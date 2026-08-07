@@ -170,18 +170,30 @@ func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback strin
 	empty := ""
 	update := beads.UpdateOpts{
 		Assignee: &empty,
-		Metadata: clearedSessionAffinityMetadata(),
+		Metadata: releaseWorkBeadMetadata(item, runTargetFallback),
 	}
 	if item.Status == "in_progress" {
 		open := "open"
 		update.Status = &open
 	}
+	return store.Update(item.ID, update)
+}
+
+// releaseWorkBeadMetadata returns the metadata patch a WORK release writes:
+// the session-affinity clears, plus the run_target fallback when one is offered
+// AND the bead carries no route of its own. Shared so the conditional
+// (ReleaseIfCurrent) release path, whose CAS swaps only status/assignee and
+// must therefore write the metadata separately, stamps byte-identically to the
+// single-Update path in ReleaseWorkBead. Duplicating the fallback condition at
+// the second call site is how the two drift.
+func releaseWorkBeadMetadata(item beads.Bead, runTargetFallback string) map[string]string {
+	metadata := clearedSessionAffinityMetadata()
 	if runTargetFallback != "" &&
 		strings.TrimSpace(item.Metadata[beadmeta.RunTargetMetadataKey]) == "" &&
 		strings.TrimSpace(item.Metadata[beadmeta.RoutedToMetadataKey]) == "" {
-		update.Metadata[beadmeta.RunTargetMetadataKey] = runTargetFallback
+		metadata[beadmeta.RunTargetMetadataKey] = runTargetFallback
 	}
-	return store.Update(item.ID, update)
+	return metadata
 }
 
 // ReassignWorkBead re-homes one WORK bead onto a new session identity, emitting
