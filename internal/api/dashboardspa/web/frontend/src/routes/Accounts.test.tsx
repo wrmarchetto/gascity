@@ -14,7 +14,7 @@
 //
 //   npm --workspace gas-city-dashboard-frontend run test -- Accounts
 
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { QUOTA_STALE_AFTER_SECONDS, type AccountQuotaReport } from 'gas-city-dashboard-shared';
 import { AccountsPage } from './Accounts';
@@ -74,12 +74,12 @@ function observed(ageSeconds: number, fiveHourPercent = 62, sevenDayPercent = 18
   };
 }
 
-function renderAccounts() {
+function renderAccounts(tickMs?: number) {
   // No router wrapper: the page renders no Link and reads no route params, so
   // adding one would only import react-router's v7 deprecation warning, which
   // this suite's setup turns into a failure.
   return render(
-    <NowProvider>
+    <NowProvider {...(tickMs === undefined ? {} : { intervalMs: tickMs })}>
       <AccountsPage />
     </NowProvider>,
   );
@@ -166,6 +166,30 @@ it('shows a stale reading, with its age, visibly grayed rather than hidden', asy
   // against a literal class name, so restyling the palette does not fail this
   // and dropping the distinction cannot pass it.
   expect(cell.className).not.toBe(fresh.className);
+});
+
+it('advances the displayed age between refetches, not only on one', async () => {
+  // The staleness rule is worth nothing if the age it is applied to is frozen.
+  // Capturing now once at mount -- the obvious `useRef(Date.now())` -- left the
+  // whole suite green while a tab open for an hour reported "as of 3m ago" in
+  // full-brightness text forever, because every other test asserts a single
+  // settled render.
+  //
+  // Real timers, no fakes: NowProvider reads the wall clock, so only real
+  // elapsed time can move the age. The tick is driven fast and the fixture is
+  // placed 10s back, which puts the next second boundary under a second away --
+  // the poll interval is 30s, so nothing refetches inside this window and the
+  // change can ONLY have come from the tick.
+  currentReport = {
+    ...emptyReport(),
+    accounts: [entry('2', { in_pool: true, observation: observed(10) })],
+    pool: ['2'],
+  };
+  renderAccounts(20);
+
+  const cell = await screen.findByTestId('five-hour-2');
+  expect(cell.textContent ?? '').toMatch(/as of 10s ago/);
+  await waitFor(() => expect(cell.textContent ?? '').toMatch(/as of 1[12]s ago/), { timeout: 4_000 });
 });
 
 it('withholds the percentage once the window has rolled', async () => {
