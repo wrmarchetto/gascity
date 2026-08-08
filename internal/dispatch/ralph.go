@@ -427,9 +427,22 @@ func parsePositiveRalphTimeout(beadID, key, raw string) (time.Duration, error) {
 	return parsed, nil
 }
 
-func persistCheckResult(store beads.Store, beadID string, result convergence.GateResult) error {
+// gateObservationMetadata renders what a check script did -- exit status, both
+// output streams, wall time, truncation flag -- as bead metadata.
+//
+// gc.outcome is deliberately NOT in this set. On the live ralph path the
+// disposition owns that key: processAttemptControl writes it at close, and a
+// gate outcome stamped here would publish "fail" on a control bead that still
+// has attempts left. persistCheckResult adds it back for the gc.kind=check
+// path, where a check bead's own outcome and the gate outcome are one thing.
+//
+// gc.exit_code is written as an empty string rather than omitted when the gate
+// produced no code (manual mode, or a timeout that killed the script): the
+// key's presence is what separates "the check ran and reported no status" from
+// "nothing was ever recorded here". Omitting it collapses those two, which is
+// the ambiguity that made ci-kki3 cost a root-cause investigation.
+func gateObservationMetadata(result convergence.GateResult) map[string]string {
 	batch := map[string]string{
-		beadmeta.OutcomeMetadataKey:    result.Outcome,
 		beadmeta.StdoutMetadataKey:     result.Stdout,
 		beadmeta.StderrMetadataKey:     result.Stderr,
 		beadmeta.DurationMsMetadataKey: strconv.FormatInt(result.Duration.Milliseconds(), 10),
@@ -440,6 +453,25 @@ func persistCheckResult(store beads.Store, beadID string, result convergence.Gat
 	} else {
 		batch[beadmeta.ExitCodeMetadataKey] = ""
 	}
+	return batch
+}
+
+// persistGateObservation records what a check observed on the control bead
+// without touching that bead's disposition.
+//
+// The keys stay under gc.stdout / gc.stderr / gc.exit_code rather than moving
+// to the gc.check_* prefix that holds the check's CONFIGURATION
+// (gc.check_mode, gc.check_path, gc.check_timeout). Sharing one prefix between
+// config and results would make clearRetryEphemera's delete list a trap: it
+// must scrub a previous attempt's results off a cloned bead while leaving the
+// config intact, and prefix-adjacent names invite clearing one with the other.
+func persistGateObservation(store beads.Store, beadID string, result convergence.GateResult) error {
+	return store.SetMetadataBatch(beadID, gateObservationMetadata(result))
+}
+
+func persistCheckResult(store beads.Store, beadID string, result convergence.GateResult) error {
+	batch := gateObservationMetadata(result)
+	batch[beadmeta.OutcomeMetadataKey] = result.Outcome
 	return store.SetMetadataBatch(beadID, batch)
 }
 

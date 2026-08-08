@@ -296,6 +296,24 @@ func evaluateRalphIteration(store beads.Store, bead, iteration beads.Bead, itera
 	if err != nil {
 		return attemptEvaluation{}, fmt.Errorf("%s: running check: %w", bead.ID, err)
 	}
+	// Distinct from ralph.go's "check-result", which only the gc.kind=check
+	// path emits. The two paths run the same script through the same gate, and
+	// a shared trace verb sent ci-kki3's triage to the wrong writer.
+	opts.tracef("ralph iteration-check-result bead=%s iteration=%d outcome=%s exit=%s dur=%s truncated=%v stderr=%q stdout=%q",
+		bead.ID, iterationNum, checkResult.Outcome, formatGateExitCode(checkResult.ExitCode), checkResult.Duration,
+		checkResult.Truncated, traceClipString(checkResult.Stderr, traceCheckOutputCap),
+		traceClipString(checkResult.Stdout, traceCheckOutputCap))
+	// Its own round-trip, not folded into the disposition write the way
+	// TestProcessRetryControlPassClosesWithSingleFinalMetadataUpdate pins for
+	// retry: folding it in would make the record's survival depend on a later
+	// successful close, and a spawn or store failure between here and there
+	// destroys the evidence needed to diagnose that failure. Safe against the
+	// close because every beads.Store merges an Update's metadata rather than
+	// replacing it. These keys describe the MOST RECENT check and each attempt
+	// overwrites them -- only gc.attempt_log accumulates.
+	if err := persistGateObservation(store, bead.ID, checkResult); err != nil {
+		return attemptEvaluation{}, fmt.Errorf("%s: recording check observation: %w", bead.ID, err)
+	}
 	eval := attemptEvaluation{logOutcome: checkResult.Outcome, logDetail: checkResult.Stderr}
 	if checkResult.Outcome == convergence.GatePass {
 		eval.disposition = attemptPass
