@@ -892,6 +892,9 @@ func filterUnreadyHookCandidates(output string, now time.Time) string {
 			filtered = append(filtered, item)
 			continue
 		}
+		if isMessageHookCandidate(obj) {
+			continue
+		}
 		if isClosedHookCandidate(obj) {
 			continue
 		}
@@ -911,6 +914,37 @@ func filterUnreadyHookCandidates(output string, now time.Time) string {
 		return output
 	}
 	return string(reencoded)
+}
+
+// isMessageHookCandidate reports whether a work_query row is a mail message.
+// It is the demand-side twin of hookClaimCandidateIsMessage: the claim path
+// refuses message beads, so a message reaching a consumer as work produces
+// demand that can never be satisfied -- spawn, refuse, drain-ack, respawn, at
+// boot cadence and at full model cost.
+//
+// #4419 taught only the claim side this predicate. Leaving the demand side
+// unchanged is what made the loop structural: two correct components
+// disagreeing about what "work exists" means, with neither erroring.
+//
+// The generated work_query already excludes messages at every assigned tier
+// (internal/config/workquery.go excludeMessageTypeArg). This filter is the
+// backstop for output that query did not generate -- a pack-supplied
+// work_query, or a legacy tier -- since every consumer funnels through here.
+// It cannot substitute for the query-side fix: the shell ladder exits on its
+// first hit, so a message arriving here means the routed work below it was
+// never fetched at all.
+//
+// Both field spellings are read: bd emits issue_type, some legacy rows carry
+// type. Matching is case- and space-insensitive to stay identical to
+// hookClaimCandidateIsMessage; TestHookMessagePredicateMatchesTheClaimPredicate
+// asserts the two agree.
+func isMessageHookCandidate(item map[string]any) bool {
+	for _, key := range []string{"issue_type", "type"} {
+		if raw, ok := item[key].(string); ok && strings.EqualFold(strings.TrimSpace(raw), "message") {
+			return true
+		}
+	}
+	return false
 }
 
 func isFutureDeferredHookCandidate(item map[string]any, now time.Time) bool {

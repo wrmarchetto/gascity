@@ -56,6 +56,38 @@ func excludeHoldLabelsJQClause() string {
 	return ` | select(([ (.labels // [])[] | select(` + strings.Join(conds, " or ") + `) ] | length) == 0)`
 }
 
+// excludeMessageTypeArg keeps mail out of the ASSIGNED work tiers.
+//
+// A message bead carries the recipient in `assignee`, which is the identical
+// shape a real assigned bead has, so `bd ready --assignee=<id>` returns it as
+// work. The claim side already refuses it (hookClaimCandidateIsMessage in
+// cmd/gc/cmd_hook_claim.go) and that asymmetry is the whole bug: demand said
+// work exists, the claim handed out nothing, the session drain-acked, and
+// nothing about the message changed -- so the next tick spawned another
+// session, forever, at boot cadence. Worse, the assigned tier exits the
+// ladder on its first hit, so a message also HID the routed work waiting
+// below it in the same batch (#4419 named this: "ahead of any real routed
+// work waiting in the same batch"; it taught the claim, not the demand).
+//
+// This is applied where DEMAND is computed, so both sides now share one
+// predicate. The invariants it pins are in
+// workquery_message_displacement_test.go.
+//
+// Documented absence: mail deliberately does NOT create demand and will NOT
+// spawn or sustain a session. That is not a regression to restore -- a
+// session cannot consume its own mail, because `gc hook --claim` is its FIRST
+// command, so it drained before ever reading the message that spawned it.
+// Mail is read by a live session; it is not a reason to start one.
+const excludeMessageTypeArg = ` --exclude-type=message`
+
+// excludeMessageJQClause is the jq form of excludeMessageTypeArg, for the
+// ephemeral tiers that filter in jq because `bd query` has no --exclude-type.
+// Both spellings of the field are read: `bd` emits issue_type, some legacy
+// rows carry type.
+func excludeMessageJQClause() string {
+	return ` | select((((.issue_type // .type // "") | ascii_downcase)) != "message")`
+}
+
 // jqMeta renders the jq expression that reads a bead-metadata key with an
 // empty-string default, e.g. (.metadata["gc.routed_to"] // ""). Shell/jq
 // builders use it so embedded key spellings stay anchored to the beadmeta
@@ -98,6 +130,7 @@ func bdQueryEphemeralStatusQuietShell(status string) string {
 
 func legacyEphemeralReadyFilterJQ(selector string, limit int, excludeHoldLabels bool) string {
 	body := selector +
+		excludeMessageJQClause() +
 		` | select(((.issue_type // .type // "") != "epic"))` +
 		` | select(([ (.dependencies // [])[]` +
 		` | select((.type // .dep_type // "") as $t | ($t == "blocks" or $t == "waits-for" or $t == "conditional-blocks"))` +
@@ -200,7 +233,7 @@ func standardAssignedWorkQueryScript(includeEphemeralReady bool) string {
 func standardAssignedInProgressWorkQueryScript(includeEphemeralReady bool) string {
 	return `for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do ` +
 		`[ -z "$id" ] && continue; ` +
-		`r=$(bd list --status in_progress --assignee="$id" --json --limit=1 2>/dev/null); ` +
+		`r=$(bd list --status in_progress --assignee="$id"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`if [ -n "$r" ] && [ "$r" != "[]" ]; then ` +
 		inProgressBlockedByEnrichmentScript("r") +
 		`fi; ` +
@@ -267,7 +300,7 @@ func inProgressBlockedByEnrichmentScript(shellVar string) string {
 func standardAssignedReadyWorkQueryScript(includeEphemeralReady bool) string {
 	return `for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do ` +
 		`[ -z "$id" ] && continue; ` +
-		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$id" --json --limit=1 2>/dev/null); ` +
+		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$id"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		ephemeralAssignedReadyProbeScript("id", includeEphemeralReady) +
 		`done; `
@@ -284,7 +317,7 @@ func legacyControlAssignedInProgressWorkQueryScript(includeEphemeralReady bool) 
 		`legacy=""; case "$id" in *control-dispatcher) legacy="${id%control-dispatcher}workflow-control";; esac; ` +
 		`for cand in "$id" "$legacy"; do ` +
 		`[ -z "$cand" ] && continue; ` +
-		`r=$(bd list --status in_progress --assignee="$cand" --json --limit=1 2>/dev/null); ` +
+		`r=$(bd list --status in_progress --assignee="$cand"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`if [ -n "$r" ] && [ "$r" != "[]" ]; then ` +
 		inProgressBlockedByEnrichmentScript("r") +
 		`fi; ` +
@@ -299,7 +332,7 @@ func legacyControlAssignedReadyWorkQueryScript(includeEphemeralReady bool) strin
 		`legacy=""; case "$id" in *control-dispatcher) legacy="${id%control-dispatcher}workflow-control";; esac; ` +
 		`for cand in "$id" "$legacy"; do ` +
 		`[ -z "$cand" ] && continue; ` +
-		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$cand" --json --limit=1 2>/dev/null); ` +
+		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$cand"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		ephemeralAssignedReadyProbeScript("cand", includeEphemeralReady) +
 		`done; ` +
@@ -309,7 +342,7 @@ func legacyControlAssignedReadyWorkQueryScript(includeEphemeralReady bool) strin
 func ephemeralAssignedInProgressProbeScript(shellVar string, includeEphemeralReady bool) string {
 	_ = includeEphemeralReady
 	return `r=$(` + bdQueryEphemeralStatusQuietShell("in_progress") + ` | ` +
-		`jq --arg id "$` + shellVar + `" '[.[] | select((.assignee // "") == $id)] | .[:1]' 2>/dev/null); ` +
+		`jq --arg id "$` + shellVar + `" '[.[] | select((.assignee // "") == $id)` + excludeMessageJQClause() + `] | .[:1]' 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; `
 }
 

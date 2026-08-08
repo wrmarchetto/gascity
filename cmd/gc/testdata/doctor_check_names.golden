@@ -65,6 +65,7 @@ hold-label-routed-to
 work-option-metadata-migration
 backlog-depth
 convoy-autoclose-leak
+session-spawn-rate
 order-tracking-retention
 session-model
 dolt-server
