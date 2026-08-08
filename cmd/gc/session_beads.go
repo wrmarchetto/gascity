@@ -3088,12 +3088,97 @@ func releaseWorkFromClosedSessionBead(store beads.Store, sessionBead beads.Bead,
 				// when BOTH routed_to and run_target are empty, and restoreCarriedWorkRoutes
 				// (#3421) then backfills gc.routed_to from that run_target so the work
 				// re-enters pool demand.
-				if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
-					fmt.Fprintf(stderr, "session beads: releasing work %s from closing session %s: %v\n", item.ID, sessionBead.ID, err) //nolint:errcheck
-				}
+				releaseWorkBeadFromClosedSession(wa, item, sessionBead.ID, fallbackRoute, stderr)
 			}
 		}
 	}
+}
+
+// releaseWorkBeadFromClosedSession releases one WORK bead off the closing
+// session, but only while the store still shows the (status, assignee) pair the
+// enumeration observed.
+//
+// The enumeration feeding this is OpenAssignedToBasic, a deliberately non-Live
+// store.List that the production CachingStore serves from the in-process cache.
+// An agent closing its own work through the external bd CLI writes straight to
+// the backing store, and that close is invisible here until the next reconcile
+// tick (30-120s). The unconditional Update{status:open, assignee:""} that used
+// to run therefore REOPENED a bead the backing store already showed closed, the
+// pool re-dispatched it, and the work ran a second time -- silently, with
+// no error anywhere (observed on bead ci-2hk, sessions ci-1si/ci-e6t).
+//
+// Same defect and same discipline as releaseOrphanedPoolAssignment (#4151):
+// prefer the store's atomic ReleaseIfCurrent CAS, and where the store cannot
+// conditionally release this snapshot shape, re-verify with a Live read
+// immediately before the unconditional write. Flipping OpenAssignedToBasic to
+// Live instead was rejected twice over: it only shrinks the window rather than
+// closing it, and it would change the bead op every session close emits (the
+// distinction OpenAssignedToBasic exists to preserve).
+func releaseWorkBeadFromClosedSession(wa workAssignment, item beads.Bead, sessionBeadID, fallbackRoute string, stderr io.Writer) {
+	store := wa.unwrapped()
+	if store == nil {
+		return
+	}
+	// Continuation-group beads bypass the CAS fast path for the reason given in
+	// beadHasActiveContinuationGroup: the CAS swaps only status/assignee, so the
+	// group would stay advertised on an open, unassigned bead until the
+	// follow-up metadata write lands, and a concurrent claim can vacuum it (and
+	// its siblings) onto an unrelated session through that window.
+	if !beadHasActiveContinuationGroup(item) {
+		if released, handled := releaseClosedSessionWorkIfCurrent(store, item, sessionBeadID, stderr); handled {
+			if released {
+				if err := store.Update(item.ID, beads.UpdateOpts{Metadata: releaseWorkBeadMetadata(item, fallbackRoute)}); err != nil {
+					// Non-fatal: the release itself already landed. Stale
+					// affinity keys are overwritten by the next assignment, and
+					// a missing run_target fallback leaves the work reachable by
+					// releaseOrphanedPoolAssignments on a later tick.
+					fmt.Fprintf(stderr, "session beads: clearing affinity metadata after releasing %s from closing session %s: %v\n", item.ID, sessionBeadID, err) //nolint:errcheck
+				}
+			}
+			return
+		}
+	}
+	if !liveWorkAssignmentStillReleasable(store, item.ID, item.Status, strings.TrimSpace(item.Assignee)) {
+		fmt.Fprintf(stderr, "session beads: skipping release of %s from closing session %s: the store no longer shows it %s/%q (closed or re-claimed since the cached enumeration)\n", item.ID, sessionBeadID, item.Status, item.Assignee) //nolint:errcheck
+		return
+	}
+	if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
+		fmt.Fprintf(stderr, "session beads: releasing work %s from closing session %s: %v\n", item.ID, sessionBeadID, err) //nolint:errcheck
+	}
+}
+
+// releaseClosedSessionWorkIfCurrent attempts the store's atomic conditional
+// release. handled=false means the store cannot conditionally release this
+// snapshot (no ConditionalAssignmentReleaser, ErrConditionalReleaseUnsupported,
+// or a snapshot outside the verb's in_progress+assigned contract) and the caller
+// must take the live-recheck fallback. handled=true with released=false means
+// the store answered authoritatively (the assignment changed) and the
+// release must NOT be retried unconditionally.
+func releaseClosedSessionWorkIfCurrent(store beads.Store, item beads.Bead, sessionBeadID string, stderr io.Writer) (released, handled bool) {
+	expectedAssignee := strings.TrimSpace(item.Assignee)
+	if item.Status != "in_progress" || expectedAssignee == "" {
+		return false, false
+	}
+	releaser, ok := store.(beads.ConditionalAssignmentReleaser)
+	if !ok {
+		return false, false
+	}
+	released, err := releaser.ReleaseIfCurrent(item.ID, expectedAssignee)
+	if err != nil {
+		if errors.Is(err, beads.ErrConditionalReleaseUnsupported) {
+			return false, false
+		}
+		// The store can conditionally release but this attempt failed
+		// (transient backend error). Skip rather than downgrade to an
+		// unconditional write; releaseOrphanedPoolAssignments on a later tick is
+		// the idempotent fallback for genuinely orphaned work.
+		fmt.Fprintf(stderr, "session beads: conditional release of %s from closing session %s failed: %v\n", item.ID, sessionBeadID, err) //nolint:errcheck
+		return false, true
+	}
+	if !released {
+		fmt.Fprintf(stderr, "session beads: skipping release of %s from closing session %s: assignment changed since the cached enumeration (closed or re-claimed)\n", item.ID, sessionBeadID) //nolint:errcheck
+	}
+	return released, true
 }
 
 // resolveAgentTemplate returns the config agent template name for a given

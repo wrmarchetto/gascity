@@ -634,6 +634,9 @@ func directSessionBeadIDCandidates(assignee string) []string {
 // Open status is required for the issue #2793 path — graph.v2 step
 // beads stuck on a dead session's long-form assignee are status=open,
 // not in_progress.
+//
+// Shared by the orphan-pool release and the session-close release cascade
+// (releaseWorkBeadFromClosedSession), so the failure log names no caller.
 func liveWorkAssignmentStillReleasable(store beads.Store, id, expectedStatus, assignee string) bool {
 	id = strings.TrimSpace(id)
 	expectedStatus = strings.TrimSpace(expectedStatus)
@@ -646,7 +649,7 @@ func liveWorkAssignmentStillReleasable(store beads.Store, id, expectedStatus, as
 		TierMode: beads.TierBoth,
 	})
 	if err != nil {
-		log.Printf("releaseOrphanedPoolAssignments: live work validation failed for %q: %v", id, err)
+		log.Printf("live work assignment validation failed for %q: %v", id, err)
 		return false
 	}
 	for _, wb := range work {
