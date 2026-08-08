@@ -738,6 +738,46 @@ func listConvoyChildren(store beads.Store, convoyID string, includeClosed bool) 
 	return convoycore.Members(store, convoyID, includeClosed)
 }
 
+// convoyIsComplete reports whether a convoy has become collectable: it is an
+// open, unowned convoy with at least one child, and every child has reached a
+// terminal status.
+//
+// This is the single definition of "collectable", shared by the three places
+// that must agree -- the event-driven autoclose, the `gc convoy check` sweep,
+// and the doctor gate that fails when a collectable convoy was never
+// collected. Restating the condition in the gate is the obvious alternative
+// and is exactly what lets a gate report green while the collector it guards
+// has changed its mind about "owned" or about childless convoys.
+//
+// Two exclusions, both deliberate. A convoy with ZERO children is not
+// complete: sling mints the convoy bead before attaching its child, so
+// "every child is closed" is vacuously true during the mint window and would
+// collect a dispatch that has not started. A convoy labeled "owned" is not
+// complete either -- its owner terminates it through `gc convoy land`, and
+// closing it here would retire the owner's convoy out from under it.
+//
+// A store error yields (false, err): the caller must decide, because "cannot
+// tell" is not "not collectable". Callers that collect treat it as no-op;
+// the gate reports the leak set as unknown rather than empty.
+func convoyIsComplete(store beads.Store, convoy beads.Bead) (bool, error) {
+	if convoy.Type != "convoy" || convoycore.IsTerminalStatus(convoy.Status) || hasLabel(convoy.Labels, "owned") {
+		return false, nil
+	}
+	children, err := listConvoyChildren(store, convoy.ID, true)
+	if err != nil {
+		return false, err
+	}
+	if len(children) == 0 {
+		return false, nil
+	}
+	for _, ch := range children {
+		if !convoycore.IsTerminalStatus(ch.Status) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func doConvoyListAcrossStores(stores []convoyStoreView, jsonOut bool, stdout, stderr io.Writer) int {
 	convoys, err := collectOpenConvoys(stores)
 	if err != nil {
@@ -1437,25 +1477,12 @@ func doConvoyCheckAcrossStoresJSON(stores []convoyStoreView, rec events.Recorder
 
 	closed := 0
 	for _, item := range convoys {
-		if hasLabel(item.bead.Labels, "owned") {
-			continue
-		}
-		children, err := listConvoyChildren(item.store, item.bead.ID, true)
+		complete, err := convoyIsComplete(item.store, item.bead)
 		if err != nil {
 			fmt.Fprintf(stderr, "gc convoy check: children of %s: %v\n", item.bead.ID, err) //nolint:errcheck // best-effort stderr
 			return 1
 		}
-		if len(children) == 0 {
-			continue
-		}
-		allClosed := true
-		for _, ch := range children {
-			if !convoycore.IsTerminalStatus(ch.Status) {
-				allClosed = false
-				break
-			}
-		}
-		if allClosed {
+		if complete {
 			if err := closeConvoyWithReason(item.store, item.bead.ID, convoyAutocloseReason); err != nil {
 				fmt.Fprintf(stderr, "gc convoy check: closing %s: %v\n", item.bead.ID, err) //nolint:errcheck // best-effort stderr
 				return 1
@@ -1879,18 +1906,8 @@ func doConvoyAutocloseWith(store beads.Store, rec events.Recorder, beadID string
 }
 
 func autocloseConvoyIfComplete(store beads.Store, rec events.Recorder, convoy beads.Bead, stdout io.Writer) {
-	if convoy.Type != "convoy" || convoycore.IsTerminalStatus(convoy.Status) || hasLabel(convoy.Labels, "owned") {
+	if complete, err := convoyIsComplete(store, convoy); err != nil || !complete {
 		return
-	}
-
-	children, err := listConvoyChildren(store, convoy.ID, true)
-	if err != nil || len(children) == 0 {
-		return
-	}
-	for _, ch := range children {
-		if !convoycore.IsTerminalStatus(ch.Status) {
-			return
-		}
 	}
 
 	if err := closeConvoyWithReason(store, convoy.ID, convoyAutocloseReason); err != nil {
