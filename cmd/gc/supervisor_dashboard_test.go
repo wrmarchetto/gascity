@@ -87,6 +87,24 @@ func TestDashboardDepsModulesCoreOnly(t *testing.T) {
 	}
 }
 
+// The account-quota endpoint reads a host path and names the accounts held out
+// of the rotation pool. Both arrive from env: a compiled-in path would point at
+// the wrong root on any machine that relocates the homes, and a compiled-in
+// name would be a role name in SDK Go (AGENTS.md, ZERO hardcoded roles). This
+// test pins the wiring because both failures are silent — a wrong root renders
+// an empty tab, and a missing label map renders unlabeled groups.
+func TestDashboardDepsWiresAccountQuotaEnv(t *testing.T) {
+	t.Setenv("DASHBOARD_ACCOUNT_HOMES_DIR", "/srv/homes")
+	t.Setenv("DASHBOARD_ACCOUNT_LABELS", "0=operator interactive,1=orchestrator pin")
+	deps := dashboardDeps(fakeDashResolver{}, false, "127.0.0.1", 8372, nil)
+	if deps.AccountHomesDir != "/srv/homes" {
+		t.Errorf("AccountHomesDir = %q, want the env override", deps.AccountHomesDir)
+	}
+	if deps.AccountLabels["0"] != "operator interactive" || deps.AccountLabels["1"] != "orchestrator pin" {
+		t.Errorf("AccountLabels = %v, want both env-supplied labels", deps.AccountLabels)
+	}
+}
+
 func TestRunCwdAllowedRootsFromEnv(t *testing.T) {
 	t.Setenv("RUN_CWD_ALLOWED_ROOTS", "/srv/a:/srv/b: :relative:/srv/c")
 	got := runCwdAllowedRootsFromEnv()

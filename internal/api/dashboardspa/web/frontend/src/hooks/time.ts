@@ -23,6 +23,26 @@ function toEpochMs(ts: string | number | Date): number {
   return ts instanceof Date ? ts.getTime() : typeof ts === 'number' ? ts : Date.parse(ts);
 }
 
+/**
+ * Bucket a whole-second span into the compact grammar above, without the
+ * 'now' shortcut or the null sentinel — both belong to `formatRelative`,
+ * which owns the notion of a timestamp in the past.
+ *
+ * Exported for spans that run FORWARD (time remaining), which cannot go
+ * through `formatRelative` at all. The alternative a future editor will
+ * reach for is mirroring the target around now —
+ * `formatRelative(2 * now - target, now)` — which does compute the right
+ * number today and inverts silently the moment `formatRelative`'s clamp or
+ * rounding changes, with no test able to see it.
+ */
+export function formatDuration(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  if (whole < 60) return `${whole}s`;
+  if (whole < 3_600) return `${Math.round(whole / 60)}m`;
+  if (whole < 86_400) return `${Math.round(whole / 3_600)}h`;
+  return `${Math.round(whole / 86_400)}d`;
+}
+
 export function formatRelative(ts: string | number | Date | undefined | null, now: number): string {
   if (ts === undefined || ts === null || ts === '') return '·';
 
@@ -31,10 +51,7 @@ export function formatRelative(ts: string | number | Date | undefined | null, no
 
   const diffSec = Math.max(0, Math.round((now - ms) / 1_000));
   if (diffSec < 5) return 'now';
-  if (diffSec < 60) return `${diffSec}s`;
-  if (diffSec < 3_600) return `${Math.round(diffSec / 60)}m`;
-  if (diffSec < 86_400) return `${Math.round(diffSec / 3_600)}h`;
-  return `${Math.round(diffSec / 86_400)}d`;
+  return formatDuration(diffSec);
 }
 
 /**

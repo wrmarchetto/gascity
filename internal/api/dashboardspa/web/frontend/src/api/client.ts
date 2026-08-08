@@ -1,4 +1,5 @@
 import type {
+  AccountQuotaReport,
   GitCommitList,
   GitView,
   DeployList,
@@ -230,6 +231,76 @@ const decodeRuntimeConfig = objectDecoder<DashboardRuntimeConfig>('config', (rec
   requireStringArrayOrNullField(record, url, 'config', 'enabledModules');
   requireNullableStringField(record, url, 'config', 'defaultView');
 });
+// The four presence states the /api/account-quota rows carry. Validated as a
+// closed set: an unrecognized state must fail the decode loudly rather than
+// reach the renderer, where an unmatched switch would fall through to whatever
+// the last branch renders — for this view, plausibly a healthy-looking row.
+const accountObservationStates = new Set(['never_observed', 'no_limits', 'observed', 'unreadable']);
+
+function requireNullableNumberField(
+  record: JsonRecord,
+  url: string,
+  label: string,
+  field: string,
+): void {
+  const value = record[field];
+  if (value !== null && typeof value !== 'number') {
+    failDecode(url, `${label}.${field} must be a number or null`);
+  }
+}
+
+// A window is validated only where one is present. Absent (null) is a real,
+// meaningful state — the record carried no limits — and must NOT be coerced
+// into a zeroed window, which renders as an idle healthy account.
+function requireQuotaWindowField(
+  record: JsonRecord,
+  url: string,
+  label: string,
+  field: string,
+): void {
+  const value = record[field];
+  if (value === null) return;
+  const window = requireRecord(value, url, `${label}.${field}`);
+  requireNumberField(window, url, `${label}.${field}`, 'used_percentage');
+  requireNumberField(window, url, `${label}.${field}`, 'resets_at');
+}
+
+const decodeAccountQuota = objectDecoder<AccountQuotaReport>('account quota', (record, url) => {
+  requireArrayField(record, url, 'account quota', 'accounts');
+  requireArrayField(record, url, 'account quota', 'pool');
+  requireStringField(record, url, 'account quota', 'homes_dir');
+  requireNumberField(record, url, 'account quota', 'unattributed_suspects');
+  const rotation = requireRecord(record.rotation, url, 'account quota.rotation');
+  requireBooleanField(rotation, url, 'account quota.rotation', 'available');
+  requireStringField(rotation, url, 'account quota.rotation', 'reason');
+
+  for (const item of record.accounts as unknown[]) {
+    const entry = requireRecord(item, url, 'account quota.accounts[]');
+    const label = `account quota.accounts[${String(entry.account)}]`;
+    requireStringField(entry, url, label, 'account');
+    requireStringField(entry, url, label, 'label');
+    requireBooleanField(entry, url, label, 'in_pool');
+    requireNumberField(entry, url, label, 'bound_sessions');
+    requireNumberField(entry, url, label, 'suspect_sessions');
+    requireNullableNumberField(entry, url, label, 'last_used_at');
+    requireNullableNumberField(entry, url, label, 'cooldown_until');
+
+    const observation = requireRecord(entry.observation, url, `${label}.observation`);
+    requireStringField(observation, url, `${label}.observation`, 'state');
+    requireStringField(observation, url, `${label}.observation`, 'session_id');
+    requireStringField(observation, url, `${label}.observation`, 'reason');
+    requireNullableNumberField(observation, url, `${label}.observation`, 'observed_at');
+    requireQuotaWindowField(observation, url, `${label}.observation`, 'five_hour');
+    requireQuotaWindowField(observation, url, `${label}.observation`, 'seven_day');
+    if (!accountObservationStates.has(observation.state as string)) {
+      failDecode(
+        url,
+        `${label}.observation.state is not a known state: ${String(observation.state)}`,
+      );
+    }
+  }
+});
+
 const healthMetricUnavailableReasons = new Set([
   'sample_failed',
   'invalid_sample',
@@ -413,6 +484,11 @@ export const api = {
   },
   listBuilds(): Promise<DeployList> {
     return request('GET', '/api/builds', decodeBuildList);
+  },
+  // Host-global, not city-scoped: the account homes are one machine-level
+  // resource shared by every city this supervisor serves.
+  accountQuota(): Promise<AccountQuotaReport> {
+    return request('GET', '/api/account-quota', decodeAccountQuota);
   },
 
   // ── City-scoped endpoints (ride /api/city/:cityName/*) ─────────────────

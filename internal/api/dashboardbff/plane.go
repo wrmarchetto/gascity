@@ -74,6 +74,17 @@ type Deps struct {
 	DecisionLabel     string
 	EnabledModules    []string
 	DefaultView       string
+
+	// AccountHomesDir is the per-account Claude home root the account-quota
+	// endpoint reads (DASHBOARD_ACCOUNT_HOMES_DIR). Empty resolves to
+	// $HOME/.claude-homes, which is where the collector writes.
+	AccountHomesDir string
+	// AccountLabels names the accounts a deployment holds out of the rotation
+	// pool, keyed by account id (DASHBOARD_ACCOUNT_LABELS). Supplied by the
+	// caller because the reasons an account is reserved are role-shaped, and no
+	// role name may appear in SDK Go (AGENTS.md). Unlabeled accounts render
+	// under their pool membership alone.
+	AccountLabels map[string]string
 }
 
 // Plane is the host-side /api/* HTTP surface. It owns the shared mutation
@@ -200,6 +211,7 @@ func (p *Plane) registerRoutes() {
 	p.registerBuilds()
 	p.registerClientLog()
 	p.registerHealth()
+	p.registerQuota()
 	p.registerSamplers()
 	p.registerRunSummary()
 	p.registerRunDetail()

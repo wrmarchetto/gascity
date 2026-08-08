@@ -491,3 +491,94 @@ describe('run projection endpoints', () => {
     expect((err as ApiClientError).reason).toBeUndefined();
   });
 });
+
+// The account-quota decoder is the last place a malformed row can be stopped
+// before it renders. Every case below would otherwise reach the view as
+// `undefined` on a field the renderer reads, and this particular view turns
+// missing data into a confident-looking healthy account -- so the decode must
+// fail loudly rather than let a partial row through.
+describe('account quota decode', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubQuota(body: unknown) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    );
+  }
+
+  function validReport() {
+    return {
+      accounts: [
+        {
+          account: '2',
+          label: '',
+          in_pool: true,
+          observation: {
+            state: 'observed',
+            observed_at: 1_800_000_000,
+            session_id: 's',
+            five_hour: { used_percentage: 62, resets_at: 1_800_003_600 },
+            seven_day: null,
+            reason: '',
+          },
+          last_used_at: null,
+          cooldown_until: 1_800_001_000,
+          bound_sessions: 3,
+          suspect_sessions: 0,
+        },
+      ],
+      pool: ['2'],
+      rotation: { available: true, reason: '' },
+      homes_dir: '/home/op/.claude-homes',
+      unattributed_suspects: 0,
+    };
+  }
+
+  it('accepts a well-formed report, including a null window beside a present one', async () => {
+    stubQuota(validReport());
+    const report = await api.accountQuota();
+    expect(report.accounts[0]?.observation.five_hour?.used_percentage).toBe(62);
+    // Null is a real state (the record carried no 7d window), not a decode
+    // failure -- coercing it to a zeroed window is the bug this asserts against.
+    expect(report.accounts[0]?.observation.seven_day).toBeNull();
+  });
+
+  it('rejects an observation state outside the known set', async () => {
+    const body = validReport();
+    body.accounts[0]!.observation.state = 'probably_fine';
+    stubQuota(body);
+    await expect(api.accountQuota()).rejects.toThrow(/not a known state/);
+  });
+
+  it('rejects a window missing its reset time', async () => {
+    const body = validReport();
+    // Without resets_at the classifier cannot tell a live window from a rolled
+    // one, so it would render the percentage unconditionally.
+    delete (body.accounts[0]!.observation.five_hour as { resets_at?: number }).resets_at;
+    stubQuota(body);
+    await expect(api.accountQuota()).rejects.toThrow(/five_hour.resets_at must be a number/);
+  });
+
+  it('rejects a row whose nullable epochs are neither number nor null', async () => {
+    const body = validReport();
+    (body.accounts[0] as { cooldown_until: unknown }).cooldown_until = 'soon';
+    stubQuota(body);
+    await expect(api.accountQuota()).rejects.toThrow(/cooldown_until must be a number or null/);
+  });
+
+  it('rejects a report whose accounts list is null rather than empty', async () => {
+    const body = validReport();
+    (body as { accounts: unknown }).accounts = null;
+    stubQuota(body);
+    await expect(api.accountQuota()).rejects.toThrow(/accounts must be an array/);
+  });
+});

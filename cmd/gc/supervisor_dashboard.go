@@ -132,6 +132,12 @@ func dashboardDeps(resolver api.CityResolver, readOnly bool, bind string, port i
 		OperatorWireAlias:  os.Getenv("DASHBOARD_OPERATOR_WIRE_ALIAS"),
 		DecisionLabel:      os.Getenv("DASHBOARD_DECISION_LABEL"),
 		DefaultView:        os.Getenv("DEFAULT_VIEW"),
+		AccountHomesDir:    os.Getenv("DASHBOARD_ACCOUNT_HOMES_DIR"),
+		// Names for the accounts a deployment holds out of its rotation pool,
+		// e.g. "0=operator interactive,1=orchestrator pin". Env rather than Go
+		// because the reasons are role-shaped and the pin has moved accounts
+		// before; a compiled-in list would go quietly wrong when it moves again.
+		AccountLabels: dashboardbff.ParseAccountLabels(os.Getenv("DASHBOARD_ACCOUNT_LABELS")),
 		// EnabledModules is intentionally left unset: every shipped dashboard view
 		// module is core (always on), and no first-party (gated) module exists yet,
 		// so the config projection emits an empty enabledModules list by design.

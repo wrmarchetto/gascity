@@ -7,6 +7,19 @@ describe('views/registry', () => {
     expect(ids).toContain('health');
   });
 
+  // Core, not firstParty: dashboardDeps leaves EnabledModules unset, so a
+  // firstParty descriptor would be filtered out of every deployment and the
+  // route would never mount. The kind assertion is the guard against a future
+  // edit "tidying" it into a gated module and silently removing the tab.
+  it('contains the accounts view as a core route', () => {
+    const accounts = ALL_VIEWS.find((v) => v.id === 'accounts');
+    expect(accounts).toBeDefined();
+    expect(accounts?.kind).toBe('core');
+    expect(accounts?.path).toBe('/accounts');
+    expect(accounts?.nav).not.toBeNull();
+    expect(accounts?.nav?.label).toBe('Accounts');
+  });
+
   it('contains the activity view as a core route', () => {
     const activity = ALL_VIEWS.find((v) => v.id === 'activity');
     expect(activity).toBeDefined();

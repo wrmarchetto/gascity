@@ -500,8 +500,9 @@ typed-wire principle. Every other path is a typed Huma operation.
 - **`/api/*` (the host-side dashboard BFF plane)** — the host-local
   reads in `internal/api/dashboardbff` (runtime-config projection,
   git log / builds, run diffs, health probes, slow-status samplers,
-  and the `/api/client-errors` telemetry sink) that are
-  dashboard-local rather than GC domain resources. The SPA reads all
+  the per-account provider rate-limit levels at
+  `/api/account-quota`, and the `/api/client-errors` telemetry sink)
+  that are dashboard-local rather than GC domain resources. The SPA reads all
   GC domain data from the typed `/v0` API directly; the `/api/*`
   plane exists only for the handful of host-side reads that have no
   `/v0` home. It is registered as a non-Huma handler, so it adds

@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "test": "../../../../../scripts/dashboard-shared-tests.sh"
   },
   "dependencies": {
     "@hey-api/client-fetch": "^0.13.1",

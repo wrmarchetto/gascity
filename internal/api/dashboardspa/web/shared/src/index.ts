@@ -38,6 +38,7 @@ export type * from './transcript.js';
 export type * from './dashboard-beads.js';
 export type * from './activity.js';
 export type * from './dashboard-health.js';
+export * from './dashboard-quota.js';
 export type * from './rig-store-health.js';
 export type * from './supervisor-status.js';
 export type * from './api-error.js';

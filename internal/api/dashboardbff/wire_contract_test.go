@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -236,5 +237,120 @@ func TestSanitizeTerminalOutputStripsCSIAndControls(t *testing.T) {
 	}
 	if got != "ared bcde" { // the literal space in " b" survives; only escapes/controls are stripped
 		t.Errorf("sanitized = %q, want %q", got, "ared bcde")
+	}
+}
+
+// TestWireContractAccountQuota pins the /api/account-quota body against what
+// decodeAccountQuota in frontend/src/api/client.ts requires. The endpoint's
+// whole point is that absent inputs degrade in place, so the contract is
+// asserted on an EMPTY homes root: the shape a machine with no collector wired
+// serves is the one most likely to reach a browser unnoticed.
+func TestWireContractAccountQuota(t *testing.T) {
+	p := New(Deps{AccountHomesDir: t.TempDir()})
+	m := wireGet(t, p, "/api/account-quota")
+	mustArray(t, m, "accounts")
+	mustArray(t, m, "pool")
+	mustObject(t, m, "rotation")
+	mustString(t, m, "homes_dir")
+	rotation, _ := m["rotation"].(map[string]any)
+	mustBool(t, rotation, "available")
+	mustString(t, rotation, "reason")
+	if _, ok := m["unattributed_suspects"].(float64); !ok {
+		t.Errorf("unattributed_suspects must be a number, got %T", m["unattributed_suspects"])
+	}
+}
+
+// TestWireContractObservationStateSpellings pins all four state spellings as
+// literals. Three consumers key on these exact strings and none of them can be
+// reached from Go: the AccountObservationState union in
+// shared/src/dashboard-quota.ts, the closed-set check in
+// frontend/src/api/client.ts (which rejects an unknown state outright), and the
+// OBSERVATION_TONE / OBSERVATION_LABEL lookup tables in routes/Accounts.tsx.
+// Writing the literals here rather than comparing constants to themselves is
+// the point — a test that reads the same constant the handler writes cannot
+// notice the spelling changing under both of them.
+func TestWireContractObservationStateSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		got  observationState
+		want string
+	}{
+		{observationNeverObserved, "never_observed"},
+		{observationNoLimits, "no_limits"},
+		{observationObserved, "observed"},
+		{observationUnreadable, "unreadable"},
+	} {
+		if string(tc.got) != tc.want {
+			t.Errorf("observation state = %q, want %q — the SPA's state union, decode allowlist and badge tables all key on this literal",
+				tc.got, tc.want)
+		}
+	}
+}
+
+// TestWireContractAccountQuotaEntry pins the per-account row, including the
+// nulls: the SPA tells the presence states apart by observed_at/window absence,
+// so an omitted key (rather than an explicit null) would decode as undefined
+// and silently take the never-observed branch for an observed account.
+func TestWireContractAccountQuotaEntry(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "quota"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	body := `{"account":"7","observed_at":1786224546,"session_id":"s-1",` +
+		`"rate_limits":{"five_hour":{"used_percentage":62.5,"resets_at":1786229400},` +
+		`"seven_day":{"used_percentage":18,"resets_at":1786700000}}}`
+	if err := os.WriteFile(filepath.Join(root, "quota", "7.json"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	m := wireGet(t, New(Deps{AccountHomesDir: root}), "/api/account-quota")
+	accounts, _ := m["accounts"].([]any)
+	if len(accounts) != 1 {
+		t.Fatalf("accounts = %v, want exactly one row", accounts)
+	}
+	entry, isObj := accounts[0].(map[string]any)
+	if !isObj {
+		t.Fatalf("account row must be an object, got %T", accounts[0])
+	}
+	mustString(t, entry, "account")
+	mustString(t, entry, "label")
+	mustBool(t, entry, "in_pool")
+	mustObject(t, entry, "observation")
+	for _, field := range []string{"bound_sessions", "suspect_sessions"} {
+		if _, ok := entry[field].(float64); !ok {
+			t.Errorf("%s must be a number, got %T", field, entry[field])
+		}
+	}
+	for _, field := range []string{"last_used_at", "cooldown_until"} {
+		if value, present := entry[field]; !present {
+			t.Errorf("field %q must be present (number|null)", field)
+		} else if _, isNum := value.(float64); value != nil && !isNum {
+			t.Errorf("field %q must be number or null, got %T", field, value)
+		}
+	}
+
+	observation, _ := entry["observation"].(map[string]any)
+	mustString(t, observation, "state")
+	// The literal, not the constant. Every other test compares a decoded state
+	// against the same observationState constant the handler wrote, so garbling
+	// all four spellings passes the Go suite entirely — and the SPA keys its
+	// state union, tone table and badge labels on these exact strings, so the
+	// tab would ship an undefined tone and an empty badge on every row. This
+	// assertion is the only place the two languages meet.
+	if got := observation["state"]; got != "observed" {
+		t.Errorf("observation.state = %v, want the literal %q that dashboard-quota.ts's union declares", got, "observed")
+	}
+	mustString(t, observation, "session_id")
+	mustString(t, observation, "reason")
+	if _, ok := observation["observed_at"].(float64); !ok {
+		t.Errorf("observed_at must be a number on an observed record, got %T", observation["observed_at"])
+	}
+	for _, window := range []string{"five_hour", "seven_day"} {
+		mustObject(t, observation, window)
+		values, _ := observation[window].(map[string]any)
+		for _, field := range []string{"used_percentage", "resets_at"} {
+			if _, ok := values[field].(float64); !ok {
+				t.Errorf("%s.%s must be a number, got %T", window, field, values[field])
+			}
+		}
 	}
 }
