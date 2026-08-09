@@ -159,16 +159,31 @@ resolution and predicates: `bdReadyPoolDemandShell(limitFlag)` reads the
 canonical `gc.routed_to=<target>` route with `--include-ephemeral`, and
 the temporary migration predicate reads `gc.run_target=<target>` only on
 `gc.kind=workflow` roots that predate root `gc.routed_to` stamping. The
-work-query form appends `--sort oldest --limit=1` to the canonical probe
+work-query form appends `--sort oldest --limit=20` to the canonical probe
 and prints the first match, then filters the migration probe to roots with
 empty `gc.routed_to`. That is an intentional routed-queue policy:
 unassigned routed pool work is FIFO before priority, so newer
 high-priority work does not jump ahead of older ready work already queued
-for the same target. The count form unions canonical and migration
+for the same target. The pool-alias tier (`--assignee=<pool>`) carries the
+same `--sort oldest`, so the policy governs both pool-demand forms; the
+own-identity tiers pass no `--sort` at all and therefore keep bd's
+priority-first default. The count form unions canonical and migration
 probes and deduplicates by bead ID before piping through `jq 'length'`.
 Targets resolve to `Agent.PoolName` when set and
 `Agent.QualifiedName()` otherwise, so pool instances and pool templates
 land on the same routed queue.
+
+`--sort oldest` and `--limit=20` compose into a second effect the policy
+paragraph above does not cover: the sort key also decides what is a
+candidate at all. Once a target's ready queue is longer than the window,
+everything past the oldest 20 is invisible to the claim until the head
+drains, whatever its priority. Measured on the city store 2026-08-09
+(ci-q2vx): 41 ready beads on the `toolsmith` pool alias, and the one P1
+created that evening sat at row 21+, unreachable. A Go-side re-sort of the
+returned rows would not have reached it -- only asking bd for a different
+window would. Treat the window as a queue-length ceiling, not a cheap
+bound: raising it costs a wider `bd` read, leaving it costs invisibility
+for the tail.
 
 Supported handoff forms are intentionally distinct. Generic pool demand is
 ready work with `assignee=""` and `gc.routed_to=<target>`. Work hand-assigned
@@ -300,11 +315,11 @@ regressions.
     3 first-row form) MUST derive their `bd ready --include-ephemeral
     --metadata-field gc.routed_to=<target> --unassigned --exclude-type=epic
     --json` canonical predicate from the same target-resolution helper and
-    `bdReadyPoolDemandShell` helper in `internal/config/config.go`. The
+    `bdReadyPoolDemandShell` helper in `internal/config/workquery.go`. The
     worker and reconciler must also share the temporary migration predicate
     for `gc.run_target=<target>` on `gc.kind=workflow` roots with empty
     `gc.routed_to`; only the worker's first-row form adds native
-    `bd ready --sort oldest --limit=1` selection to the canonical probe.
+    `bd ready --sort oldest --limit=20` selection to the canonical probe.
     Any pool-demand predicate change to one (added filter, modified target
     resolution, new state) MUST be reflected in the other. Diverging the two
     re-introduces the protocol-mismatch class — the reconciler

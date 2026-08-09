@@ -3286,6 +3286,16 @@ type Agent struct {
 	//   3. ready unassigned work with gc.routed_to=<qualified-name>
 	// When the controller probes for demand without session context, only the
 	// routed_to tier applies. Override to integrate with external task systems.
+	// Ordering: the pool tiers (routed and pool-alias) claim OLDEST FIRST, not
+	// highest priority. That is deliberate -- it keeps newer high-priority work
+	// from jumping a queue that older ready work is already waiting in -- but it
+	// means raising a bead's priority does NOT move it up a pool queue, even
+	// though `bd ready` lists rows priority-first. Use assignment to a specific
+	// session/alias (tier 2) to sequence one bead ahead of the queue. The tiers
+	// are tried in order and the first non-empty one wins, so any tier-3 match
+	// beats every pool-alias match regardless of either one's priority. Only the
+	// oldest 20 rows of a pool tier are candidates; past that, ready work is
+	// invisible to the claim until the head of the queue drains.
 	WorkQuery string `toml:"work_query,omitempty"`
 	// SlingQuery is the command template to route a bead to this session config.
 	// If it contains Go template placeholders, gc expands them using the same
