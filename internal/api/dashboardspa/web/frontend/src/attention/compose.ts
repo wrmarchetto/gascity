@@ -1,13 +1,6 @@
 import type { SourceStatus } from 'gas-city-dashboard-shared';
 
-export const ATTENTION_DOMAINS = [
-  'agents',
-  'beads',
-  'runs',
-  'mail',
-  'activity',
-  'health',
-] as const;
+export const ATTENTION_DOMAINS = ['agents', 'beads', 'runs', 'mail', 'activity', 'health'] as const;
 
 /**
  * Severity tiers. `attention` and `watch` are operator-actionable signals that

@@ -1,5 +1,7 @@
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as UseSessionStream from '../hooks/useSessionStream';
+import type * as UseStructuredSessionStream from '../hooks/useStructuredSessionStream';
 import type { StructuredStreamState } from '../hooks/useStructuredSessionStream';
 import type { SessionStreamState } from '../hooks/useSessionStream';
 import { StructuredLivePeek } from './StructuredLivePeek';
@@ -8,12 +10,12 @@ const mockUseStructured = vi.hoisted(() => vi.fn());
 const mockUseSessionStream = vi.hoisted(() => vi.fn());
 
 vi.mock('../hooks/useStructuredSessionStream', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../hooks/useStructuredSessionStream')>();
+  const actual = await importOriginal<typeof UseStructuredSessionStream>();
   return { ...actual, useStructuredSessionStream: mockUseStructured };
 });
 
 vi.mock('../hooks/useSessionStream', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../hooks/useSessionStream')>();
+  const actual = await importOriginal<typeof UseSessionStream>();
   return { ...actual, useSessionStream: mockUseSessionStream };
 });
 

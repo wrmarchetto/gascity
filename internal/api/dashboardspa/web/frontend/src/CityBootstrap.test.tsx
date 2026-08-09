@@ -118,9 +118,7 @@ describe('CityBootstrap', () => {
 
     render(<CityBootstrap />);
 
-    expect(
-      await screen.findByText('No cities are registered on this supervisor.'),
-    ).toBeTruthy();
+    expect(await screen.findByText('No cities are registered on this supervisor.')).toBeTruthy();
     expect(screen.getByText('gc init ~/my-city')).toBeTruthy();
     expect(screen.getByRole('link', { name: /getting-started guide/ })).toBeTruthy();
   });

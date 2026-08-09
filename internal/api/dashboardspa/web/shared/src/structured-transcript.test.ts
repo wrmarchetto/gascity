@@ -151,7 +151,10 @@ test('isSessionStructuredEvent accepts a structured envelope and rejects others'
   assert.equal(isSessionStructuredEvent({ format: 'structured', structured_messages: 'x' }), false);
   assert.equal(isSessionStructuredEvent({ ...event, operation: undefined }), false);
   assert.equal(isSessionStructuredEvent({ ...event, operation: 'append' }), false);
-  assert.equal(isSessionStructuredEvent({ ...event, schema_version: 'session.structured.v2' }), false);
+  assert.equal(
+    isSessionStructuredEvent({ ...event, schema_version: 'session.structured.v2' }),
+    false,
+  );
   assert.equal(isSessionStructuredEvent({ ...event, id: undefined }), false);
   assert.equal(isSessionStructuredEvent({ ...event, template: undefined }), false);
   assert.equal(isSessionStructuredEvent({ ...event, provider: undefined }), false);

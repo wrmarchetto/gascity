@@ -98,10 +98,7 @@ export default tseslint.config(
       parserOptions: {
         // The backend workspace was dropped when this SPA was vendored into the
         // gc binary; only shared + frontend remain.
-        project: [
-          './frontend/tsconfig.test.json',
-          './shared/tsconfig.json',
-        ],
+        project: ['./frontend/tsconfig.test.json', './shared/tsconfig.json'],
         tsconfigRootDir: import.meta.dirname,
       },
       globals: {

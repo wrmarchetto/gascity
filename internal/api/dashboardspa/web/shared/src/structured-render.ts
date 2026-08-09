@@ -105,7 +105,9 @@ function appendUploadedFiles(
     const preview = file.preview_url ?? '';
     const detail = [size, mime].filter((part) => part !== '').join(', ');
     const suffix = preview !== '' ? ` preview: ${preview}` : '';
-    rows.push(`- ${name}${detail !== '' ? ` (${detail})` : ''}${path !== '' ? `: ${path}` : ''}${suffix}`);
+    rows.push(
+      `- ${name}${detail !== '' ? ` (${detail})` : ''}${path !== '' ? `: ${path}` : ''}${suffix}`,
+    );
   }
 }
 
@@ -251,7 +253,8 @@ export function formatArgument(value: unknown): string {
   const argument = recordOf(value);
   if (argument === null) return formatInlineValue(value);
   const name = typeof argument.name === 'string' ? argument.name : 'argument';
-  const argValue = typeof argument.value === 'string' ? argument.value : formatInlineValue(argument.value);
+  const argValue =
+    typeof argument.value === 'string' ? argument.value : formatInlineValue(argument.value);
   return `${name}: ${argValue}`;
 }
 
@@ -332,7 +335,11 @@ export function pendingRows(pending: PendingInteraction): string[] {
   appendField(rows, 'kind', pending.kind);
   appendField(rows, 'request', pending.request_id);
   appendField(rows, 'prompt', pending.prompt);
-  appendStringList(rows, 'options', pending.options === undefined ? undefined : [...pending.options]);
+  appendStringList(
+    rows,
+    'options',
+    pending.options === undefined ? undefined : [...pending.options],
+  );
   return rows;
 }
 

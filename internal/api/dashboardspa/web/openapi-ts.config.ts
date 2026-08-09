@@ -1,4 +1,4 @@
-import { defineConfig } from "@hey-api/openapi-ts";
+import { defineConfig } from '@hey-api/openapi-ts';
 
 // @hey-api/openapi-ts generates the typed REST SDK, response/error types, and
 // zod schemas the dashboard uses, from the supervisor's committed OpenAPI 3.1
@@ -11,19 +11,19 @@ import { defineConfig } from "@hey-api/openapi-ts";
 // import a single typed client. See engdocs/architecture/api-control-plane.md
 // for the tooling rationale.
 export default defineConfig({
-  input: "../../openapi.json",
+  input: '../../openapi.json',
   output: {
-    path: "shared/src/generated/gc-supervisor-client",
-    postProcess: ["prettier"],
-    importFileExtension: ".js",
+    path: 'shared/src/generated/gc-supervisor-client',
+    postProcess: ['prettier'],
+    importFileExtension: '.js',
   },
   plugins: [
     // bundle: false — import the fetch client from the `@hey-api/client-fetch`
     // dependency the `shared` workspace already declares, rather than bundling
     // a copy into client/ + core/ dirs. Keeps the generated output flat.
-    { name: "@hey-api/client-fetch", bundle: false },
-    "@hey-api/typescript",
-    "@hey-api/sdk",
-    "zod",
+    { name: '@hey-api/client-fetch', bundle: false },
+    '@hey-api/typescript',
+    '@hey-api/sdk',
+    'zod',
   ],
 });

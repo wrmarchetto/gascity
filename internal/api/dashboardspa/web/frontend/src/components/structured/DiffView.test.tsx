@@ -8,7 +8,13 @@ afterEach(cleanup);
 // File:` separator is what `patchTextFromHunks` emits, so it stands in for the
 // file-header kind; the `@@` line is the hunk header; `+`/`-` are add/del; the
 // unprefixed line is context.
-const DIFF = ['*** Update File: src/app.ts', '@@ -1 +1 @@', '-old line', '+new line', ' context line'].join('\n');
+const DIFF = [
+  '*** Update File: src/app.ts',
+  '@@ -1 +1 @@',
+  '-old line',
+  '+new line',
+  ' context line',
+].join('\n');
 
 describe('DiffView', () => {
   it('renders one span per line, each classed by its diff kind', () => {
