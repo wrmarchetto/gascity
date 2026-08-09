@@ -34,6 +34,7 @@ the event, or it does but Gas City has not opted in yet).
 | pre-compaction   | `PreCompact` ✓   | `PreCompact` ✓   | `preCompact` ✓   | `preCompact` ✓   | `PreCompress` ✓  | — | `session.compacted` ✓ | `session_compact` ✓ | `session_compact` ✓ | — |
 | user prompt submit | `UserPromptSubmit` ✓ | `UserPromptSubmit` ✓ | `beforeSubmitPrompt` ✓ | `userPromptSubmitted` ✓ | — | — | — | — | — | — |
 | before agent run | —                | —                | —                | —                | `BeforeAgent` ✓  | `PreInvocation` ✓ | —                | `before_agent_start` ✓ | `before_agent_start` ✓ | — |
+| turn end (stop gate) | `Stop` ✓ | — | — | — | — | — | — | — | — | — |
 
 ### Gas City command bindings
 
@@ -46,6 +47,43 @@ For each provider where a row above is ✓, the wired command is one of:
   wrappers around `gc nudge drain --inject` and/or `gc mail check --inject`
   (inject pending agent-to-agent messages into the upcoming prompt without
   letting a wedged data-plane command block the provider hook).
+- **turn end** → a bounded `gc hook run` wrapper around `gc hook stop`
+  (refuse to end a turn while the session's closing contract is unfinished).
+
+## Why a Stop hook is wired when other Stop hooks deliberately are not
+
+Operators commonly keep their own `Stop` hooks — a test-suite gate, a
+formatter, a review gate — deliberately UNWIRED for agent sessions, because
+firing a test suite or blocking a commit at an agent's turn boundary breaks
+work the operator is supervising. `gc hook stop` is not that kind of hook and
+the distinction is what keeps it from being reverted as drift:
+
+- It **reads**. One work-query per turn end, no writes, no events, no
+  processes spawned beyond the query itself.
+- It **blocks nothing that was going to succeed**. Its only blocking verdict
+  is "this session claimed a bead and is ending its turn without closing it",
+  which is a defect in every case — including the case where the operator is
+  supervising.
+- It is **bounded and fails open**. The `gc hook run` wrapper caps it at 15s
+  with `--timeout-exit-code 0`, and every fact the gate cannot establish
+  resolves to "let the turn end". A store outage cannot wedge the fleet.
+- It is **self-limiting**. The provider re-enters with `stop_hook_active`
+  set, which the gate honors first and unconditionally, so a genuinely stuck
+  agent is blocked at most once per stop sequence.
+
+The bug it exists for: an agent finishes its engineering work, writes a
+summary, and ends the turn with the rest of its contract — set result
+metadata, close the bead, `gc runtime drain-ack` — never run. Nothing
+recovered that state. The nudge machinery is wired to `UserPromptSubmit`,
+which fires only when a prompt IS submitted, so the sole recovery path
+structurally cannot reach a session that has stopped submitting, and
+`gc status` reports the session running, which is true and useless. For an
+agent at `max_active_sessions = 1` the stall blocks its whole queue.
+
+Adding prompt text was the reflex to resist: the prompts already state the
+contract plainly and give the closing block verbatim. A rule with no gate
+behind it rots. See `cmd/gc/cmd_hook_stop.go` for the four editing
+constraints and `cmd/gc/cmd_hook_stop_test.go` for the tests that pin them.
 
 Some providers fold both injection commands into a single hook entry;
 others split them. The exact wiring lives in the per-provider config —

@@ -1868,6 +1868,7 @@ gc hook [agent] [flags]
 | Subcommand | Description |
 |------------|-------------|
 | [gc hook run](#gc-hook-run) | Run a managed hook command with a hard timeout |
+| [gc hook stop](#gc-hook-stop) | Refuse to end a turn while the session's closing contract is unfinished |
 
 ## gc hook run
 
@@ -1885,6 +1886,24 @@ gc hook run -- <gc args...> [flags]
 |------|------|---------|-------------|
 | `--timeout` | duration | `15s` | hard timeout for the managed hook command |
 | `--timeout-exit-code` | int | `124` | exit code to return when the managed hook command times out |
+
+## gc hook stop
+
+Stop-event gate for agent sessions.
+
+Reads the provider's Stop hook payload on stdin. Exits 2 (blocking the stop,
+with the reason on stderr) when this session still holds claimed work that is
+not closed, or when an ephemeral session has finished its work but has not
+acknowledged its drain. Exits 0 in every other case, including any case the
+gate cannot establish: a session with no claimed work must always be able to
+end its turn.
+
+Wired as the Stop hook in the city's managed settings file. Not intended for
+manual use, though running it by hand is safe and reports the same verdict.
+
+```
+gc hook stop
+```
 
 ## gc import
 
