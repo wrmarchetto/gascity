@@ -61,6 +61,7 @@ With --claim: runs the standard startup claim protocol for one work item.
 		flag.Hidden = true
 	}
 	cmd.AddCommand(newHookRunCmd(stdout, stderr))
+	cmd.AddCommand(newHookStopCmd(stderr))
 	return cmd
 }
 
@@ -223,6 +224,22 @@ type hookCommandOptions struct {
 	Claim      bool
 	DrainAck   bool
 	JSON       bool
+	// StopProbe switches the command into the read-only mode gc hook stop
+	// needs: instead of the ready-work query and a claim, the agent's
+	// assigned-in-progress query runs over the same federated store set and its
+	// result lands here. Reusing this path rather than resolving stores
+	// separately is the point -- the stop gate must see exactly the beads the
+	// claim saw, including the rig-store federation a rig-scoped agent gets.
+	StopProbe *hookStopProbe
+}
+
+// hookStopProbe carries the stop gate's read-only query result back out of
+// cmdHookWithOptions. Err is set for a query that could not be answered, which
+// the gate must distinguish from an answered "nothing outstanding" -- the two
+// reach opposite verdicts.
+type hookStopProbe struct {
+	Outstanding []beads.Bead
+	Err         error
 }
 
 // cmdHook is the CLI entry point for gc hook. Resolves the agent from
@@ -432,6 +449,15 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 		out, _, err := bestStoreWithWork(command, stores, stores[0], shellWorkQueryWithEnv)
 		emitQueryFailure(command, err)
 		return out, err
+	}
+	if opts.StopProbe != nil {
+		// Read-only: no claim, no mutation, no event. The stop gate runs on every
+		// turn boundary of every session in the city, so it must cost one query
+		// and change nothing. emitQueryFailure is deliberately NOT wired here --
+		// a stop-gate query timeout is not a stranded strand, and publishing it
+		// as one would teach the reconciler to escalate on ordinary agent exits.
+		probeStopGateOutstanding(cfg, cityPath, cityName, &a, stores, opts.StopProbe, stderr)
+		return 0
 	}
 	if opts.Claim {
 		// The stale-session fence already ran before agent resolution above; this

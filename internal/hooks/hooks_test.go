@@ -170,6 +170,78 @@ func TestInstallClaude(t *testing.T) {
 	}
 }
 
+// TestInstallClaudeWiresStopGate pins that a fresh install carries the
+// turn-end gate that refuses to let a session stop with its closing contract
+// unfinished (cmd/gc/cmd_hook_stop.go).
+//
+// Asserted against the INSTALLED settings rather than the embedded template
+// because that is the file the provider actually reads; an install path that
+// dropped the event would leave the gate present in the tree and absent in
+// every city, which is exactly the shape of the original bug (a recovery
+// mechanism wired to an event that never reaches the failing state).
+//
+// The wrapper and its timeout exit code are part of the invariant, not
+// incidental: --timeout-exit-code 0 is what makes a wedged store query end
+// the turn instead of trapping the session, and the gate's whole fail-open
+// argument rests on it.
+func TestInstallClaudeWiresStopGate(t *testing.T) {
+	fs := fsys.NewFake()
+	if err := Install(fs, "/city", "/work", []string{"claude"}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	runtimeData, ok := fs.Files["/city/.gc/settings.json"]
+	if !ok {
+		t.Fatal("expected /city/.gc/settings.json to be written")
+	}
+	command := claudeHookCommand(t, runtimeData, "Stop")
+	if !strings.Contains(command, "gc hook run --timeout 15s --timeout-exit-code 0 -- hook stop") {
+		t.Errorf("claude Stop hook should run the stop gate through the bounded gc hook run wrapper, got %q", command)
+	}
+}
+
+// TestInstallClaudeAddsStopGateToACityMissingIt pins that the gate reaches
+// cities that already have a settings.json, not only fresh installs.
+//
+// This is the propagation path that matters in practice: every city that
+// predates the gate has a settings file with no Stop event, and a gate that
+// only ships to new cities protects nobody. The user customization here must
+// survive, since discarding it is the failure mode
+// readClaudeSettingsOverride's history is a record of.
+func TestInstallClaudeAddsStopGateToACityMissingIt(t *testing.T) {
+	current, err := readEmbedded("config/claude.json")
+	if err != nil {
+		t.Fatalf("readEmbedded: %v", err)
+	}
+	var existing map[string]any
+	if err := json.Unmarshal(current, &existing); err != nil {
+		t.Fatalf("unmarshal embedded: %v", err)
+	}
+	hooks, ok := existing["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("embedded claude settings have no hooks object")
+	}
+	delete(hooks, "Stop")
+	existing["customUserSetting"] = "preserved"
+	prior, err := json.Marshal(existing)
+	if err != nil {
+		t.Fatalf("marshal prior settings: %v", err)
+	}
+
+	fs := fsys.NewFake()
+	fs.Files["/city/.gc/settings.json"] = prior
+	if err := Install(fs, "/city", "/work", []string{"claude"}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+
+	updated := fs.Files["/city/.gc/settings.json"]
+	if command := claudeHookCommand(t, updated, "Stop"); !strings.Contains(command, "-- hook stop") {
+		t.Errorf("Stop gate did not propagate to an existing city, got %q", command)
+	}
+	if !strings.Contains(string(updated), "customUserSetting") {
+		t.Error("propagating the Stop gate discarded the city's own settings")
+	}
+}
+
 func TestInstallClaudeUpgradesStaleGeneratedFile(t *testing.T) {
 	fs := fsys.NewFake()
 	current, err := readEmbedded("config/claude.json")
