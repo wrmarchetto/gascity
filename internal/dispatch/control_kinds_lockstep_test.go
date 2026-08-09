@@ -32,15 +32,26 @@ func TestProcessControlCoversEveryControlKind(t *testing.T) {
 		})
 	}
 
-	store := beads.NewMemStore()
-	bead, err := store.Create(beads.Bead{
-		Title:    "lockstep probe unknown",
-		Metadata: map[string]string{beadmeta.KindMetadataKey: "not-a-control-kind"},
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if _, err := ProcessControl(store, bead, ProcessOptions{}); err == nil || !strings.Contains(err.Error(), "unsupported control bead kind") {
-		t.Errorf("ProcessControl(unknown kind) error = %v, want unsupported-kind error", err)
+	// "check" is asserted alongside a nonsense string because it is the kind
+	// most likely to be re-added by mistake: it was a dispatched control kind
+	// until ci-zg0l, no compiler ever emitted it, and its retry-clone
+	// implementation read as coverage of the live ralph path for months.
+	// Restoring the switch case without a compiler that mints the bead puts
+	// that decoy back, so the retired kind is pinned to the same hard error as
+	// an unknown one. See internal/beadmeta/kindsets.go for the vocabulary.
+	for _, kind := range []string{"not-a-control-kind", "check"} {
+		t.Run("rejected/"+kind, func(t *testing.T) {
+			store := beads.NewMemStore()
+			bead, err := store.Create(beads.Bead{
+				Title:    "lockstep probe " + kind,
+				Metadata: map[string]string{beadmeta.KindMetadataKey: kind},
+			})
+			if err != nil {
+				t.Fatalf("create: %v", err)
+			}
+			if _, err := ProcessControl(store, bead, ProcessOptions{}); err == nil || !strings.Contains(err.Error(), "unsupported control bead kind") {
+				t.Errorf("ProcessControl(%q) error = %v, want unsupported-kind error", kind, err)
+			}
+		})
 	}
 }

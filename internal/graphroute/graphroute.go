@@ -383,30 +383,11 @@ func ResolveGraphStepBindingWithVars(stepID string, stepByID map[string]*formula
 				cache[stepID] = binding
 				return binding, nil
 			}
-		case "check":
-			var resolved GraphRouteBinding
-			found := false
-			for _, depID := range depsByStep[step.ID] {
-				if depID == "" {
-					continue
-				}
-				binding, err := ResolveGraphStepBindingWithVars(depID, stepByID, stepAlias, depsByStep, cache, resolving, routeVars, fallback, rigContext, store, cityName, cfg, deps)
-				if err != nil {
-					return GraphRouteBinding{}, err
-				}
-				if !found {
-					resolved = binding
-					found = true
-					continue
-				}
-				if binding != resolved {
-					return GraphRouteBinding{}, fmt.Errorf("step %s: inconsistent control routing between deps (%+v vs %+v)", stepID, resolved, binding)
-				}
-			}
-			if found {
-				cache[stepID] = resolved
-				return resolved, nil
-			}
+			// "check" is deliberately absent from this switch. It inherited its
+			// route from every dep and errored on disagreement, but no compiler
+			// ever emitted a step of that kind, so the branch only ever ran from
+			// test fixtures; ci-zg0l removed the kind. A step whose kind is not
+			// listed here falls through to the fallback route below.
 		}
 		cache[stepID] = fallback
 		return fallback, nil

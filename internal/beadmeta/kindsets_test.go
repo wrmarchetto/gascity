@@ -11,7 +11,7 @@ import (
 // updated together.
 func TestControlKindsExact(t *testing.T) {
 	want := []string{
-		KindRetry, KindRalph, KindCheck, KindRetryEval, KindFanout,
+		KindRetry, KindRalph, KindRetryEval, KindFanout,
 		KindDrain, KindScopeCheck, KindWorkflowFinalize,
 	}
 	if !slices.Equal(ControlKinds, want) {
@@ -22,7 +22,10 @@ func TestControlKindsExact(t *testing.T) {
 			t.Errorf("IsControlKind(%q) = false, want true", k)
 		}
 	}
-	for _, k := range []string{KindWorkflow, KindScope, KindSpec, KindWisp, KindTask, KindRun, KindRetryRun, KindCleanup, "", "nonsense"} {
+	// "check" is listed by value, not by constant, because the constant is gone
+	// (ci-zg0l). A literal is what a reader re-adding the kind would type, and
+	// this is the assertion that has to stop them.
+	for _, k := range []string{KindWorkflow, KindScope, KindSpec, KindWisp, KindTask, KindRun, KindRetryRun, KindCleanup, "check", "", "nonsense"} {
 		if IsControlKind(k) {
 			t.Errorf("IsControlKind(%q) = true, want false", k)
 		}

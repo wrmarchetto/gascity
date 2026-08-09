@@ -560,14 +560,16 @@ func fragmentInstanceComplete(store beads.Store, fragment *formula.FragmentRecip
 				break
 			}
 		}
+		// A missing declared dep means the instance is incomplete, with no
+		// exception. There used to be one: a retried ralph's logical->check
+		// blocks-dep was re-pointed at the clone's check bead, so the declared
+		// edge legitimately went missing mid-retry. That rewiring belonged to
+		// the gc.kind=check retry-clone path, which no compiler ever emitted
+		// beads for and which ci-zg0l removed. Re-adding a dynamic exception
+		// here without a compiler that mints check beads makes an incompletely
+		// wired instance report complete.
 		if !found {
-			ok, err := fragmentDepSatisfiedDynamically(store, stepByID, dep, mapping)
-			if err != nil {
-				return false, err
-			}
-			if !ok {
-				return false, nil
-			}
+			return false, nil
 		}
 	}
 
@@ -625,45 +627,6 @@ func beadHasDep(store beads.Store, fromID, toID, depType string) (bool, error) {
 	}
 	for _, dep := range deps {
 		if dep.Type == depType && dep.DependsOnID == toID {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func fragmentDepSatisfiedDynamically(store beads.Store, stepByID map[string]formula.RecipeStep, dep formula.RecipeDep, mapping map[string]string) (bool, error) {
-	fromStep, ok := stepByID[dep.StepID]
-	if !ok {
-		return false, nil
-	}
-	toStep, ok := stepByID[dep.DependsOnID]
-	if !ok {
-		return false, nil
-	}
-	if dep.Type != "blocks" || fromStep.Metadata[beadmeta.KindMetadataKey] != beadmeta.KindRalph || toStep.Metadata[beadmeta.KindMetadataKey] != beadmeta.KindCheck {
-		return false, nil
-	}
-
-	logicalID := mapping[dep.StepID]
-	if logicalID == "" {
-		return false, nil
-	}
-	deps, err := store.DepList(logicalID, "down")
-	if err != nil {
-		return false, err
-	}
-	for _, existing := range deps {
-		if existing.Type != "blocks" {
-			continue
-		}
-		check, err := store.Get(existing.DependsOnID)
-		if err != nil {
-			return false, err
-		}
-		if check.Metadata[beadmeta.KindMetadataKey] != beadmeta.KindCheck {
-			continue
-		}
-		if check.Metadata[beadmeta.LogicalBeadIDMetadataKey] == logicalID {
 			return true, nil
 		}
 	}

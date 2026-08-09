@@ -282,52 +282,6 @@ func TestRemappedControlForBeadID(t *testing.T) {
 	}
 }
 
-// TestBuildRalphRetryGraphNodeControlForRemap covers W7: a bead-ID-valued
-// gc.control_for pointing at a bead re-minted in the plan is moved to
-// MetadataRefs (so the applier substitutes the new ID); a step-ref-valued
-// pointer stays on the string rewrite path in meta.
-func TestBuildRalphRetryGraphNodeControlForRemap(t *testing.T) {
-	t.Parallel()
-
-	attemptIDs := map[string]bool{"nested-ctl": true, "subject-old": true}
-
-	t.Run("bead-ID pointer moves to MetadataRefs", func(t *testing.T) {
-		old := beads.Bead{
-			ID:  "attempt-old",
-			Ref: "mol.loop.iteration.1.inner.attempt.1",
-			Metadata: map[string]string{
-				"gc.control_for": "nested-ctl",
-				"gc.attempt":     "1",
-			},
-		}
-		node := buildRalphRetryGraphNode(old, "logical", "mol.loop.iteration.1", "mol.loop.iteration.2", 1, 2, attemptIDs, nil)
-		if _, ok := node.Metadata["gc.control_for"]; ok {
-			t.Fatalf("gc.control_for must be removed from Metadata when remapped, got %q", node.Metadata["gc.control_for"])
-		}
-		if node.MetadataRefs["gc.control_for"] != "nested-ctl" {
-			t.Fatalf("MetadataRefs[gc.control_for] = %q, want nested-ctl", node.MetadataRefs["gc.control_for"])
-		}
-	})
-
-	t.Run("step-ref pointer stays in Metadata", func(t *testing.T) {
-		old := beads.Bead{
-			ID:  "check-old",
-			Ref: "mol.loop.iteration.1.check",
-			Metadata: map[string]string{
-				"gc.control_for": "mol.loop.iteration.1.inner",
-				"gc.attempt":     "1",
-			},
-		}
-		node := buildRalphRetryGraphNode(old, "logical", "mol.loop.iteration.1", "mol.loop.iteration.2", 1, 2, attemptIDs, nil)
-		if node.MetadataRefs["gc.control_for"] != "" {
-			t.Fatalf("step-ref pointer must not go to MetadataRefs, got %q", node.MetadataRefs["gc.control_for"])
-		}
-		if node.Metadata["gc.control_for"] == "" {
-			t.Fatalf("step-ref pointer must remain in Metadata")
-		}
-	})
-}
-
 // TestLatestAttemptNestedControlIsolatedAcrossOuterIterations is the S38
 // nested-lineage regression guard for the read side: each outer ralph
 // iteration's inner control must resolve ONLY its own latest attempt, never a

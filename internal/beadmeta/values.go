@@ -14,9 +14,18 @@ package beadmeta
 // (ControlKinds is authoritative; every routing predicate derives from it).
 const (
 	// Control-bead kinds processed by the control dispatcher.
+	//
+	// "check" is deliberately ABSENT. It was a dispatched kind until ci-zg0l,
+	// but no compiler ever emitted a bead carrying it -- formula ralph
+	// expansion produces control(ralph)+spec+iteration -- so its dispatcher
+	// branch and retry-clone implementation were reachable only from test
+	// fixtures. Re-adding the constant without a compiler that mints the bead
+	// restores a dead path whose tests read as coverage of the live ralph
+	// loop; that misreading already cost one root-cause investigation
+	// (ci-kki3). The live gate observation lives on the ralph control bead
+	// itself, written by evaluateRalphIteration.
 	KindRetry            = "retry"
 	KindRalph            = "ralph"
-	KindCheck            = "check"
 	KindRetryEval        = "retry-eval"
 	KindFanout           = "fanout"
 	KindDrain            = "drain"

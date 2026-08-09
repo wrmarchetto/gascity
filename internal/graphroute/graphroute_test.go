@@ -40,14 +40,22 @@ func TestIsCompiledGraphWorkflow(t *testing.T) {
 	})
 }
 
+// TestIsControlDispatcherKind pins the predicate to exactly
+// beadmeta.ControlKinds, which is what its doc comment promises.
+//
+// The membership is DERIVED from that set rather than relisted here. A literal
+// copy is what let this test keep asserting "check" after the kind was retired
+// (ci-zg0l): the duplicate list is a second place to forget.
 func TestIsControlDispatcherKind(t *testing.T) {
-	for _, kind := range []string{"check", "fanout", "retry-eval", "scope-check", "workflow-finalize", "retry", "ralph"} {
+	for _, kind := range beadmeta.ControlKinds {
 		if !IsControlDispatcherKind(kind) {
 			t.Errorf("expected true for %q", kind)
 		}
 	}
-	if IsControlDispatcherKind("task") {
-		t.Error("expected false for task")
+	for _, kind := range []string{"task", "check", "run", "scope", ""} {
+		if IsControlDispatcherKind(kind) {
+			t.Errorf("expected false for %q", kind)
+		}
 	}
 }
 
@@ -610,10 +618,16 @@ func stepIDs(steps []formula.RecipeStep) []string {
 }
 
 func TestResolveGraphStepBinding_CycleDetection(t *testing.T) {
-	// Step A has kind "check" with dep on B, B has kind "check" with dep on A.
-	// This creates a routing cycle.
-	stepA := &formula.RecipeStep{ID: "A", Metadata: map[string]string{"gc.kind": "check"}}
-	stepB := &formula.RecipeStep{ID: "B", Metadata: map[string]string{"gc.kind": "check"}}
+	// Step A has kind "retry-eval" with dep on B, B has kind "retry-eval" with
+	// dep on A. This creates a routing cycle.
+	//
+	// The kind has to be one whose branch RECURSES through depsByStep, or the
+	// resolver returns the fallback without ever re-entering and the cycle guard
+	// is never reached. These steps carried "check" until ci-zg0l retired that
+	// kind; retry-eval is the remaining dep-recursing kind (scope-check and
+	// fanout recurse through gc.control_for instead).
+	stepA := &formula.RecipeStep{ID: "A", Metadata: map[string]string{"gc.kind": "retry-eval"}}
+	stepB := &formula.RecipeStep{ID: "B", Metadata: map[string]string{"gc.kind": "retry-eval"}}
 	stepByID := map[string]*formula.RecipeStep{"A": stepA, "B": stepB}
 	depsByStep := map[string][]string{"A": {"B"}, "B": {"A"}}
 	cache := make(map[string]GraphRouteBinding)

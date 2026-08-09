@@ -174,8 +174,6 @@ func ProcessControl(store beads.Store, bead beads.Bead, opts ProcessOptions) (Co
 		return processRetryControl(store, bead, opts)
 	case beadmeta.KindRalph:
 		return processRalphControl(store, bead, opts)
-	case beadmeta.KindCheck:
-		return processRalphCheck(store, bead, opts)
 	case beadmeta.KindRetryEval:
 		return processRetryEval(store, bead, opts)
 	case beadmeta.KindFanout:

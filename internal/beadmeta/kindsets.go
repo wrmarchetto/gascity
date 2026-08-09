@@ -35,7 +35,6 @@ const (
 var ControlKinds = []string{
 	KindRetry,
 	KindRalph,
-	KindCheck,
 	KindRetryEval,
 	KindFanout,
 	KindDrain,
@@ -57,11 +56,11 @@ func IsControlKind(kind string) bool {
 // frozen step-spec sidecars (bookkeeping, not work); the remaining members are
 // control kinds whose terminal scope reconciliation is owned by the control
 // runtime (fanout reconciles its enclosing scope on close, scope-check IS the
-// reconciler, workflow-finalize runs at root level, and check beads are closed
-// by their owning ralph control, which reconciles). KindRetry and KindRalph
-// stay non-exempt on purpose: their controls pair with scope-checks in
-// addition to their own close-time reconciliation (NDI redundancy), and the
-// scope-check's isRetryAttemptSubject branch depends on that pairing.
+// reconciler, and workflow-finalize runs at root level). KindRetry and
+// KindRalph stay non-exempt on purpose: their controls pair with
+// scope-checks in addition to their own close-time reconciliation (NDI
+// redundancy), and the scope-check's isRetryAttemptSubject branch depends on
+// that pairing.
 //
 // Consumers (the judgment of WHEN to inject stays at each site):
 //
@@ -84,7 +83,6 @@ var ScopeCheckExemptKinds = []string{
 	KindScopeCheck,
 	KindWorkflowFinalize,
 	KindFanout,
-	KindCheck,
 	KindDrain,
 	KindSpec,
 }
@@ -139,7 +137,6 @@ var GraphContractMetadataKinds = []string{
 	KindRetryEval,
 	KindRalph,
 	KindRun,
-	KindCheck,
 	KindDrain,
 }
 

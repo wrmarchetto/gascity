@@ -2,11 +2,17 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Draft — partly superseded, see note |
 | Date | 2026-03-19 |
 | Author(s) | Codex |
 | Issue | — |
 | Supersedes | — |
+
+> **The separate `gc.kind=check` bead below was never built.** The shipped
+> ralph loop compiles to control + spec + iteration, and the `ralph` control
+> bead runs the check script itself. A dispatcher branch for `gc.kind=check`
+> existed but no compiler ever emitted the bead; ci-zg0l removed both. Read
+> the check-bead sections here as the original proposal, not as behavior.
 
 Small design for a first prototype of first-class workflow beads with a
 single Ralph-style retry loop.

@@ -531,7 +531,7 @@ The v2 compiler must emit a flat, topologically ordered graph:
   terminal.
 - **The root blocks on the finalize step.** The workflow root bead is made
   to depend on `workflow-finalize` (or, when a recipe has no finalize step,
-  on every step whose `gc.kind` is not one of the generated `run`, `check`,
+  on every step whose `gc.kind` is not one of the generated `run`,
   `retry-run`, `retry-eval`, or `spec` kinds).
   Consequence: the root is never Ready-visible while the workflow runs and
   only surfaces when the workflow completes. Step beads — not the root —
@@ -563,7 +563,7 @@ of the `gc.kind` step-metadata key (all hyphenated):
 
 | Group | Values | Author may set |
 |---|---|---|
-| Control kinds (dispatched by the orchestrator) | `retry`, `ralph`, `check`, `retry-eval`, `fanout`, `drain`, `scope-check`, `workflow-finalize` | No — compiler/orchestrator-owned; authored values are not validated and produce unspecified dispatcher behavior |
+| Control kinds (dispatched by the orchestrator) | `retry`, `ralph`, `retry-eval`, `fanout`, `drain`, `scope-check`, `workflow-finalize` | No — compiler/orchestrator-owned; authored values are not validated and produce unspecified dispatcher behavior |
 | Structural kinds (compiled into graphs, never dispatched) | `scope`, `cleanup`, `run`, `retry-run` | `scope` and `cleanup` only (section 3.5) |
 | Root kinds | `workflow`, `wisp` | No — stamped by the compiler |
 | Sidecar | `spec` | No — generated step-spec sidecars |
@@ -642,12 +642,21 @@ tracked convoy member, and stamp the root as specified in section 2. The
 reserved-variable rules of section 1.4 are enforced at this point.
 
 **Control dispatch.** The orchestrator's control dispatcher processes every
-open control bead by `gc.kind`: `retry`, `ralph`, `check`, `retry-eval`,
+open control bead by `gc.kind`: `retry`, `ralph`, `retry-eval`,
 `fanout`, `drain`, `scope-check`, and `workflow-finalize`. An
 unknown control kind is a hard dispatcher error. Structural kinds
 (`scope`, `cleanup`, `run`, `retry-run`) are never dispatched. Control
 execution requires only the orchestrator; no user-configured agent role
 participates.
+
+`check` is NOT a control kind and never was one in practice. It was
+dispatched until the branch was removed, but no compiler emitted a bead
+carrying it — a `ralph` step compiles to control + spec + iteration, and the
+control bead runs its own check script — so the kind existed only in test
+fixtures. A bead authored with `gc.kind = "check"` is a hard dispatcher
+error like any other unknown kind. The verification a `[steps.ralph.check]`
+block describes is executed by the `ralph` control bead, not by a separate
+check bead.
 
 ### 3.1. Check
 

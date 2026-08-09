@@ -11,7 +11,6 @@ func TestPinnedKindValues(t *testing.T) {
 	pinned := map[string]string{
 		KindRetry:            "retry",
 		KindRalph:            "ralph",
-		KindCheck:            "check",
 		KindRetryEval:        "retry-eval",
 		KindFanout:           "fanout",
 		KindDrain:            "drain",
