@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"text/template"
 
@@ -15,6 +16,15 @@ import (
 )
 
 // PathContext holds template variables for work_dir expansion.
+//
+// This is a strictly smaller set than the session_setup context
+// (cmd/gc.SessionSetupContext). Session, WorkDir and ConfigDir are absent
+// because work_dir is resolved BEFORE the session name is minted and IS the
+// value SessionSetupContext.WorkDir later carries -- a work_dir naming any of
+// them is circular or premature, and fails closed at spawn rather than
+// expanding to empty. config.Agent doc comments that promise "PathContext
+// fields" are checked against this struct by
+// TestAgentDocCommentsEnumerateEveryPathContextField.
 type PathContext struct {
 	Agent         string
 	AgentBase     string
@@ -23,6 +33,36 @@ type PathContext struct {
 	CityRoot      string
 	CityName      string
 	WorktreesRoot string
+}
+
+// Placeholders returns the template variable names a work_dir, tmux_alias,
+// scale_check, on_boot, on_death, work_query or sling_query may name, in
+// declaration order.
+//
+// Derived by reflection rather than written out: a hand-kept list is what let
+// WorktreesRoot sit undocumented in six config.Agent comments after it was
+// added.
+func Placeholders() []string {
+	typ := reflect.TypeOf(PathContext{})
+	out := make([]string, 0, typ.NumField())
+	for i := range typ.NumField() {
+		if f := typ.Field(i); f.IsExported() {
+			out = append(out, f.Name)
+		}
+	}
+	return out
+}
+
+// PlaceholderDocList renders Placeholders as the parenthesized enumeration
+// config.Agent doc comments must contain verbatim, e.g.
+// "(Agent, AgentBase, Rig, RigRoot, CityRoot, CityName, WorktreesRoot)".
+//
+// The comments spell the set inline instead of referring here because
+// docs/reference/config.md is generated from them and is the only text a
+// config author reads; a cross-reference to a Go symbol publishes as a
+// dangling pointer.
+func PlaceholderDocList() string {
+	return "(" + strings.Join(Placeholders(), ", ") + ")"
 }
 
 // CityName returns the effective workspace name for workdir/template expansion.
