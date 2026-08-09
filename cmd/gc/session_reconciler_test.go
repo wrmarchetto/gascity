@@ -2290,7 +2290,12 @@ func TestReconcileSessionBeads_UndesiredDrainAckStopsAndCloses(t *testing.T) {
 	if got.Status != "closed" {
 		t.Fatalf("status = %q, want closed; metadata=%v", got.Status, got.Metadata)
 	}
-	if want := sessionpkg.CanonicalCloseReason("drained"); got.Metadata["close_reason"] != want {
+	// setDrainAck is the AGENT's call, so this fixture is a self-drain and the
+	// close must say so. The literal is spelled out rather than derived from
+	// DrainedCloseReason: recomputing the expectation from the code under test
+	// would pass against a body that ignored the origin entirely, which is the
+	// state this assertion previously pinned (ci-wxag).
+	if want := "session drained: agent retired itself (self)"; got.Metadata["close_reason"] != want {
 		t.Fatalf("close_reason = %q, want %q", got.Metadata["close_reason"], want)
 	}
 	if got.Metadata["state"] != "drained" {

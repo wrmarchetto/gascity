@@ -1011,7 +1011,7 @@ func TestDoHookClaimDrainAckOnNoWork(t *testing.T) {
 	runner := func(string, string) (string, error) { return "[]", nil }
 	ops := hookClaimOps{
 		Runner: runner,
-		DrainAck: func(io.Writer) error {
+		DrainAck: func(string, io.Writer) error {
 			drained = true
 			return nil
 		},
@@ -1136,7 +1136,7 @@ func TestClaimHookWorkDrainsWhenPrimaryLosesRaceThenFederatedStoreErrors(t *test
 		},
 		EmitClaimRejected: func(string, string, string) {},
 		ResolveWorkBranch: func(string) string { return "" },
-		DrainAck:          func(io.Writer) error { return nil },
+		DrainAck:          func(string, io.Writer) error { return nil },
 	}
 	opts := hookClaimOptions{
 		Assignee:           "worker-1",
@@ -2932,7 +2932,7 @@ func TestDoHookClaimDrainsClaimsErroredWhenEveryCandidateErrors(t *testing.T) {
 			attempts = append(attempts, beadID)
 			return beads.Bead{}, false, fmt.Errorf("claiming %s: store write timeout", beadID)
 		},
-		DrainAck: func(io.Writer) error {
+		DrainAck: func(string, io.Writer) error {
 			drained = true
 			return nil
 		},
@@ -2985,7 +2985,7 @@ func TestClaimHookWorkDrainsClaimsErroredWhenEveryCandidateErrors(t *testing.T) 
 		},
 		EmitClaimRejected: func(string, string, string) {},
 		ResolveWorkBranch: func(string) string { return "" },
-		DrainAck:          func(io.Writer) error { return nil },
+		DrainAck:          func(string, io.Writer) error { return nil },
 	}
 	opts := hookClaimOptions{
 		Assignee:           "worker-1",

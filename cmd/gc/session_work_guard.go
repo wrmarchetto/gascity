@@ -109,6 +109,37 @@ func closeSessionBeadIfReachableStoreUnassigned(
 	stderr io.Writer,
 	excludeOwnDrainStep bool,
 ) bool {
+	return closeSessionBeadIfReachableStoreUnassignedWithTerminalPatch(
+		cityPath, cfg, store, rigStores, info, reason, nil, now, stderr, excludeOwnDrainStep,
+	)
+}
+
+// closeSessionBeadIfReachableStoreUnassignedWithTerminalPatch is
+// closeSessionBeadIfReachableStoreUnassigned with extra terminal metadata merged
+// over the ClosePatch the close would otherwise write alone.
+//
+// It exists for the drain-ack close, which knows something the state code cannot
+// express: WHICH actor retired the session. Every other caller passes nil and
+// gets the previous behavior exactly. The overlay is applied on the close write
+// itself, in the same Tx, so a closed bead never exists carrying the generic
+// close_reason without the origin that qualifies it.
+//
+// The failed-create branch below ignores the overlay: its close is a distinct
+// helper with its own terminal patch, and no caller pairs it with an overlay.
+// Passing one there would be silently dropped, so it is documented as an
+// absence rather than left to be discovered.
+func closeSessionBeadIfReachableStoreUnassignedWithTerminalPatch(
+	cityPath string,
+	cfg *config.City,
+	store beads.Store,
+	rigStores map[string]beads.Store,
+	info sessionpkg.Info,
+	reason string,
+	terminalPatch sessionpkg.MetadataPatch,
+	now time.Time,
+	stderr io.Writer,
+	excludeOwnDrainStep bool,
+) bool {
 	if stderr == nil {
 		stderr = io.Discard
 	}
@@ -127,5 +158,5 @@ func closeSessionBeadIfReachableStoreUnassigned(
 	if isFailedCreateSessionInfo(info) {
 		return closeFailedCreateBead(sessionFrontDoor(store), info.ID, now, stderr)
 	}
-	return closeBead(store, info.ID, reason, now, stderr)
+	return closeBeadWithTerminalPatch(store, info.ID, reason, terminalPatch, now, stderr)
 }

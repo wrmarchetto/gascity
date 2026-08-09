@@ -19,6 +19,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/session"
 )
 
 // drainOpsWithCountdown wraps fakeDrainOps and returns false for isRestartRequested
@@ -56,6 +57,8 @@ type fakeDrainOps struct {
 	draining         map[string]bool
 	drainTimes       map[string]time.Time // when drain was set
 	acked            map[string]bool
+	ackOrigins       map[string]session.DrainOrigin
+	ackReasons       map[string]string
 	restartRequested map[string]bool
 	driftRestart     map[string]bool
 	err              error // injected error for all ops
@@ -69,9 +72,24 @@ func newFakeDrainOps() *fakeDrainOps {
 		draining:         make(map[string]bool),
 		drainTimes:       make(map[string]time.Time),
 		acked:            make(map[string]bool),
+		ackOrigins:       make(map[string]session.DrainOrigin),
+		ackReasons:       make(map[string]string),
 		restartRequested: make(map[string]bool),
 		driftRestart:     make(map[string]bool),
 	}
+}
+
+// setReconcilerDrainAck is the fake's stand-in for the reconciler acknowledging a
+// drain on a session's behalf (setReconcilerDrainAckMetadata against a real
+// provider). It has no production counterpart on drainOps -- the reconciler
+// writes that metadata through runtime.Provider directly -- and exists so a test
+// can drive the reconciler-origin close path without a live tmux runtime.
+func (f *fakeDrainOps) setReconcilerDrainAck(sessionName, reason string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.acked[sessionName] = true
+	f.ackOrigins[sessionName] = session.DrainOriginReconciler
+	f.ackReasons[sessionName] = reason
 }
 
 func TestE2b2ProviderConstructionFailuresReturnThroughRun(t *testing.T) {
@@ -337,13 +355,27 @@ func (f *fakeDrainOps) drainStartTime(sessionName string) (time.Time, error) {
 }
 
 func (f *fakeDrainOps) setDrainAck(sessionName string) error {
+	return f.setDrainAckWithReason(sessionName, "")
+}
+
+func (f *fakeDrainOps) setDrainAckWithReason(sessionName, reason string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
 	}
 	f.acked[sessionName] = true
+	// Mirrors providerDrainOps: the ack always stamps the agent as the source,
+	// because only an agent calls it.
+	f.ackOrigins[sessionName] = session.DrainOriginSelf
+	f.ackReasons[sessionName] = strings.TrimSpace(reason)
 	return nil
+}
+
+func (f *fakeDrainOps) drainAckOrigin(sessionName string) (session.DrainOrigin, string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ackOrigins[sessionName], f.ackReasons[sessionName]
 }
 
 func (f *fakeDrainOps) isDrainAcked(sessionName string) (bool, error) {
@@ -666,7 +698,7 @@ func TestDoRuntimeDrainAck(t *testing.T) {
 
 	dops := newFakeDrainOps()
 	var stdout, stderr bytes.Buffer
-	code := doRuntimeDrainAck(dops, "", "worker", "worker", false, &stdout, &stderr)
+	code := doRuntimeDrainAck(dops, "", "worker", "worker", "", false, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -682,7 +714,7 @@ func TestDoRuntimeDrainAckError(t *testing.T) {
 	dops := newFakeDrainOps()
 	dops.err = errors.New("tmux borked")
 	var stdout, stderr bytes.Buffer
-	code := doRuntimeDrainAck(dops, "", "worker", "worker", false, &stdout, &stderr)
+	code := doRuntimeDrainAck(dops, "", "worker", "worker", "", false, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("code = %d, want 1", code)
 	}
@@ -708,7 +740,7 @@ func TestDoRuntimeDrainAckJSON(t *testing.T) {
 
 	dops := newFakeDrainOps()
 	var stdout, stderr bytes.Buffer
-	code := doRuntimeDrainAck(dops, "", "worker", "worker", true, &stdout, &stderr)
+	code := doRuntimeDrainAck(dops, "", "worker", "worker", "", true, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -739,7 +771,7 @@ func TestDoRuntimeDrainAckPokesController(t *testing.T) {
 	// of the three adjacent string params in the new signature.
 	dops := newFakeDrainOps()
 	var stdout, stderr bytes.Buffer
-	code := doRuntimeDrainAck(dops, "/city/path", "display-name", "session-name", false, &stdout, &stderr)
+	code := doRuntimeDrainAck(dops, "/city/path", "display-name", "session-name", "", false, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -766,7 +798,7 @@ func TestDoRuntimeDrainAckErrorDoesNotPoke(t *testing.T) {
 	dops := newFakeDrainOps()
 	dops.err = errors.New("tmux borked")
 	var stdout, stderr bytes.Buffer
-	code := doRuntimeDrainAck(dops, "/city/path", "worker", "worker", false, &stdout, &stderr)
+	code := doRuntimeDrainAck(dops, "/city/path", "worker", "worker", "", false, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("code = %d, want 1", code)
 	}
@@ -782,7 +814,7 @@ func TestDoRuntimeDrainAckPokeFailureWarns(t *testing.T) {
 
 	dops := newFakeDrainOps()
 	var stdout, stderr bytes.Buffer
-	code := doRuntimeDrainAck(dops, "/city/path", "worker", "worker", false, &stdout, &stderr)
+	code := doRuntimeDrainAck(dops, "/city/path", "worker", "worker", "", false, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0 (poke failure is best-effort)", code)
 	}

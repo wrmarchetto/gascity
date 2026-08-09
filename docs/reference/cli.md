@@ -3663,6 +3663,11 @@ socket so the reconciler stops the session immediately rather than on
 its next patrol tick. Call this after the session has finished its
 current work in response to a drain signal.
 
+The acknowledgement records the session itself as the actor, so its
+closed bead reads "agent retired itself" rather than naming the
+reconciler. Pass --reason to say why; it is stored verbatim as
+drain_ack_reason on the session bead.
+
 ```
 gc runtime drain-ack [name] [flags]
 ```
@@ -3670,6 +3675,7 @@ gc runtime drain-ack [name] [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--json` | bool |  | Output as JSON |
+| `--reason` | string |  | Why this session is retiring (recorded on the closed session bead) |
 
 ## gc runtime drain-check
 

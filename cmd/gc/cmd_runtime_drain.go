@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/session"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +26,9 @@ type drainOps interface {
 	isDraining(sessionName string) (bool, error)
 	drainStartTime(sessionName string) (time.Time, error)
 	setDrainAck(sessionName string) error
+	setDrainAckWithReason(sessionName, reason string) error
 	isDrainAcked(sessionName string) (bool, error)
+	drainAckOrigin(sessionName string) (session.DrainOrigin, string)
 	setRestartRequested(sessionName string) error
 	isRestartRequested(sessionName string) (bool, error)
 	clearRestartRequested(sessionName string) error
@@ -95,12 +99,63 @@ func (o *providerDrainOps) drainStartTime(sessionName string) (time.Time, error)
 }
 
 func (o *providerDrainOps) setDrainAck(sessionName string) error {
+	return o.setDrainAckWithReason(sessionName, "")
+}
+
+// setDrainAckWithReason is setDrainAck carrying the agent's own reason for
+// retiring ("no_work", "claims_errored", "stale_session" from gc hook --claim).
+// The reason rides GC_DRAIN_REASON, the same key the reconciler's own drain-ack
+// uses, because the two are never both set: GC_DRAIN_ACK_SOURCE is written in
+// the same call and every reader of GC_DRAIN_REASON
+// (reconcilerDrainAckMatchesSession, staleReconcilerDrainAck) gates on
+// source == "reconciler" first.
+//
+// An empty reason still REMOVES the key rather than writing "": a stale reason
+// from the reconciler's own earlier drain of this same runtime would otherwise
+// survive under an agent source and be reported as the agent's.
+func (o *providerDrainOps) setDrainAckWithReason(sessionName, reason string) error {
+	writeReason := func() error {
+		if trimmed := strings.TrimSpace(reason); trimmed != "" {
+			return o.sp.SetMeta(sessionName, reconcilerDrainAckReasonKey, trimmed)
+		}
+		return o.sp.RemoveMeta(sessionName, reconcilerDrainAckReasonKey)
+	}
 	return joinDrainAckMutationErrors(
-		o.sp.RemoveMeta(sessionName, reconcilerDrainAckReasonKey),
+		writeReason(),
 		o.sp.RemoveMeta(sessionName, reconcilerDrainAckGenerationKey),
 		o.sp.SetMeta(sessionName, reconcilerDrainAckSourceKey, drainAckSourceAgentValue),
 		o.sp.SetMeta(sessionName, "GC_DRAIN_ACK", "1"),
 	)
+}
+
+// drainAckOrigin reports who acknowledged the drain, from the runtime metadata
+// the acknowledging side wrote. Readable only while the runtime still exists,
+// which is why the reconciler stamps the answer onto the session bead the tick
+// it observes the ack rather than re-reading it at close time.
+//
+// A read error is not propagated: it means the runtime is gone, so the origin
+// is genuinely unrecorded here, and the close must proceed either way. The
+// caller distinguishes that from a real origin by DrainOriginUnrecorded, which
+// renders as "origin not recorded" instead of naming an actor.
+func (o *providerDrainOps) drainAckOrigin(sessionName string) (session.DrainOrigin, string) {
+	source, err := o.sp.GetMeta(sessionName, reconcilerDrainAckSourceKey)
+	if err != nil {
+		return session.DrainOriginUnrecorded, ""
+	}
+	var origin session.DrainOrigin
+	switch strings.TrimSpace(source) {
+	case drainAckSourceAgentValue:
+		origin = session.DrainOriginSelf
+	case reconcilerDrainAckSourceValue:
+		origin = session.DrainOriginReconciler
+	default:
+		return session.DrainOriginUnrecorded, ""
+	}
+	reason, err := o.sp.GetMeta(sessionName, reconcilerDrainAckReasonKey)
+	if err != nil {
+		return origin, ""
+	}
+	return origin, strings.TrimSpace(reason)
 }
 
 func (o *providerDrainOps) isDrainAcked(sessionName string) (bool, error) {
@@ -444,6 +499,7 @@ func doRuntimeDrainCheck(dops drainOps, targetName, sn string, jsonOutput bool, 
 
 func newRuntimeDrainAckCmd(stdout, stderr io.Writer) *cobra.Command {
 	var jsonOutput bool
+	var reason string
 	cmd := &cobra.Command{
 		Use:   "drain-ack [name]",
 		Short: "Acknowledge drain — signal the controller to stop this session",
@@ -452,20 +508,26 @@ func newRuntimeDrainAckCmd(stdout, stderr io.Writer) *cobra.Command {
 Sets GC_DRAIN_ACK metadata on the session, then pokes the controller
 socket so the reconciler stops the session immediately rather than on
 its next patrol tick. Call this after the session has finished its
-current work in response to a drain signal.`,
+current work in response to a drain signal.
+
+The acknowledgement records the session itself as the actor, so its
+closed bead reads "agent retired itself" rather than naming the
+reconciler. Pass --reason to say why; it is stored verbatim as
+drain_ack_reason on the session bead.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			if cmdRuntimeDrainAck(args, jsonOutput, stdout, stderr) != 0 {
+			if cmdRuntimeDrainAck(args, reason, jsonOutput, stdout, stderr) != 0 {
 				return errExit
 			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	cmd.Flags().StringVar(&reason, "reason", "", "Why this session is retiring (recorded on the closed session bead)")
 	return cmd
 }
 
-func cmdRuntimeDrainAck(args []string, jsonOutput bool, stdout, stderr io.Writer) int {
+func cmdRuntimeDrainAck(args []string, reason string, jsonOutput bool, stdout, stderr io.Writer) int {
 	if len(args) > 0 {
 		target, err := resolveSessionRuntimeTarget(args[0], stderr)
 		if err != nil {
@@ -478,7 +540,7 @@ func cmdRuntimeDrainAck(args []string, jsonOutput bool, stdout, stderr io.Writer
 			return 1
 		}
 		dops := newDrainOps(sp)
-		return doRuntimeDrainAck(dops, target.cityPath, target.display, target.sessionName, jsonOutput, stdout, stderr)
+		return doRuntimeDrainAck(dops, target.cityPath, target.display, target.sessionName, reason, jsonOutput, stdout, stderr)
 	}
 
 	current, err := currentSessionRuntimeTarget()
@@ -492,7 +554,7 @@ func cmdRuntimeDrainAck(args []string, jsonOutput bool, stdout, stderr io.Writer
 		return 1
 	}
 	dops := newDrainOps(sp)
-	return doRuntimeDrainAck(dops, current.cityPath, current.display, current.sessionName, jsonOutput, stdout, stderr)
+	return doRuntimeDrainAck(dops, current.cityPath, current.display, current.sessionName, reason, jsonOutput, stdout, stderr)
 }
 
 // ---------------------------------------------------------------------------
@@ -695,8 +757,8 @@ var drainAckPokeController = pokeController
 // doRuntimeDrainAck sets the drain-ack flag on the session, then pokes the
 // controller so the reconciler observes the drained state immediately instead
 // of waiting for its next patrol tick.
-func doRuntimeDrainAck(dops drainOps, cityPath, targetName, sn string, jsonOutput bool, stdout, stderr io.Writer) int {
-	if err := dops.setDrainAck(sn); err != nil {
+func doRuntimeDrainAck(dops drainOps, cityPath, targetName, sn, reason string, jsonOutput bool, stdout, stderr io.Writer) int {
+	if err := dops.setDrainAckWithReason(sn, reason); err != nil {
 		fmt.Fprintf(stderr, "gc runtime drain-ack: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}

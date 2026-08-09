@@ -134,7 +134,7 @@ func TestHookClaimTakesOpenBeadParkedOnThePoolAlias(t *testing.T) {
 			probe.poolClaimed, probe.poolAlias, probe.poolActor = beadID, alias, assignee
 			return beads.Bead{ID: beadID, Assignee: assignee, Status: "in_progress"}, true, nil
 		},
-		DrainAck: func(io.Writer) error { return nil },
+		DrainAck: func(string, io.Writer) error { return nil },
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -193,7 +193,7 @@ func TestHookClaimLeavesInProgressPoolAliasBeadToItsHolder(t *testing.T) {
 			t.Errorf("PoolClaim ran on the holder's live bead %s", beadID)
 			return beads.Bead{}, false, nil
 		},
-		DrainAck: func(io.Writer) error { return nil },
+		DrainAck: func(string, io.Writer) error { return nil },
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -242,7 +242,7 @@ func TestHookClaimAdoptsOwnBareNameBeadWithoutTheTransfer(t *testing.T) {
 			t.Errorf("PoolClaim ran for own-identity bead %s", beadID)
 			return beads.Bead{}, false, nil
 		},
-		DrainAck: func(io.Writer) error { return nil },
+		DrainAck: func(string, io.Writer) error { return nil },
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -278,7 +278,7 @@ func TestHookClaimReportsRejectionWhenAnotherSlotWinsThePoolTransfer(t *testing.
 		EmitClaimRejected: func(beadID, existing, _ string) {
 			rejectedBead, rejectedWinner = beadID, existing
 		},
-		DrainAck: func(io.Writer) error { return nil },
+		DrainAck: func(string, io.Writer) error { return nil },
 	}
 
 	var stdout, stderr bytes.Buffer
