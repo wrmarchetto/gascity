@@ -272,9 +272,12 @@ city store and disables rig auto-detection (GC_RIG, cwd, bead prefix), so a
 deliberate city-scoped query is never silently downgraded to a rig store.
 
 All arguments after "gc bd" are forwarded to bd unchanged, except the
-gc-only "heartbeat &lt;issue-id&gt;" subcommand, which rewrites to
+"heartbeat &lt;issue-id&gt;" subcommand (alias "hb"), which performs two writes so
+a long-running worker keeps both halves of its claim alive — bd's own
+"heartbeat" to push the claim lease forward, then
 "update &lt;issue-id&gt; --set-metadata gc.last_heartbeat_at=&lt;RFC3339 UTC now&gt;"
-so long-running workers can signal liveness to the dashboard, and
+for the dashboard, which cannot see the node-local lease. A lease bd refuses
+stops the command before the stamp. Also excepted is
 "release-if-current &lt;issue-id&gt; &lt;assignee&gt;", which conditionally resets an
 in-progress assignment only when the bead still has that assignee.
 
@@ -294,7 +297,7 @@ gc bd --rig my-project create "New task"
 gc bd show my-project-abc          # auto-detects rig from bead prefix
 gc bd list --rig my-project -s open
 gc bd --city /path/to/city list    # pins the city (HQ) store, no rig auto-detect
-gc bd heartbeat my-project-abc     # stamp gc.last_heartbeat_at=now
+gc bd heartbeat my-project-abc     # refresh the claim lease + stamp gc.last_heartbeat_at
 gc bd release-if-current my-project-abc worker-1
 ```
 
@@ -3705,6 +3708,10 @@ a false-alarm watchdog kill.
 The hold is automatically cleared by the reconciler once held_until passes.
 This is the agent-facing API for the held_until bead-metadata mechanism; it
 does not put the session into a suspended state or change its sleep_intent.
+
+This extends the SESSION's timers only. It does NOT refresh the claim lease on
+a work bead: that lease is bd's, and only "gc bd heartbeat &lt;issue-id&gt;" pushes
+it forward. An agent holding a bead across a long operation runs both.
 
 The default duration (45m0s) covers long-running operations.
 Pass --duration to override.

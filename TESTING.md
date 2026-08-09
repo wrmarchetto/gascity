@@ -961,10 +961,15 @@ axis 2 leaves unconfined (`test-acceptance*`, `test-integration`,
 This mechanism does not extend `bd` claim-lease heartbeats across the
 wait+run phases. An earlier draft of the originating bead (`ga-owh20p`)
 assumed an existing bd-heartbeat workaround needed extending for this
-purpose; no such mechanism exists in this codebase (`bd heartbeat` leases
-are node-local and ephemeral, never committed to Dolt, so extending them
-here would be a no-op). The underlying claim-staleness concern this would
-have addressed is tracked separately under `ga-aw5356`, not here.
+purpose, and at the time none existed. One does now: `gc bd heartbeat <id>`
+forwards bd's own `heartbeat`, pushing `lease_expires_at` forward (ci-ctkz).
+So the option is real, it is simply not wired into this gate. Note that the
+reasoning recorded here previously — that leases are node-local and ephemeral,
+never committed to Dolt, so refreshing one would be a no-op — got the premise
+right and the conclusion wrong: `bd reclaim` only ever reaps leases on the
+node that granted them, so a node-local refresh is precisely what stops a
+local reclaim. The underlying claim-staleness concern is tracked separately
+under `ga-aw5356`, not here.
 
 ### 2. Testscript (`.txtar` files in `cmd/gc/testdata/`)
 

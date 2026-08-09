@@ -46,8 +46,12 @@ Read the bead's title and description carefully. This is your task.
 
 **Signal liveness:** run `gc bd heartbeat "$WORK_BEAD_ID"` now, and again before any
 shell command you expect to run for many minutes (long builds, test sweeps).
-It stamps `gc.last_heartbeat_at` so the dashboard can tell you are alive and
-working rather than wedged.
+It refreshes the claim lease on the bead — an expired lease is what lets a
+reclaim sweep revert your bead to ready and hand it to a second agent while
+you are still mid-edit — and it stamps `gc.last_heartbeat_at` so the dashboard
+can tell you are alive and working rather than wedged. The lease TTL is
+minutes, so a build that outruns it without a heartbeat is exactly the case
+this prevents.
 
 **2. Implement the solution and verify it:**
 

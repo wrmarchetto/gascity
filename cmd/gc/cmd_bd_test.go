@@ -1989,38 +1989,99 @@ func TestHeadLimitedWriter(t *testing.T) {
 	})
 }
 
-// TestGcBdHeartbeatRewritesToMetadataUpdate pins the gastownhall/gascity#1855
-// worker-heartbeat write half: `gc bd heartbeat <id>` must forward to bd as
-// `update <id> --set-metadata gc.last_heartbeat_at=<RFC3339 UTC>`. The exact
-// key (with the _at suffix) is what the gas-city-dashboard will read
-// (dashboard #324) to tell a live worker from a dead one, and the stamp must
-// be valid RFC3339 in UTC even when the local clock is in another zone.
-func TestGcBdHeartbeatRewritesToMetadataUpdate(t *testing.T) {
+// captureBdInvocations installs a fake bd that appends one line per
+// invocation, so a test can assert on a SEQUENCE of forwarded commands rather
+// than only the last one. extraScript is appended to the recorder and may exit
+// non-zero to simulate a bd failure. Returns the capture file path.
+func captureBdInvocations(t *testing.T, extraScript string) string {
+	t.Helper()
+	capture := filepath.Join(t.TempDir(), "gc-bd-args.txt")
+	silentFallbackTestSetup(t, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"${CAPTURE_PATH}\"\n"+extraScript)
+	t.Setenv("CAPTURE_PATH", capture)
+	return capture
+}
+
+// readBdInvocations returns the forwarded arg-lines recorded by
+// captureBdInvocations. A missing file means bd was never invoked.
+func readBdInvocations(t *testing.T, capture string) []string {
+	t.Helper()
+	data, err := os.ReadFile(capture)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	trimmed := strings.TrimRight(string(data), "\n")
+	if trimmed == "" {
+		return nil
+	}
+	return strings.Split(trimmed, "\n")
+}
+
+// bdWriteInvocations drops the read-only `show` calls gc makes on its own
+// behalf -- the exact-ID collision guard resolves every mutation's bead ID
+// through `bd show --json` before forwarding it -- so a test can assert the
+// exact sequence of WRITES without pinning how many reads the guard needs.
+// Only reads are dropped: an unexpected write still fails the assertion,
+// which is the property these tests are about.
+func bdWriteInvocations(t *testing.T, capture string) []string {
+	t.Helper()
+	var writes []string
+	for _, call := range readBdInvocations(t, capture) {
+		if strings.HasPrefix(call, "show ") {
+			continue
+		}
+		writes = append(writes, call)
+	}
+	return writes
+}
+
+// TestGcBdHeartbeatRefreshesLeaseBeforeStampingLiveness pins BOTH writes that
+// `gc bd heartbeat <id>` owes, and their order.
+//
+// The lease refresh is bd's own `heartbeat` subcommand. It is the only thing
+// that pushes lease_expires_at forward, and therefore the only thing that
+// stops `bd reclaim` from reverting a bead to ready and handing it to a second
+// agent while the first is still working it. ci-ctkz is what happens without
+// it: gc rewrote `heartbeat` into the metadata write alone, so the command an
+// agent was told to call for liveness reported success while the claim lease
+// it was named after quietly lapsed.
+//
+// The gc.last_heartbeat_at stamp is a separate contract and is NOT redundant
+// with the lease: bd keeps leases in an ephemeral node-local table that is
+// never committed to Dolt, so the dashboard (gastownhall/gascity#1855, reader
+// dashboard #324) cannot see one. Dropping either write loses a distinct
+// consumer.
+//
+// The order is asserted rather than left incidental. The lease is the half
+// that prevents a concurrent writer, so it goes first; see the sibling test
+// for what a failure there must suppress.
+func TestGcBdHeartbeatRefreshesLeaseBeforeStampingLiveness(t *testing.T) {
 	origNow := bdHeartbeatNow
 	t.Cleanup(func() { bdHeartbeatNow = origNow })
-	// Pin the clock to a non-UTC zone to prove the rewrite normalizes to UTC.
+	// Pin the clock to a non-UTC zone to prove the stamp normalizes to UTC.
 	fixed := time.Date(2026, 5, 31, 12, 0, 0, 0, time.FixedZone("PST", -8*3600))
 	bdHeartbeatNow = func() time.Time { return fixed }
 
-	// The fake bd captures its forwarded args so the assertion can inspect them.
-	capture := filepath.Join(t.TempDir(), "gc-bd-args.txt")
-	silentFallbackTestSetup(t, "#!/bin/sh\nprintf '%s' \"$*\" > \"${CAPTURE_PATH}\"\n")
-	t.Setenv("CAPTURE_PATH", capture)
+	capture := captureBdInvocations(t, "")
 
 	var stdout, stderr bytes.Buffer
 	if got := doBd([]string{"heartbeat", "demo-abc"}, &stdout, &stderr); got != 0 {
 		t.Fatalf("doBd(heartbeat) = %d, want 0; stderr=%q", got, stderr.String())
 	}
 
-	data, err := os.ReadFile(capture)
-	if err != nil {
-		t.Fatal(err)
+	calls := bdWriteInvocations(t, capture)
+	if len(calls) != 2 {
+		t.Fatalf("bd writes = %q, want exactly 2 (lease refresh then liveness stamp)", calls)
+	}
+	if calls[0] != "heartbeat demo-abc" {
+		t.Errorf("first bd write = %q, want %q (the lease refresh must come first)", calls[0], "heartbeat demo-abc")
 	}
 	const prefix = "update demo-abc --set-metadata " + heartbeatMetadataKey + "="
-	gotArgs := string(data)
-	stamp, ok := strings.CutPrefix(gotArgs, prefix)
+	stamp, ok := strings.CutPrefix(calls[1], prefix)
 	if !ok {
-		t.Fatalf("forwarded args = %q, want prefix %q", gotArgs, prefix)
+		t.Fatalf("second bd write = %q, want prefix %q", calls[1], prefix)
 	}
 	parsed, err := time.Parse(time.RFC3339, stamp)
 	if err != nil {
@@ -2034,10 +2095,67 @@ func TestGcBdHeartbeatRewritesToMetadataUpdate(t *testing.T) {
 	}
 }
 
-// TestRewriteBdHeartbeatArgs covers the arg-rewrite edge cases without the
-// full city/bd harness: exactly one issue id is required, and non-heartbeat
-// commands pass through untouched so the generic bd passthrough is intact.
-func TestRewriteBdHeartbeatArgs(t *testing.T) {
+// TestGcBdHeartbeatAliasTakesTheSamePath pins that `hb` is not a back door.
+// bd publishes `hb` as an alias of `heartbeat`, and before ci-ctkz the two
+// spellings did entirely different things through gc: `heartbeat` was
+// intercepted and rewritten to a metadata-only update, while `hb` fell through
+// the generic passthrough to bd's real lease refresh. Which half of the
+// contract a worker got depended on how it spelled the command.
+func TestGcBdHeartbeatAliasTakesTheSamePath(t *testing.T) {
+	capture := captureBdInvocations(t, "")
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"hb", "demo-abc"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("doBd(hb) = %d, want 0; stderr=%q", got, stderr.String())
+	}
+
+	calls := bdWriteInvocations(t, capture)
+	if len(calls) != 2 {
+		t.Fatalf("bd writes for the alias = %q, want the same 2 as the canonical spelling", calls)
+	}
+	// The alias is normalized to bd's canonical subcommand name on the way
+	// out, so the forwarded command does not depend on the caller's spelling.
+	if calls[0] != "heartbeat demo-abc" {
+		t.Errorf("first bd write = %q, want %q", calls[0], "heartbeat demo-abc")
+	}
+	if !strings.HasPrefix(calls[1], "update demo-abc --set-metadata "+heartbeatMetadataKey+"=") {
+		t.Errorf("second bd write = %q, want the liveness stamp", calls[1])
+	}
+}
+
+// TestGcBdHeartbeatFailedLeaseSuppressesLivenessStamp pins the ordering's
+// whole point. bd refuses a heartbeat when the caller is no longer the owner
+// -- the lease was already reclaimed, or the issue closed -- precisely so the
+// worker learns to stop. Stamping gc.last_heartbeat_at after that refusal
+// would report the worker alive on a bead it has just been told it no longer
+// holds, which is the one reading that key exists to rule out. The refusal
+// must also reach the caller as a non-zero exit rather than being absorbed.
+func TestGcBdHeartbeatFailedLeaseSuppressesLivenessStamp(t *testing.T) {
+	capture := captureBdInvocations(t, "if [ \"$1\" = heartbeat ]; then exit 3; fi\n")
+
+	// Assert bd's own exit code survives rather than merely "non-zero": gc bd
+	// documents that it plumbs bd's codes through (and reserves 4 for the
+	// silent-fallback loud-fail), so collapsing a refusal to 1 would destroy
+	// the distinction a caller uses to tell them apart.
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"heartbeat", "demo-abc"}, &stdout, &stderr); got != 3 {
+		t.Fatalf("doBd(heartbeat) = %d, want 3 (bd's own exit code for the refused lease refresh); stderr=%q", got, stderr.String())
+	}
+
+	calls := bdWriteInvocations(t, capture)
+	if len(calls) != 1 {
+		t.Fatalf("bd writes = %q, want exactly 1 (the refused lease refresh, no liveness stamp)", calls)
+	}
+	if calls[0] != "heartbeat demo-abc" {
+		t.Errorf("bd write = %q, want %q", calls[0], "heartbeat demo-abc")
+	}
+}
+
+// TestParseBdHeartbeatArgs covers the arg edge cases without the full city/bd
+// harness: exactly one issue id is required, both spellings are recognized,
+// and non-heartbeat commands are not claimed so the generic bd passthrough
+// stays intact.
+func TestParseBdHeartbeatArgs(t *testing.T) {
 	t.Run("rejects wrong arity, flag-as-id, or whitespace id", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"heartbeat"},
@@ -2048,30 +2166,36 @@ func TestRewriteBdHeartbeatArgs(t *testing.T) {
 			{"heartbeat", " demo-abc"}, // leading space
 			{"heartbeat", "demo-abc "}, // trailing space
 			{"heartbeat", "demo abc"},  // internal space
+			{"hb"},
+			{"hb", "demo-abc", "extra"},
 		} {
-			got, err := rewriteBdHeartbeatArgs(args)
+			id, ok, err := parseBdHeartbeatArgs(args)
 			if err == nil {
-				t.Fatalf("rewriteBdHeartbeatArgs(%q) = (%q, nil), want usage error", args, got)
+				t.Fatalf("parseBdHeartbeatArgs(%q) = (%q, %v, nil), want usage error", args, id, ok)
+			}
+			if !ok {
+				t.Fatalf("parseBdHeartbeatArgs(%q) reported ok=false with an error; the caller would forward a malformed heartbeat to bd", args)
 			}
 		}
 	})
-	t.Run("rewrites a clean id to a set-metadata update", func(t *testing.T) {
-		out, err := rewriteBdHeartbeatArgs([]string{"heartbeat", "demo-abc"})
-		if err != nil {
-			t.Fatalf("rewriteBdHeartbeatArgs unexpected error: %v", err)
-		}
-		if len(out) != 4 || out[0] != "update" || out[1] != "demo-abc" || out[2] != "--set-metadata" {
-			t.Fatalf("rewriteBdHeartbeatArgs = %q, want [update demo-abc --set-metadata ...]", out)
+	t.Run("accepts a clean id under both spellings", func(t *testing.T) {
+		for _, sub := range []string{"heartbeat", "hb"} {
+			id, ok, err := parseBdHeartbeatArgs([]string{sub, "demo-abc"})
+			if err != nil || !ok || id != "demo-abc" {
+				t.Fatalf("parseBdHeartbeatArgs(%q demo-abc) = (%q, %v, %v), want (demo-abc, true, nil)", sub, id, ok, err)
+			}
 		}
 	})
-	t.Run("passes non-heartbeat args through unchanged", func(t *testing.T) {
-		in := []string{"list", "-s", "open"}
-		out, err := rewriteBdHeartbeatArgs(in)
-		if err != nil {
-			t.Fatalf("rewriteBdHeartbeatArgs(%q) unexpected error: %v", in, err)
-		}
-		if len(out) != len(in) || out[0] != "list" || out[2] != "open" {
-			t.Fatalf("rewriteBdHeartbeatArgs(%q) = %q, want passthrough", in, out)
+	t.Run("does not claim non-heartbeat args", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"list", "-s", "open"},
+			{"update", "demo-abc", "--claim"},
+			nil,
+		} {
+			id, ok, err := parseBdHeartbeatArgs(args)
+			if ok || err != nil {
+				t.Fatalf("parseBdHeartbeatArgs(%q) = (%q, %v, %v), want (\"\", false, nil)", args, id, ok, err)
+			}
 		}
 	})
 }

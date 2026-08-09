@@ -50,6 +50,17 @@ func validateHeartbeatDuration(d time.Duration) error {
 // held_until mechanism in the bead reconciler provides the timer-blocker
 // semantics; this command is the agent-facing API for setting it without
 // triggering a full user-hold suspend.
+//
+// This deliberately does NOT also refresh the claim lease on whatever work
+// bead the session holds, which is the first thing an agent watching its lease
+// lapse mid-build reaches for (ci-ctkz). Two reasons, both structural rather
+// than a matter of taste. bd keeps leases in an ephemeral node-local table
+// that no store method exposes -- beads.Store has no lease surface at all --
+// so the only way to push one forward is the bd CLI, which this store-backed
+// command does not shell out to. And the command names no bead: it would have
+// to reverse-look-up the session's in-progress work in a different store to
+// find one. `gc bd heartbeat <issue-id>` is the call that refreshes a lease;
+// an agent working a bead through a long operation makes both.
 func newRuntimeHeartbeatCmd(stdout, stderr io.Writer) *cobra.Command {
 	var (
 		durationStr string
@@ -68,6 +79,10 @@ a false-alarm watchdog kill.
 The hold is automatically cleared by the reconciler once held_until passes.
 This is the agent-facing API for the held_until bead-metadata mechanism; it
 does not put the session into a suspended state or change its sleep_intent.
+
+This extends the SESSION's timers only. It does NOT refresh the claim lease on
+a work bead: that lease is bd's, and only "gc bd heartbeat <issue-id>" pushes
+it forward. An agent holding a bead across a long operation runs both.
 
 The default duration (` + defaultHeartbeatDuration.String() + `) covers long-running operations.
 Pass --duration to override.`,
