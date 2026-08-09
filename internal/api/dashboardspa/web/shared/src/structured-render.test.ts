@@ -304,10 +304,7 @@ test('toolInputRows renders typed todos and arguments', () => {
 });
 
 test('toolInputRows falls back to inline value when no rows accumulate', () => {
-  assert.deepEqual(
-    toolInputRows({} as unknown as SessionStructuredToolInput),
-    ['{}'],
-  );
+  assert.deepEqual(toolInputRows({} as unknown as SessionStructuredToolInput), ['{}']);
 });
 
 // --- toolResultSections per kind (spec §8 + __perKindRendering__) ----------

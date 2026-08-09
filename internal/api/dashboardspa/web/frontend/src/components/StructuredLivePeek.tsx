@@ -1,4 +1,7 @@
-import { useStructuredSessionStream, type StructuredStreamState } from '../hooks/useStructuredSessionStream';
+import {
+  useStructuredSessionStream,
+  type StructuredStreamState,
+} from '../hooks/useStructuredSessionStream';
 import { PROMPT_INJECTION_NOTICE } from '../lib/constants';
 import { LiveSessionPeek, streamBadge } from './LiveSessionPeek';
 import { StatusBadge } from './StatusBadge';
@@ -25,13 +28,19 @@ interface StructuredLivePeekProps {
   showBadge?: boolean;
 }
 
-export function StructuredLivePeek({ sessionId, stream, showBadge = true }: StructuredLivePeekProps) {
+export function StructuredLivePeek({
+  sessionId,
+  stream,
+  showBadge = true,
+}: StructuredLivePeekProps) {
   const state = useStructuredSessionStream(sessionId, stream);
 
   // The server returned a non-structured transcript — render the conversation
   // peek instead so the view never goes blank.
   if (state.status === 'unavailable') {
-    return <LiveSessionPeek sessionId={sessionId} stream={stream} showBadge={showBadge} showCaption />;
+    return (
+      <LiveSessionPeek sessionId={sessionId} stream={stream} showBadge={showBadge} showCaption />
+    );
   }
   if (state.status === 'idle') return null;
 

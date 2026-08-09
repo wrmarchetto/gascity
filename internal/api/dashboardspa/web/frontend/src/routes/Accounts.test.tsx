@@ -198,7 +198,9 @@ it('advances the displayed age between refetches, not only on one', async () => 
 
   const cell = await screen.findByTestId('five-hour-2');
   expect(cell.textContent ?? '').toMatch(/as of 10s ago/);
-  await waitFor(() => expect(cell.textContent ?? '').toMatch(/as of 1[12]s ago/), { timeout: 4_000 });
+  await waitFor(() => expect(cell.textContent ?? '').toMatch(/as of 1[12]s ago/), {
+    timeout: 4_000,
+  });
 });
 
 it('says how long until each window resets, counting forward from now', async () => {

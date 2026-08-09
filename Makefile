@@ -847,9 +847,18 @@ dashboard-build:
 dashboard-dev:
 	cd internal/api/dashboardspa/web && npm run --workspace gas-city-dashboard-frontend dev
 
-## dashboard-check: typecheck (src + test + e2e specs) + build the SPA, then run the
-## shared node:test suite and go test the embedded handler + BFF
-dashboard-check: dashboard-build
+# Its own target rather than another recipe line in dashboard-check so a style
+# failure names itself. The dashboard-build prerequisite is there ONLY for the
+# npm ci: eslint's type-aware rules need node_modules, and a second npm ci here
+# would wipe and refetch the tree the build just installed. Rationale in `#`
+# rather than `##` because `help` prints every `##` line verbatim.
+## dashboard-lint: eslint (--max-warnings=0) + prettier --check over the SPA workspaces
+dashboard-lint: dashboard-build
+	cd internal/api/dashboardspa/web && npm run lint && npm run format:check
+
+## dashboard-check: lint + format + typecheck (src + test + e2e specs) + build the
+## SPA, then run the shared node:test suite and go test the embedded handler + BFF
+dashboard-check: dashboard-build dashboard-lint
 	cd internal/api/dashboardspa/web && npm run typecheck && npm run --workspace gas-city-dashboard-frontend typecheck:test
 	cd internal/api/dashboardspa/web && npm run --workspace gas-city-dashboard-frontend typecheck:e2e
 	./scripts/dashboard-shared-tests.sh

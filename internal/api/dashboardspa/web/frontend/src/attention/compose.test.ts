@@ -117,14 +117,7 @@ describe('composeAttention', () => {
   });
 
   it('keeps the domain set explicit so nav consumers cannot drift', () => {
-    expect(ATTENTION_DOMAINS).toEqual([
-      'agents',
-      'beads',
-      'runs',
-      'mail',
-      'activity',
-      'health',
-    ]);
+    expect(ATTENTION_DOMAINS).toEqual(['agents', 'beads', 'runs', 'mail', 'activity', 'health']);
   });
 });
 

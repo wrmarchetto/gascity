@@ -397,10 +397,7 @@ describe('useStructuredSessionStream', () => {
         'pending',
         JSON.stringify({ request_id: 'req-1', kind: 'tool_approval' }),
       );
-      eventSources[0]?.emit(
-        'pending',
-        JSON.stringify({ request_id: 'req-2', kind: 'question' }),
-      );
+      eventSources[0]?.emit('pending', JSON.stringify({ request_id: 'req-2', kind: 'question' }));
     });
 
     if (result.current.status !== 'ready') throw new Error('expected ready');

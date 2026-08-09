@@ -202,11 +202,13 @@ describe('StructuredBlock dispatch', () => {
     expect(text).toContain('Proceed?');
   });
 
-  it('renders the closed unknown block variant via the inline-value fallback', () => {
+  it('renders an unknown block as a lossless dump of its whole payload', () => {
     const { container } = render(
       <StructuredBlock block={{ type: 'unknown', content: 'opaque' }} />,
     );
-    // formatInlineValue(block) JSON-stringifies the whole block.
+    // `unknown` has its own case arm sharing the `default` body, so this pins
+    // the shared body and NOT the fallback: formatInlineValue JSON-stringifies
+    // the whole block, which is why no salvaged field can go missing.
     expect(container.textContent).toContain('unknown');
     expect(container.textContent).toContain('opaque');
   });

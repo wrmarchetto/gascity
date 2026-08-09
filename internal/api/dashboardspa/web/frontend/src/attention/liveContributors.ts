@@ -235,11 +235,7 @@ function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException('The operation was aborted', 'AbortError');
 }
 
-async function listDecisionBeads(
-  cityName: string,
-  decisionLabel: string,
-  signal?: AbortSignal,
-) {
+async function listDecisionBeads(cityName: string, decisionLabel: string, signal?: AbortSignal) {
   return supervisorApi().listBeads(
     cityName,
     {
