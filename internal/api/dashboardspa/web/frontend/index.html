@@ -3,7 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>gas city · ds-research</title>
+    <!-- Bare wordmark, with no " · <city>" half. Upstream shipped the old
+         wordmark followed by " · ds-research". That suffix resembles the
+         header's but is not the same construction: the header's comes from
+         the live city switcher, whereas this one is static, and nothing in
+         the SPA ever writes document.title. One supervisor serves every city
+         under /city/<name>/, so any baked-in suffix is wrong for all but one
+         of them. Pinned in the built bundle by
+         internal/api/dashboardspa/branding_test.go. That test is also why the
+         retired wordmark is described above rather than quoted: Vite copies
+         HTML comments into dist verbatim, so quoting it here would be
+         indistinguishable from a revert to a test that scans dist.
+         Two consecutive hyphens are avoided throughout; they are
+         non-conforming inside an HTML comment. -->
+    <title>DBZ Dark Lab</title>
     <!-- gascity-dashboard-kb3 R8: useFaviconSignal mutates href in place
          to flip between the calm and alert SVGs on a 2-cycle hysteresis. -->
     <link id="favicon" rel="icon" type="image/svg+xml" href="/favicon-calm.svg" />

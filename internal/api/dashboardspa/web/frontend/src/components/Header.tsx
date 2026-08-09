@@ -109,7 +109,12 @@ export function Header() {
     <header className="border-b border-rule">
       <div className="max-w-dashboard mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-baseline gap-x-6 lg:gap-x-8 gap-y-2 flex-wrap">
         <div className="flex items-baseline gap-3 min-w-0">
-          <span className="text-title font-semibold tracking-tight text-fg">gas city</span>
+          {/* Deployment wordmark, not the software's name. The "·" and the
+              switcher beside it supply the city half dynamically, so this
+              span carries the brand alone. Pinned in the built bundle by
+              internal/api/dashboardspa/branding_test.go -- a revert here
+              fails that test, not this file's own suite. */}
+          <span className="text-title font-semibold tracking-tight text-fg">DBZ Dark Lab</span>
           <span className="text-fg-muted" aria-hidden="true">
             ·
           </span>
