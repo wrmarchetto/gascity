@@ -71,6 +71,19 @@ func TestInitFromWithoutHostedPreservesTemplate(t *testing.T) {
 
 	src := gastownExamplePath(t)
 	cityPath := filepath.Join(t.TempDir(), "city")
+	// Registered before the init call, not after: with no endpoint supplied
+	// this is the ONLY case in this file that reaches the managed-local Dolt
+	// bootstrap, so it is the only one that leaves a sql-server behind -- the
+	// siblings pin an external endpoint or fail validation first and start
+	// nothing, which is why they carry no teardown. Registering first also
+	// covers an early return or panic before the assertions.
+	//
+	// NOT GC_DOLT=skip, the smaller change a future editor will reach for
+	// (init_provider_readiness_test.go uses it). That short-circuits
+	// initDirIfReady before the managed bootstrap, so this test would stop
+	// covering the managed-local branch it uniquely reaches and would still
+	// go green.
+	cleanupManagedDoltTestCity(t, cityPath)
 
 	var stdout, stderr bytes.Buffer
 	// disabled hosted options => template preserved
