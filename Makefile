@@ -900,18 +900,30 @@ dashboard-e2e: dashboard-e2e-go dashboard-e2e-play
 ## fail if the generated gc-supervisor-client or the embedded dist/ is stale.
 ## Used by CI to enforce that the dashboard's generated client (from
 ## internal/api/openapi.json via openapi-ts.config.ts) and dist/ match sources.
+## Both verdicts come from scripts/check-artifact-drift.sh rather than a bare
+## `git diff --quiet`, which answers "the artifact moved" when the question is
+## "did the committed artifact stop matching the committed sources" -- and is
+## blind to a rebuild that only adds an untracked asset. See ci-c425.
 dashboard-ci: dashboard-check
 	cd internal/api/dashboardspa/web && npm run generate:client
-	@if ! git diff --quiet -- internal/api/dashboardspa/web/shared/src/generated/gc-supervisor-client; then \
-		echo "ERROR: dashboard API client is stale — run 'npm run generate:client' in internal/api/dashboardspa/web and commit." >&2; \
-		git --no-pager diff --stat -- internal/api/dashboardspa/web/shared/src/generated/gc-supervisor-client; \
-		exit 1; \
-	fi
-	@if ! git diff --quiet -- internal/api/dashboardspa/dist; then \
-		echo "ERROR: internal/api/dashboardspa/dist/ is stale — run 'make dashboard-build' and commit." >&2; \
-		git --no-pager diff --stat -- internal/api/dashboardspa/dist; \
-		exit 1; \
-	fi
+	@./scripts/check-artifact-drift.sh \
+		--label 'dashboard API client' \
+		--artifact internal/api/dashboardspa/web/shared/src/generated/gc-supervisor-client \
+		--source internal/api/openapi.json \
+		--source internal/api/dashboardspa/web/openapi-ts.config.ts \
+		--source internal/api/dashboardspa/web/package-lock.json \
+		--regen '(cd internal/api/dashboardspa/web && npm run generate:client)'
+	@./scripts/check-artifact-drift.sh \
+		--label 'dashboard bundle' \
+		--artifact internal/api/dashboardspa/dist \
+		--source internal/api/dashboardspa/web \
+		--regen 'make dashboard-build' \
+		--note 'A large asset count is normal here and is not a toolchain' \
+		--note 'smell: rollup folds each chunk content hash into the names' \
+		--note 'of every chunk that imports it, so one source edit renames' \
+		--note 'the whole import chain above it (ci-gpxg moved 22 of 35).' \
+		--note 'Build under Node 22 (.nvmrc) before concluding anything --' \
+		--note 'vite refuses to run on the Node 18 some hosts default to.'
 
 ## spec-ci: regenerate the OpenAPI spec + generated Go client, fail on drift.
 ## Used by CI to enforce that internal/api/openapi.json, docs/reference/schema JSON
