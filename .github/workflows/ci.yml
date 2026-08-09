@@ -1232,7 +1232,7 @@ jobs:
         env:
           GC_TEST_GASCITY_PACKS_REGISTRY: main
 
-  # Dashboard SPA typecheck + tests + build. Runs on every push/PR
+  # Dashboard SPA lint + typecheck + tests + build. Runs on every push/PR
   # so TS drift against the spec (e.g. a query param tightening from
   # string to boolean) fails CI instead of shipping as a silent
   # runtime bug. Vite's build transpiles TS to JS and does not fail
@@ -1253,6 +1253,18 @@ jobs:
           node-version: "22"
       - name: Install SPA dependencies
         run: npm ci --silent
+        working-directory: internal/api/dashboardspa/web
+      # Lint and format run BEFORE typecheck/build: they are the cheapest steps
+      # and the package has declared --max-warnings=0 since it was vendored, but
+      # no job ever ran them, so 3 eslint errors and 15 unformatted files sat
+      # committed on main (bead ci-dxot). Kept as two named steps rather than
+      # folded into `make dashboard-check` so a style failure is legible from
+      # the job list without opening the log.
+      - name: Lint (eslint --max-warnings=0)
+        run: npm run lint
+        working-directory: internal/api/dashboardspa/web
+      - name: Format check (prettier --check)
+        run: npm run format:check
         working-directory: internal/api/dashboardspa/web
       - name: Typecheck (tsc --noEmit)
         run: npm run typecheck
