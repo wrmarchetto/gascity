@@ -240,6 +240,17 @@ func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
 // It is widened past a single row for the same reason as routedReadyTierCommand:
 // a self-blocked head must have ready work behind it to fall through to, and the
 // hook layer (filterUnreadyHookCandidates) strips the blocked head.
+//
+// `--sort oldest` is the documented routed-queue policy (FIFO before priority,
+// engdocs/architecture/dispatch.md), not bd's default -- unflagged, bd orders
+// ready work (priority, created_at, id). Do NOT "fix" this to priority in
+// isolation: it is the ordering the whole pool queue is scheduled on, a strict
+// priority sort starves the long P3 tail, and the policy statement has to move
+// with it (TestRoutedQueueOrderingPolicyMatchesEmittedWorkQuery).
+//
+// This tier reached the flag by copying the routed tier's shape (ci-c000) at a
+// time when only the routed tier's ordering was written down, so ci-q2vx read
+// the resulting FIFO here as a dispatch bug. It is deliberate, and now stated.
 func poolAliasReadyTierCommand(includeEphemeralReady bool) string {
 	return bdReadyPoolAliasDemandShell("--sort oldest --limit=20", includeEphemeralReady) + ` 2>/dev/null`
 }
@@ -251,6 +262,17 @@ func routedReadyTierCommand(includeEphemeralReady bool) string {
 	// self-blocked head (is_blocked / status==blocked) has Ready routed work
 	// behind it to fall through to instead of idle-exiting; the hook layer
 	// (filterUnreadyHookCandidates) strips the blocked head from the result.
+	//
+	// `--sort oldest` is policy, not a default: it overrides bd's own
+	// (priority, created_at, id) ready order so newer high-priority work does
+	// not jump the queue (engdocs/architecture/dispatch.md, PR #2800). See
+	// poolAliasReadyTierCommand for why it must not be changed in isolation.
+	//
+	// The sort and the limit are NOT independent -- together they also bound
+	// what is a candidate. Past the oldest 20, ready work of any priority is
+	// invisible to the claim until the head drains (measured: 41 ready rows on
+	// one pool alias, ci-q2vx). Widening the window is the only lever on that;
+	// re-sorting the returned rows cannot reach what bd never returned.
 	return bdReadyPoolDemandShell("--sort oldest --limit=20", includeEphemeralReady) + ` 2>/dev/null`
 }
 
