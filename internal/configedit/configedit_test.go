@@ -628,6 +628,183 @@ schema = 2
 	}
 }
 
+// authoredAgentTOML is the shape a hand-maintained agents/<name>/agent.toml
+// actually takes: a header comment block, comments interleaved between keys,
+// a multi-line array value, and a sub-table after the root keys. Every one of
+// those survived the map decode but not the re-encode, so a flat two-key
+// fixture would not have caught ci-o3fo.
+const authoredAgentTOML = `# WARNING: this header is the only record of why the agent has this shape.
+# It cost an afternoon to write and cannot be rederived from the values.
+
+# Its own template rather than the shared one, and the copy is a KNOWN COST.
+prompt_template = "/abs/path/prompt.template.md"
+provider = "codex"
+
+# --- scope and placement ---
+
+scope = "city"
+
+# Two lines because this agent edits TWO shared repositories.
+pre_start = [
+  "setup.sh one",
+  "setup.sh two",
+]
+
+# See the pack for why model must be named explicitly.
+[option_defaults]
+  model = "opus-5"
+`
+
+// TestAgentTOMLKeepsAuthoredTextAcrossSuspendResume pins the invariant that
+// `gc agent suspend` and `gc agent resume` mutate only the `suspended` key of
+// agents/<name>/agent.toml and leave every other byte alone.
+//
+// The round trip is asserted byte-for-byte rather than key-by-key because the
+// loss this pins is not a lost key -- the map round trip preserved every key.
+// What it destroyed was comments and ordering, which no decoded value can
+// witness. Suspend and resume both run so the assertion covers the insert and
+// the delete edit; a test that only suspended would pass with a delete that
+// rewrote the file.
+func TestAgentTOMLKeepsAuthoredTextAcrossSuspendResume(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTOML(t, dir, `[workspace]
+name = "test-city"
+`)
+	if err := os.WriteFile(filepath.Join(dir, "pack.toml"), []byte(`[pack]
+name = "test-city"
+schema = 2
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(dir, "agents", "worker")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "prompt.template.md"), []byte("You are the worker.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentTomlPath := filepath.Join(agentDir, "agent.toml")
+	if err := os.WriteFile(agentTomlPath, []byte(authoredAgentTOML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ed := configedit.NewEditor(fsys.OSFS{}, path)
+	if err := ed.SuspendAgent("worker"); err != nil {
+		t.Fatalf("SuspendAgent: %v", err)
+	}
+
+	suspended := string(mustReadFile(t, agentTomlPath))
+	if !strings.Contains(suspended, "suspended = true") {
+		t.Fatalf("agent.toml after suspend = %q, want suspended = true", suspended)
+	}
+	// Every authored line must still be present verbatim. Checking each line
+	// rather than the whole block reports WHICH line was dropped.
+	for _, line := range strings.Split(strings.TrimRight(authoredAgentTOML, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(suspended, line) {
+			t.Fatalf("agent.toml after suspend dropped line %q:\n%s", line, suspended)
+		}
+	}
+
+	if err := ed.ResumeAgent("worker"); err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+
+	resumed := string(mustReadFile(t, agentTomlPath))
+	if resumed != authoredAgentTOML {
+		t.Fatalf("agent.toml after suspend+resume:\n%s\nwant original:\n%s", resumed, authoredAgentTOML)
+	}
+}
+
+// writeConventionAgentCity builds a schema-2 city carrying one convention
+// agent named "worker", writing agentTOML as its durable config when non-empty.
+// Returns the city.toml path and the agent's agent.toml path.
+func writeConventionAgentCity(t *testing.T, agentTOML string) (cityTOML, agentTomlPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	cityTOML = writeTOML(t, dir, `[workspace]
+name = "test-city"
+`)
+	if err := os.WriteFile(filepath.Join(dir, "pack.toml"), []byte(`[pack]
+name = "test-city"
+schema = 2
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentDir := filepath.Join(dir, "agents", "worker")
+	if err := os.MkdirAll(agentDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(agentDir, "prompt.template.md"), []byte("You are the worker.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentTomlPath = filepath.Join(agentDir, "agent.toml")
+	if agentTOML != "" {
+		if err := os.WriteFile(agentTomlPath, []byte(agentTOML), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cityTOML, agentTomlPath
+}
+
+// TestResumeKeepsAgentTOMLWhenOnlyCommentsRemain pins that a resume clearing
+// the file's last key does not delete the file when authored prose is still
+// in it.
+//
+// The rule it replaces keyed removal on the key count alone, which took the
+// same header out by the other door: an agent.toml whose only key is
+// `suspended` is exactly the shape a suspended-and-documented agent has.
+func TestResumeKeepsAgentTOMLWhenOnlyCommentsRemain(t *testing.T) {
+	const header = "# The only record of why this agent is muted.\n# Restoring it costs an afternoon.\n"
+	cityTOML, agentTomlPath := writeConventionAgentCity(t, header+"suspended = true\n")
+
+	ed := configedit.NewEditor(fsys.OSFS{}, cityTOML)
+	if err := ed.ResumeAgent("worker"); err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+
+	got := string(mustReadFile(t, agentTomlPath))
+	if got != header {
+		t.Fatalf("agent.toml = %q, want the header alone %q", got, header)
+	}
+}
+
+// The truly empty case still removes the file: nothing authored is lost, and
+// leaving a zero-byte agent.toml behind would classify the agent as durably
+// configured when it has no durable config.
+func TestResumeRemovesAgentTOMLWhenNothingAuthoredRemains(t *testing.T) {
+	cityTOML, agentTomlPath := writeConventionAgentCity(t, "suspended = true\n")
+
+	ed := configedit.NewEditor(fsys.OSFS{}, cityTOML)
+	if err := ed.ResumeAgent("worker"); err != nil {
+		t.Fatalf("ResumeAgent: %v", err)
+	}
+
+	if _, err := os.Stat(agentTomlPath); !os.IsNotExist(err) {
+		t.Fatalf("agent.toml stat err = %v, want removed file", err)
+	}
+}
+
+// UpdateAgent shares the durable writer with suspend/resume, so it inherits
+// the same guarantee. Pinned separately because it reaches the writer by a
+// different caller and edits a different key.
+func TestUpdateAgentKeepsAuthoredTextAroundTheEditedKey(t *testing.T) {
+	const src = "# why codex and not claude\nprovider = \"codex\"\n\n# --- scope ---\nscope = \"city\"\n"
+	cityTOML, agentTomlPath := writeConventionAgentCity(t, src)
+
+	ed := configedit.NewEditor(fsys.OSFS{}, cityTOML)
+	if err := ed.UpdateAgent("worker", configedit.AgentUpdate{Provider: "claude"}); err != nil {
+		t.Fatalf("UpdateAgent: %v", err)
+	}
+
+	want := strings.Replace(src, `provider = "codex"`, `provider = "claude"`, 1)
+	if got := string(mustReadFile(t, agentTomlPath)); got != want {
+		t.Fatalf("agent.toml =\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // setupSymlinkedConventionAgent builds a schema-2 city with a convention
 // "worker" whose agents/worker/agent.toml is a symlink into a separate
 // checked-in location. It returns the city.toml path, the agent.toml link

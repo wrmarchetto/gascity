@@ -20,6 +20,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/suspensionstate"
+	"github.com/gastownhall/gascity/internal/tomledit"
 	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
 
@@ -598,59 +599,78 @@ func removeAgentTomlConvention(fs fsys.FS, agentTomlPath, name string) error {
 	return nil
 }
 
-// WriteLocalDiscoveredAgentSuspended writes the suspended state to
-// agents/<name>/agent.toml using an atomic temp-file rename. When
-// suspended is false and the file would become empty (no other fields),
-// the durable content is cleared instead.
+// patchAgentTomlConvention applies root-key edits to agents/<name>/agent.toml
+// in place and writes the result atomically. A missing file is an empty
+// document, so an edit may create it.
 //
-// Decoding into map[string]any (rather than a typed struct) preserves
-// any user-set fields the caller didn't ask about. TOML comments and
-// key ordering are not preserved — that is a limitation of the
-// underlying decode/encode round trip, not this helper.
+// The edit is textual ([tomledit]) rather than a decode/encode round trip. The
+// round trip preserved every key but re-emitted the file alphabetized and
+// stripped of comments, which is how a suspend deleted a 132-line header that
+// documented why an agent was shaped the way it was. That prose has no other
+// home and cannot be rederived from the values, so it is content the writer
+// has to carry, not formatting it may normalize.
+//
+// The file is removed only when the edited document has nothing authored left
+// in it -- no keys, no tables, and no comments. The older rule keyed on the
+// last key going away, which deleted a comment-only file and lost the same
+// prose by the other door.
+//
+// The other way to stop rewriting an authored file is to stop storing runtime
+// state in it: move agent suspension to .gc/runtime/suspension-state.json,
+// where city and rig suspension already live and where the schema reserves an
+// `agents` block for it. That is the right end state and it is tracked
+// separately as issue #2407 -- it has to reconcile an authored default against
+// a runtime override across ~30 read sites, which is a migration and not this
+// bug. Patching the text fixes the destruction now without prejudging it.
 //
 // Writes and removals resolve a symlinked agent.toml to its checked-in target
 // first, so a linked config is updated/cleared at the target rather than having
 // the link replaced by a regular file (the ga-lurp5d symlink-clobber class).
-func WriteLocalDiscoveredAgentSuspended(fs fsys.FS, cityRoot string, agent config.Agent, suspended bool) error {
-	agentTomlPath := filepath.Join(cityRoot, "agents", agent.Name, "agent.toml")
-
-	values := make(map[string]any)
+func patchAgentTomlConvention(fs fsys.FS, agentTomlPath, name string, edits map[string]any) error {
+	var src []byte
 	data, err := fs.ReadFile(agentTomlPath)
 	switch {
 	case err == nil:
-		if len(bytes.TrimSpace(data)) > 0 {
-			if _, decodeErr := toml.Decode(string(data), &values); decodeErr != nil {
-				return fmt.Errorf("reading agents/%s/agent.toml: %w", agent.Name, decodeErr)
-			}
-		}
+		src = data
 	case os.IsNotExist(err):
-		// Start from an empty config; suspend=true may create the file.
+		// Start from an empty document; an edit may create the file.
 	default:
-		return fmt.Errorf("reading agents/%s/agent.toml: %w", agent.Name, err)
+		return fmt.Errorf("reading agents/%s/agent.toml: %w", name, err)
 	}
 
-	if suspended {
-		values["suspended"] = true
-	} else {
-		delete(values, "suspended")
+	out, err := tomledit.SetRootKeys(src, edits)
+	if err != nil {
+		return fmt.Errorf("editing agents/%s/agent.toml: %w", name, err)
 	}
 
-	if len(values) == 0 {
-		return removeAgentTomlConvention(fs, agentTomlPath, agent.Name)
+	if !tomledit.HasContent(out) {
+		return removeAgentTomlConvention(fs, agentTomlPath, name)
 	}
 
-	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(values); err != nil {
-		return fmt.Errorf("encoding agents/%s/agent.toml: %w", agent.Name, err)
-	}
-	writePath, err := resolveAgentTomlTarget(fs, agentTomlPath, agent.Name)
+	writePath, err := resolveAgentTomlTarget(fs, agentTomlPath, name)
 	if err != nil {
 		return err
 	}
-	if err := fsys.WriteFileAtomic(fs, writePath, buf.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("writing agents/%s/agent.toml: %w", agent.Name, err)
+	if err := fsys.WriteFileAtomic(fs, writePath, out, 0o644); err != nil {
+		return fmt.Errorf("writing agents/%s/agent.toml: %w", name, err)
 	}
 	return nil
+}
+
+// WriteLocalDiscoveredAgentSuspended records the suspended state in
+// agents/<name>/agent.toml, leaving every other byte of the file as authored.
+//
+// Resuming REMOVES the key rather than writing `suspended = false`, so a
+// resumed agent's durable config carries no trace of the toggle. The update
+// path ([Editor.UpdateAgent]) deliberately differs and writes the explicit
+// false, because there an API caller asked for that value.
+func WriteLocalDiscoveredAgentSuspended(fs fsys.FS, cityRoot string, agent config.Agent, suspended bool) error {
+	agentTomlPath := filepath.Join(cityRoot, "agents", agent.Name, "agent.toml")
+	edit := tomledit.Delete
+	if suspended {
+		edit = true
+	}
+	return patchAgentTomlConvention(fs, agentTomlPath, agent.Name, map[string]any{"suspended": edit})
 }
 
 func removeLocalDiscoveredAgentConfig(fs fsys.FS, cityRoot string, agent config.Agent) error {
@@ -886,49 +906,23 @@ func writeLocalDiscoveredAgentUpdate(fs fsys.FS, cityRoot string, agent config.A
 		return err
 	}
 
-	agentTomlPath := filepath.Join(cityRoot, "agents", agent.Name, "agent.toml")
-	values := make(map[string]any)
-	data, err := fs.ReadFile(agentTomlPath)
-	switch {
-	case err == nil:
-		if len(bytes.TrimSpace(data)) > 0 {
-			if _, decodeErr := toml.Decode(string(data), &values); decodeErr != nil {
-				return fmt.Errorf("reading agents/%s/agent.toml: %w", agent.Name, decodeErr)
-			}
-		}
-	case os.IsNotExist(err):
-	default:
-		return fmt.Errorf("reading agents/%s/agent.toml: %w", agent.Name, err)
-	}
-
+	// An unset patch field means "leave alone", so it contributes no edit.
+	// suspended is the exception: an explicit false is written out rather
+	// than removed, because the caller named the value. See
+	// [WriteLocalDiscoveredAgentSuspended] for why resume differs.
+	edits := make(map[string]any)
 	if patch.Provider != "" {
-		values["provider"] = patch.Provider
+		edits["provider"] = patch.Provider
 	}
 	if patch.Scope != "" {
-		values["scope"] = patch.Scope
+		edits["scope"] = patch.Scope
 	}
 	if patch.Suspended != nil {
-		values["suspended"] = *patch.Suspended
+		edits["suspended"] = *patch.Suspended
 	}
 
-	// An empty merged convention config means there is no durable agent.toml
-	// content to preserve; the prompt scaffold still defines the agent.
-	if len(values) == 0 {
-		return removeAgentTomlConvention(fs, agentTomlPath, agent.Name)
-	}
-
-	var buf bytes.Buffer
-	if err := toml.NewEncoder(&buf).Encode(values); err != nil {
-		return fmt.Errorf("encoding agents/%s/agent.toml: %w", agent.Name, err)
-	}
-	writePath, err := resolveAgentTomlTarget(fs, agentTomlPath, agent.Name)
-	if err != nil {
-		return err
-	}
-	if err := fsys.WriteFileAtomic(fs, writePath, buf.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("writing agents/%s/agent.toml: %w", agent.Name, err)
-	}
-	return nil
+	agentTomlPath := filepath.Join(cityRoot, "agents", agent.Name, "agent.toml")
+	return patchAgentTomlConvention(fs, agentTomlPath, agent.Name, edits)
 }
 
 func validateLocalDiscoveredAgent(agent config.Agent) error {
