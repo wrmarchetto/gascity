@@ -126,6 +126,14 @@ func bdReadyPoolDemandShell(limitFlag string, includeEphemeralReady bool) string
 //     addressed to the pool by name is indistinguishable from pool-assigned work
 //     at the bd level. Left in, it raises demand no session can consume, and the
 //     spawn repeats at boot cadence forever (#4419; see excludeMessageTypeArg).
+//     Measured bound on that claim, bd 1.1.1: mail materializes as an EPHEMERAL
+//     message wisp, and `bd ready --include-ephemeral --assignee=<pool>` does not
+//     return one, so today this exclusion is latent -- removing it would not
+//     regress anything observable, because the tier has no ephemeral probe for
+//     mail to arrive through (see the absence noted below). It stays because the
+//     protection has to already be in place if either of those two facts
+//     changes, and because the tests can only assert the flag's presence, never
+//     its effect, while mail cannot reach here.
 //   - --exclude-type=epic: a parent epic has no executable spec, so a worker
 //     claiming one does undefined work (gc-udx).
 //   - hold labels: this tier creates spawn demand, so a bead deliberately parked
