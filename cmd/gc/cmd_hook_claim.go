@@ -45,8 +45,14 @@ type hookClaimOptions struct {
 }
 
 type hookClaimOps struct {
-	Runner             WorkQueryRunner
-	Claim              hookClaimFunc
+	Runner WorkQueryRunner
+	Claim  hookClaimFunc
+	// PoolClaim takes a bead parked on a pool route alias -- hand-assigned with
+	// `bd update --assignee <pool>` rather than routed -- for this session. It is
+	// a separate seam from Claim because bd refuses a plain --claim on a bead
+	// assigned to another name, so the take needs the compare-and-swap transfer
+	// first (BdStore.PoolClaim).
+	PoolClaim          hookPoolClaimFunc
 	ListContinuation   hookListContinuationFunc
 	AssignContinuation hookAssignContinuationFunc
 	DrainAck           hookDrainAckFunc
@@ -74,6 +80,7 @@ type hookClaimOps struct {
 
 type (
 	hookClaimFunc              func(context.Context, string, []string, string, string) (beads.Bead, bool, error)
+	hookPoolClaimFunc          func(ctx context.Context, dir string, env []string, beadID, poolAlias, assignee string) (beads.Bead, bool, error)
 	hookListContinuationFunc   func(context.Context, string, []string, string, string) ([]beads.Bead, error)
 	hookAssignContinuationFunc func(context.Context, string, []string, string, string) error
 	hookDrainAckFunc           func(io.Writer) error
@@ -191,6 +198,9 @@ func tryHookClaim(workQuery, dir string, opts *hookClaimOptions, ops *hookClaimO
 func (ops *hookClaimOps) applyDefaults() {
 	if ops.Claim == nil {
 		ops.Claim = hookClaimWithBdStore
+	}
+	if ops.PoolClaim == nil {
+		ops.PoolClaim = hookPoolClaimWithBdStore
 	}
 	if ops.ListContinuation == nil {
 		ops.ListContinuation = hookListContinuationWithBdStore
@@ -323,7 +333,7 @@ func claimFirstEligibleHookCandidate(candidates []beads.Bead, opts hookClaimOpti
 			// next tick (NDI).
 			break
 		}
-		claimed, ok, err := ops.Claim(ctx, dir, opts.Env, candidate.ID, opts.Assignee)
+		claimed, ok, err := claimHookCandidate(ctx, candidate, opts, ops, dir)
 		if err != nil {
 			if ok {
 				// The atomic mutation committed, but its canonical readback failed.
@@ -383,12 +393,58 @@ func mergeHookClaimCandidateMetadata(candidate, claimed beads.Bead) beads.Bead {
 }
 
 // hookCandidateClaimable reports whether a work-query candidate is eligible for a
-// fresh claim: it has an id, is currently unassigned, and matches one of this
-// session's route targets.
+// fresh claim: it has an id and is either unassigned with routing metadata
+// matching one of this session's route targets, or parked on a route target as
+// its assignee.
 func hookCandidateClaimable(candidate beads.Bead, routeTargets []string) bool {
-	return strings.TrimSpace(candidate.ID) != "" &&
-		strings.TrimSpace(candidate.Assignee) == "" &&
+	if strings.TrimSpace(candidate.ID) == "" {
+		return false
+	}
+	if hookCandidatePoolAlias(candidate, routeTargets) != "" {
+		return true
+	}
+	return strings.TrimSpace(candidate.Assignee) == "" &&
 		hookClaimMatchesRoute(candidate, routeTargets)
+}
+
+// hookCandidatePoolAlias returns the pool route alias a candidate is parked on,
+// or "" when it is not pool-parked work.
+//
+// A bead hand-assigned with `bd update --assignee <pool>` is addressed to the
+// pool, not to any one slot, so any slot may take it. It carries no
+// gc.routed_to, so hookClaimMatchesRoute cannot see it, and its assignee is not
+// this session's identity, so the adoption paths cannot either: without this the
+// candidate reaches every branch and is refused by all of them (ci-c000).
+//
+// The status gate is the ga-80pen8 invariant, not defensiveness. The bare pool
+// name is ALSO a [[named_session]] holder's own identity, so an in_progress bead
+// under that name is the holder's live work and never free pool work. The
+// built-in tier's `bd ready` already drops in_progress, which makes this the
+// second of two independent gates; it is here as well because a user-supplied
+// work_query owes no such filtering and its candidates arrive on this same path.
+func hookCandidatePoolAlias(candidate beads.Bead, routeTargets []string) string {
+	assignee := strings.TrimSpace(candidate.Assignee)
+	if assignee == "" || !strings.EqualFold(strings.TrimSpace(candidate.Status), "open") {
+		return ""
+	}
+	for _, target := range routeTargets {
+		if assignee == strings.TrimSpace(target) {
+			return assignee
+		}
+	}
+	return ""
+}
+
+// claimHookCandidate runs the claim mutation that fits one candidate: the plain
+// atomic claim for unassigned routed work, or the compare-and-swap transfer for
+// work parked on the pool route name. The choice is made here rather than inside
+// ops.Claim so the pool-alias path stays visible at the decision point and each
+// ops seam keeps one meaning.
+func claimHookCandidate(ctx context.Context, candidate beads.Bead, opts hookClaimOptions, ops hookClaimOps, dir string) (beads.Bead, bool, error) {
+	if alias := hookCandidatePoolAlias(candidate, opts.RouteTargets); alias != "" {
+		return ops.PoolClaim(ctx, dir, opts.Env, candidate.ID, alias, opts.Assignee)
+	}
+	return ops.Claim(ctx, dir, opts.Env, candidate.ID, opts.Assignee)
 }
 
 // reportHookClaimRejected publishes a bead.claim_rejected event (ADR-0009) when a
@@ -579,6 +635,30 @@ func hookClaimWithBdStore(ctx context.Context, dir string, env []string, beadID,
 		return canonical, false, nil
 	}
 	return canonical, true, nil
+}
+
+// hookPoolClaimWithBdStore takes a bead parked on poolAlias for assignee in two
+// writes: the store's compare-and-swap transfer decides who gets it, then the
+// shared claim path takes the lease.
+//
+// The transfer is the arbitration point, so the claim that follows is this
+// session claiming a bead it already owns. Routing that second step through
+// hookClaimWithBdStore rather than open-coding it is deliberate: the pool take
+// then inherits the same conflict re-read, own-identity check and canonical
+// metadata reload as every other claim, so a partial `bd update --claim`
+// projection cannot reach the continuation-group and identity-stamp code by this
+// path alone.
+//
+// A session that dies between the two writes leaves the bead assigned to itself
+// and still open, which its next hook tick promotes as own-identity assigned
+// work -- the window self-heals rather than stranding the bead.
+func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, beadID, poolAlias, assignee string) (beads.Bead, bool, error) {
+	store := hookClaimBdStoreContext(ctx, dir, env, assignee)
+	current, ok, err := store.ReassignIfAssignee(beadID, poolAlias, assignee)
+	if err != nil || !ok {
+		return current, ok, err
+	}
+	return hookClaimWithBdStore(ctx, dir, env, beadID, assignee)
 }
 
 // stampHookClaimIdentity records the claiming worker's execution identity on the

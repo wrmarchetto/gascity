@@ -100,6 +100,46 @@ func bdReadyPoolDemandShell(limitFlag string, includeEphemeralReady bool) string
 	return `bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --metadata-field "` + beadmeta.RoutedToMetadataKey + `=$target" --unassigned --exclude-type=epic` + excludeHoldLabelsShellArgs() + ` --json ` + limitFlag
 }
 
+// bdReadyPoolAliasDemandShell returns the canonical bd ready predicate for work
+// PARKED ON the pool alias itself -- hand-assigned with
+// `bd update --assignee <pool>` rather than routed with gc.routed_to.
+//
+// It exists because bd matches --assignee exactly and the assigned tiers only
+// ever probe $GC_SESSION_ID, $GC_SESSION_NAME and $GC_ALIAS. At
+// max_active_sessions=1 GC_ALIAS IS the bare pool name (see
+// Agent.UsesCanonicalSingletonPoolIdentity), so hand-assigned work matched there;
+// above 1 every slot's GC_ALIAS is its own suffixed name and nothing carries the
+// bare name any more, making the bead unclaimable by any slot with no error and
+// no log line (ci-c000 measured an entire historical queue stranded this way).
+//
+// Adding the bare name as a fourth entry in the assigned loop was the rejected
+// alternative. That name is ALSO a [[named_session]] holder's own identity, so
+// treating it as own-identity work lets a suffixed slot adopt the holder's live
+// in_progress bead -- the ga-80pen8 regression. This tier is therefore
+// route-scoped like the unassigned pool-demand tier beside it: it runs behind the
+// GC_SESSION_ORIGIN gate, and the claim side takes the bead by atomic transfer
+// (BdStore.PoolClaim) rather than by adoption.
+//
+// The exclusions are load-bearing, not tidiness:
+//
+//   - --exclude-type=message: mail carries its recipient in `assignee`, so mail
+//     addressed to the pool by name is indistinguishable from pool-assigned work
+//     at the bd level. Left in, it raises demand no session can consume, and the
+//     spawn repeats at boot cadence forever (#4419; see excludeMessageTypeArg).
+//   - --exclude-type=epic: a parent epic has no executable spec, so a worker
+//     claiming one does undefined work (gc-udx).
+//   - hold labels: this tier creates spawn demand, so a bead deliberately parked
+//     on a dispatch hold must not raise it (ga-x9kptu / ga-5736js).
+//
+// Documented absence: there is no ephemeral (wisp) counterpart to this tier.
+// Ephemeral beads are materialized by formulas, which route with gc.routed_to and
+// leave assignee empty; nothing hand-assigns a wisp to a pool name. Adding one
+// would mean duplicating legacyEphemeralPoolDemandShell's jq filter for a
+// retirement-window path that has no producer.
+func bdReadyPoolAliasDemandShell(limitFlag string, includeEphemeralReady bool) string {
+	return `bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$target" --exclude-type=epic` + excludeMessageTypeArg + excludeHoldLabelsShellArgs() + ` --json ` + limitFlag
+}
+
 // bdReadyPoolDemandMigrationShell is a temporary raw compatibility probe for
 // graph.v2 workflow roots created before gc.routed_to root stamping shipped.
 // It is scoped to workflow roots so gc.run_target remains an authoring hint
@@ -176,6 +216,8 @@ func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
 		`[ -z "$target" ] && return 1; ` +
 		`r=$(` + routedReadyTierCommand(includeEphemeralReady) + `); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
+		`r=$(` + poolAliasReadyTierCommand(includeEphemeralReady) + `); ` +
+		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		`legacy_candidates=$(` + bdReadyPoolDemandMigrationShell("--limit=20", includeEphemeralReady) + ` 2>/dev/null); ` +
 		`r=$(printf "%s" "$legacy_candidates" | ` + poolDemandMigrationFilterJQ(1) + ` 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
@@ -184,6 +226,14 @@ func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		`return 1; ` +
 		`}; `
+}
+
+// poolAliasReadyTierCommand is the worker first-row form of the pool-alias tier.
+// It is widened past a single row for the same reason as routedReadyTierCommand:
+// a self-blocked head must have ready work behind it to fall through to, and the
+// hook layer (filterUnreadyHookCandidates) strips the blocked head.
+func poolAliasReadyTierCommand(includeEphemeralReady bool) string {
+	return bdReadyPoolAliasDemandShell("--sort oldest --limit=20", includeEphemeralReady) + ` 2>/dev/null`
 }
 
 func routedReadyTierCommand(includeEphemeralReady bool) string {
@@ -197,10 +247,13 @@ func routedReadyTierCommand(includeEphemeralReady bool) string {
 }
 
 // poolDemandCountShell emits the reconciler count-form for target: it counts
-// ready, unassigned, routed demand and prints the array length. It shares the
-// canonical and migration predicates with poolDemandFirstRowFunctionScript so
-// the reconciler's spawn decision and the worker's claim decision read the
-// same demand shape.
+// ready routed demand -- unassigned, plus beads hand-assigned to the pool name
+// itself -- and prints the array length. It shares the canonical, pool-alias and
+// migration predicates with poolDemandFirstRowFunctionScript so the reconciler's
+// spawn decision and the worker's claim decision read the same demand shape.
+// Counting a shape the worker can claim but the reconciler cannot see leaves the
+// bead unworked with no session ever spawned (ci-rdbw); counting one the worker
+// cannot claim is the wake/drain spawn storm of PR #1516.
 //
 // Unlike the work_query probe, this form must NOT redirect bd stderr or default
 // to zero: a failed `bd ready` has to surface as an error rather than
@@ -210,10 +263,11 @@ func routedReadyTierCommand(includeEphemeralReady bool) string {
 func poolDemandCountShell(target string, includeEphemeralReady bool) string {
 	script := `target="$1"; ` +
 		`ready_json=$(` + bdReadyPoolDemandShell("--limit 0", includeEphemeralReady) + `) || exit $?; ` +
+		`alias_json=$(` + bdReadyPoolAliasDemandShell("--limit 0", includeEphemeralReady) + `) || exit $?; ` +
 		`legacy_candidates=$(` + bdReadyPoolDemandMigrationShell("--limit 0", includeEphemeralReady) + `) || exit $?; ` +
 		`legacy_json=$(printf "%s" "$legacy_candidates" | ` + poolDemandMigrationFilterJQ(0) + `) || exit $?; ` +
 		`legacy_ephemeral_json=$(` + legacyEphemeralPoolDemandShell(0, includeEphemeralReady, false) + `); ` +
-		`printf "%s\n%s\n%s\n" "$ready_json" "$legacy_json" "$legacy_ephemeral_json" | jq -s "(add // []) | unique_by(.id) | length"`
+		`printf "%s\n%s\n%s\n%s\n" "$ready_json" "$alias_json" "$legacy_json" "$legacy_ephemeral_json" | jq -s "(add // []) | unique_by(.id) | length"`
 	return shellquote.Join([]string{"sh", "-c", script, "--", target})
 }
 
@@ -441,7 +495,10 @@ func (a *Agent) effectiveQueryForBeads(kind queryKind, beads BeadsConfig) string
 // was used when assigning.
 //
 // State priority: in_progress+assigned (crash recovery) >
-// ready+assigned (pre-assigned) > ready+unassigned+routed_to (pool).
+// ready+assigned (pre-assigned) > ready+unassigned+routed_to (pool) >
+// ready+assigned-to-the-pool-name (hand-assigned pool work; see
+// bdReadyPoolAliasDemandShell for why that last tier is route-scoped rather
+// than a fourth identity in the assigned loop).
 // Executable formula roots can be epic-typed; the bead storage policy decides
 // whether those roots are history-backed, no-history, or ephemeral for the
 // configured bd compatibility mode. Molecule containers are not routable
