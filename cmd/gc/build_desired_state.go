@@ -1618,10 +1618,14 @@ func defaultScaleCheckCountsAndDemand(cfg *config.City, targets []defaultScaleCh
 			}
 		}
 		for _, b := range ready {
-			if strings.TrimSpace(b.Assignee) != "" {
-				continue
-			}
+			// An assignee names either a specific identity or, for the pool-alias
+			// tier, the pool itself. Skipping every assigned bead here left this
+			// in-process reader unable to see a shape poolDemandCountShell counts,
+			// which is the Go/shell divergence dispatch.md invariant 11 forbids.
 			template := controllerDemandRouteTarget(cfg, b, group.templates)
+			if strings.TrimSpace(b.Assignee) != "" {
+				template = controllerDemandPoolAliasTarget(cfg, b, group.templates)
+			}
 			if _, ok := group.templates[template]; !ok {
 				continue
 			}

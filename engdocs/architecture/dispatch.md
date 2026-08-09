@@ -171,11 +171,55 @@ Targets resolve to `Agent.PoolName` when set and
 land on the same routed queue.
 
 Supported handoff forms are intentionally distinct. Generic pool demand is
-ready work with `assignee=""` and `gc.routed_to=<target>`; assigning the
-pool template itself is not pool demand. Direct named-session delivery is
-ready work with `assignee=<named-session-identity>` and no generic route
-metadata, so the reconciler does not also treat the handoff as generic pool
-demand.
+ready work with `assignee=""` and `gc.routed_to=<target>`. Work hand-assigned
+to the pool's own bare name is a SECOND pool-demand form, served by the
+pool-alias tier (`bdReadyPoolAliasDemandShell`, ci-c000) -- it is read from
+the assignee and claimed by atomic transfer, never rewritten into a route.
+Direct named-session delivery is ready work with
+`assignee=<named-session-identity>` and no generic route metadata, so the
+reconciler does not also treat the handoff as generic pool demand.
+
+The pool-alias tier has TWO implementations and both must know about it. The
+generated shell predicates are one; the other is the reconciler's in-process
+Go reader (`defaultScaleCheckCountsAndDemand`), which is what runs for a pool
+with no custom `scale_check` -- the reconciler only shells out when one is
+configured. That reader skipped every bead carrying an assignee until ci-mqqe,
+so the shell form counted a shape the in-process form could not see. The
+consequence was not a wrong number but a pool that never woke at all: measured
+at 7h23m of a ready P1 with zero sessions, ending only when a human ran
+`gc sling`. `controllerDemandPoolAliasTarget`
+(`cmd/gc/pool_alias_demand.go`) is the in-process half, and its exclusions
+mirror the shell predicate's for the same recorded reasons.
+
+Rewriting such a bead into the routed form -- clear the assignee, stamp
+`gc.routed_to` -- was tried and rejected. It wakes the pool, but it bypasses
+the compare-and-swap claim transfer (`BdStore.ReassignIfAssignee`) that stops
+two slots winning the same bead, discards the operator's recorded addressee,
+and leaves the two implementations still disagreeing: any bead the rewrite
+skipped would remain visible to one half and not the other. Demand is read
+from the assignee, not manufactured by editing the work.
+
+The tier serves only work with an assignee and NO route, and that boundary is
+what keeps it from colliding with #2527. A route present means routing was
+expressed explicitly and the assignee sits on top of it as concrete ownership
+-- the refinery handoff, which must wake its named holder without also raising
+generic pool demand. A route absent means the assignee IS the routing
+expression. Note this is a route check, not a same-target comparison: a bead
+assigned here but routed ELSEWHERE has already left this pool and must not
+raise demand on it either.
+
+Two asymmetries with the shell form are deliberate rather than drift, and both
+are one-sided because the shell probe only ever runs for a target the
+reconciler already chose to scale, while the Go reader walks every ready bead
+against a template set.
+
+- Only the Go side excludes a configured named session's identity; otherwise a
+  bead the named-session path is already spawning its holder for would also
+  wake the backing pool.
+- `bd ready --assignee="$target"` applies no route filter, so for a bead both
+  assigned and routed to this same target the shell counts one where the Go
+  reader counts zero. #2527's invariant is explicit and regression-tested, so
+  it wins for that shape, and ci-c000's tier has no producer of it.
 
 The shared predicate is the agreement substrate. Failure envelopes
 intentionally differ: the worker path suppresses `bd ready` stderr and
