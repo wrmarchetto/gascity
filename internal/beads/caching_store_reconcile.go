@@ -276,11 +276,34 @@ func (c *CachingStore) nextReconcileDelay(now time.Time) time.Duration {
 		return 0
 	}
 
+	interval := c.adaptiveIntervalLocked()
+
+	// Two independent reasons to scan, and the earlier one wins.
+	//
+	// The scheduled one anchors on the last completed full scan. Before the
+	// first pass there is none, and it must NOT fall back to lastFreshAt:
+	// markFreshLocked has ~30 callers -- every write, every event apply,
+	// every cache-absorbing read -- so on a store busier than its own cadence
+	// that anchor is pushed forward on every touch, and the pass that would
+	// set LastReconcileAt is the only thing that ends the dependency. The
+	// city store sat in exactly that state for 29 hours across eight restarts
+	// with its loop ticking every 5 s throughout (bead ci-enyk).
+	// reconcilerArmedAt is stamped once and never moves, so the first scan
+	// stays on a bounded schedule however much traffic the store carries.
 	lastFullScanAt := c.stats.LastReconcileAt
 	if lastFullScanAt.IsZero() {
-		lastFullScanAt = c.lastFreshAt
+		lastFullScanAt = c.reconcilerArmedAt
 	}
-	dueAt := lastFullScanAt.Add(c.adaptiveIntervalLocked())
+	dueAt := lastFullScanAt.Add(interval)
+
+	// The watchdog one fires when the cached data itself has aged past an
+	// interval. Taking the minimum keeps it: freshness may only ever pull a
+	// scan EARLIER, never defer one. Dropping this arm would leave a store
+	// whose data went stale waiting out the scheduled interval instead.
+	if staleAt := c.lastFreshAt.Add(interval); staleAt.Before(dueAt) {
+		dueAt = staleAt
+	}
+
 	if !now.Before(dueAt) {
 		return 0
 	}

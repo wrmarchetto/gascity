@@ -2393,10 +2393,20 @@ func TestCachingStoreNextReconcileDelayUsesFreshnessWatchdog(t *testing.T) {
 
 	cache := NewCachingStoreForTest(NewMemStore(), nil)
 	cache.state = cacheLive
+	cache.reconcilerArmedAt = time.Unix(100, 0)
 	cache.lastFreshAt = time.Unix(100, 0)
 
 	if got := cache.nextReconcileDelay(time.Unix(110, 0)); got != 20*time.Second {
 		t.Fatalf("nextReconcileDelay(fresh) = %s, want 20s", got)
+	}
+
+	// Freshness stamped after the loop was armed must NOT push the first
+	// scan out: the due instant stays anchored at armed+30s, so at t=125
+	// there are 5s left rather than a fresh 30s. Anchoring this case on
+	// lastFreshAt is what starved the city store for 29 hours (ci-enyk).
+	cache.lastFreshAt = time.Unix(125, 0)
+	if got := cache.nextReconcileDelay(time.Unix(125, 0)); got != 5*time.Second {
+		t.Fatalf("nextReconcileDelay(armed, then written) = %s, want 5s", got)
 	}
 
 	cache.stats.LastReconcileAt = time.Unix(70, 0)

@@ -805,3 +805,89 @@ func TestPrimeFailureThenReconcileConverges(t *testing.T) {
 		t.Fatalf("cachedReadyOnly = %#v, want to include %s", got, missed.ID)
 	}
 }
+
+// TestFirstFullScanIsNotStarvedByOngoingFreshness pins the invariant that a
+// store which has never completed a reconcile still becomes due for one on a
+// bounded schedule, however often ordinary traffic stamps the cache fresh.
+//
+// Before the first pass stats.LastReconcileAt is zero, so nextReconcileDelay
+// must anchor the due instant on something else. Anchoring it on lastFreshAt
+// is self-gating: every write, event-apply and cache-absorbing read calls
+// markFreshLocked, so a store busier than its own cadence pushes the due
+// instant forward on every touch, and the pass that would set LastReconcileAt
+// -- the only thing that ends the dependency -- never runs. The city store
+// held exactly that state for 29 hours across eight process restarts with its
+// loop armed and ticking every 5 s throughout, and recovered only when a
+// config reload built a fresh store that happened to catch a quiet window
+// (bead ci-enyk).
+//
+// The traffic period is derived from the store's own adaptive interval rather
+// than written as a constant, because the invariant under test is "traffic
+// strictly faster than the cadence", not any particular pair of durations.
+// What is asserted is that a scan comes DUE inside a generous horizon; no
+// expected delay is recomputed from nextReconcileDelay, so an implementation
+// that drops the anchor cannot make this pass vacuously.
+func TestFirstFullScanIsNotStarvedByOngoingFreshness(t *testing.T) {
+	t.Parallel()
+
+	cache := NewCachingStoreForTest(NewMemStore(), nil)
+
+	start := time.Unix(1_000_000, 0)
+
+	cache.mu.Lock()
+	cache.state = cacheLive
+	cache.markFreshLocked(start)
+	interval := cache.adaptiveIntervalLocked()
+	neverReconciled := cache.stats.LastReconcileAt.IsZero()
+	cache.mu.Unlock()
+
+	if !neverReconciled {
+		t.Fatal("LastReconcileAt is already set; this test only covers the pre-first-scan anchor")
+	}
+
+	// Strictly faster than the cadence, so each sample re-stamps freshness
+	// before the previous due instant can arrive.
+	traffic := interval / 3
+	if traffic <= 0 {
+		t.Fatalf("adaptiveIntervalLocked = %s, too small to sample beneath", interval)
+	}
+	horizon := 20 * interval
+
+	due := false
+	for elapsed := time.Duration(0); elapsed <= horizon && !due; elapsed += traffic {
+		now := start.Add(elapsed)
+		if cache.nextReconcileDelay(now) == 0 {
+			due = true
+			break
+		}
+		cache.mu.Lock()
+		cache.markFreshLocked(now)
+		cache.mu.Unlock()
+	}
+	if !due {
+		t.Fatalf("no full scan came due within %s of traffic every %s at cadence %s; "+
+			"the first-scan anchor is being pushed forward by freshness", horizon, traffic, interval)
+	}
+
+	// The gate opening is only half of it. Run the pass and confirm it stamps
+	// LastReconcileAt -- that handoff is what moves the store onto the stable
+	// anchor, and it is why a store that escapes once never starves again. The
+	// field failure was "loop armed and ticking, no pass ever completed", so a
+	// test that stopped at the gate would miss a break in the handoff.
+	cache.runReconciliation()
+
+	cache.mu.RLock()
+	stamped := cache.stats.LastReconcileAt
+	cache.mu.RUnlock()
+	if stamped.IsZero() {
+		t.Fatal("runReconciliation left LastReconcileAt zero; the store stays on the armed anchor forever")
+	}
+
+	// And once stamped, freshness must not push the next scan out either.
+	cache.mu.Lock()
+	cache.markFreshLocked(stamped.Add(interval))
+	cache.mu.Unlock()
+	if got := cache.nextReconcileDelay(stamped.Add(interval)); got > interval {
+		t.Fatalf("nextReconcileDelay after handoff = %s, want <= cadence %s", got, interval)
+	}
+}

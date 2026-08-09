@@ -91,7 +91,12 @@ func TestMergeOracleFieldCoverage(t *testing.T) {
 		"stats": true, // stats compared field-wise below
 	}
 	excludedStore := map[string]bool{
-		"backing": true, "idPrefix": true, "mu": true, "reconciling": true,
+		// reconcilerArmedAt is scheduler state, written once by
+		// StartReconciler and never by the merge seam, so the oracle has
+		// nothing to compare. It gates WHEN a pass runs, not what one
+		// produces.
+		"reconcilerArmedAt": true,
+		"backing":           true, "idPrefix": true, "mu": true, "reconciling": true,
 		"onChange": true, "problemf": true, "problemLog": true,
 		"lastReconcileLogAt": true, "primeMu": true, "primeRunning": true,
 		"primeCycle": true, "lastFullPrimeStartedAt": true, "primeRetryDelay": true,
