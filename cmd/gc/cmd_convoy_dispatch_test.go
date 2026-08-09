@@ -703,7 +703,9 @@ func TestDecorateDrainItemRecipeUsesDirectExecutionRoute(t *testing.T) {
 				Title: "Check",
 				Type:  "task",
 				Metadata: map[string]string{
-					"gc.kind": "check",
+					// Any control kind exercises the control-step route; this
+					// carried "check" until ci-zg0l retired that kind.
+					"gc.kind": "scope-check",
 				},
 			},
 		},
@@ -1789,8 +1791,13 @@ func TestDecorateDynamicFragmentRecipeControlRouteUsesOwningStoreScope(t *testin
 		Name: "expansion-review",
 		Steps: []formula.RecipeStep{
 			{ID: "expansion-review.review", Title: "Review"},
+			// Any control kind exercises the control-dispatcher route;
+			// scope-check is the one internal/formula/fragment.go actually
+			// injects into a dynamic fragment, so it is the faithful stand-in.
+			// This step used to carry gc.kind=check, a kind no compiler ever
+			// emitted (removed in ci-zg0l).
 			{ID: "expansion-review.check", Title: "Check", Metadata: map[string]string{
-				beadmeta.KindMetadataKey:         beadmeta.KindCheck,
+				beadmeta.KindMetadataKey:         beadmeta.KindScopeCheck,
 				beadmeta.RootStoreRefMetadataKey: "rig:stale",
 			}},
 		},
@@ -1937,7 +1944,9 @@ func TestDecorateDynamicFragmentRecipeUsesDirectExecutionRoute(t *testing.T) {
 				ID:    "expansion-review.check",
 				Title: "Check",
 				Metadata: map[string]string{
-					"gc.kind": "check",
+					// Any control kind exercises the control-dispatcher queue
+					// route; this carried "check" until ci-zg0l retired it.
+					"gc.kind": "scope-check",
 				},
 			},
 		},
@@ -2993,60 +3002,54 @@ func TestRunControlDispatcherWithStoreRoutesRalphTraceWarningToStderr(t *testing
 	if err != nil {
 		t.Fatalf("create workflow bead: %v", err)
 	}
-	logical, err := store.Create(beads.Bead{
-		Title: "logical",
+	iteration, err := store.Create(beads.Bead{
+		Title: "implement iteration 1",
 		Type:  "task",
 		Metadata: map[string]string{
-			"gc.kind":         "ralph",
+			"gc.kind":         "scope",
+			"gc.scope_role":   "body",
 			"gc.step_id":      "implement",
-			"gc.max_attempts": "1",
+			"gc.attempt":      "1",
+			"gc.step_ref":     "implement.iteration.1",
 			"gc.root_bead_id": workflow.ID,
 		},
 	})
 	if err != nil {
-		t.Fatalf("create logical bead: %v", err)
+		t.Fatalf("create iteration bead: %v", err)
 	}
-	run1, err := store.Create(beads.Bead{
-		Title: "run 1",
-		Type:  "task",
-		Metadata: map[string]string{
-			"gc.kind":            "run",
-			"gc.step_id":         "implement",
-			"gc.ralph_step_id":   "implement",
-			"gc.attempt":         "1",
-			"gc.step_ref":        "implement.run.1",
-			"gc.root_bead_id":    workflow.ID,
-			"gc.logical_bead_id": logical.ID,
-		},
-	})
-	if err != nil {
-		t.Fatalf("create run bead: %v", err)
+	// Closed: the ralph control evaluates an iteration only once it is
+	// terminal, so an open one would leave the dispatch pending and the
+	// action=pass assertion below unreachable.
+	if err := store.Close(iteration.ID); err != nil {
+		t.Fatalf("close iteration: %v", err)
 	}
 	check1, err := store.Create(beads.Bead{
-		Title: "check 1",
+		Title: "implement control",
 		Type:  "task",
 		Metadata: map[string]string{
-			"gc.kind":            "check",
-			"gc.step_id":         "implement",
-			"gc.ralph_step_id":   "implement",
-			"gc.attempt":         "1",
-			"gc.step_ref":        "implement.check.1",
-			"gc.check_mode":      "exec",
-			"gc.check_path":      "pass-check.sh",
-			"gc.check_timeout":   "30s",
-			"gc.max_attempts":    "1",
-			"gc.root_bead_id":    workflow.ID,
-			"gc.logical_bead_id": logical.ID,
+			// The ralph control carries its own check config and runs the gate
+			// itself. This fixture used to build a separate gc.kind=check bead
+			// and dispatch that; no compiler ever emitted one and ci-zg0l
+			// removed the kind. What is under test here is the trace-open
+			// warning, not the control kind.
+			"gc.kind":          "ralph",
+			"gc.step_id":       "implement",
+			"gc.step_ref":      "implement",
+			"gc.check_mode":    "exec",
+			"gc.check_path":    "pass-check.sh",
+			"gc.check_timeout": "30s",
+			"gc.max_attempts":  "1",
+			"gc.control_epoch": "1",
+			"gc.root_bead_id":  workflow.ID,
+			"gc.source_step_spec": `{"id":"implement","title":"Implement","type":"task",` +
+				`"ralph":{"max_attempts":1,"check":{"mode":"exec","path":"pass-check.sh"}}}`,
 		},
 	})
 	if err != nil {
-		t.Fatalf("create check bead: %v", err)
+		t.Fatalf("create control bead: %v", err)
 	}
-	if err := store.DepAdd(check1.ID, run1.ID, "blocks"); err != nil {
-		t.Fatalf("add check->run dep: %v", err)
-	}
-	if err := store.DepAdd(logical.ID, check1.ID, "blocks"); err != nil {
-		t.Fatalf("add logical->check dep: %v", err)
+	if err := store.DepAdd(check1.ID, iteration.ID, "blocks"); err != nil {
+		t.Fatalf("add control->iteration dep: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -3097,60 +3100,54 @@ func TestRunControlDispatcherWithStoreWarnsOnLegacyTracePath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workflow bead: %v", err)
 	}
-	logical, err := store.Create(beads.Bead{
-		Title: "logical",
+	iteration, err := store.Create(beads.Bead{
+		Title: "implement iteration 1",
 		Type:  "task",
 		Metadata: map[string]string{
-			"gc.kind":         "ralph",
+			"gc.kind":         "scope",
+			"gc.scope_role":   "body",
 			"gc.step_id":      "implement",
-			"gc.max_attempts": "1",
+			"gc.attempt":      "1",
+			"gc.step_ref":     "implement.iteration.1",
 			"gc.root_bead_id": workflow.ID,
 		},
 	})
 	if err != nil {
-		t.Fatalf("create logical bead: %v", err)
+		t.Fatalf("create iteration bead: %v", err)
 	}
-	run1, err := store.Create(beads.Bead{
-		Title: "run 1",
-		Type:  "task",
-		Metadata: map[string]string{
-			"gc.kind":            "run",
-			"gc.step_id":         "implement",
-			"gc.ralph_step_id":   "implement",
-			"gc.attempt":         "1",
-			"gc.step_ref":        "implement.run.1",
-			"gc.root_bead_id":    workflow.ID,
-			"gc.logical_bead_id": logical.ID,
-		},
-	})
-	if err != nil {
-		t.Fatalf("create run bead: %v", err)
+	// Closed: the ralph control evaluates an iteration only once it is
+	// terminal, so an open one would leave the dispatch pending and the
+	// action=pass assertion below unreachable.
+	if err := store.Close(iteration.ID); err != nil {
+		t.Fatalf("close iteration: %v", err)
 	}
 	check1, err := store.Create(beads.Bead{
-		Title: "check 1",
+		Title: "implement control",
 		Type:  "task",
 		Metadata: map[string]string{
-			"gc.kind":            "check",
-			"gc.step_id":         "implement",
-			"gc.ralph_step_id":   "implement",
-			"gc.attempt":         "1",
-			"gc.step_ref":        "implement.check.1",
-			"gc.check_mode":      "exec",
-			"gc.check_path":      "pass-check.sh",
-			"gc.check_timeout":   "30s",
-			"gc.max_attempts":    "1",
-			"gc.root_bead_id":    workflow.ID,
-			"gc.logical_bead_id": logical.ID,
+			// The ralph control carries its own check config and runs the gate
+			// itself. This fixture used to build a separate gc.kind=check bead
+			// and dispatch that; no compiler ever emitted one and ci-zg0l
+			// removed the kind. What is under test here is the trace-open
+			// warning, not the control kind.
+			"gc.kind":          "ralph",
+			"gc.step_id":       "implement",
+			"gc.step_ref":      "implement",
+			"gc.check_mode":    "exec",
+			"gc.check_path":    "pass-check.sh",
+			"gc.check_timeout": "30s",
+			"gc.max_attempts":  "1",
+			"gc.control_epoch": "1",
+			"gc.root_bead_id":  workflow.ID,
+			"gc.source_step_spec": `{"id":"implement","title":"Implement","type":"task",` +
+				`"ralph":{"max_attempts":1,"check":{"mode":"exec","path":"pass-check.sh"}}}`,
 		},
 	})
 	if err != nil {
-		t.Fatalf("create check bead: %v", err)
+		t.Fatalf("create control bead: %v", err)
 	}
-	if err := store.DepAdd(check1.ID, run1.ID, "blocks"); err != nil {
-		t.Fatalf("add check->run dep: %v", err)
-	}
-	if err := store.DepAdd(logical.ID, check1.ID, "blocks"); err != nil {
-		t.Fatalf("add logical->check dep: %v", err)
+	if err := store.DepAdd(check1.ID, iteration.ID, "blocks"); err != nil {
+		t.Fatalf("add control->iteration dep: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -3216,65 +3213,54 @@ func TestRunWorkflowServeDedupsTraceWarningsAcrossNestedControlDispatch(t *testi
 			Title: "logical " + stepID,
 			Type:  "task",
 			Metadata: map[string]string{
-				"gc.kind":         "ralph",
+				"gc.kind":          "ralph",
+				"gc.step_id":       stepID,
+				"gc.step_ref":      stepID,
+				"gc.check_mode":    "exec",
+				"gc.check_path":    "pass-check.sh",
+				"gc.check_timeout": "30s",
+				"gc.max_attempts":  "1",
+				"gc.control_epoch": "1",
+				"gc.root_bead_id":  workflow.ID,
+				"gc.source_step_spec": `{"id":"` + stepID + `","title":"Implement","type":"task",` +
+					`"ralph":{"max_attempts":1,"check":{"mode":"exec","path":"pass-check.sh"}}}`,
+			},
+		})
+		if err != nil {
+			t.Fatalf("create control bead for %s: %v", stepID, err)
+		}
+		iteration, err := store.Create(beads.Bead{
+			Title: "iteration " + stepID,
+			Type:  "task",
+			Metadata: map[string]string{
+				"gc.kind":         "scope",
+				"gc.scope_role":   "body",
 				"gc.step_id":      stepID,
-				"gc.max_attempts": "1",
+				"gc.attempt":      "1",
+				"gc.step_ref":     stepID + ".iteration.1",
 				"gc.root_bead_id": workflow.ID,
 			},
 		})
 		if err != nil {
-			t.Fatalf("create logical bead for %s: %v", stepID, err)
+			t.Fatalf("create iteration bead for %s: %v", stepID, err)
 		}
-		run, err := store.Create(beads.Bead{
-			Title: "run " + stepID,
-			Type:  "task",
-			Metadata: map[string]string{
-				"gc.kind":            "run",
-				"gc.step_id":         stepID,
-				"gc.ralph_step_id":   stepID,
-				"gc.attempt":         "1",
-				"gc.step_ref":        stepID + ".run.1",
-				"gc.root_bead_id":    workflow.ID,
-				"gc.logical_bead_id": logical.ID,
-			},
-		})
-		if err != nil {
-			t.Fatalf("create run bead for %s: %v", stepID, err)
+		// Closed so the control evaluates it instead of staying pending; a
+		// pending dispatch would never reach the nested trace-open this test
+		// counts.
+		if err := store.Close(iteration.ID); err != nil {
+			t.Fatalf("close iteration for %s: %v", stepID, err)
 		}
-		check, err := store.Create(beads.Bead{
-			Title: "check " + stepID,
-			Type:  "task",
-			Metadata: map[string]string{
-				"gc.kind":            "check",
-				"gc.step_id":         stepID,
-				"gc.ralph_step_id":   stepID,
-				"gc.attempt":         "1",
-				"gc.step_ref":        stepID + ".check.1",
-				"gc.check_mode":      "exec",
-				"gc.check_path":      "pass-check.sh",
-				"gc.check_timeout":   "30s",
-				"gc.max_attempts":    "1",
-				"gc.root_bead_id":    workflow.ID,
-				"gc.logical_bead_id": logical.ID,
-			},
-		})
-		if err != nil {
-			t.Fatalf("create check bead for %s: %v", stepID, err)
+		if err := store.DepAdd(logical.ID, iteration.ID, "blocks"); err != nil {
+			t.Fatalf("add control->iteration dep for %s: %v", stepID, err)
 		}
-		if err := store.DepAdd(check.ID, run.ID, "blocks"); err != nil {
-			t.Fatalf("add check->run dep for %s: %v", stepID, err)
-		}
-		if err := store.DepAdd(logical.ID, check.ID, "blocks"); err != nil {
-			t.Fatalf("add logical->check dep for %s: %v", stepID, err)
-		}
-		return check.ID
+		return logical.ID
 	}
 
 	checkOneID := newCheckBead("implement-a")
 	checkTwoID := newCheckBead("implement-b")
 	sequence := [][]hookBead{
-		{{ID: checkOneID, Metadata: map[string]string{"gc.kind": "check"}}},
-		{{ID: checkTwoID, Metadata: map[string]string{"gc.kind": "check"}}},
+		{{ID: checkOneID, Metadata: map[string]string{"gc.kind": "ralph"}}},
+		{{ID: checkTwoID, Metadata: map[string]string{"gc.kind": "ralph"}}},
 	}
 	workflowServeList = func(_, _ string, _ map[string]string) ([]hookBead, error) {
 		if len(sequence) == 0 {
@@ -3348,65 +3334,54 @@ func TestRunWorkflowServeDedupsLegacyTraceWarningsAcrossNestedControlDispatch(t 
 			Title: "logical " + stepID,
 			Type:  "task",
 			Metadata: map[string]string{
-				"gc.kind":         "ralph",
+				"gc.kind":          "ralph",
+				"gc.step_id":       stepID,
+				"gc.step_ref":      stepID,
+				"gc.check_mode":    "exec",
+				"gc.check_path":    "pass-check.sh",
+				"gc.check_timeout": "30s",
+				"gc.max_attempts":  "1",
+				"gc.control_epoch": "1",
+				"gc.root_bead_id":  workflow.ID,
+				"gc.source_step_spec": `{"id":"` + stepID + `","title":"Implement","type":"task",` +
+					`"ralph":{"max_attempts":1,"check":{"mode":"exec","path":"pass-check.sh"}}}`,
+			},
+		})
+		if err != nil {
+			t.Fatalf("create control bead for %s: %v", stepID, err)
+		}
+		iteration, err := store.Create(beads.Bead{
+			Title: "iteration " + stepID,
+			Type:  "task",
+			Metadata: map[string]string{
+				"gc.kind":         "scope",
+				"gc.scope_role":   "body",
 				"gc.step_id":      stepID,
-				"gc.max_attempts": "1",
+				"gc.attempt":      "1",
+				"gc.step_ref":     stepID + ".iteration.1",
 				"gc.root_bead_id": workflow.ID,
 			},
 		})
 		if err != nil {
-			t.Fatalf("create logical bead for %s: %v", stepID, err)
+			t.Fatalf("create iteration bead for %s: %v", stepID, err)
 		}
-		run, err := store.Create(beads.Bead{
-			Title: "run " + stepID,
-			Type:  "task",
-			Metadata: map[string]string{
-				"gc.kind":            "run",
-				"gc.step_id":         stepID,
-				"gc.ralph_step_id":   stepID,
-				"gc.attempt":         "1",
-				"gc.step_ref":        stepID + ".run.1",
-				"gc.root_bead_id":    workflow.ID,
-				"gc.logical_bead_id": logical.ID,
-			},
-		})
-		if err != nil {
-			t.Fatalf("create run bead for %s: %v", stepID, err)
+		// Closed so the control evaluates it instead of staying pending; a
+		// pending dispatch would never reach the nested trace-open this test
+		// counts.
+		if err := store.Close(iteration.ID); err != nil {
+			t.Fatalf("close iteration for %s: %v", stepID, err)
 		}
-		check, err := store.Create(beads.Bead{
-			Title: "check " + stepID,
-			Type:  "task",
-			Metadata: map[string]string{
-				"gc.kind":            "check",
-				"gc.step_id":         stepID,
-				"gc.ralph_step_id":   stepID,
-				"gc.attempt":         "1",
-				"gc.step_ref":        stepID + ".check.1",
-				"gc.check_mode":      "exec",
-				"gc.check_path":      "pass-check.sh",
-				"gc.check_timeout":   "30s",
-				"gc.max_attempts":    "1",
-				"gc.root_bead_id":    workflow.ID,
-				"gc.logical_bead_id": logical.ID,
-			},
-		})
-		if err != nil {
-			t.Fatalf("create check bead for %s: %v", stepID, err)
+		if err := store.DepAdd(logical.ID, iteration.ID, "blocks"); err != nil {
+			t.Fatalf("add control->iteration dep for %s: %v", stepID, err)
 		}
-		if err := store.DepAdd(check.ID, run.ID, "blocks"); err != nil {
-			t.Fatalf("add check->run dep for %s: %v", stepID, err)
-		}
-		if err := store.DepAdd(logical.ID, check.ID, "blocks"); err != nil {
-			t.Fatalf("add logical->check dep for %s: %v", stepID, err)
-		}
-		return check.ID
+		return logical.ID
 	}
 
 	checkOneID := newCheckBead("implement-a")
 	checkTwoID := newCheckBead("implement-b")
 	sequence := [][]hookBead{
-		{{ID: checkOneID, Metadata: map[string]string{"gc.kind": "check"}}},
-		{{ID: checkTwoID, Metadata: map[string]string{"gc.kind": "check"}}},
+		{{ID: checkOneID, Metadata: map[string]string{"gc.kind": "ralph"}}},
+		{{ID: checkTwoID, Metadata: map[string]string{"gc.kind": "ralph"}}},
 	}
 	workflowServeList = func(_, _ string, _ map[string]string) ([]hookBead, error) {
 		if len(sequence) == 0 {
@@ -4571,7 +4546,7 @@ func TestRunWorkflowServeRetriesBrieflyAfterProcessingBeforeIdleExit(t *testing.
 		case 2:
 			return nil, nil
 		case 3:
-			return []hookBead{{ID: "gc-ctrl-2", Metadata: map[string]string{"gc.kind": "check"}}}, nil
+			return []hookBead{{ID: "gc-ctrl-2", Metadata: map[string]string{"gc.kind": "ralph"}}}, nil
 		default:
 			return nil, nil
 		}
@@ -5978,52 +5953,6 @@ func TestResolveGraphStepBindingWorkflowFinalizeUsesFallback(t *testing.T) {
 	}
 	if binding.QualifiedName != "mayor" || binding.SessionName != fallback.SessionName {
 		t.Fatalf("binding = %+v, want fallback %+v", binding, fallback)
-	}
-}
-
-func TestResolveGraphStepBindingCheckRejectsInconsistentDeps(t *testing.T) {
-	store := beads.NewMemStore()
-	cfg := &config.City{
-		Workspace: config.Workspace{Name: "test-city"},
-		Agents: []config.Agent{
-			{Name: "reviewer-a"},
-			{Name: "reviewer-b"},
-		},
-	}
-
-	stepByID := map[string]*formula.RecipeStep{
-		"demo.review-a": {
-			ID:    "demo.review-a",
-			Title: "Review A",
-			Metadata: map[string]string{
-				"gc.run_target": "reviewer-a",
-			},
-		},
-		"demo.review-b": {
-			ID:    "demo.review-b",
-			Title: "Review B",
-			Metadata: map[string]string{
-				"gc.run_target": "reviewer-b",
-			},
-		},
-		"demo.check": {
-			ID:    "demo.check",
-			Title: "Check",
-			Metadata: map[string]string{
-				"gc.kind": "check",
-			},
-		},
-	}
-	depsByStep := map[string][]string{
-		"demo.check": {"demo.review-a", "demo.review-b"},
-	}
-	fallback := graphRouteBinding{
-		QualifiedName: "reviewer-a",
-		SessionName:   lookupSessionNameOrLegacy(store, cfg.Workspace.Name, "reviewer-a", cfg.Workspace.SessionTemplate),
-	}
-
-	if _, err := resolveGraphStepBinding("demo.check", stepByID, nil, depsByStep, map[string]graphRouteBinding{}, map[string]bool{}, fallback, "", store, cfg.Workspace.Name, "", cfg); err == nil || !strings.Contains(err.Error(), "inconsistent control routing") {
-		t.Fatalf("resolveGraphStepBinding(check) error = %v, want inconsistent control routing", err)
 	}
 }
 

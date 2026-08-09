@@ -2,18 +2,19 @@
 // -- exit code, stdout, stderr, duration, truncation -- onto the control bead.
 //
 // This suite exists because that record was absent for months with a green
-// suite. The writer (persistCheckResult) sits on processRalphCheck, reached
-// only by a bead with gc.kind=check, and the formula compiler emits no such
-// bead: internal/formula/ralph.go returns control(ralph)+spec+iteration. Every
+// suite. The writer sat on a processRalphCheck path reached only by a bead
+// with gc.kind=check, and the formula compiler emits no such bead:
+// internal/formula/ralph.go returns control(ralph)+spec+iteration. Every
 // pre-existing check-result fixture hand-set gc.kind=check, so the tests
 // exercised a subsystem no production path reaches while the live path
 // (processRalphControl -> evaluateRalphIteration) dropped four of the six
-// GateResult fields on the floor.
+// GateResult fields on the floor. ci-zg0l removed that kind and everything
+// hanging off it; these tests are what remains, and they are all live.
 //
 // The tests therefore enter through processRalphControl with gc.kind=ralph and
-// a real exec script. A test that calls processRalphCheck, or that asserts
-// against a hand-built gc.kind=check bead, re-pins the dead path and must not
-// be added here.
+// a real exec script. A test asserting against a hand-built gc.kind=check bead
+// would now pin a hard dispatcher error, not a behavior, and must not be added
+// here.
 //
 // Iteration-attempt history is delegated: gc.attempt_log is covered by
 // TestAttemptLogMultipleEntries in control_test.go. These tests assert only
@@ -56,11 +57,14 @@ func writeSaltedCheckScript(t *testing.T, cityPath string, exitCode int) string 
 // wired so processAttemptControl reaches evaluateRalphIteration and runs the
 // check script.
 //
+// It takes no city path: gc.check_path is relative and is resolved against
+// ProcessOptions.CityPath at dispatch time, which each caller passes itself.
+//
 // The iteration carries no gc.outcome deliberately. runRalphCheck
 // short-circuits on gc.outcome=fail (ralph.go:212) and synthesizes a
 // GateResult without executing anything, which would make an assertion about
 // the script's own exit code vacuous.
-func ralphCheckObservationFixture(t *testing.T, store beads.Store, cityPath string, maxAttempts int) beads.Bead {
+func ralphCheckObservationFixture(t *testing.T, store beads.Store, maxAttempts int) beads.Bead {
 	t.Helper()
 	root := mustCreate(t, store, beads.Bead{
 		Title:    "workflow",
@@ -108,7 +112,7 @@ func TestProcessRalphControlPersistsCheckObservationOnPass(t *testing.T) {
 	cityPath := t.TempDir()
 	salt := writeSaltedCheckScript(t, cityPath, 0)
 	store := beads.NewMemStore()
-	control := ralphCheckObservationFixture(t, store, cityPath, 2)
+	control := ralphCheckObservationFixture(t, store, 2)
 
 	result, err := processRalphControl(store, mustGet(t, store, control.ID), ProcessOptions{CityPath: cityPath})
 	if err != nil {
@@ -166,7 +170,7 @@ func TestProcessRalphControlPersistsCheckExitCodeOnExhaustion(t *testing.T) {
 	store := beads.NewMemStore()
 	// max_attempts=1 so the failing check exhausts immediately and takes the
 	// strategy.exhaust seam, which is a different write from the pass close.
-	control := ralphCheckObservationFixture(t, store, cityPath, 1)
+	control := ralphCheckObservationFixture(t, store, 1)
 
 	result, err := processRalphControl(store, mustGet(t, store, control.ID), ProcessOptions{CityPath: cityPath})
 	if err != nil {
@@ -195,12 +199,13 @@ func TestProcessRalphControlPersistsCheckExitCodeOnExhaustion(t *testing.T) {
 // failing check with budget left records its observation while leaving
 // gc.outcome ABSENT on the still-open control bead.
 //
-// This is why evaluateRalphIteration must call persistGateObservation and not
-// persistCheckResult, whose batch includes gc.outcome from the gate result.
-// Stamping gc.outcome=fail on a control that is about to spawn another
-// iteration publishes a failed verdict for a loop still running, and beadmeta
-// documents gc.outcome as the control-plane step outcome -- the final
-// disposition, not one attempt's.
+// This is why evaluateRalphIteration records the observation WITHOUT
+// gc.outcome: persistGateObservation deliberately omits that key, and a writer
+// that folded the gate outcome into the same batch would violate this
+// invariant. Stamping gc.outcome=fail on a control that is about to spawn
+// another iteration publishes a failed verdict for a loop still running, and
+// beadmeta documents gc.outcome as the control-plane step outcome -- the
+// final disposition, not one attempt's.
 //
 // This one enters at evaluateRalphIteration rather than processRalphControl
 // because the continue disposition goes on to spawn the next iteration, which
@@ -212,7 +217,7 @@ func TestEvaluateRalphIterationObservationDoesNotPreemptOutcome(t *testing.T) {
 	cityPath := t.TempDir()
 	salt := writeSaltedCheckScript(t, cityPath, 1)
 	store := beads.NewMemStore()
-	control := ralphCheckObservationFixture(t, store, cityPath, 3)
+	control := ralphCheckObservationFixture(t, store, 3)
 	iteration := mustGet(t, store, latestIterationID(t, store, control.ID))
 
 	eval, err := evaluateRalphIteration(store, mustGet(t, store, control.ID), iteration, 1, ProcessOptions{CityPath: cityPath})

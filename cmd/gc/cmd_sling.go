@@ -1401,30 +1401,11 @@ func resolveGraphStepBindingWithVars(stepID string, stepByID map[string]*formula
 				cache[stepID] = binding
 				return binding, nil
 			}
-		case "check":
-			var resolved graphRouteBinding
-			found := false
-			for _, depID := range depsByStep[step.ID] {
-				if depID == "" {
-					continue
-				}
-				binding, err := resolveGraphStepBindingWithVars(depID, stepByID, stepAlias, depsByStep, cache, resolving, routeVars, fallback, rigContext, store, cityName, cityPath, cfg)
-				if err != nil {
-					return graphRouteBinding{}, err
-				}
-				if !found {
-					resolved = binding
-					found = true
-					continue
-				}
-				if binding != resolved {
-					return graphRouteBinding{}, fmt.Errorf("step %s: inconsistent control routing between deps (%+v vs %+v)", stepID, resolved, binding)
-				}
-			}
-			if found {
-				cache[stepID] = resolved
-				return resolved, nil
-			}
+			// "check" is deliberately absent, matching the switch this one
+			// duplicates in internal/graphroute. No compiler emits that kind
+			// (ci-zg0l removed it), so the branch was reachable only from
+			// fixtures. Keep the two switches in step: a kind handled here but
+			// not there routes differently depending on which entry point ran.
 		}
 		cache[stepID] = fallback
 		return fallback, nil

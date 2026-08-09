@@ -237,9 +237,11 @@ func TestDoHookClaimStampsOnlyChangedIdentityKeys(t *testing.T) {
 // stamped as before.
 func TestDoHookClaimSkipsSessionIdentityForControlBead(t *testing.T) {
 	spy := &stampMetaSpy{}
+	// gc.kind=ralph stands in for "any member of ControlKinds"; the policy is
+	// per-set, not per-kind. It was "check" until ci-zg0l retired that kind.
 	ops := poolClaimOps(
-		`[{"id":"hc-check","status":"open","metadata":{"gc.routed_to":"worker","gc.kind":"check"}}]`,
-		map[string]string{"gc.routed_to": "worker", "gc.kind": "check"},
+		`[{"id":"hc-check","status":"open","metadata":{"gc.routed_to":"worker","gc.kind":"ralph"}}]`,
+		map[string]string{"gc.routed_to": "worker", "gc.kind": "ralph"},
 		"bd-hc-check",
 		spy,
 	)

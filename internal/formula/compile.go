@@ -661,8 +661,12 @@ func isDetachedGraphStep(step *Step) bool {
 	if step == nil {
 		return false
 	}
+	// "check" is absent: no compiler emits that kind (ci-zg0l removed it), so
+	// listing it here would only suggest a step shape that cannot occur. These
+	// switches read freshly compiled steps, never persisted beads, so unlike
+	// molecule.logicalRecipeStepID they need no v1 compatibility entry.
 	switch step.Metadata[beadmeta.KindMetadataKey] {
-	case "ralph", "run", "check", "retry", "retry-run", "retry-eval":
+	case "ralph", "run", "retry", "retry-run", "retry-eval":
 		return true
 	default:
 		return false
@@ -703,7 +707,7 @@ func isWorkflowRootBlocker(step *Step) bool {
 		return false
 	}
 	switch step.Metadata[beadmeta.KindMetadataKey] {
-	case "run", "check", "retry-run", "retry-eval", "spec":
+	case "run", "retry-run", "retry-eval", "spec":
 		return false
 	default:
 		return true

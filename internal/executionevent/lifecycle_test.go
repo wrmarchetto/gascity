@@ -339,7 +339,9 @@ func TestLifecycleEventRetainsUnknownAndRejectsNonNativeOrInvalidFacts(t *testin
 	for k, v := range base.Metadata {
 		control.Metadata[k] = v
 	}
-	control.Metadata[beadmeta.KindMetadataKey] = "check"
+	// Any member of beadmeta.ControlKinds exercises the control-bead
+	// suppression; this carried "check" until ci-zg0l retired that kind.
+	control.Metadata[beadmeta.KindMetadataKey] = beadmeta.KindFanout
 	if _, ok := LifecycleEvent(events.ExecutionStepCompleted, root, control, "close-hook"); ok {
 		t.Fatal("control close emitted lifecycle event")
 	}
