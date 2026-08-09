@@ -1390,6 +1390,53 @@ func (s *BdStore) Claim(id string) (Bead, bool, error) {
 	return claimed, true, nil
 }
 
+// ReassignIfAssignee moves a bead from expected to next, but only while expected
+// is still its assignee.
+//
+// This is bd's `--if-assignee` compare-and-swap: it writes nothing and exits 13
+// when the assignee has already moved, which makes it the arbitration point for
+// taking a bead several actors are eligible for -- work parked on a pool alias
+// being the case it exists for (ci-c000). The rejected alternative was bd's
+// claim.pools config, which lets a plain `--claim` take a pool-assigned bead in
+// one write: it works, but it is store state no gate keeps in sync with the
+// city's agent names, so a renamed pool silently returns to the unclaimable
+// state.
+//
+// It deliberately does NOT set status or take a lease, because bd rejects
+// --if-assignee combined with --claim. A caller that needs the lease runs Claim
+// afterwards, as itself, on a bead it now owns.
+//
+// ok=false with a nil error means the swap was refused and the returned bead is
+// the readback naming the current holder, matching Claim. A refusal while the
+// bead is STILL on expected is an operational write failure and returns an
+// error: reporting that as a lost race would launder a failed write into
+// "someone else took it", leaving the bead stuck with nothing logged.
+func (s *BdStore) ReassignIfAssignee(id, expected, next string) (Bead, bool, error) {
+	out, err := s.runBDTransientWriteOutput("update", id, "--if-assignee", expected, "--assignee", next, "--json")
+	if err == nil {
+		moved, parseErr := parseBDMutationBead("bd reassign", out)
+		if parseErr != nil {
+			// The swap committed; only its projection was unreadable. Report the
+			// win with the error attached rather than as a refusal, so the caller
+			// does not hand back a bead it now owns.
+			return Bead{ID: id, Assignee: next}, true, fmt.Errorf("reassigning bead %q from %q: %w", id, expected, parseErr)
+		}
+		return moved, true, nil
+	}
+	// Decide lost-race vs write-failure from the bead's own state rather than
+	// bd's message text: exit 13 is not visible through the CommandRunner seam,
+	// and a text match would silently reclassify itself the next time bd rewords
+	// the mismatch line.
+	current, getErr := s.Get(id)
+	if getErr != nil || strings.TrimSpace(current.Assignee) == strings.TrimSpace(expected) {
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return Bead{}, false, fmt.Errorf("reassigning bead %q from %q: %w: %s", id, expected, err, msg)
+		}
+		return Bead{}, false, fmt.Errorf("reassigning bead %q from %q: %w", id, expected, err)
+	}
+	return current, false, nil
+}
+
 func parseBDMutationBead(op string, out []byte) (Bead, error) {
 	issues, parseErr := parseIssuesTolerant(extractJSON(out))
 	if parseErr == nil && len(issues) > 0 {
