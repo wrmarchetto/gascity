@@ -104,6 +104,21 @@ export interface QuotaReading {
   /** Seconds since the reading was taken, clamped at zero for clock skew. */
   readonly ageSeconds: number;
   readonly resetsAt: number;
+  /**
+   * Seconds from now until the window ends, null in the `rolled` state.
+   *
+   * Measured from NOW rather than from the observation, which is what makes it
+   * the one number on a row that an old reading does not degrade: the boundary
+   * is fixed and only the clock moves toward it. Every other field here is
+   * age-relative, so the natural-looking `resetsAt - observedAt` is wrong by
+   * exactly the reading's age.
+   *
+   * Null in `rolled` and only there. The boundary that passed is not the next
+   * one and nothing observed the next one, so there is no countdown to give --
+   * including the future-dated case where `resetsAt - nowSeconds` is still
+   * positive and would hand back a number for a window already over.
+   */
+  readonly secondsUntilReset: number | null;
 }
 
 /**
@@ -124,13 +139,21 @@ export function classifyQuotaReading(
   // disagree about the time, and "as of -3m ago" reads as a bug in the tab.
   const ageSeconds = Math.max(0, Math.round(nowSeconds - observedAt));
   if (window.resets_at <= nowSeconds || window.resets_at < observedAt) {
-    return { state: 'rolled', percentage: null, ageSeconds, resetsAt: window.resets_at };
+    return {
+      state: 'rolled',
+      percentage: null,
+      ageSeconds,
+      resetsAt: window.resets_at,
+      secondsUntilReset: null,
+    };
   }
   return {
     state: ageSeconds > QUOTA_STALE_AFTER_SECONDS ? 'stale' : 'current',
     percentage: window.used_percentage,
     ageSeconds,
     resetsAt: window.resets_at,
+    // Strictly positive here: reaching this branch means resets_at > nowSeconds.
+    secondsUntilReset: window.resets_at - nowSeconds,
   };
 }
 

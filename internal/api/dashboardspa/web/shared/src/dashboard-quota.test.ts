@@ -105,6 +105,44 @@ test('a window ending before a future-dated reading rolls rather than clamping',
   assert.equal(reading.percentage, null);
 });
 
+test('a live window reports the seconds remaining until it resets', () => {
+  const reading = classifyQuotaReading(NOW - JUST_INSIDE, window(62, NOW + 3_600), NOW);
+  assert.equal(reading.secondsUntilReset, 3_600);
+});
+
+test('the countdown runs from now, not from when the reading was taken', () => {
+  // The discriminating fixture for the whole countdown: observed_at is well
+  // behind now, so the tempting resets_at - observed_at (an age-relative span,
+  // matching how every other number in this module is derived) yields
+  // 3600 + JUST_OUTSIDE and stays wrong by exactly the reading's age. Only a
+  // fixture whose observation is NOT at now separates the two.
+  const reading = classifyQuotaReading(NOW - JUST_OUTSIDE, window(62, NOW + 3_600), NOW);
+  assert.equal(reading.state, 'stale');
+  // Stale, and the countdown is still exact. That asymmetry is the reason this
+  // field exists: the percentage decays with the window, the boundary does not
+  // move, so an old reading still knows precisely when its window ends.
+  assert.equal(reading.secondsUntilReset, 3_600);
+});
+
+test('a rolled window reports no countdown at all', () => {
+  // The boundary that passed is not the next one, and nothing observed the
+  // next one. A countdown here would have to be invented.
+  const reading = classifyQuotaReading(NOW - 1, window(62, NOW), NOW);
+  assert.equal(reading.state, 'rolled');
+  assert.equal(reading.secondsUntilReset, null);
+});
+
+test('a rolled window with a still-future boundary reports no countdown either', () => {
+  // Same future-dated reading as the second-clause test above, and the reason
+  // it is repeated here: resets_at is 100s AHEAD of the browser, so an
+  // implementation that returns null by testing the subtraction's sign rather
+  // than the rolled state hands back a confident 100s countdown for a window
+  // that closed before the reading was even written.
+  const reading = classifyQuotaReading(NOW + 300, window(62, NOW + 100), NOW);
+  assert.equal(reading.state, 'rolled');
+  assert.equal(reading.secondsUntilReset, null);
+});
+
 test('a percentage renders without the collector arithmetic noise', () => {
   // Not a synthetic case: account 5 on this host reported
   // 14.000000000000002 for its 7d window, which reaches the wire verbatim and
