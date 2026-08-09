@@ -61,15 +61,24 @@ function entry(account: string, overrides: EntryOverrides = {}) {
   };
 }
 
-// A record observed `ageSeconds` ago whose windows both reset an hour out, so
-// only the age distinguishes fresh from stale.
+// A record observed `ageSeconds` ago whose windows are both still open, so only
+// the age distinguishes fresh from stale.
+//
+// The reset offsets sit in the INTERIOR of formatDuration's buckets, not on
+// their edges. The obvious 3_600 renders '1h' only while the clock agrees to
+// the second: this suite runs on real time against a real NowProvider tick, and
+// one second of drift puts the span at 3_599, below the hour branch, rendering
+// '60m' and failing a countdown assertion for no reason the output explains.
+const FIVE_HOUR_RESET_IN = 7_200;
+const SEVEN_DAY_RESET_IN = 172_800;
+
 function observed(ageSeconds: number, fiveHourPercent = 62, sevenDayPercent = 18) {
   return {
     state: 'observed' as const,
     observed_at: NOW_SECONDS - ageSeconds,
     session_id: 'sess-1',
-    five_hour: { used_percentage: fiveHourPercent, resets_at: NOW_SECONDS + 3_600 },
-    seven_day: { used_percentage: sevenDayPercent, resets_at: NOW_SECONDS + 86_400 },
+    five_hour: { used_percentage: fiveHourPercent, resets_at: NOW_SECONDS + FIVE_HOUR_RESET_IN },
+    seven_day: { used_percentage: sevenDayPercent, resets_at: NOW_SECONDS + SEVEN_DAY_RESET_IN },
     reason: '',
   };
 }
@@ -192,6 +201,64 @@ it('advances the displayed age between refetches, not only on one', async () => 
   await waitFor(() => expect(cell.textContent ?? '').toMatch(/as of 1[12]s ago/), { timeout: 4_000 });
 });
 
+it('says how long until each window resets, counting forward from now', async () => {
+  // formatRelative is the helper every other timestamp on this row goes
+  // through, and it clamps future timestamps to 'now' -- a countdown routed
+  // through it renders "resets in now" on every live window, which reads as a
+  // window about to reset rather than one with hours left. Only a forward
+  // formatter produces these two.
+  currentReport = {
+    ...emptyReport(),
+    accounts: [entry('2', { in_pool: true, observation: observed(180) })],
+    pool: ['2'],
+  };
+  renderAccounts();
+
+  const row = await screen.findByTestId('account-row-2');
+  expect(within(row).getByTestId('five-hour-2').textContent ?? '').toMatch(/resets in 2h/i);
+  // Asserted per window rather than on the row, so a countdown wired to one
+  // window's boundary and rendered under both cells cannot pass.
+  expect(within(row).getByTestId('seven-day-2').textContent ?? '').toMatch(/resets in 2d/i);
+});
+
+it('leaves the countdown ungrayed on a stale row, where the percentage is grayed', async () => {
+  // The distinction the whole cell exists to make: the percentage decayed with
+  // the window and the boundary did not move, so graying both would report an
+  // exact fact as doubtful. Both accounts render together because "ungrayed"
+  // is a claim about a difference -- against a single row, making the
+  // countdown's class unconditional passes whatever the cell is doing.
+  currentReport = {
+    ...emptyReport(),
+    accounts: [
+      entry('2', { in_pool: true, observation: observed(WELL_OUTSIDE) }),
+      entry('3', { in_pool: true, observation: observed(60) }),
+    ],
+    pool: ['2', '3'],
+  };
+  renderAccounts();
+
+  const staleCell = await screen.findByTestId('five-hour-2');
+  const staleReset = await screen.findByTestId('five-hour-2-reset');
+  const freshReset = await screen.findByTestId('five-hour-3-reset');
+  expect(staleCell.dataset.reading).toBe('stale');
+  expect(staleReset.textContent ?? '').toMatch(/resets in 2h/i);
+  // The countdown is also its own clause in the text, so the row still reads
+  // correctly with no color at all: '(stale)' attaches to the percentage and
+  // nothing about the countdown claims to be stale.
+  expect(staleCell.textContent ?? '').toMatch(/\(stale\)/);
+  expect(staleReset.textContent ?? '').not.toMatch(/\(stale\)/);
+  // Class-level claims, and only that: jsdom loads no stylesheet, so nothing
+  // here can see a rendered color. Together they still bound the failure --
+  // the countdown overrides its grayed parent rather than inheriting it, and
+  // it looks the same whether the row is stale or fresh.
+  expect(staleReset.className).not.toBe(staleCell.className);
+  expect(staleReset.className).toBe(freshReset.className);
+  // Non-empty on purpose: with the class dropped entirely, both comparisons
+  // above still hold while the span quietly inherits the cell's gray, which is
+  // exactly the state this test exists to forbid.
+  expect(staleReset.className.trim()).not.toBe('');
+});
+
 it('withholds the percentage once the window has rolled', async () => {
   const rolled = {
     ...observed(WELL_OUTSIDE),
@@ -208,9 +275,18 @@ it('withholds the percentage once the window has rolled', async () => {
   expect(cell.textContent ?? '').not.toContain('62%');
   expect(cell.textContent ?? '').toMatch(/unknown/i);
   expect(cell.dataset.reading).toBe('rolled');
+  // No countdown either, and this is the case a reader will look for: the
+  // boundary on record is the one that already passed, so any countdown here
+  // is invented. resets_at is 60s BEHIND now, so an implementation that
+  // formats it anyway renders "resets in 0s" -- an imminent reset, on a window
+  // that ended a minute ago.
+  expect(cell.textContent ?? '').not.toMatch(/resets in/i);
+  expect(screen.queryByTestId('five-hour-2-reset')).toBeNull();
   // The 7d window on the same record is untouched: the two roll independently
   // and a rolled 5h says nothing about the 7d level.
-  expect((await screen.findByTestId('seven-day-2')).textContent ?? '').toContain('18%');
+  const sevenDay = await screen.findByTestId('seven-day-2');
+  expect(sevenDay.textContent ?? '').toContain('18%');
+  expect(sevenDay.textContent ?? '').toMatch(/resets in 2d/i);
 });
 
 it('tells never-observed, no-limits, and unreadable apart in the rendered row', async () => {

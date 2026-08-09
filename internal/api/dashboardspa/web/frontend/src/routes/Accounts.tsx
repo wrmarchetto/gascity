@@ -70,7 +70,8 @@ export function AccountsPage() {
             ? 'Reading per-account rate-limit levels.'
             : `5h and 7d levels per account, as last observed. Values older than ` +
               `${QUOTA_STALE_AFTER_SECONDS / 60} minutes are grayed; a window that has ` +
-              `since rolled shows unknown rather than its last level.`
+              `since rolled shows unknown rather than its last level. Reset countdowns ` +
+              `stay exact at any age, so they are not grayed with the level beside them.`
         }
         meta={
           <Button size="sm" onClick={() => void reload()}>
@@ -203,9 +204,33 @@ function AccountRow({ account, nowSeconds }: { account: AccountQuotaEntry; nowSe
 }
 
 /**
- * One window's cell. The reading state rides on `data-reading` as well as the
- * color, so the distinction survives the greyscale test and is assertable
- * without matching on class names.
+ * One window's cell: the level, its age, and how long until the window resets.
+ *
+ * The reading state rides on `data-reading` as well as the color, so the
+ * distinction survives the greyscale test and is assertable without matching on
+ * class names.
+ *
+ * The countdown is the one thing on the row a stale reading does not degrade --
+ * the boundary is absolute and only the clock moves toward it -- so it is
+ * rendered ungrayed inside a grayed cell rather than sharing the cell's tone.
+ * Graying it would report an exact fact as doubtful, and an operator who
+ * distrusts the countdown has nothing left to plan against.
+ *
+ * Three absences a reader will look for:
+ *
+ *   - No countdown in the `rolled` state. The boundary on record is the one
+ *     that already passed and nothing observed the next one, so any countdown
+ *     there would be invented. `classifyQuotaReading` withholds it rather than
+ *     this cell suppressing it, so the rule is pinned by the shared suite.
+ *   - No wall-clock reset time beside the duration. `formatClockTime` is right
+ *     there in hooks/time.ts, and the 7d window is the reason not to use it: a
+ *     bare HH:MM three days out names a moment the reader cannot place without
+ *     also being told the date, and the date doubles the width of every row.
+ *   - No minutes past the hour. `formatDuration` is the dashboard's one
+ *     duration grammar and it buckets, so a 3h37m span renders "4h" -- off by
+ *     as much as half a bucket. It buckets in the operator's favor here: below
+ *     an hour, which is the range in which "can I use this account yet"
+ *     actually gets decided, the answer is already minute-precise.
  */
 function WindowCell({
   testId,
@@ -245,6 +270,14 @@ function WindowCell({
         <>
           {formatQuotaPercentage(reading.percentage)}%, as of {age} ago
           {reading.state === 'stale' ? ' (stale)' : ''}
+        </>
+      )}
+      {reading.secondsUntilReset !== null && (
+        <>
+          {' · '}
+          <span data-testid={`${testId}-reset`} className="text-fg">
+            resets in {formatDuration(reading.secondsUntilReset)}
+          </span>
         </>
       )}
     </p>
