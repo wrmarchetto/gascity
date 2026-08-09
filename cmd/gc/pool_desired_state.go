@@ -145,7 +145,12 @@ func computePoolDesiredStates(
 	aliasHeldTemplates := canonicalSingletonAliasHeldTemplates(cfg, sessionInfos)
 
 	var resumeRequests []SessionRequest
-	wakeRequestedTemplates := make(map[string]struct{})
+	// Keyed by template + the raw assignee, NOT by template alone. One dead
+	// owner earns one wake request however many beads it left behind, but two
+	// dead slots of the same pool are two owners and must earn two. Keying on
+	// the template collapsed those, so only one of the slots ever came back
+	// and the other slot's work stayed in_progress with no session forever.
+	wakeRequestedOwners := make(map[string]struct{})
 
 	for i := range cfg.Agents {
 		agent := &cfg.Agents[i]
@@ -217,7 +222,20 @@ func computePoolDesiredStates(
 				// at all.
 				continue
 			}
-			if !agentTemplateIdentitiesEquivalent(cfg, assignee, template) || !isKnownPoolTemplate(assignee, cfg) {
+			// Read through the same pool-instance normalization the routedTo
+			// value above already goes through. A pool scaled past one slot
+			// stops using the canonical singleton identity, so `gc hook
+			// --claim` stamps a SLOT name ("rig/claude-2"), and the raw
+			// compare treated that as a stranger's name: an agent's own dead
+			// slot failed the gate below and its in-progress work produced no
+			// request at all. Nothing else recovers that bead — the routed
+			// pool-demand probe counts only ready UNASSIGNED work, so a bead
+			// still stamped with its dead owner's name is invisible to
+			// scale_check. NormalizePoolRouteTarget is bounded by the agent's
+			// own cap, so a slot number the config cannot produce still reads
+			// as a stranger and is still skipped.
+			assigneeOwner := normalizeAgentTemplateIdentity(cfg, agentutil.NormalizePoolRouteTarget(cfg, assignee))
+			if !agentTemplateIdentitiesEquivalent(cfg, assigneeOwner, template) || !isKnownPoolTemplate(assigneeOwner, cfg) {
 				// Assignee set but session closed/unknown and not a configured
 				// pool template — orphaned work, not our job to respawn. The
 				// identity-equivalence compare keeps work assigned under a
@@ -226,10 +244,14 @@ func computePoolDesiredStates(
 				// canonical template.
 				continue
 			}
-			if _, ok := wakeRequestedTemplates[template]; ok {
+			// The raw assignee, not assigneeOwner: the point of the key is to
+			// tell one dead slot from another, and they normalize to the same
+			// owner by construction.
+			wakeKey := template + "\x00" + assignee
+			if _, ok := wakeRequestedOwners[wakeKey]; ok {
 				continue
 			}
-			wakeRequestedTemplates[template] = struct{}{}
+			wakeRequestedOwners[wakeKey] = struct{}{}
 			resumeRequests = append(resumeRequests, SessionRequest{
 				Template:       template,
 				BeadPriority:   beadPriority(wb),
