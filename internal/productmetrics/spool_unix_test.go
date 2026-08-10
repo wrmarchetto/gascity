@@ -600,17 +600,30 @@ func TestRecordOnceDecisionWindowGatesEveryForegroundQuotaBoundary(t *testing.T)
 				current = testRecordHour.Add(defaultRecordDecisionBudget + time.Nanosecond)
 			}
 		}
-		quotaOpens := 0
+		quotaOpens, lockSteps := 0, 0
 		service.deps.storageHooks.afterFileOpen = func(path string) {
 			if filepath.Base(path) == quotaFileName {
 				quotaOpens++
 			}
+		}
+		service.deps.storageHooks.beforeStep = func(step storageStep) error {
+			if step == storageStepLock {
+				lockSteps++
+			}
+			return nil
 		}
 		if got := service.RecordOnce(permit, CommandHelp); got != RecordDropped {
 			t.Fatalf("RecordOnce = %v, want dropped", got)
 		}
 		if quotaOpens != 0 {
 			t.Fatalf("expired quota-read boundary opened quota %d times", quotaOpens)
+		}
+		// Zero opens is also what a drop BEFORE the boundary looks like, so
+		// the assertion above is vacuous on its own -- it stayed green
+		// through the whole ci-anbv flake. Requiring the state lock to have
+		// been reached is what gives it meaning.
+		if lockSteps == 0 {
+			t.Fatal("RecordOnce dropped before the state lock, so the quota-read boundary was never exercised")
 		}
 	})
 
@@ -660,15 +673,25 @@ func TestRecordOnceDecisionWindowGatesEveryForegroundQuotaBoundary(t *testing.T)
 					current = testRecordHour.Add(defaultRecordDecisionBudget + time.Nanosecond)
 				}
 			}
-			lookups := 0
+			lookups, lockSteps := 0, 0
 			service.deps.storageHooks.beforeStep = func(step storageStep) error {
-				if step == storageStepEntryStat {
+				switch step {
+				case storageStepEntryStat:
 					lookups++
+				case storageStepLock:
+					lockSteps++
 				}
 				return nil
 			}
 			if got := service.RecordOnce(permit, CommandHelp); got != RecordDropped {
 				t.Fatalf("RecordOnce = %v, want dropped", got)
+			}
+			// The index==0 case wants zero lookups, which is also what a drop
+			// before the state lock produces -- so that case alone is vacuous
+			// without this, and it passed throughout the ci-anbv flake while
+			// its siblings failed.
+			if lockSteps == 0 {
+				t.Fatalf("expired lookup %q dropped before the state lock, so no boundary was exercised", expireName)
 			}
 			if lookups != index {
 				t.Fatalf("expired lookup %q began %d exact lookups, want %d prior lookups only", expireName, lookups, index)
@@ -728,6 +751,64 @@ func TestRecordOnceDecisionWindowGatesEveryForegroundQuotaBoundary(t *testing.T)
 			}
 		})
 	}
+}
+
+// There is deliberately NO test here that burns real wall time inside the
+// state-lock acquisition to prove a slow filesystem cannot spend the decision
+// budget. That was the ci-anbv defect: RecordOnce converted the budget's
+// remaining duration into a context.WithTimeout deadline, which counts real
+// seconds, so fsyncing state.lock under the parallel sweep expired a budget
+// the injected clock reported as untouched and the record was dropped before
+// its first control lookup. Such a test needs elapsed wall time by
+// construction, and the fixed_sleep census ratchet in TESTING.md forbids
+// growing that total.
+//
+// What replaced it is stronger than a test: recordDecisionWindow hands back
+// no duration at all (spool.go, open()), so there is nothing left to convert
+// into a real-time deadline and the compiler is the gate. Reintroducing a
+// duration-returning accessor reopens the defect, and no test in this package
+// would catch it. The companion below pins the other half -- that the budget
+// still abandons a contended wait.
+
+// The budget still abandons a contended state-lock wait -- it just does so on
+// the injected clock now that the wait is no longer bounded by a real-time
+// deadline. This is the other half of the test above: without it, the
+// foreground guarantee could silently decay into the 12 s liveness backstop
+// with the whole suite green, because nothing else pins how long RecordOnce
+// may block a user's command on a lock another process holds.
+func TestRecordOnceAbandonsContendedStateLockWhenDecisionBudgetExpires(t *testing.T) {
+	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
+	barrierRoot := mustOpenMutableRoot(t, home)
+	barrier, err := barrierRoot.acquireLock(context.Background(), stateLockName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := errors.Join(barrier.Release(), barrierRoot.Close()); err != nil {
+			t.Errorf("release state-lock barrier: %v", err)
+		}
+	})
+	current := testRecordHour
+	service.deps.now = func() time.Time { return current }
+	lockSteps := 0
+	service.deps.storageHooks.beforeStep = func(step storageStep) error {
+		if step == storageStepLock {
+			lockSteps++
+			current = testRecordHour.Add(defaultRecordDecisionBudget + time.Nanosecond)
+		}
+		return nil
+	}
+	if got := service.RecordOnce(permit, CommandHelp); got != RecordDropped {
+		t.Fatalf("RecordOnce = %v, want dropped", got)
+	}
+	// Exactly one attempt: the budget expires during it and the next pass
+	// stops at the gate before attempting again. Counting attempts rather
+	// than elapsed time keeps the assertion clock-free -- more than one means
+	// the wait is bounded by the real-time backstop instead of the budget.
+	if lockSteps != 1 {
+		t.Fatalf("contended wait made %d lock attempts, want 1", lockSteps)
+	}
+	assertNoQueuedEvents(t, home)
 }
 
 func TestRecordOnceRejectsActiveOrRetiredControlEvidenceWithPresentQuota(t *testing.T) {
