@@ -11,33 +11,16 @@ import (
 )
 
 func TestPreCommitFormatterPreservesFileMode(t *testing.T) {
-	repoRoot := repoRoot(t)
-	binDir := t.TempDir()
-	fakeLint := filepath.Join(binDir, "golangci-lint")
-	writeExecutable(t, fakeLint, `#!/usr/bin/env bash
-set -euo pipefail
-if [ "$#" -ne 2 ] || [ "$1" != "fmt" ] || [ "$2" != "--stdin" ]; then
-  echo "unexpected golangci-lint args: $*" >&2
-  exit 2
-fi
-cat
-printf '\n'
-`)
-
-	source := filepath.Join(t.TempDir(), "needs_format.go")
-	if err := os.WriteFile(source, []byte("package main"), 0o644); err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	cmd := exec.Command(filepath.Join(repoRoot, "scripts", "precommit-format-staged-go"))
-	cmd.Dir = repoRoot
-	cmd.Env = []string{
-		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-		"TMPDIR=" + t.TempDir(),
-	}
-	cmd.Stdin = strings.NewReader(source + "\n")
-	out, err := cmd.CombinedOutput()
+	// The staged bytes deliberately lack the trailing newline the linter
+	// adds, so the formatter has to take its rewrite path. Handing it
+	// already-formatted content would short-circuit at the `cmp -s` and the
+	// mode assertion would pass without the rewrite it exists to check ever
+	// having run.
+	out, source, err := runStagedGoFormatter(t, formatterFixture{
+		withGo:        true,
+		pinned:        newlineAppendingLinter(),
+		sourceContent: "package main",
+	})
 	if err != nil {
 		t.Fatalf("precommit formatter failed: %v\n%s", err, out)
 	}
@@ -49,13 +32,268 @@ printf '\n'
 	if got := info.Mode().Perm(); got != 0o644 {
 		t.Fatalf("formatted source mode = %o, want 644", got)
 	}
-	content, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatalf("read formatted source: %v", err)
-	}
-	if string(content) != "package main\n" {
+	if content := readOptionalFile(t, source); content != "package main\n" {
 		t.Fatalf("formatted content = %q, want package main with newline", content)
 	}
+}
+
+// TestPreCommitFormatterNamesRemedyWhenLinterUnreachable pins the message a
+// contributor sees when golangci-lint resolves nowhere. Blocking the commit
+// is correct -- what was not is `golangci-lint: command not found` plus a
+// generic summary, which names neither the cause nor a remedy and reads as a
+// broken hook. The next move it invites is --no-verify, and on the push side
+// --no-verify also skips scripts/push-ownership-guard.sh (bead ci-f6u4).
+func TestPreCommitFormatterNamesRemedyWhenLinterUnreachable(t *testing.T) {
+	tests := []struct {
+		name   string
+		withGo bool
+	}{
+		// Both arms of resolution come up empty: nothing on PATH, and
+		// nothing at the pinned location either.
+		{name: "installed nowhere", withGo: true},
+		// `go` itself missing means the pinned location cannot even be
+		// computed. That must still reach the remedy, not die inside the
+		// `go env GOPATH` call under set -e with an unrelated error.
+		{name: "go unavailable to resolve the pinned location", withGo: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, _, err := runStagedGoFormatter(t, formatterFixture{withGo: tt.withGo})
+			if err == nil {
+				t.Fatalf("formatter must fail when golangci-lint resolves nowhere, got exit 0:\n%s", out)
+			}
+			report := string(out)
+			if strings.Contains(report, "command not found") {
+				t.Fatalf("formatter must catch golangci-lint's absence itself rather than letting bash "+
+					"report `command not found`, which names neither cause nor remedy:\n%s", report)
+			}
+			for _, want := range []string{"golangci-lint", "make install-tools", "go env GOPATH"} {
+				if !strings.Contains(report, want) {
+					t.Fatalf("formatter's missing-linter failure must name %q -- it has to state the cause "+
+						"(the binary resolves nowhere) and BOTH remedies, installing it and putting the "+
+						"install directory on PATH, because a city agent session hits this with the binary "+
+						"already installed:\n%s", want, report)
+				}
+			}
+			if !strings.Contains(report, "--no-verify") {
+				t.Fatalf("formatter's missing-linter failure must warn against --no-verify: it is the "+
+					"obvious next move here, and on the push side it also disarms "+
+					"scripts/push-ownership-guard.sh:\n%s", report)
+			}
+		})
+	}
+}
+
+// TestPreCommitFormatterPrefersMakefilePinnedLinter pins the resolution order
+// against the Makefile's. Every other consumer of golangci-lint in this repo
+// -- lint-changed, lint-full, fmt, fmt-check -- runs $(GOLANGCI_LINT), the
+// pinned install, never PATH. This script resolving PATH first would let it
+// format with one version while `make lint-changed`, three lines later in the
+// same hook run, checks with another.
+//
+// The assertion is that the pinned fake's output lands in the file, not merely
+// that the run exits 0: a formatter that quietly reached neither binary also
+// exits 0 for every already-formatted file.
+func TestPreCommitFormatterPrefersMakefilePinnedLinter(t *testing.T) {
+	out, source, err := runStagedGoFormatter(t, formatterFixture{
+		withGo: true,
+		pinned: markerLinter("pinned"),
+		onPath: markerLinter("path"),
+	})
+	if err != nil {
+		t.Fatalf("formatter failed: %v\n%s", err, out)
+	}
+
+	content := readOptionalFile(t, source)
+	if !strings.Contains(content, "// formatted by pinned") {
+		t.Fatalf("formatter must run the golangci-lint the Makefile pins at $(go env GOPATH)/bin, so it "+
+			"formats with the same version `make lint-changed` checks with later in the same hook run. "+
+			"Formatted file:\n%s\nformatter output:\n%s", content, out)
+	}
+	if strings.Contains(content, "// formatted by path") {
+		t.Fatalf("formatter ran the PATH golangci-lint in preference to the pinned one:\n%s", content)
+	}
+}
+
+// TestPreCommitFormatterFallsBackToPATHLinter is the other half of the order:
+// a contributor whose golangci-lint is installed anywhere but GOPATH/bin must
+// still get formatted, not blocked.
+func TestPreCommitFormatterFallsBackToPATHLinter(t *testing.T) {
+	out, source, err := runStagedGoFormatter(t, formatterFixture{
+		withGo: true,
+		onPath: markerLinter("path"),
+	})
+	if err != nil {
+		t.Fatalf("formatter failed: %v\n%s", err, out)
+	}
+	if content := readOptionalFile(t, source); !strings.Contains(content, "// formatted by path") {
+		t.Fatalf("formatter must fall back to a golangci-lint on PATH when the pinned install is absent:\n%s", content)
+	}
+}
+
+// TestPreCommitFormatterSeparatesLinterFailureFromAbsence is the distinction
+// the bead asks for. A linter that ran and rejected a file needs a different
+// message than one that could not be found: telling a contributor to run
+// `make install-tools` when the tool is installed and working sends them to
+// fix the wrong thing.
+func TestPreCommitFormatterSeparatesLinterFailureFromAbsence(t *testing.T) {
+	rejecting := `#!/usr/bin/env bash
+set -euo pipefail
+echo "syntax error: unexpected }" >&2
+exit 1
+`
+	out, source, err := runStagedGoFormatter(t, formatterFixture{withGo: true, pinned: rejecting})
+	if err == nil {
+		t.Fatalf("formatter must fail when golangci-lint rejects a staged file, got exit 0:\n%s", out)
+	}
+	report := string(out)
+	if !strings.Contains(report, filepath.Base(source)) {
+		t.Fatalf("formatter must name the file golangci-lint rejected (%s) -- with several files staged the "+
+			"linter's own output does not say which one is being reported:\n%s", filepath.Base(source), report)
+	}
+	if strings.Contains(report, "make install-tools") {
+		t.Fatalf("formatter must not offer the install remedy when the linter ran and rejected the file -- "+
+			"the tool is present and working, so that remedy sends the reader to fix the wrong thing:\n%s", report)
+	}
+}
+
+// formatterFixture describes one run of scripts/precommit-format-staged-go.
+// Both resolution arms are pinned explicitly, and PATH is built from scratch
+// rather than prepended to the host's: a developer machine with golangci-lint
+// installed would otherwise turn every absence case vacuous.
+//
+// One exec.Command serves every case here on purpose. A second copy is not
+// only duplication: os/exec construction in test source is ratcheted by
+// internal/testpolicy/resourcecensus against test/test-resources.toml, so
+// adding a call site fails TestRepositoryLedgerMatchesCensusAndDocumentation
+// until someone raises a checked baseline through council review.
+type formatterFixture struct {
+	withGo        bool   // put the real `go` on PATH, so $(go env GOPATH) resolves
+	pinned        string // fake installed at $GOPATH/bin/golangci-lint, empty for none
+	onPath        string // fake installed on PATH, empty for none
+	sourceContent string // staged file's initial bytes, empty for an already-formatted default
+}
+
+// runStagedGoFormatter runs the formatter over a single staged Go file and
+// returns its combined output and that file's path.
+func runStagedGoFormatter(t *testing.T, fixture formatterFixture) ([]byte, string, error) {
+	t.Helper()
+	// Only what the script itself reaches for. `env` is absent on purpose:
+	// the kernel runs the shebang's /usr/bin/env by absolute path, so PATH
+	// only has to carry bash.
+	tools := []string{"bash", "mktemp", "cmp", "rm", "cat"}
+	if fixture.withGo {
+		tools = append(tools, "go")
+	}
+	binDir := t.TempDir()
+	linkRealTools(t, binDir, tools)
+	if fixture.onPath != "" {
+		writeExecutable(t, filepath.Join(binDir, "golangci-lint"), fixture.onPath)
+	}
+
+	gopath := t.TempDir()
+	if fixture.pinned != "" {
+		pinned := filepath.Join(gopath, makefilePinnedLinterDir(t), "golangci-lint")
+		if err := os.MkdirAll(filepath.Dir(pinned), 0o755); err != nil {
+			t.Fatalf("create pinned linter directory: %v", err)
+		}
+		writeExecutable(t, pinned, fixture.pinned)
+	}
+
+	source := filepath.Join(t.TempDir(), "staged.go")
+	staged := fixture.sourceContent
+	if staged == "" {
+		staged = "package main\n"
+	}
+	writeTestFile(t, source, staged)
+
+	cmd := exec.Command(filepath.Join(repoRoot(t), "scripts", "precommit-format-staged-go"))
+	cmd.Dir = repoRoot(t)
+	cmd.Env = []string{
+		"PATH=" + binDir,
+		"HOME=" + hermeticHome(t),
+		"TMPDIR=" + t.TempDir(),
+		"GOPATH=" + gopath,
+	}
+	cmd.Stdin = strings.NewReader(source + "\n")
+	out, err := cmd.CombinedOutput()
+	return out, source, err
+}
+
+// hermeticHome returns a throwaway HOME for a child `go` invocation. It is
+// deliberately NOT t.TempDir: the go command writes telemetry counters under
+// $HOME/.config/go/telemetry and keeps writing them after `go env` has
+// exited, so t.TempDir's cleanup intermittently fails the whole test with
+// "unlinkat .../telemetry: directory not empty" -- RemoveAll walking a
+// directory that gains a file underneath it. Removal here is best effort for
+// the same reason. Setting GOTELEMETRY=off in the child's environment does
+// not help: the mode is read from a file in the config directory, not the
+// environment (verified against go1.26.5).
+func hermeticHome(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "gc-precommit-home-")
+	if err != nil {
+		t.Fatalf("create home for child go: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+// newlineAppendingLinter builds the smallest golangci-lint stand-in that
+// still rewrites its input: it terminates the final line. Used where the test
+// asserts on the formatted bytes themselves, so a marker comment would have
+// to be written into the expectation.
+func newlineAppendingLinter() string {
+	return refuseUnlessFmtStdin + "cat\nprintf '\\n'\n"
+}
+
+// markerLinter builds a golangci-lint stand-in that appends an identifiable
+// line, so a test can tell WHICH binary ran from the formatted file. It
+// refuses any invocation but `fmt --stdin` rather than passing input through
+// unexamined -- a stand-in that answers everything with success hands a pass
+// to whatever the suite forgot to script.
+func markerLinter(marker string) string {
+	return refuseUnlessFmtStdin + "cat\nprintf '// formatted by %s\\n' " + marker + "\n"
+}
+
+// refuseUnlessFmtStdin is the prologue every golangci-lint stand-in here
+// shares. It refuses any invocation but the one the formatter is supposed to
+// make, rather than passing input through unexamined -- a stand-in that
+// answers everything with success hands a pass to whatever the suite forgot
+// to script, and the formatter losing its `fmt --stdin` arguments would then
+// look exactly like a clean run.
+const refuseUnlessFmtStdin = `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -ne 2 ] || [ "$1" != "fmt" ] || [ "$2" != "--stdin" ]; then
+  echo "unexpected golangci-lint args: $*" >&2
+  exit 2
+fi
+`
+
+// makefilePinnedLinterDir asserts the Makefile still installs golangci-lint
+// under $(go env GOPATH)/bin and returns that GOPATH-relative directory. The
+// script carries its own copy of the location -- a pre-commit hook cannot
+// afford a `make` subprocess just to ask for a variable -- and this is what
+// binds the two copies: moving the Makefile's install directory fails here
+// instead of silently costing the hook its fallback.
+func makefilePinnedLinterDir(t *testing.T) string {
+	t.Helper()
+	makefile, err := os.ReadFile(filepath.Join(repoRoot(t), "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	for _, decl := range []string{
+		"BIN_DIR := $(shell go env GOPATH)/bin",
+		"GOLANGCI_LINT := $(BIN_DIR)/golangci-lint",
+	} {
+		if !strings.Contains(string(makefile), decl) {
+			t.Fatalf("Makefile no longer declares %q. scripts/precommit-format-staged-go resolves the same "+
+				"pinned binary by that declaration, so teach the script the new location before moving it "+
+				"here (bead ci-f6u4)", decl)
+		}
+	}
+	return "bin"
 }
 
 func TestTestFastParallelUsesSanitizedEnvironmentAndMachineAwareConcurrency(t *testing.T) {
@@ -810,19 +1048,27 @@ func readOptionalFile(t *testing.T, path string) string {
 func restrictedPathWithoutNpm(t *testing.T, stubs map[string]string) string {
 	t.Helper()
 	binDir := t.TempDir()
-	for _, name := range []string{"bash", "git", "xargs"} {
-		realPath, err := exec.LookPath(name)
-		if err != nil {
-			t.Fatalf("resolve real %s on test host PATH: %v", name, err)
-		}
-		if err := os.Symlink(realPath, filepath.Join(binDir, name)); err != nil {
-			t.Fatalf("symlink %s: %v", name, err)
-		}
-	}
+	linkRealTools(t, binDir, []string{"bash", "git", "xargs"})
 	for name, script := range stubs {
 		writeExecutable(t, filepath.Join(binDir, name), script)
 	}
 	return binDir
+}
+
+// linkRealTools symlinks the host's own copy of each named tool into dir,
+// which is how a restricted PATH stays usable without letting the rest of the
+// host's PATH back in behind it.
+func linkRealTools(t *testing.T, dir string, names []string) {
+	t.Helper()
+	for _, name := range names {
+		realPath, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatalf("resolve real %s on test host PATH: %v", name, err)
+		}
+		if err := os.Symlink(realPath, filepath.Join(dir, name)); err != nil {
+			t.Fatalf("symlink %s: %v", name, err)
+		}
+	}
 }
 
 func TestNativeDoltliteBeadsTargetRunsTaggedSuite(t *testing.T) {
