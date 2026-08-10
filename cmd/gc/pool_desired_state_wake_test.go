@@ -7,17 +7,30 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 )
 
-// closedPoolSessionBead creates a closed pool-managed session bead whose
-// template metadata matches the given qualified template name. Used to
-// construct "session bead closed but template still configured" scenarios.
-func closedPoolSessionBead(id, template string) beads.Bead {
+// closedPoolSessionBead creates a closed pool-managed session bead for
+// "rig/claude", the template every caller configures via
+// poolAgent("claude", "rig", ...). Used to construct "session bead closed but
+// template still configured" scenarios.
+//
+// The template is fixed rather than a parameter, and re-adding the parameter
+// is the mistake to avoid. computePoolDesiredStates skips sb.Closed before it
+// populates sessionBeadTemplate, and canonicalSingletonAliasHeldTemplates
+// skips closed beads too, so nothing reads this key on a closed bead --
+// setting it to "rig/bogus-never-configured" left all four callers green. A
+// call site passing a different template would therefore pin no behavior,
+// which is what unparam reported. Making the value load-bearing needs an OPEN
+// bead, which is the resume tier and not this one. The key is still written
+// because a real pool-managed session bead carries one.
+//
+// Callers: go test ./cmd/gc/ -run 'TestComputePoolDesiredStates_(WakeKnownIdentityForClosedSession|WakeKnownIdentityDedupsMultipleBeadsForSameSession|SlotAssignedWorkWakesAfterSessionClose|SlotDistinctSlotsWakeIndependently)' -count=1
+func closedPoolSessionBead(id string) beads.Bead {
 	return beads.Bead{
 		ID:     id,
 		Status: "closed",
 		Type:   sessionBeadType,
 		Labels: []string{sessionBeadLabel},
 		Metadata: map[string]string{
-			"template":             template,
+			"template":             "rig/claude",
 			poolManagedMetadataKey: boolMetadata(true),
 		},
 	}
@@ -39,7 +52,7 @@ func TestComputePoolDesiredStates_WakeKnownIdentityForClosedSession(t *testing.T
 	work := []beads.Bead{
 		workBead("w1", "rig/claude", "rig/claude", "in_progress", 5),
 	}
-	closed := closedPoolSessionBead("sess-1", "rig/claude")
+	closed := closedPoolSessionBead("sess-1")
 
 	result := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads([]beads.Bead{closed}), nil)
 
@@ -90,7 +103,7 @@ func TestComputePoolDesiredStates_WakeKnownIdentityDedupsMultipleBeadsForSameSes
 		workBead("w1", "rig/claude", "rig/claude", "in_progress", 5),
 		workBead("w2", "rig/claude", "rig/claude", "open", 3),
 	}
-	closed := closedPoolSessionBead("sess-1", "rig/claude")
+	closed := closedPoolSessionBead("sess-1")
 
 	result := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads([]beads.Bead{closed}), nil)
 

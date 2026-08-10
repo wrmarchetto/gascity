@@ -50,7 +50,7 @@ func TestComputePoolDesiredStates_SlotAssignedWorkWakesAfterSessionClose(t *test
 	work := []beads.Bead{
 		workBead("w1", "rig/claude", "rig/claude-2", "in_progress", 5),
 	}
-	closed := closedPoolSessionBead("sess-2", "rig/claude")
+	closed := closedPoolSessionBead("sess-2")
 
 	result := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads([]beads.Bead{closed}), nil)
 
@@ -94,8 +94,8 @@ func TestComputePoolDesiredStates_SlotDistinctSlotsWakeIndependently(t *testing.
 		workBead("w2", "rig/claude", "rig/claude-2", "in_progress", 5),
 	}
 	sessions := []beads.Bead{
-		closedPoolSessionBead("sess-1", "rig/claude"),
-		closedPoolSessionBead("sess-2", "rig/claude"),
+		closedPoolSessionBead("sess-1"),
+		closedPoolSessionBead("sess-2"),
 	}
 
 	result := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads(sessions), nil)
