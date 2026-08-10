@@ -13,8 +13,10 @@ This page exists because the cost lands on whoever next merges rather than on
 whoever wrote the dashboard change, and nothing else in the repository records
 that the cheap resolution exists. Without it the reader sees dozens of
 rename/rename conflicts over minified JavaScript and reasonably concludes
-something is wrong with the toolchain -- the same wrong conclusion that cost
-about an agent-hour on ci-c425.
+something is wrong with the toolchain. That is the same wrong conclusion the
+whole-tree rename cascade already produced once on ci-gpxg, where it cost
+about an agent-hour -- see the header of `scripts/check-artifact-drift.sh`,
+the gate ci-c425 rewrote in response.
 
 ## The procedure
 
