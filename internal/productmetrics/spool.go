@@ -113,16 +113,19 @@ func recordLookupOperation(name string) recordOperation {
 	return recordOperation("lookup:" + name)
 }
 
-func (window recordDecisionWindow) remaining() (time.Duration, bool) {
+// open reports whether the decision budget still has time on the injected
+// clock. It deliberately hands back no duration: the one caller that took one
+// turned it into a context.WithTimeout deadline, which counts real seconds
+// rather than the injected clock's, and a slow filesystem then expired a
+// budget the clock reported as untouched. Returning only the predicate makes
+// that conversion unrepresentable instead of merely discouraged.
+func (window recordDecisionWindow) open() bool {
 	current := window.now()
 	if current.Before(window.started) {
-		return 0, false
+		return false
 	}
 	elapsed := current.Sub(window.started)
-	if elapsed < 0 || elapsed >= window.limit {
-		return 0, false
-	}
-	return window.limit - elapsed, true
+	return elapsed >= 0 && elapsed < window.limit
 }
 
 func depsHourUTC(value time.Time) string {
@@ -190,7 +193,7 @@ func (service *Service) RecordOnce(permit RecordingPermit, commandID CommandID) 
 	if err != nil || len(encoded) == 0 || uint64(len(encoded)) > maximumEventBytes {
 		return RecordDropped
 	}
-	if _, ok := window.remaining(); !ok {
+	if !window.open() {
 		return RecordDropped
 	}
 
@@ -200,26 +203,31 @@ func (service *Service) RecordOnce(permit RecordingPermit, commandID CommandID) 
 		if existingStorageGate != nil && !existingStorageGate() {
 			return false
 		}
-		_, ok := window.remaining()
-		return ok
+		return window.open()
 	}
 	root, err := openStorageRootMutableWithHooks(service.deps.home, storageHooks)
 	if err != nil {
 		return RecordDropped
 	}
 	defer func() { _ = root.Close() }()
-	remaining, ok := window.remaining()
-	if !ok {
+	if !window.open() {
 		return RecordDropped
 	}
-	lockContext, cancel := context.WithTimeout(context.Background(), remaining)
+	// The budget is measured on the injected clock, so it must NOT become the
+	// context deadline: context.WithTimeout counts real seconds, and a slow
+	// state.lock create/fsync then expires a budget the clock reports as
+	// untouched -- dropping the record before its first control lookup. The
+	// wait honors the budget through the storage hooks' decision gate
+	// instead. stateLockTimeout is only the liveness backstop shared with
+	// every other state-lock caller; a foreground record never reaches it.
+	lockContext, cancel := context.WithTimeout(context.Background(), stateLockTimeout)
 	defer cancel()
 	lock, err := root.acquireLock(lockContext, stateLockName)
 	if err != nil {
 		return RecordDropped
 	}
 	defer func() { _ = lock.Release() }()
-	if _, ok := window.remaining(); !ok {
+	if !window.open() {
 		return RecordDropped
 	}
 
@@ -234,8 +242,7 @@ func (service *Service) RecordOnce(permit RecordingPermit, commandID CommandID) 
 		if service.deps.beforeRecordOperation != nil {
 			service.deps.beforeRecordOperation(operation)
 		}
-		_, ok := window.remaining()
-		return ok
+		return window.open()
 	}
 	diagnosticStorageSafe := false
 	authorizedDrop := func(class DiagnosticErrorClass) RecordResult {
@@ -247,7 +254,7 @@ func (service *Service) RecordOnce(permit RecordingPermit, commandID CommandID) 
 		}
 		return RecordDropped
 	}
-	if _, ok := window.remaining(); !ok {
+	if !window.open() {
 		return authorizedDrop(DiagnosticErrorLockTimeout)
 	}
 	quota, present, err := loadForegroundSpoolQuota(root, canStart)
@@ -263,7 +270,7 @@ func (service *Service) RecordOnce(permit RecordingPermit, commandID CommandID) 
 	if err != nil {
 		return authorizedDrop(diagnosticClassForStorageError(err))
 	}
-	if _, ok := window.remaining(); !ok {
+	if !window.open() {
 		return authorizedDrop(DiagnosticErrorLockTimeout)
 	}
 	if err := persistForegroundSpoolQuota(root, reserved, !present, canStart); err != nil {
@@ -300,7 +307,7 @@ func (service *Service) RecordOnce(permit RecordingPermit, commandID CommandID) 
 	if spawnDependencies.executable == nil || spawnDependencies.environ == nil || spawnDependencies.start == nil {
 		return RecordStored
 	}
-	if _, ok := window.remaining(); !ok {
+	if !window.open() {
 		return RecordStored
 	}
 	attemptedAt := service.deps.now().UTC()
