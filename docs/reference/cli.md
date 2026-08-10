@@ -282,8 +282,11 @@ All arguments after "gc bd" are forwarded to bd unchanged, except the
 a long-running worker keeps both halves of its claim alive — bd's own
 "heartbeat" to push the claim lease forward, then
 "update &lt;issue-id&gt; --set-metadata gc.last_heartbeat_at=&lt;RFC3339 UTC now&gt;"
-for the dashboard, which cannot see the node-local lease. A lease bd refuses
-stops the command before the stamp. Also excepted is
+for the dashboard, which cannot see the node-local lease. bd matches a lease on
+holder = actor, so the refresh runs as the bead's own lease holder whenever that
+is another identity form of the calling session — an alias, a runtime session
+name, or a session bead id. A lease bd refuses stops the command before the
+stamp. Also excepted is
 "release-if-current &lt;issue-id&gt; &lt;assignee&gt;", which conditionally resets an
 in-progress assignment only when the bead still has that assignee.
 

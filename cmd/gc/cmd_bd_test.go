@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -2412,6 +2413,298 @@ func TestGcBdHeartbeatFailedLeaseSuppressesLivenessStamp(t *testing.T) {
 	}
 	if calls[0] != "heartbeat demo-abc" {
 		t.Errorf("bd write = %q, want %q", calls[0], "heartbeat demo-abc")
+	}
+}
+
+// leaseHolderFakeBdScript is a bd stand-in that enforces bd's REAL ownership
+// rule instead of accepting every heartbeat: HeartbeatIssueInTx matches
+// `WHERE issue_id = ? AND holder = ?`, the holder being whoever claimed the
+// bead and the actor coming from --actor or $BEADS_ACTOR. $FAKE_LEASE_HOLDER is
+// that holder, and it is also the assignee `show --json` reports, because
+// gc hook --claim takes the lease under the identity the bead was already
+// assigned to.
+//
+// The refusal branch is the whole point of the stand-in. One that exited 0 for
+// every heartbeat would hand a pass to the exact defect these tests pin --
+// gc presenting an actor that is not the holder -- because from outside bd the
+// only difference is the exit code. Anything other than the three scripted
+// subcommands exits 64 rather than 0 for the same reason.
+const leaseHolderFakeBdScript = `
+if [ "$1" = show ]; then
+	printf '[{"id":"%s","status":"in_progress","assignee":"%s"}]\n' "$FAKE_BEAD_ID" "$FAKE_LEASE_HOLDER"
+	exit 0
+fi
+if [ "$1" = heartbeat ]; then
+	actor="$BEADS_ACTOR"
+	for arg in "$@"; do
+		case "$arg" in --actor=*) actor="${arg#--actor=}" ;; esac
+	done
+	if [ "$actor" != "$FAKE_LEASE_HOLDER" ]; then
+		echo "Error: heartbeat $2: issue already claimed by $FAKE_LEASE_HOLDER" >&2
+		exit 3
+	fi
+	exit 0
+fi
+if [ "$1" = update ]; then
+	exit 0
+fi
+echo "bd stand-in: unscripted subcommand $1" >&2
+exit 64
+`
+
+// heartbeatSessionIdentity is the set of identity env vars gc bd heartbeat
+// reads to decide whether a bead's lease holder is a form of THIS session.
+// alias covers GC_ALIAS, GC_AGENT and $BEADS_ACTOR together, which is how a
+// managed session is actually launched (session.RuntimeEnvWithSessionContext).
+type heartbeatSessionIdentity struct {
+	sessionID   string
+	sessionName string
+	alias       string
+}
+
+// heartbeatLeaseHolderSetup installs leaseHolderFakeBdScript for one bead and
+// pins every identity env var the actor decision reads. Pinning all of them is
+// required, not tidiness: this suite runs inside a managed agent session whose
+// own GC_ALIAS / GC_SESSION_ID would otherwise decide the outcome, and a test
+// that passes because of the developer's environment proves nothing.
+func heartbeatLeaseHolderSetup(t *testing.T, beadID, holder string, id heartbeatSessionIdentity) string {
+	t.Helper()
+	capture := captureBdInvocations(t, leaseHolderFakeBdScript)
+	t.Setenv("FAKE_BEAD_ID", beadID)
+	t.Setenv("FAKE_LEASE_HOLDER", holder)
+	t.Setenv("GC_SESSION_ID", id.sessionID)
+	t.Setenv("GC_SESSION_NAME", id.sessionName)
+	t.Setenv("GC_ALIAS", id.alias)
+	t.Setenv("GC_AGENT", id.alias)
+	t.Setenv("BEADS_ACTOR", id.alias)
+	return capture
+}
+
+// TestGcBdHeartbeatRefreshesALeaseHeldUnderThisSessionsSessionID pins ci-eaon.
+// A bead pre-assigned by session bead id -- what continuation preassignment and
+// slinging to a named session both produce -- takes its lease under that id,
+// because gc hook --claim deliberately claims as the bead's own assignee rather
+// than $BEADS_ACTOR. The working agent's $BEADS_ACTOR is its alias, so bd's
+// holder check refused the refresh and the lease lapsed under a live worker.
+//
+// Both halves are asserted. The lease refresh must carry the holder's identity,
+// and the gc.last_heartbeat_at stamp must then land: ci-ctkz put the lease
+// refresh FIRST, so a refusal there also cost such a bead the dashboard stamp
+// it used to get, which is what made this a regression rather than a
+// nice-to-have.
+func TestGcBdHeartbeatRefreshesALeaseHeldUnderThisSessionsSessionID(t *testing.T) {
+	origNow := bdHeartbeatNow
+	t.Cleanup(func() { bdHeartbeatNow = origNow })
+	fixed := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	bdHeartbeatNow = func() time.Time { return fixed }
+
+	capture := heartbeatLeaseHolderSetup(t, "demo-abc", "ci-ll22", heartbeatSessionIdentity{
+		sessionID:   "ci-ll22",
+		sessionName: "toolsmith-ci-ll22",
+		alias:       "toolsmith-2",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"heartbeat", "demo-abc"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("doBd(heartbeat) = %d, want 0 (the holder is this session under another identity form); stderr=%q", got, stderr.String())
+	}
+
+	calls := bdWriteInvocations(t, capture)
+	if len(calls) != 2 {
+		t.Fatalf("bd writes = %q, want 2 (lease refresh as the holder, then the liveness stamp)", calls)
+	}
+	// The =-joined form is load-bearing, so it is asserted literally rather
+	// than by substring: a two-token `--actor ci-ll22` puts a city-prefixed
+	// bead id into the args resolveBdScopeTarget scans, which would pin the
+	// city store and mis-scope a heartbeat on a RIG bead.
+	if want := "heartbeat demo-abc --actor=ci-ll22"; calls[0] != want {
+		t.Errorf("lease refresh = %q, want %q", calls[0], want)
+	}
+	// Parsing the remainder as a bare instant also pins that the stamp write
+	// carries no --actor: its audit trail stays this session's $BEADS_ACTOR,
+	// which is who is really writing it.
+	prefix := "update demo-abc --set-metadata " + heartbeatMetadataKey + "="
+	stamp, ok := strings.CutPrefix(calls[1], prefix)
+	if !ok {
+		t.Fatalf("second bd write = %q, want prefix %q", calls[1], prefix)
+	}
+	if want := fixed.UTC().Format(time.RFC3339); stamp != want {
+		t.Fatalf("heartbeat stamp = %q, want exactly %q", stamp, want)
+	}
+}
+
+// TestGcBdHeartbeatWillNotBorrowAnotherSessionsLeaseHolder is the negative half
+// of ci-eaon, and the reason the assignee is not passed unconditionally. Doing
+// that would let any caller refresh any other agent's lease, and it would
+// delete the "learn to stop" signal -- bd's refusal after a reclaim is the only
+// thing that tells a worker its claim is gone. So a holder that is not one of
+// this session's identity forms must reach bd as no --actor at all, and bd's
+// refusal must survive as the exit code with no liveness stamp behind it.
+func TestGcBdHeartbeatWillNotBorrowAnotherSessionsLeaseHolder(t *testing.T) {
+	capture := heartbeatLeaseHolderSetup(t, "demo-abc", "ci-someone-else", heartbeatSessionIdentity{
+		sessionID:   "ci-ll22",
+		sessionName: "toolsmith-ci-ll22",
+		alias:       "toolsmith-2",
+	})
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"heartbeat", "demo-abc"}, &stdout, &stderr); got != 3 {
+		t.Fatalf("doBd(heartbeat) = %d, want 3 (bd's refusal for a lease this session does not hold); stderr=%q", got, stderr.String())
+	}
+
+	calls := bdWriteInvocations(t, capture)
+	if len(calls) != 1 {
+		t.Fatalf("bd writes = %q, want exactly 1 (the refused lease refresh, no liveness stamp)", calls)
+	}
+	if calls[0] != "heartbeat demo-abc" {
+		t.Errorf("lease refresh = %q, want %q with no --actor", calls[0], "heartbeat demo-abc")
+	}
+}
+
+// TestResolveBdScopeTargetReadsATwoTokenFlagValueAsTheSubject is the evidence
+// behind the =-joined `--actor=<holder>` form doBdHeartbeat builds, rather than
+// leaving that choice as a claim in a comment.
+//
+// Scope auto-detection scans EVERY non-flag arg and accepts the first one that
+// looks like -- and exists as -- a bead, with the city prefix probed before any
+// rig. A lease holder is frequently a session bead id in the CITY store, so
+// passing it as a separate token would re-scope a heartbeat on a RIG bead to
+// the city and lose the bead. Joining it into one flag-shaped token is what
+// keeps it out of the scan.
+//
+// When this test starts failing because resolveBdScopeTarget learned to skip
+// flag VALUES -- bdflags.Positionals is the tested vocabulary for that -- the
+// constraint on doBdHeartbeat's argv is gone and its comment goes with it.
+func TestResolveBdScopeTargetReadsATwoTokenFlagValueAsTheSubject(t *testing.T) {
+	setCwd(t, t.TempDir())
+	origProbe := bdBeadExists
+	t.Cleanup(func() { bdBeadExists = origProbe })
+	// Every probed id exists in the store being probed: the question here is
+	// which args are OFFERED to the probe, not which beads are real.
+	bdBeadExists = func(_ string, _ *config.City, _ execStoreTarget, _ string) bool { return true }
+
+	cityDir := filepath.Join(t.TempDir(), "city")
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "demo", Prefix: "demo"},
+		Rigs:      []config.Rig{{Name: "gascity", Path: filepath.Join("rigs", "gascity"), Prefix: "gs"}},
+	}
+	rigTarget := execStoreTarget{
+		ScopeRoot: filepath.Join(cityDir, "rigs", "gascity"),
+		ScopeKind: "rig",
+		Prefix:    "gs",
+		RigName:   "gascity",
+	}
+
+	t.Run("two tokens: the holder wins over the bead being heartbeaten", func(t *testing.T) {
+		got, err := resolveBdScopeTarget(cfg, cityDir, "", []string{"heartbeat", "gs-abc", "--actor", "demo-sess1"}, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		if got.ScopeKind != "city" {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want the city scope; the hazard doBdHeartbeat's =-joined --actor avoids has disappeared, so relax that comment", got)
+		}
+	})
+
+	t.Run("one joined token: the bead being heartbeaten still wins", func(t *testing.T) {
+		got, err := resolveBdScopeTarget(cfg, cityDir, "", []string{"heartbeat", "gs-abc", "--actor=demo-sess1"}, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		if got != rigTarget {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v", got, rigTarget)
+		}
+	})
+}
+
+// TestBdHeartbeatLeaseActorOverridesOnlyForThisSessionsOwnIdentity pins the
+// decision itself, away from the city/bd harness. Each row is a holder form
+// gc hook --claim can leave on a bead.
+func TestBdHeartbeatLeaseActorOverridesOnlyForThisSessionsOwnIdentity(t *testing.T) {
+	identities := []string{"toolsmith-2", "toolsmith-ci-ll22", "ci-ll22"}
+	for _, tc := range []struct {
+		name       string
+		assignee   string
+		ambient    string
+		identities []string
+		want       string
+	}{
+		{
+			name:       "holder is already the ambient actor",
+			assignee:   "toolsmith-2",
+			ambient:    "toolsmith-2",
+			identities: identities,
+			want:       "",
+		},
+		{
+			name:       "holder is this session's bead id",
+			assignee:   "ci-ll22",
+			ambient:    "toolsmith-2",
+			identities: identities,
+			want:       "ci-ll22",
+		},
+		{
+			name:       "holder is this session's runtime name",
+			assignee:   "toolsmith-ci-ll22",
+			ambient:    "toolsmith-2",
+			identities: identities,
+			want:       "toolsmith-ci-ll22",
+		},
+		{
+			name:       "holder is another session",
+			assignee:   "ci-someone-else",
+			ambient:    "toolsmith-2",
+			identities: identities,
+			want:       "",
+		},
+		{
+			name:       "bead has no holder",
+			assignee:   "",
+			ambient:    "toolsmith-2",
+			identities: identities,
+			want:       "",
+		},
+		{
+			// A caller outside any managed session knows no identity forms, so
+			// it can never claim a holder is itself.
+			name:       "session identity is unknown",
+			assignee:   "ci-ll22",
+			ambient:    "",
+			identities: nil,
+			want:       "",
+		},
+		{
+			// Padding round-tripped through the store must not read as a
+			// different identity and manufacture a redundant --actor.
+			name:       "holder differs from the ambient actor only by padding",
+			assignee:   "  toolsmith-2  ",
+			ambient:    "toolsmith-2",
+			identities: identities,
+			want:       "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bdHeartbeatLeaseActor(tc.assignee, tc.ambient, tc.identities); got != tc.want {
+				t.Fatalf("bdHeartbeatLeaseActor(%q, %q, %q) = %q, want %q", tc.assignee, tc.ambient, tc.identities, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestBdHeartbeatIdentityFormsExcludeTheBarePoolTemplate pins a documented
+// ABSENCE. GC_TEMPLATE is set on every suffixed pool worker and holds the bare
+// template name, which is ALSO the [[named_session]] holder's identity --
+// admitting it would let toolsmith-3 refresh a lease held by toolsmith, the
+// cross-session adoption gc hook --claim excludes it to prevent (ga-80pen8).
+func TestBdHeartbeatIdentityFormsExcludeTheBarePoolTemplate(t *testing.T) {
+	t.Setenv("GC_ALIAS", "toolsmith-3")
+	t.Setenv("GC_AGENT", "toolsmith-3")
+	t.Setenv("GC_SESSION_NAME", "toolsmith-ci-ll22")
+	t.Setenv("GC_SESSION_ID", "ci-ll22")
+	t.Setenv("GC_TEMPLATE", "toolsmith")
+
+	want := []string{"toolsmith-3", "toolsmith-ci-ll22", "ci-ll22"}
+	if got := bdHeartbeatIdentityForms(); !slices.Equal(got, want) {
+		t.Fatalf("bdHeartbeatIdentityForms() = %q, want %q (GC_TEMPLATE=%q must not appear)", got, want, "toolsmith")
 	}
 }
 
