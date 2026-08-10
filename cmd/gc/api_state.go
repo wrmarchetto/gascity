@@ -745,7 +745,7 @@ func (cs *controllerState) runBeadCloseAutoclose(beadID string, store beads.Stor
 	// returns the same store, so this is identity today.
 	graphStore := cs.GraphBeadStore()
 	beadCloseAutocloseDispatch(func() {
-		doConvoyAutocloseWith(store, rec, beadID, os.Stderr, os.Stderr)
+		doConvoyAutocloseWith(store, rec, convoyCloseOriginController, beadID, os.Stderr, os.Stderr)
 		doWispAutocloseWith(store, beadID, os.Stderr, graphStore.Store)
 		doMoleculeAutocloseWith(store, storeRef, rec, beadID, os.Stderr, graphStore.Store)
 	})

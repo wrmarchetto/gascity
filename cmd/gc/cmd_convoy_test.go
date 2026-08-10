@@ -1357,7 +1357,7 @@ func TestConvoyAutocloseHappyPath(t *testing.T) {
 	_ = store.Close("gc-3")
 
 	var stdout bytes.Buffer
-	doConvoyAutocloseWith(store, events.Discard, "gc-3", &stdout, &bytes.Buffer{})
+	doConvoyAutocloseWith(store, events.Discard, convoyCloseOriginCloseHook, "gc-3", &stdout, &bytes.Buffer{})
 
 	out := stdout.String()
 	if !strings.Contains(out, `Auto-closed convoy gc-1 "batch"`) {
@@ -1385,7 +1385,7 @@ func TestConvoyAutocloseTracksDeps(t *testing.T) {
 	_ = store.Close("gc-4")
 
 	var stdout bytes.Buffer
-	doConvoyAutocloseWith(store, events.Discard, "gc-3", &stdout, &bytes.Buffer{})
+	doConvoyAutocloseWith(store, events.Discard, convoyCloseOriginCloseHook, "gc-3", &stdout, &bytes.Buffer{})
 
 	out := stdout.String()
 	if !strings.Contains(out, `Auto-closed convoy gc-2 "batch"`) {
@@ -1408,7 +1408,7 @@ func TestConvoyAutocloseOwnedSkip(t *testing.T) {
 	_ = store.Close("gc-2")
 
 	var stdout bytes.Buffer
-	doConvoyAutocloseWith(store, events.Discard, "gc-2", &stdout, &bytes.Buffer{})
+	doConvoyAutocloseWith(store, events.Discard, convoyCloseOriginCloseHook, "gc-2", &stdout, &bytes.Buffer{})
 
 	if strings.Contains(stdout.String(), "Auto-closed") {
 		t.Errorf("owned convoy should NOT be auto-closed: %q", stdout.String())
@@ -1426,7 +1426,7 @@ func TestConvoyAutocloseNoParent(t *testing.T) {
 	_ = store.Close("gc-1")
 
 	var stdout bytes.Buffer
-	doConvoyAutocloseWith(store, events.Discard, "gc-1", &stdout, &bytes.Buffer{})
+	doConvoyAutocloseWith(store, events.Discard, convoyCloseOriginCloseHook, "gc-1", &stdout, &bytes.Buffer{})
 
 	if stdout.String() != "" {
 		t.Errorf("no-parent bead should produce no output, got %q", stdout.String())
@@ -1440,7 +1440,7 @@ func TestConvoyAutocloseNotConvoy(t *testing.T) {
 	_ = store.Close("gc-2")
 
 	var stdout bytes.Buffer
-	doConvoyAutocloseWith(store, events.Discard, "gc-2", &stdout, &bytes.Buffer{})
+	doConvoyAutocloseWith(store, events.Discard, convoyCloseOriginCloseHook, "gc-2", &stdout, &bytes.Buffer{})
 
 	if stdout.String() != "" {
 		t.Errorf("non-convoy parent should produce no output, got %q", stdout.String())
@@ -1460,7 +1460,7 @@ func TestConvoyAutoclosePartialSiblings(t *testing.T) {
 	_ = store.Close("gc-2")                                            // only one sibling closed
 
 	var stdout bytes.Buffer
-	doConvoyAutocloseWith(store, events.Discard, "gc-2", &stdout, &bytes.Buffer{})
+	doConvoyAutocloseWith(store, events.Discard, convoyCloseOriginCloseHook, "gc-2", &stdout, &bytes.Buffer{})
 
 	if strings.Contains(stdout.String(), "Auto-closed") {
 		t.Errorf("partial siblings should NOT auto-close: %q", stdout.String())
@@ -1472,12 +1472,16 @@ func TestConvoyAutoclosePartialSiblings(t *testing.T) {
 	}
 }
 
-// TestConvoyAutocloseStampsCloseReason verifies that the hook-driven
-// autoclose path (doConvoyAutocloseWith) stamps the canonical
-// convoyAutocloseReason on the convoy bead before closing it. The
-// metadata is what BdStore.Close() forwards as `bd close --reason`,
-// which is what allows cities running with validation.on-close=error
-// to accept the close.
+// TestConvoyAutocloseStampsCloseReason verifies that the hook-driven autoclose
+// path (doConvoyAutocloseWith) stamps a close_reason on the convoy bead before
+// closing it. The metadata is what BdStore.Close() forwards as `bd close
+// --reason`, which is what allows cities running with
+// validation.on-close=error to accept the close.
+//
+// The expected string is a literal, not convoyAutocloseReasonFor(origin):
+// recomputing it here would let a body that ignores its origin argument pass,
+// which is the ci-eh7h bug. Per-collector distinctness is pinned in
+// convoy_close_origin_test.go.
 func TestConvoyAutocloseStampsCloseReason(t *testing.T) {
 	store := beads.NewMemStore()
 	_, _ = store.Create(beads.Bead{Title: "batch", Type: "convoy"})    // gc-1
@@ -1485,7 +1489,7 @@ func TestConvoyAutocloseStampsCloseReason(t *testing.T) {
 	_ = store.Close("gc-2")
 
 	var stdout bytes.Buffer
-	doConvoyAutocloseWith(store, events.Discard, "gc-2", &stdout, &bytes.Buffer{})
+	doConvoyAutocloseWith(store, events.Discard, convoyCloseOriginCloseHook, "gc-2", &stdout, &bytes.Buffer{})
 
 	b, err := store.Get("gc-1")
 	if err != nil {
@@ -1494,14 +1498,17 @@ func TestConvoyAutocloseStampsCloseReason(t *testing.T) {
 	if b.Status != "closed" {
 		t.Fatalf("convoy Status = %q, want %q", b.Status, "closed")
 	}
-	if got := b.Metadata["close_reason"]; got != convoyAutocloseReason {
-		t.Errorf("metadata.close_reason = %q, want %q", got, convoyAutocloseReason)
+	want := "convoy autoclose: collected by the gc convoy autoclose hook"
+	if got := b.Metadata["close_reason"]; got != want {
+		t.Errorf("metadata.close_reason = %q, want %q", got, want)
 	}
 }
 
-// TestConvoyCheckStampsCloseReason verifies that the bulk autoclose
-// path (gc convoy check) stamps the same convoyAutocloseReason on
-// every convoy it auto-closes.
+// TestConvoyCheckStampsCloseReason verifies that the bulk autoclose path (gc
+// convoy check) stamps its own close_reason on every convoy it auto-closes --
+// DIFFERENT from the hook path above. This test asserted the two were identical
+// until ci-eh7h; that is what made a hand-run sweep indistinguishable from the
+// event-driven handler firing.
 func TestConvoyCheckStampsCloseReason(t *testing.T) {
 	store := beads.NewMemStore()
 	_, _ = store.Create(beads.Bead{Title: "batch", Type: "convoy"})    // gc-1
@@ -1520,8 +1527,9 @@ func TestConvoyCheckStampsCloseReason(t *testing.T) {
 	if b.Status != "closed" {
 		t.Fatalf("convoy Status = %q, want %q", b.Status, "closed")
 	}
-	if got := b.Metadata["close_reason"]; got != convoyAutocloseReason {
-		t.Errorf("metadata.close_reason = %q, want %q", got, convoyAutocloseReason)
+	want := "convoy autoclose: collected by the gc convoy check sweep"
+	if got := b.Metadata["close_reason"]; got != want {
+		t.Errorf("metadata.close_reason = %q, want %q", got, want)
 	}
 }
 
@@ -1530,7 +1538,7 @@ func TestCloseConvoyWithReasonReturnsMetadataError(t *testing.T) {
 	_, _ = base.Create(beads.Bead{Title: "batch", Type: "convoy"}) // gc-1
 	store := failingSetMetadataStore{Store: base}
 
-	err := closeConvoyWithReason(store, "gc-1", convoyAutocloseReason)
+	err := closeConvoyWithReason(store, "gc-1", convoyManualCloseReason)
 	if err == nil {
 		t.Fatal("closeConvoyWithReason returned nil, want metadata error")
 	}
@@ -1566,9 +1574,9 @@ func TestCloseConvoyWithReasonBdStoreForwardsReasonWithoutShow(t *testing.T) {
 			return nil, fmt.Errorf("unexpected bd show before convoy close")
 		}
 		switch strings.Join(args, " ") {
-		case "update --json " + id + " --set-metadata close_reason=" + convoyAutocloseReason:
+		case "update --json " + id + " --set-metadata close_reason=" + convoyManualCloseReason:
 			return []byte(`[{"id":"bd-x","title":"batch","status":"open","issue_type":"convoy","created_at":"2025-01-15T10:30:00Z"}]`), nil
-		case "close --force --json --reason " + convoyAutocloseReason + " " + id:
+		case "close --force --json --reason " + convoyManualCloseReason + " " + id:
 			closeArgs = append([]string(nil), args...)
 			return []byte(`[{"id":"bd-x","title":"batch","status":"closed","issue_type":"convoy","created_at":"2025-01-15T10:30:00Z"}]`), nil
 		default:
@@ -1577,13 +1585,70 @@ func TestCloseConvoyWithReasonBdStoreForwardsReasonWithoutShow(t *testing.T) {
 	}
 	store := beads.NewBdStore("/city", runner)
 
-	if err := closeConvoyWithReason(store, id, convoyAutocloseReason); err != nil {
+	if err := closeConvoyWithReason(store, id, convoyManualCloseReason); err != nil {
 		t.Fatal(err)
 	}
 
-	want := []string{"close", "--force", "--json", "--reason", convoyAutocloseReason, id}
+	want := []string{"close", "--force", "--json", "--reason", convoyManualCloseReason, id}
 	if got := fmt.Sprint(closeArgs); got != fmt.Sprint(want) {
 		t.Fatalf("close args = %v, want %v", closeArgs, want)
+	}
+}
+
+// TestCloseConvoyWithOriginBdStoreForwardsOneUpdateThenClose is the BdStore
+// counterpart: the attribution must reach bd as ONE `bd update` carrying all
+// three keys, then the close. Three separate updates would leave the convoy
+// briefly stamped with a reason but no origin, and BdStore applies batch writes
+// sequentially, so the single-invocation shape is the only thing that makes the
+// record atomic on an external store.
+func TestCloseConvoyWithOriginBdStoreForwardsOneUpdateThenClose(t *testing.T) {
+	t.Setenv("GC_ALIAS", "mayor")
+
+	const id = "bd-y"
+	const reason = "convoy autoclose: collected by the gc convoy check sweep"
+	var got []string
+	runner := func(_, name string, args ...string) ([]byte, error) {
+		if name != "bd" {
+			return nil, fmt.Errorf("unexpected command name: %s", name)
+		}
+		got = append(got, strings.Join(args, " "))
+		switch args[0] {
+		case "update":
+			return []byte(`[{"id":"bd-y","title":"batch","status":"open","issue_type":"convoy","created_at":"2025-01-15T10:30:00Z"}]`), nil
+		case "close":
+			return []byte(`[{"id":"bd-y","title":"batch","status":"closed","issue_type":"convoy","created_at":"2025-01-15T10:30:00Z"}]`), nil
+		default:
+			return nil, fmt.Errorf("unexpected command: bd %s", strings.Join(args, " "))
+		}
+	}
+
+	if err := closeConvoyWithOrigin(beads.NewBdStore("/city", runner), id, convoyCloseOriginSweep); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only the first two invocations are pinned. BdStore.CloseWithReason
+	// re-reads the bead afterwards ("show --json"), which is its business and
+	// not part of this contract; asserting the whole list would make this test
+	// fail on an unrelated change to that read. SetMetadataBatch sorts its
+	// keys, so the argument order within the update IS stable and is pinned.
+	want := []string{
+		"update --json " + id +
+			" --set-metadata close_reason=" + reason +
+			" --set-metadata convoy_close_actor=mayor" +
+			" --set-metadata convoy_close_origin=sweep",
+		"close --force --json --reason " + reason + " " + id,
+	}
+	if len(got) < len(want) {
+		t.Fatalf("bd invocations = %v, want at least %v", got, want)
+	}
+	if fmt.Sprint(got[:len(want)]) != fmt.Sprint(want) {
+		t.Fatalf("bd invocations =\n  %v\nwant to open with\n  %v", got, want)
+	}
+	// A second update would mean the three keys did not travel together.
+	for _, call := range got[len(want):] {
+		if strings.HasPrefix(call, "update ") {
+			t.Errorf("extra bd update after the close: %q -- the attribution keys must travel in one write", call)
+		}
 	}
 }
 
