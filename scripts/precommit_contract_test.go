@@ -1,9 +1,11 @@
 package scripts_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -273,113 +275,46 @@ func TestPreCommitRegeneratesDashboardClientOnSpecChange(t *testing.T) {
 }
 
 func TestPreCommitReachesDashboardBlockWhenOnlySpecFileStaged(t *testing.T) {
-	repoRoot := repoRoot(t)
-	hookPath := filepath.Join(repoRoot, ".githooks", "pre-commit")
-
-	tmpRepo := t.TempDir()
-	runGit := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpRepo
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.invalid",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.invalid",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	specPath := filepath.Join(tmpRepo, "internal", "api", "openapi.json")
-	clientPath := filepath.Join(tmpRepo, "internal", "api", "dashboardspa", "web", "shared", "src", "generated", "gc-supervisor-client")
-	distPath := filepath.Join(tmpRepo, "internal", "api", "dashboardspa", "dist", "placeholder")
-
-	runGit("init")
-	writeTestFile(t, specPath, "{}\n")
-	writeTestFile(t, clientPath, "placeholder\n")
-	writeTestFile(t, distPath, "placeholder\n")
-	runGit("add", "-A")
-	runGit("commit", "-m", "init")
+	// The stubbed make stands in for the real dashboard-check/dashboard-smoke
+	// targets, which need the full repo: this test verifies the control flow
+	// reaches the dashboard block at all (the reviewer's criterion-2 gap).
+	tmpRepo := newPreCommitFixtureRepo(t, map[string]string{
+		"internal/api/openapi.json": "{}\n",
+		"internal/api/dashboardspa/web/shared/src/generated/gc-supervisor-client": "placeholder\n",
+		"internal/api/dashboardspa/dist/placeholder":                              "placeholder\n",
+	})
 
 	// Stage ONLY a change to openapi.json -- no .go, web-src, or doc files
 	// are staged, matching the reviewer's criterion-2 repro scenario.
-	writeTestFile(t, specPath, `{"changed":true}`+"\n")
-	runGit("add", "internal/api/openapi.json")
+	writeTestFile(t, filepath.Join(tmpRepo, "internal", "api", "openapi.json"), `{"changed":true}`+"\n")
+	runFixtureGit(t, tmpRepo, "add", "internal/api/openapi.json")
 
-	binDir := t.TempDir()
-	npmLog := filepath.Join(binDir, "npm.log")
-	writeExecutable(t, filepath.Join(binDir, "npm"), `#!/usr/bin/env bash
-set -euo pipefail
-echo "$*" >> "`+npmLog+`"
-exit 0
-`)
-	// Stub make: this test verifies the control-flow reaches the dashboard
-	// block at all (the reviewer's criterion-2 gap), not the real
-	// dashboard-check/dashboard-smoke targets, which need the full repo.
-	writeExecutable(t, filepath.Join(binDir, "make"), `#!/usr/bin/env bash
-exit 0
-`)
-
-	cmd := exec.Command("bash", hookPath)
-	cmd.Dir = tmpRepo
-	cmd.Env = []string{
-		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
-	}
-	out, err := cmd.CombinedOutput()
+	stubs := newPreCommitToolStubs(t)
+	out, err := runPreCommitHook(t, tmpRepo, stubs.path)
 	if err != nil {
 		t.Fatalf("pre-commit hook failed: %v\n%s", err, out)
 	}
 
-	logContent, readErr := os.ReadFile(npmLog)
-	if readErr != nil {
-		t.Fatalf("pre-commit hook exited early and never invoked npm when only internal/api/openapi.json was "+
-			"staged -- the go/web/docs early guard must not skip a spec-only commit (hook output: %s)", out)
-	}
-	if !strings.Contains(string(logContent), "generate:client") {
+	invocations := stubs.npmInvocations(t)
+	if !strings.Contains(invocations, "generate:client") {
 		t.Fatalf("pre-commit hook must run 'npm run generate:client' when only internal/api/openapi.json is "+
-			"staged, got npm invocations:\n%s", logContent)
+			"staged -- the go/web/docs early guard must not skip a spec-only commit. npm invocations:\n%s\n"+
+			"hook output:\n%s", invocations, out)
 	}
 }
 
 func TestPreCommitFailsClosedWhenSpecStagedButNpmAbsent(t *testing.T) {
-	repoRoot := repoRoot(t)
-	hookPath := filepath.Join(repoRoot, ".githooks", "pre-commit")
-
-	tmpRepo := t.TempDir()
-	runGit := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpRepo
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.invalid",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.invalid",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	specPath := filepath.Join(tmpRepo, "internal", "api", "openapi.json")
-
-	runGit("init")
-	writeTestFile(t, specPath, "{}\n")
-	runGit("add", "-A")
-	runGit("commit", "-m", "init")
+	tmpRepo := newPreCommitFixtureRepo(t, map[string]string{
+		"internal/api/openapi.json": "{}\n",
+	})
 
 	// Stage ONLY a change to openapi.json -- same repro shape as
 	// TestPreCommitReachesDashboardBlockWhenOnlySpecFileStaged, but this
 	// time npm itself is unreachable on PATH.
-	writeTestFile(t, specPath, `{"changed":true}`+"\n")
-	runGit("add", "internal/api/openapi.json")
+	writeTestFile(t, filepath.Join(tmpRepo, "internal", "api", "openapi.json"), `{"changed":true}`+"\n")
+	runFixtureGit(t, tmpRepo, "add", "internal/api/openapi.json")
 
-	cmd := exec.Command("bash", hookPath)
-	cmd.Dir = tmpRepo
-	cmd.Env = []string{
-		"PATH=" + restrictedPathWithoutNpm(t, nil),
-		"HOME=" + t.TempDir(),
-	}
-	out, err := cmd.CombinedOutput()
+	out, err := runPreCommitHook(t, tmpRepo, restrictedPathWithoutNpm(t, nil))
 	if err == nil {
 		t.Fatalf("pre-commit hook must fail when internal/api/openapi.json is staged and npm is not on PATH "+
 			"-- the generated TS client can't be regenerated, so the commit would silently ship a stale "+
@@ -392,63 +327,34 @@ func TestPreCommitFailsClosedWhenSpecStagedButNpmAbsent(t *testing.T) {
 }
 
 func TestPreCommitFailsClosedWhenGoBlockStagesSpecAsSideEffectAndNpmAbsent(t *testing.T) {
-	repoRoot := repoRoot(t)
-	hookPath := filepath.Join(repoRoot, ".githooks", "pre-commit")
-
-	tmpRepo := t.TempDir()
-	runGit := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpRepo
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.invalid",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.invalid",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	goFilePath := filepath.Join(tmpRepo, "main.go")
-	specPath := filepath.Join(tmpRepo, "internal", "api", "openapi.json")
-	formatStagedGoPath := filepath.Join(tmpRepo, "scripts", "precommit-format-staged-go")
 	// Every path the Go block unconditionally `git add`s after each
 	// generation step must already exist on disk, or that `git add` fails
 	// closed under `set -euo pipefail` before the hook ever reaches the
 	// npm-absent branch this test targets.
-	generatedPaths := []string{
-		specPath,
-		filepath.Join(tmpRepo, "docs", "reference", "schema", "openapi.json"),
-		filepath.Join(tmpRepo, "docs", "reference", "schema", "openapi.txt"),
-		filepath.Join(tmpRepo, "internal", "api", "genclient", "client_gen.go"),
-		filepath.Join(tmpRepo, "docs", "reference", "schema", "city-schema.json"),
-		filepath.Join(tmpRepo, "docs", "reference", "schema", "city-schema.txt"),
-		filepath.Join(tmpRepo, "docs", "reference", "config.md"),
-		filepath.Join(tmpRepo, "docs", "reference", "cli.md"),
-	}
-
-	runGit("init")
-	writeTestFile(t, goFilePath, "package main\n\nfunc main() {}\n")
-	for _, p := range generatedPaths {
-		writeTestFile(t, p, "{}\n")
-	}
-	if err := os.MkdirAll(filepath.Dir(formatStagedGoPath), 0o755); err != nil {
-		t.Fatalf("create parent for %s: %v", formatStagedGoPath, err)
-	}
-	writeExecutable(t, formatStagedGoPath, "#!/usr/bin/env bash\nexit 0\n")
-	runGit("add", "-A")
-	runGit("commit", "-m", "init")
+	const formatStagedGo = "scripts/precommit-format-staged-go"
+	tmpRepo := newPreCommitFixtureRepo(t, map[string]string{
+		"main.go":                                "package main\n\nfunc main() {}\n",
+		formatStagedGo:                           "#!/usr/bin/env bash\nexit 0\n",
+		"internal/api/openapi.json":              "{}\n",
+		"docs/reference/schema/openapi.json":     "{}\n",
+		"docs/reference/schema/openapi.txt":      "{}\n",
+		"internal/api/genclient/client_gen.go":   "{}\n",
+		"docs/reference/schema/city-schema.json": "{}\n",
+		"docs/reference/schema/city-schema.txt":  "{}\n",
+		"docs/reference/config.md":               "{}\n",
+		"docs/reference/cli.md":                  "{}\n",
+	}, formatStagedGo)
 
 	// Stage ONLY a .go file -- internal/api/openapi.json is untouched by the
 	// user's own `git add`. The hook's own Go block (staged_go_files branch)
 	// regenerates and stages openapi.json as a SIDE EFFECT via
 	// `go run ./cmd/genspec`, which is exactly the #4627/#4607 staleness
-	// trap the npm-present branch re-reads for (fresh spec_changed) but
+	// trap the npm-present branch re-reads for (fresh client_src_changed) but
 	// which the npm-absent fail-closed branch used to miss (ga-jg89a5): it
 	// checked a snapshot taken before the hook ran at all, so it never saw
 	// the spec this commit was actually about to ship.
-	writeTestFile(t, goFilePath, "package main\n\nfunc main() { println(1) }\n")
-	runGit("add", "main.go")
+	writeTestFile(t, filepath.Join(tmpRepo, "main.go"), "package main\n\nfunc main() { println(1) }\n")
+	runFixtureGit(t, tmpRepo, "add", "main.go")
 
 	goStub := `#!/usr/bin/env bash
 set -euo pipefail
@@ -458,22 +364,16 @@ fi
 exit 0
 `
 
-	cmd := exec.Command("bash", hookPath)
-	cmd.Dir = tmpRepo
-	cmd.Env = []string{
-		"PATH=" + restrictedPathWithoutNpm(t, map[string]string{
-			"make": "#!/usr/bin/env bash\nexit 0\n",
-			// Stands in for format/lint/genspec/genclient/genschema/vet.
-			// Only `run ./cmd/genspec` has an observable side effect
-			// (rewriting internal/api/openapi.json, which the hook's own
-			// `git add` then stages), matching what the real cmd/genspec
-			// does against a live Huma API -- the rest of the Go block is
-			// exercised for control-flow only.
-			"go": goStub,
-		}),
-		"HOME=" + t.TempDir(),
-	}
-	out, err := cmd.CombinedOutput()
+	out, err := runPreCommitHook(t, tmpRepo, restrictedPathWithoutNpm(t, map[string]string{
+		"make": "#!/usr/bin/env bash\nexit 0\n",
+		// Stands in for format/lint/genspec/genclient/genschema/vet.
+		// Only `run ./cmd/genspec` has an observable side effect
+		// (rewriting internal/api/openapi.json, which the hook's own
+		// `git add` then stages), matching what the real cmd/genspec
+		// does against a live Huma API -- the rest of the Go block is
+		// exercised for control-flow only.
+		"go": goStub,
+	}))
 	if err == nil {
 		t.Fatalf("pre-commit hook must fail when its own Go block stages internal/api/openapi.json as a side "+
 			"effect (go run ./cmd/genspec, triggered by staging a .go file) and npm is not on PATH -- the "+
@@ -487,46 +387,20 @@ exit 0
 }
 
 func TestPreCommitWarnsOnlyWhenNpmAbsentAndSpecNotStaged(t *testing.T) {
-	repoRoot := repoRoot(t)
-	hookPath := filepath.Join(repoRoot, ".githooks", "pre-commit")
-
-	tmpRepo := t.TempDir()
-	runGit := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = tmpRepo
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.invalid",
-			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.invalid",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	docPath := filepath.Join(tmpRepo, "README.md")
-
-	runGit("init")
-	writeTestFile(t, docPath, "hello\n")
-	runGit("add", "-A")
-	runGit("commit", "-m", "init")
+	tmpRepo := newPreCommitFixtureRepo(t, map[string]string{
+		"README.md": "hello\n",
+	})
 
 	// Stage a docs-only change -- internal/api/openapi.json is untouched,
 	// so npm's absence must stay a warning, not a hard failure. staged_docs
 	// being non-empty also exercises `make check-docs`, so stub `make` as a
 	// no-op; the fixture repo has none of the real doc-lint machinery.
-	writeTestFile(t, docPath, "hello again\n")
-	runGit("add", "README.md")
+	writeTestFile(t, filepath.Join(tmpRepo, "README.md"), "hello again\n")
+	runFixtureGit(t, tmpRepo, "add", "README.md")
 
-	cmd := exec.Command("bash", hookPath)
-	cmd.Dir = tmpRepo
-	cmd.Env = []string{
-		"PATH=" + restrictedPathWithoutNpm(t, map[string]string{
-			"make": "#!/usr/bin/env bash\nexit 0\n",
-		}),
-		"HOME=" + t.TempDir(),
-	}
-	out, err := cmd.CombinedOutput()
+	out, err := runPreCommitHook(t, tmpRepo, restrictedPathWithoutNpm(t, map[string]string{
+		"make": "#!/usr/bin/env bash\nexit 0\n",
+	}))
 	if err != nil {
 		t.Fatalf("pre-commit hook must still succeed (warn-only) when npm is absent and "+
 			"internal/api/openapi.json is NOT staged -- contributors without Node tooling must not be "+
@@ -535,6 +409,397 @@ func TestPreCommitWarnsOnlyWhenNpmAbsentAndSpecNotStaged(t *testing.T) {
 	if !strings.Contains(string(out), "npm not on PATH") {
 		t.Fatalf("pre-commit hook should still warn when npm is absent, got:\n%s", out)
 	}
+}
+
+// spaSourceRoot is the SPA workspace tree. Everything tracked under it is
+// SPA source or SPA config -- no prose, no fixture data -- which is what
+// makes "every tracked file" the correct trigger set for the dashboard gate
+// rather than a list somebody has to remember to extend.
+const spaSourceRoot = "internal/api/dashboardspa/web"
+
+// TestPreCommitSPAGateCoversEverySPASourceFile pins the dashboard trigger as
+// a coverage rule instead of a file list. .githooks/pre-commit decides
+// whether to run `make dashboard-check dashboard-smoke` from the pathspecs it
+// hands `git diff --cached`, and while those pathspecs enumerated individual
+// files the enumeration drifted behind the tree it described: at the time this
+// test was written it missed eslint.config.mjs, prettier.config.mjs,
+// .prettierignore and openapi-ts.config.ts, so the files that CONFIGURE lint
+// and format were exactly the ones whose changes got no local lint or format
+// check -- plus package-lock.json, the tailwind/postcss/vitest/playwright
+// configs, and the whole frontend/e2e tree (bead ci-padp, follow-up to
+// ci-dxot).
+//
+// The assertion is set coverage computed from `git ls-files`, deliberately
+// NOT a list of the twelve names above: a test that enumerates the misses can
+// only catch the misses somebody already found, which is the same failure as
+// the list it is guarding. A new SPA config file is covered the moment it is
+// tracked.
+func TestPreCommitSPAGateCoversEverySPASourceFile(t *testing.T) {
+	repoRoot := repoRoot(t)
+	script, err := os.ReadFile(filepath.Join(repoRoot, ".githooks", "pre-commit"))
+	if err != nil {
+		t.Fatalf("read pre-commit hook: %v", err)
+	}
+
+	tracked := gitLsFiles(t, repoRoot, spaSourceRoot)
+	if len(tracked) == 0 {
+		t.Fatalf("no tracked files under %s -- the coverage comparison below would pass "+
+			"vacuously, so the fixture is wrong, not the hook", spaSourceRoot)
+	}
+
+	covered := gitLsFiles(t, repoRoot, spaTriggerPathspecs(t, string(script))...)
+	var missing []string
+	for path := range tracked {
+		if !covered[path] {
+			missing = append(missing, path)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		if len(missing) > 12 {
+			missing = append(missing[:12], fmt.Sprintf("... and %d more", len(missing)-12))
+		}
+		t.Fatalf("pre-commit hook's staged_web_src pathspecs miss %d of %d tracked files under %s, so a "+
+			"commit touching only those skips `make dashboard-check dashboard-smoke` entirely and gets no "+
+			"local lint, format, typecheck or build check (bead ci-padp). Match the whole tree instead of "+
+			"enumerating it. Missing:\n  %s",
+			len(missing), len(tracked), spaSourceRoot, strings.Join(missing, "\n  "))
+	}
+}
+
+// TestPreCommitRunsDashboardGateWhenOnlySPAConfigStaged is the behavioral half
+// of the coverage test above: it proves a commit staging nothing but an SPA
+// lint config actually reaches `make dashboard-check dashboard-smoke`, rather
+// than exiting at the hook's go/web/docs/spec early guard.
+//
+// It also asserts the widened SPA trigger did NOT widen client regeneration:
+// eslint.config.mjs is not an input to the generated TS client, so npm must
+// stay untouched here.
+func TestPreCommitRunsDashboardGateWhenOnlySPAConfigStaged(t *testing.T) {
+	lintConfig := spaSourceRoot + "/eslint.config.mjs"
+	repo := newPreCommitFixtureRepo(t, map[string]string{
+		lintConfig: "export default [];\n",
+		// The dashboard branch `git add`s dist unconditionally after make,
+		// and that add fails closed under `set -euo pipefail` on a missing
+		// path -- which would mask the control-flow question being asked.
+		"internal/api/dashboardspa/dist/placeholder": "placeholder\n",
+	})
+	writeTestFile(t, filepath.Join(repo, filepath.FromSlash(lintConfig)), "export default [{}];\n")
+	runFixtureGit(t, repo, "add", lintConfig)
+
+	stubs := newPreCommitToolStubs(t)
+	out, err := runPreCommitHook(t, repo, stubs.path)
+	if err != nil {
+		t.Fatalf("pre-commit hook failed: %v\n%s", err, out)
+	}
+
+	if !strings.Contains(stubs.makeInvocations(t), "dashboard-check dashboard-smoke") {
+		t.Fatalf("pre-commit hook must run `make dashboard-check dashboard-smoke` when %s is staged -- the "+
+			"file that configures eslint is exactly the one whose change gets no local lint check otherwise "+
+			"(bead ci-padp). make invocations:\n%s\nhook output:\n%s",
+			lintConfig, stubs.makeInvocations(t), out)
+	}
+	if strings.Contains(stubs.npmInvocations(t), "generate:client") {
+		t.Fatalf("pre-commit hook must not regenerate the TS client for an SPA config change that is not one "+
+			"of its inputs, got npm invocations:\n%s", stubs.npmInvocations(t))
+	}
+}
+
+// TestPreCommitRegeneratesClientForEveryDeclaredClientSource pins the hook's
+// regeneration trigger to the SAME input set dashboard-ci declares to
+// check-artifact-drift.sh for the generated TS client. Keying regeneration on
+// internal/api/openapi.json alone left a commit that retuned
+// openapi-ts.config.ts, or bumped the generator in package-lock.json, shipping
+// a client built by the OLD config -- caught nowhere until CI's drift gate
+// (bead ci-padp).
+//
+// The expected set is read out of the Makefile rather than restated here, so
+// declaring a fourth --source without teaching the hook about it fails this
+// test instead of quietly reopening the hole.
+func TestPreCommitRegeneratesClientForEveryDeclaredClientSource(t *testing.T) {
+	for _, source := range dashboardClientSources(t) {
+		t.Run(source, func(t *testing.T) {
+			repo := newClientSourceFixtureRepo(t, source)
+			stubs := newPreCommitToolStubs(t)
+			out, err := runPreCommitHook(t, repo, stubs.path)
+			if err != nil {
+				t.Fatalf("pre-commit hook failed: %v\n%s", err, out)
+			}
+			if !strings.Contains(stubs.npmInvocations(t), "generate:client") {
+				t.Fatalf("pre-commit hook must run `npm run generate:client` when %s is staged -- "+
+					"dashboard-ci declares it a --source of the generated client, so a commit that "+
+					"changes it and not the spec ships a client built by the old inputs. npm "+
+					"invocations:\n%s\nhook output:\n%s", source, stubs.npmInvocations(t), out)
+			}
+		})
+	}
+}
+
+// TestPreCommitFailsClosedWhenAnyClientSourceStagedAndNpmAbsent extends the
+// npm-absent fail-closed branch to the same declared input set. The two
+// branches must not diverge on which inputs count as "the client is about to
+// go stale" -- diverging is what ga-jg89a5 was, one branch trusting a
+// different snapshot than the other.
+func TestPreCommitFailsClosedWhenAnyClientSourceStagedAndNpmAbsent(t *testing.T) {
+	for _, source := range dashboardClientSources(t) {
+		t.Run(source, func(t *testing.T) {
+			repo := newClientSourceFixtureRepo(t, source)
+			out, err := runPreCommitHook(t, repo, restrictedPathWithoutNpm(t, nil))
+			if err == nil {
+				t.Fatalf("pre-commit hook must fail when %s is staged and npm is not on PATH -- the "+
+					"generated TS client can't be regenerated, so the commit would silently ship a "+
+					"stale client with no enforcement until CI runs. Hook exited 0, output:\n%s",
+					source, out)
+			}
+			if !strings.Contains(string(out), "npm ci") || !strings.Contains(string(out), "generate:client") {
+				t.Fatalf("pre-commit hook's npm-absent failure must name the exact recovery command "+
+					"(cd internal/api/dashboardspa/web && npm ci && npm run generate:client), got:\n%s", out)
+			}
+			if !strings.Contains(string(out), source) {
+				t.Fatalf("pre-commit hook's npm-absent failure must name the staged input that triggered "+
+					"it (%s), not a fixed path -- otherwise the message sends the reader to a file they "+
+					"never touched. Got:\n%s", source, out)
+			}
+		})
+	}
+}
+
+// dashboardClientSources reads the --source paths dashboard-ci hands
+// check-artifact-drift.sh for the generated TS client. That recipe is the
+// declaration of what the client is built from; the pre-commit hook is a
+// consumer of the same fact and must not carry its own copy.
+func dashboardClientSources(t *testing.T) []string {
+	t.Helper()
+	makefile, err := os.ReadFile(filepath.Join(repoRoot(t), "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	content := string(makefile)
+
+	const clientArtifact = "--artifact " + spaSourceRoot + "/shared/src/generated/gc-supervisor-client"
+	artifactIdx := strings.Index(content, clientArtifact)
+	if artifactIdx < 0 {
+		t.Fatalf("Makefile must still judge the generated dashboard client through "+
+			"check-artifact-drift.sh (%q not found)", clientArtifact)
+	}
+	// Bounded at --regen so the NEXT check-artifact-drift.sh call in the same
+	// recipe -- the embedded bundle, whose --source is the whole web tree --
+	// cannot leak its paths into this list.
+	invocation := content[artifactIdx:]
+	if end := strings.Index(invocation, "--regen"); end >= 0 {
+		invocation = invocation[:end]
+	}
+
+	// Recipe continuations survive strings.Fields as bare `\` tokens; they
+	// always precede a flag, never follow one, so the value after --source is
+	// the path. The guard below catches it if that ever stops being true.
+	fields := strings.Fields(invocation)
+	var sources []string
+	for i, field := range fields {
+		if field != "--source" {
+			continue
+		}
+		if i+1 >= len(fields) || strings.HasPrefix(fields[i+1], "-") || fields[i+1] == `\` {
+			t.Fatalf("dangling --source in dashboard-ci's client drift check:\n%s", invocation)
+		}
+		sources = append(sources, fields[i+1])
+	}
+	if len(sources) == 0 {
+		t.Fatalf("could not parse --source paths out of dashboard-ci's client drift check:\n%s", invocation)
+	}
+	return sources
+}
+
+// newClientSourceFixtureRepo builds a repo whose only staged change is the
+// given generated-client input. The generated client and the embedded dist
+// both exist because the hook `git add`s them after regenerating and after
+// make -- an add of a missing path fails closed under `set -euo pipefail`,
+// which would answer a different question than the one under test.
+func newClientSourceFixtureRepo(t *testing.T, source string) string {
+	t.Helper()
+	repo := newPreCommitFixtureRepo(t, map[string]string{
+		source: "{}\n",
+		spaSourceRoot + "/shared/src/generated/gc-supervisor-client/index.ts": "export {};\n",
+		"internal/api/dashboardspa/dist/placeholder":                          "placeholder\n",
+	})
+	writeTestFile(t, filepath.Join(repo, filepath.FromSlash(source)), `{"changed":true}`+"\n")
+	runFixtureGit(t, repo, "add", source)
+	return repo
+}
+
+// spaTriggerPathspecs extracts the pathspecs the hook hands `git diff
+// --cached` when deciding whether staged SPA sources exist.
+func spaTriggerPathspecs(t *testing.T, hook string) []string {
+	t.Helper()
+	const assignment = "staged_web_src=$("
+	start := strings.Index(hook, assignment)
+	if start < 0 {
+		t.Fatal("pre-commit hook must still compute staged_web_src from a git diff --cached pathspec list")
+	}
+	segment := hook[start+len(assignment):]
+	end := strings.Index(segment, ")")
+	if end < 0 {
+		t.Fatal("pre-commit hook's staged_web_src command substitution is unterminated")
+	}
+	segment = segment[:end]
+	sep := strings.Index(segment, " -- ")
+	if sep < 0 {
+		t.Fatalf("pre-commit hook's staged_web_src must pass its paths after a `--` separator, got: %s", segment)
+	}
+	segment = segment[sep+len(" -- "):]
+
+	var specs []string
+	for {
+		open := strings.Index(segment, "'")
+		if open < 0 {
+			break
+		}
+		segment = segment[open+1:]
+		closed := strings.Index(segment, "'")
+		if closed < 0 {
+			t.Fatal("pre-commit hook's staged_web_src has an unterminated quoted pathspec")
+		}
+		specs = append(specs, segment[:closed])
+		segment = segment[closed+1:]
+	}
+	if len(specs) == 0 {
+		t.Fatal("pre-commit hook's staged_web_src passes no pathspecs, so no SPA change can ever trigger the gate")
+	}
+	return specs
+}
+
+// gitLsFiles returns the tracked paths matching pathspecs, as a set. It asks
+// git rather than matching pathspecs in Go so the test agrees with the matcher
+// the hook itself runs under, including directory-prefix and wildcard forms.
+func gitLsFiles(t *testing.T, dir string, pathspecs ...string) map[string]bool {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"ls-files", "-z", "--"}, pathspecs...)...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git ls-files %v: %v", pathspecs, err)
+	}
+	files := make(map[string]bool)
+	for _, name := range strings.Split(string(out), "\x00") {
+		if name != "" {
+			files[name] = true
+		}
+	}
+	return files
+}
+
+// newPreCommitFixtureRepo creates a throwaway git repository holding files
+// (repo-relative slash paths) and commits them, so callers can then rewrite
+// and stage whichever paths their case is about. Any path also named in
+// executables gets the exec bit -- the hook pipes into
+// scripts/precommit-format-staged-go by path, so a 0644 stand-in there fails
+// the hook on permissions instead of exercising the branch under test.
+func newPreCommitFixtureRepo(t *testing.T, files map[string]string, executables ...string) string {
+	t.Helper()
+	repo := t.TempDir()
+	runFixtureGit(t, repo, "init")
+	for rel, content := range files {
+		writeTestFile(t, filepath.Join(repo, filepath.FromSlash(rel)), content)
+	}
+	for _, rel := range executables {
+		if _, ok := files[rel]; !ok {
+			t.Fatalf("executable %q is not one of the fixture files", rel)
+		}
+		if err := os.Chmod(filepath.Join(repo, filepath.FromSlash(rel)), 0o755); err != nil {
+			t.Fatalf("chmod fixture executable %s: %v", rel, err)
+		}
+	}
+	runFixtureGit(t, repo, "add", "-A")
+	runFixtureGit(t, repo, "commit", "-m", "init")
+	return repo
+}
+
+func runFixtureGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.invalid",
+		"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.invalid",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+// runPreCommitHook runs the hook against a fixture repo under exactly the
+// given PATH. It takes the whole PATH rather than a directory to prepend:
+// prepending would leave the ambient PATH reachable behind it, which silently
+// defeats restrictedPathWithoutNpm and turns a fail-closed assertion into a
+// test of whatever npm the host happens to have.
+func runPreCommitHook(t *testing.T, repo, path string) ([]byte, error) {
+	t.Helper()
+	cmd := exec.Command("bash", filepath.Join(repoRoot(t), ".githooks", "pre-commit"))
+	cmd.Dir = repo
+	cmd.Env = []string{
+		"PATH=" + path,
+		"HOME=" + t.TempDir(),
+	}
+	return cmd.CombinedOutput()
+}
+
+type preCommitToolStubs struct {
+	path    string
+	makeLog string
+	npmLog  string
+}
+
+// newPreCommitToolStubs installs make and npm stand-ins that record every
+// invocation and REFUSE anything the hook is not expected to reach. A stub
+// that answered every call with success would hand a pass to whatever a case
+// forgot to script, and the gap would be invisible from the outside.
+func newPreCommitToolStubs(t *testing.T) preCommitToolStubs {
+	t.Helper()
+	binDir := t.TempDir()
+	stubs := preCommitToolStubs{
+		path:    binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		makeLog: filepath.Join(binDir, "make.log"),
+		npmLog:  filepath.Join(binDir, "npm.log"),
+	}
+	writeExecutable(t, filepath.Join(binDir, "make"), `#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "`+stubs.makeLog+`"
+case "$*" in
+"dashboard-check dashboard-smoke") exit 0 ;;
+esac
+echo "unscripted make target: $*" >&2
+exit 2
+`)
+	writeExecutable(t, filepath.Join(binDir, "npm"), `#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "`+stubs.npmLog+`"
+case "$*" in
+"ci --silent" | "run generate:client") exit 0 ;;
+esac
+echo "unscripted npm invocation: $*" >&2
+exit 2
+`)
+	return stubs
+}
+
+func (s preCommitToolStubs) makeInvocations(t *testing.T) string {
+	return readOptionalFile(t, s.makeLog)
+}
+
+func (s preCommitToolStubs) npmInvocations(t *testing.T) string {
+	return readOptionalFile(t, s.npmLog)
+}
+
+func readOptionalFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "(never invoked)"
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
 }
 
 // restrictedPathWithoutNpm builds a PATH containing only symlinks to the
