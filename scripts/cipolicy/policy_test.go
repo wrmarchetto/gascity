@@ -23,6 +23,128 @@ func TestCurrentWorkflowsMatchPolicy(t *testing.T) {
 	}
 }
 
+// The SPA lint's dependency on shared/dist is satisfied by step ORDER and by
+// which workspace the build targets, not by a build step merely existing, so
+// each case here breaks one of those and the gate must reject all four.
+// Driven through validateSPALintOrdering rather than validate(): the
+// whole-workflow execution hash rejects any mutation at all, so a case routed
+// through validate() would report a pass this check never earned.
+func TestSPALintMustFollowTheSharedTypesBuild(t *testing.T) {
+	if err := validateSPALintOrdering(loadPolicyDocuments(t).ci); err != nil {
+		t.Fatalf("committed ci.yml must satisfy the ordering it pins: %v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, []any) []any
+	}{
+		{
+			// The pre-ci-nwu2 shape: npm ci straight into lint.
+			name: "build step dropped",
+			mutate: func(t *testing.T, steps []any) []any {
+				return dropStep(steps, stepIndexRunning(t, steps, spaSharedBuildCommand))
+			},
+		},
+		{
+			// Present but late -- what a presence-only gate would wave through.
+			name: "build step moved after lint",
+			mutate: func(t *testing.T, steps []any) []any {
+				build := stepIndexRunning(t, steps, spaSharedBuildCommand)
+				lint := stepIndexRunning(t, steps, "npm run lint")
+				// Dropping the earlier build shifts lint down one, so the
+				// original lint index now lands immediately AFTER it.
+				moved := dropStep(steps, build)
+				return insertStep(moved, lint, steps[build])
+			},
+		},
+		{
+			// A build run somewhere else leaves the workspace's own dist absent.
+			name: "build step in another working-directory",
+			mutate: func(t *testing.T, steps []any) []any {
+				copied := dropStep(steps, len(steps))
+				index := stepIndexRunning(t, copied, spaSharedBuildCommand)
+				copied[index].(map[string]any)["working-directory"] = "internal/api/dashboardspa"
+				return copied
+			},
+		},
+		{
+			// The frontend half of `npm run build` builds no shared types, so a
+			// substring match on "npm run build" alone would pass this.
+			name: "build step narrowed to the frontend workspace",
+			mutate: func(t *testing.T, steps []any) []any {
+				copied := dropStep(steps, len(steps))
+				index := stepIndexRunning(t, copied, spaSharedBuildCommand)
+				copied[index].(map[string]any)["run"] = "npm run build:frontend --silent"
+				return copied
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			docs := loadPolicyDocuments(t)
+			dashboard := job(t, docs.ci, "dashboard")
+			steps, ok := dashboard["steps"].([]any)
+			if !ok {
+				t.Fatal("dashboard job steps are not a list")
+			}
+			dashboard["steps"] = test.mutate(t, steps)
+
+			err := validateSPALintOrdering(docs.ci)
+			if err == nil || !strings.Contains(err.Error(), `job "dashboard" lints`) {
+				t.Fatalf("error = %v, want the dashboard job named as linting before its build", err)
+			}
+		})
+	}
+}
+
+// Index of the first step whose run text contains substring. Fails the test
+// when there is none: every caller below is naming a step the committed
+// workflow has, so a miss means the fixture drifted, not that the case passed.
+func stepIndexRunning(t *testing.T, steps []any, substring string) int {
+	t.Helper()
+	for index, raw := range steps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if run, ok := step["run"].(string); ok && strings.Contains(run, substring) {
+			return index
+		}
+	}
+	t.Fatalf("no dashboard step runs %q", substring)
+	return -1
+}
+
+// Returns a copy without the step at index, so a mutation cannot reach the
+// shared decoded document through the backing array. An out-of-range index
+// copies every step, which is how the third case above takes a plain copy.
+func dropStep(steps []any, index int) []any {
+	result := make([]any, 0, len(steps))
+	for position, step := range steps {
+		if position == index {
+			continue
+		}
+		if mapping, ok := step.(map[string]any); ok {
+			clone := make(map[string]any, len(mapping))
+			for key, value := range mapping {
+				clone[key] = value
+			}
+			result = append(result, clone)
+			continue
+		}
+		result = append(result, step)
+	}
+	return result
+}
+
+func insertStep(steps []any, index int, step any) []any {
+	result := make([]any, 0, len(steps)+1)
+	result = append(result, steps[:index]...)
+	result = append(result, step)
+	return append(result, steps[index:]...)
+}
+
 func TestMakeTestCIPolicyRunsStaticScopeContracts(t *testing.T) {
 	const want = "\t$(TEST_ENV) GOFLAGS= GOENV=off GOWORK=off go test -count=1 -run '^(TestPreflightStaticScopesOrdinaryPRsWithoutWeakeningProtectedRuns|TestFullStaticLintExplicitlyOwnsConfiguredGolangCIGovet|TestChangedStaticTargetsScopeLintAndFormattingToTheDiff|TestCIStaticScopeClassifierFailsClosedOutsideValidatedPullRequestMerge)$$' ./scripts"
 

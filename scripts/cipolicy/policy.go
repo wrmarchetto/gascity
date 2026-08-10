@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -14,13 +15,18 @@ import (
 const (
 	setupGoAction = "actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c"
 
+	// Anchors for validateSPALintOrdering. The directory is the npm workspace
+	// root, which is the working-directory every SPA step declares.
+	spaWorkspaceDir       = "internal/api/dashboardspa/web"
+	spaSharedBuildCommand = "npm run build:shared"
+
 	// These are SHA-256 digests of the display-free JSON projections below.
 	// Whole-workflow execution hashes deliberately pin shell text instead of
 	// approximating shell semantics: any execution change requires explicit
 	// policy review, while workflow, job, step, and input descriptions remain
 	// free to change. A failure prints the projection and candidate digest.
 	expectedCITriggersHash       = "d1a8bcd089019589658d8f154af9c26a70877285d84a384c2dcea299efc9554a"
-	expectedCIExecutionHash      = "20fb1c01e05bd45c2355fd0a11ac99260d738e6c91f6d7d277009c0c8e507795"
+	expectedCIExecutionHash      = "c032cdd66b620bb36e5ba9d3f205cb0c74ed176418ae1e0297bcfdf59d94c994"
 	expectedNightlyTriggersHash  = "0a4400a09ac567e90adf8be1232eef1f14e36efd8dba3e143aa6e36f5b7a36f5"
 	expectedNightlyExecutionHash = "80575ca368f28ba9f8b14bf72ce5767a7877ffe4dcadc136854ab4b0b5f1377a"
 	expectedSetupActionHash      = "b7864038195cd054aee7fccfa903cab335b375bcab1a35239c17c5da7d32c07e"
@@ -175,6 +181,9 @@ func validate(ci, nightly, action map[string]any) error {
 	if err := validatePolicyWiring(ci); err != nil {
 		return err
 	}
+	if err := validateSPALintOrdering(ci); err != nil {
+		return err
+	}
 	if err := validatePRProviderOwnership(ci); err != nil {
 		return err
 	}
@@ -279,6 +288,99 @@ func validatePolicyWiring(workflow map[string]any) error {
 		return fmt.Errorf("preflight-static CI policy step must be unconditional and blocking")
 	}
 	return nil
+}
+
+// The dashboard SPA's eslint config enables typescript-eslint's type-aware
+// rules, so its lint has a BUILD dependency: those rules resolve the
+// gas-city-dashboard-shared workspace through shared/dist, which is gitignored
+// (`*/dist/` in that directory's .gitignore, zero tracked files) and is not
+// produced by `npm ci`. Lint a fresh checkout before building it and every
+// cross-workspace import reads as `unknown`, so restrict-template-expressions
+// fails on a file nobody touched and the push stays red (bead ci-nwu2).
+// Cheapest-step-first is correct for a syntax-only lint and wrong here.
+//
+// The Makefile already orders it right -- `dashboard-lint: dashboard-build` --
+// which is why `make dashboard-ci` never broke. Leaving that as the only
+// guarantee is what allowed a workflow calling the npm script directly to get
+// it wrong, so the ordering is pinned here rather than trusted.
+//
+// NOT caught: an eslint run that declares no `working-directory` (a `cd` in
+// the run body instead), and any lint outside .github/workflows. Widen
+// spaLintsWorkspace below rather than adding a second gate.
+func validateSPALintOrdering(workflow map[string]any) error {
+	jobs, ok := workflow["jobs"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("workflow jobs must be a mapping")
+	}
+	for _, name := range sortedKeys(jobs) {
+		job, ok := jobs[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		steps, err := mappingSlice(job["steps"], name+" steps")
+		if err != nil {
+			// No steps list: a job that delegates to a reusable workflow. A
+			// malformed one is left to the execution hash, which pins every
+			// step field in the workflow and reports the whole projection.
+			continue
+		}
+		for index, step := range steps {
+			if !spaStepRuns(step, spaLintsWorkspace) {
+				continue
+			}
+			if spaSharedBuiltBefore(steps[:index]) {
+				continue
+			}
+			return fmt.Errorf(
+				"job %q lints %s at step %d without building shared/dist first: run %q "+
+					"in that working-directory beforehand, or eslint's type-aware rules "+
+					"resolve every cross-workspace import as unknown",
+				name, spaWorkspaceDir, index, spaSharedBuildCommand,
+			)
+		}
+	}
+	return nil
+}
+
+// Reports whether the step runs eslint over the SPA workspace. `npm run lint`
+// is the shape ci.yml uses; the bare-eslint arm is there so hoisting the
+// command out of the npm script does not silently drop the step from the gate.
+func spaLintsWorkspace(run string) bool {
+	return strings.Contains(run, "npm run lint") || strings.Contains(run, "eslint")
+}
+
+// Reports whether any earlier step produced shared/dist. Scans for a first
+// match rather than requiring a unique one the way findStep does: the
+// dashboard job legitimately runs `npm run build` again later for the bundle,
+// so uniqueness would misread a correctly ordered job as ambiguous.
+func spaSharedBuiltBefore(earlier []map[string]any) bool {
+	for _, step := range earlier {
+		if spaStepRuns(step, spaBuildsSharedTypes) {
+			return true
+		}
+	}
+	return false
+}
+
+// Reports whether the step produces shared/dist. Unsuffixed `npm run build`
+// counts, since it is `build:shared && build:frontend` -- building the
+// frontend too is wasteful before a lint, not incorrect. `npm run
+// build:frontend` alone does NOT, which is why this cannot collapse into a
+// single "npm run build" prefix match.
+func spaBuildsSharedTypes(run string) bool {
+	if strings.Contains(run, spaSharedBuildCommand) {
+		return true
+	}
+	return strings.Contains(run, "npm run build") &&
+		!strings.Contains(run, "npm run build:frontend")
+}
+
+func spaStepRuns(step map[string]any, pred func(string) bool) bool {
+	if step["working-directory"] != spaWorkspaceDir {
+		return false
+	}
+	run, ok := step["run"].(string)
+	return ok && pred(run)
 }
 
 func validatePRProviderOwnership(workflow map[string]any) error {

@@ -1254,6 +1254,17 @@ jobs:
       - name: Install SPA dependencies
         run: npm ci --silent
         working-directory: internal/api/dashboardspa/web
+      # eslint here enables typescript-eslint's type-aware rules, so lint has a
+      # BUILD dependency: those rules resolve gas-city-dashboard-shared through
+      # shared/dist, which is gitignored (`*/dist/`, zero tracked files) and is
+      # NOT produced by `npm ci`. Without this step eslint reads every
+      # cross-workspace import as `unknown`, which failed every push on a file
+      # nobody had touched (bead ci-nwu2). Only :shared is built -- the
+      # frontend's own types come from src, and its bundle is built below.
+      # Ordering pinned by validateSPALintOrdering in scripts/cipolicy.
+      - name: Build shared types (eslint type-aware rule input)
+        run: npm run build:shared --silent
+        working-directory: internal/api/dashboardspa/web
       # Lint and format run BEFORE typecheck/build: they are the cheapest steps
       # and the package has declared --max-warnings=0 since it was vendored, but
       # no job ever ran them, so 3 eslint errors and 15 unformatted files sat
