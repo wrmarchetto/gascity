@@ -999,10 +999,15 @@ func TestFinalizeInitNoStartStillStartsBeadStore(t *testing.T) {
 //
 // This asserts a string, not a behavior -- TestFinalizeInitNoStartStillStarts
 // BeadStore holds the behavior. It earns its place because nothing else
-// guards the clause: scripts/check-generated-docs-drift.sh keeps
-// docs/reference/cli.md equal to whatever this string says, and
-// TestCLIDocsFreshness byte-compares only a fixed list of commands that does
-// not include gc init, so deleting the clause leaves every gate green.
+// guards the clause. The two gates that look like they would are both blind to
+// it: scripts/check-generated-docs-drift.sh regenerates
+// docs/reference/cli.md from this string and diffs, so it holds the doc equal
+// to whatever the string says and reports fresh once the clause is gone from
+// both; and TestCLIDocsFreshness checks only that every non-hidden command has
+// a "## <path>" heading in cli.md, deliberately avoiding byte-equality because
+// cobra registers completion/help lazily. Flag usage text is therefore outside
+// what it compares, for gc init and for every other command -- adding gc init
+// to its scope would not cover this. Deleting the clause leaves both green.
 func TestInitNoStartHelpDisclosesTheBeadStore(t *testing.T) {
 	usage := newInitCmd(io.Discard, io.Discard).Flags().Lookup("no-start").Usage
 	for _, want := range []string{"bead store", "gc stop"} {
