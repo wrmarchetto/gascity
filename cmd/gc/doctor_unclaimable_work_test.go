@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -137,10 +138,14 @@ func TestUnclaimableWorkReportsWorkRoutedToASuspendedAgent(t *testing.T) {
 // it unclaimable-assignee's, so without this exclusion every held bead reports.
 func TestUnclaimableWorkPassesUnassignedWorkOnAHold(t *testing.T) {
 	got := unclaimableIDs(t, poolAgentCfg(4), []beads.Bead{
-		{ID: "W-1", Title: "waiting on the mayor", Type: "bug", Status: "open",
-			Labels: []string{beadmeta.HoldMayorLabel}},
-		{ID: "W-2", Title: "waiting on a vendor", Type: "bug", Status: "open",
-			Labels: []string{beadmeta.HoldExternalLabel}},
+		{
+			ID: "W-1", Title: "waiting on the mayor", Type: "bug", Status: "open",
+			Labels: []string{beadmeta.HoldMayorLabel},
+		},
+		{
+			ID: "W-2", Title: "waiting on a vendor", Type: "bug", Status: "open",
+			Labels: []string{beadmeta.HoldExternalLabel},
+		},
 	}, nil)
 	assertUnclaimable(t, got)
 }
@@ -218,13 +223,76 @@ func TestUnclaimableWorkSummaryNamesBeadsAndStatesItsOverflow(t *testing.T) {
 	}
 }
 
-// TestUnclaimableWorkReportsAnUnreadableStoreAsUnknown pins that a store it
-// cannot read is a warning, never an OK. Reporting "nothing stranded" when the
-// query failed is the silence this whole check exists to remove.
-func TestUnclaimableWorkReportsAnUnreadableStoreAsUnknown(t *testing.T) {
-	check := newUnclaimableWorkCheck(poolAgentCfg(4), "/city", nil)
-	res := check.Run(&doctor.CheckContext{})
-	if res.Status != doctor.StatusWarning {
-		t.Fatalf("Status = %v, want StatusWarning", res.Status)
+// unclaimableWorkFailingStore fails one read and REFUSES every other call. The
+// embedded nil beads.Store is what does the refusing: an unscripted method
+// panics rather than answering, so a branch that later reaches for a query
+// nobody scripted cannot be handed a silent zero value and pass.
+type unclaimableWorkFailingStore struct {
+	beads.Store
+	listOpenErr error
+	readyErr    error
+}
+
+func (s unclaimableWorkFailingStore) ListOpen(...string) ([]beads.Bead, error) {
+	return nil, s.listOpenErr
+}
+
+func (s unclaimableWorkFailingStore) Ready(...beads.ReadyQuery) ([]beads.Bead, error) {
+	return nil, s.readyErr
+}
+
+// TestUnclaimableWorkReportsAnUnanswerableStoreAsUnknown pins the one status
+// this check must never reach by accident, across every path that ends without
+// an answer.
+//
+// Each row is pinned separately rather than through the single branch that is
+// easiest to reach, because the tempting zero value on any of them -- an empty
+// bead slice -- renders as "every one of 0 claimable bead(s) is addressed": a
+// StatusOK indistinguishable from a healthy city. Reporting a store it could
+// not read as a store with nothing stranded is precisely the silence this check
+// exists to remove, so the check may not be able to regress into it down any
+// path. The message assertion is part of the invariant, not decoration -- a
+// warning that does not name which read failed leaves an operator no way to
+// tell a stopped Dolt server from a broken query.
+func TestUnclaimableWorkReportsAnUnanswerableStoreAsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		newStore func(string) (beads.Store, error)
+		want     string
+	}{
+		{
+			name:     "no store configured",
+			newStore: nil,
+			want:     "no city bead store configured",
+		},
+		{
+			name:     "store will not open",
+			newStore: func(string) (beads.Store, error) { return nil, fmt.Errorf("dolt unreachable") },
+			want:     "opening city bead store: dolt unreachable",
+		},
+		{
+			name: "open beads unreadable",
+			newStore: func(string) (beads.Store, error) {
+				return unclaimableWorkFailingStore{listOpenErr: fmt.Errorf("list failed")}, nil
+			},
+			want: "listing open beads: list failed",
+		},
+		{
+			name: "ready projection unreadable",
+			newStore: func(string) (beads.Store, error) {
+				return unclaimableWorkFailingStore{readyErr: fmt.Errorf("ready unavailable")}, nil
+			},
+			want: "listing ready beads: ready unavailable",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := newUnclaimableWorkCheck(poolAgentCfg(4), "/city", tc.newStore).Run(&doctor.CheckContext{})
+			if res.Status != doctor.StatusWarning {
+				t.Fatalf("Status = %v, want StatusWarning; message %q", res.Status, res.Message)
+			}
+			if !strings.Contains(res.Message, tc.want) {
+				t.Fatalf("Message = %q does not name %q", res.Message, tc.want)
+			}
+		})
 	}
 }
