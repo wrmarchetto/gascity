@@ -35,6 +35,21 @@ linters:
       locale: US
 
   exclusions:
+    # node_modules is gitignored, npm-installed, third-party content, and the
+    # flatted package inside it ships a Go port. The go tool skips testdata and
+    # dot/underscore directories but NOT node_modules, so `go list ./...`
+    # includes that package and a full-repo `make lint` went red with 3 issues
+    # in code this repo neither owns nor compiles. CI never saw it: its lint job
+    # runs no `npm ci`, so the directory is absent there and only a machine that
+    # has built the dashboard hits this.
+    #
+    # Anchored on any path segment rather than the one web workspace, so a
+    # nested node_modules from a future npm workspace is covered without
+    # another edit. No matching formatters.exclusions entry: `golangci-lint fmt
+    # --diff ./...` and `go vet ./...` are both already clean on that file, so
+    # only the linters walk it.
+    paths:
+      - (^|/)node_modules/
     rules:
       # runtime shadows stdlib but is isolated to internal/.
       - path: internal/runtime/
