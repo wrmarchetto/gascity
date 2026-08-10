@@ -11,9 +11,13 @@
 //
 // Delegated elsewhere: the graph engine's package-closure semantics are
 // pinned by pr_static_scope_contract_test.go against the lint gate, which
-// shares scripts/goaffected.py. The always-run manifest's completeness is
-// pinned by push_gate_always_run_test.go. End-to-end hook wiring is pinned
-// by scripts/test-push-gate-select.sh.
+// shares scripts/goaffected.py. The always-run manifest's completeness and
+// the end-to-end hook wiring are both pinned by
+// scripts/test-push-gate-select.sh. Those two live in shell rather than
+// beside these cases on purpose: each needs exec.Command for the selector,
+// `git ls-files` and `go list`, and the resource census baseline for
+// scope=all forbids the subprocess count from growing, so a Go trampoline
+// for them cannot land. Do NOT port them back here.
 //
 // Run: go test ./scripts -run TestPushGateSelect
 

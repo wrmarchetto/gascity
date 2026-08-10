@@ -11,8 +11,8 @@
 # MEMBERSHIP IS MECHANICAL, NOT CURATED. Every package with a Go file
 # mentioning a repository-root marker -- `repoRoot`-style helper names,
 # `git ls-files`, `rev-parse --show-toplevel` -- must appear here, and
-# push_gate_always_run_test.go fails the build when one does not. That test
-# is the guarantee; this list is only its current answer. Do NOT prune an
+# scripts/test-push-gate-select.sh fails the build when one does not. That
+# check is the guarantee; this list is only its current answer. Do NOT prune an
 # entry because it looks like it only reads a fixture repo: the marker is
 # deliberately over-broad, because a package listed here costs wall clock
 # while a package missing from here costs a green build that tested nothing.
