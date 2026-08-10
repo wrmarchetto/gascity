@@ -320,6 +320,7 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 		register(newWorkOptionMetadataMigrationCheck(cfg, cityPath, storeFactory))
 		register(newBacklogDepthCheck(cityPath, storeFactory))
 		register(doctor.NewUnclaimableAssigneeCheck(cfg, cityPath, storeFactory))
+		register(newUnclaimableWorkCheck(cfg, cityPath, storeFactory))
 		register(newOrderTrackingRetentionCheck(cityPath, storeFactory))
 		register(&sessionModelDoctorCheck{cfg: cfg, cityPath: cityPath, newStore: storeFactory})
 	}
