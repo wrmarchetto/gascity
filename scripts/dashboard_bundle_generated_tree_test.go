@@ -98,7 +98,11 @@ func TestDashboardBundleIsATrackedGeneratedTree(t *testing.T) {
 		t.Errorf("dashboard-build no longer runs `npm run build`; %s cites it as the "+
 			"regenerator that replaces conflict resolution:\n%s", upstreamMergeDoc, recipe)
 	}
-	if !strings.Contains(string(recipe), "../dist") {
+	// Either spelling counts. The recipe writes `../dist` because it runs from
+	// web/, but a future recipe running from the repo root would spell the same
+	// destination in full -- and failing on that would be pedantry, not a
+	// finding. What must not happen is the recipe stopping short of the bundle.
+	if !strings.Contains(string(recipe), "../dist") && !strings.Contains(string(recipe), distPath) {
 		t.Errorf("dashboard-build no longer writes the bundle to %s; the procedure in %s "+
 			"regenerates into that exact path:\n%s", distPath, upstreamMergeDoc, recipe)
 	}
