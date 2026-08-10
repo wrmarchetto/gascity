@@ -56,7 +56,7 @@ func excludeHoldLabelsJQClause() string {
 	return ` | select(([ (.labels // [])[] | select(` + strings.Join(conds, " or ") + `) ] | length) == 0)`
 }
 
-// excludeMessageTypeArg keeps mail out of the ASSIGNED work tiers.
+// ExcludeMessageTypeArg keeps mail out of the ASSIGNED work tiers.
 //
 // A message bead carries the recipient in `assignee`, which is the identical
 // shape a real assigned bead has, so `bd ready --assignee=<id>` returns it as
@@ -73,14 +73,28 @@ func excludeHoldLabelsJQClause() string {
 // predicate. The invariants it pins are in
 // workquery_message_displacement_test.go.
 //
+// It is EXPORTED for one consumer, and the export is the point: the control
+// dispatcher's readiness scan (cmd/gc/dispatch_runtime.go) is a second,
+// hand-written copy of this same assignee-scoped predicate, and the copy is
+// what let 0de389a72 fix one path and leave the other spawning work-blind
+// sessions (ci-bhvf). A future edit here now reaches both. Do not re-inline
+// the literal at either site.
+//
+// Documented absence: the route-scoped tiers (bdReadyPoolDemandShell,
+// routed_ready in the control scan) deliberately do NOT carry it. They pass
+// --unassigned and mail always carries its recipient in assignee, so the flag
+// would filter nothing while implying a vector that does not exist. The one
+// route-scoped tier that DOES carry it, bdReadyPoolAliasDemandShell, matches
+// on assignee rather than on emptiness -- see its own comment.
+//
 // Documented absence: mail deliberately does NOT create demand and will NOT
 // spawn or sustain a session. That is not a regression to restore -- a
 // session cannot consume its own mail, because `gc hook --claim` is its FIRST
 // command, so it drained before ever reading the message that spawned it.
 // Mail is read by a live session; it is not a reason to start one.
-const excludeMessageTypeArg = ` --exclude-type=message`
+const ExcludeMessageTypeArg = ` --exclude-type=message`
 
-// excludeMessageJQClause is the jq form of excludeMessageTypeArg, for the
+// excludeMessageJQClause is the jq form of ExcludeMessageTypeArg, for the
 // ephemeral tiers that filter in jq because `bd query` has no --exclude-type.
 // Both spellings of the field are read: `bd` emits issue_type, some legacy
 // rows carry type.
@@ -125,7 +139,7 @@ func bdReadyPoolDemandShell(limitFlag string, includeEphemeralReady bool) string
 //   - --exclude-type=message: mail carries its recipient in `assignee`, so mail
 //     addressed to the pool by name is indistinguishable from pool-assigned work
 //     at the bd level. Left in, it raises demand no session can consume, and the
-//     spawn repeats at boot cadence forever (#4419; see excludeMessageTypeArg).
+//     spawn repeats at boot cadence forever (#4419; see ExcludeMessageTypeArg).
 //     Measured bound on that claim, bd 1.1.1: mail materializes as an EPHEMERAL
 //     message wisp, and `bd ready --include-ephemeral --assignee=<pool>` does not
 //     return one, so today this exclusion is latent -- removing it would not
@@ -145,7 +159,7 @@ func bdReadyPoolDemandShell(limitFlag string, includeEphemeralReady bool) string
 // would mean duplicating legacyEphemeralPoolDemandShell's jq filter for a
 // retirement-window path that has no producer.
 func bdReadyPoolAliasDemandShell(limitFlag string, includeEphemeralReady bool) string {
-	return `bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$target" --exclude-type=epic` + excludeMessageTypeArg + excludeHoldLabelsShellArgs() + ` --json ` + limitFlag
+	return `bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$target" --exclude-type=epic` + ExcludeMessageTypeArg + excludeHoldLabelsShellArgs() + ` --json ` + limitFlag
 }
 
 // bdReadyPoolDemandMigrationShell is a temporary raw compatibility probe for
@@ -317,7 +331,7 @@ func standardAssignedWorkQueryScript(includeEphemeralReady bool) string {
 func standardAssignedInProgressWorkQueryScript(includeEphemeralReady bool) string {
 	return `for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do ` +
 		`[ -z "$id" ] && continue; ` +
-		`r=$(bd list --status in_progress --assignee="$id"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
+		`r=$(bd list --status in_progress --assignee="$id"` + ExcludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`if [ -n "$r" ] && [ "$r" != "[]" ]; then ` +
 		inProgressBlockedByEnrichmentScript("r") +
 		`fi; ` +
@@ -384,7 +398,7 @@ func inProgressBlockedByEnrichmentScript(shellVar string) string {
 func standardAssignedReadyWorkQueryScript(includeEphemeralReady bool) string {
 	return `for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do ` +
 		`[ -z "$id" ] && continue; ` +
-		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$id"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
+		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$id"` + ExcludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		ephemeralAssignedReadyProbeScript("id", includeEphemeralReady) +
 		`done; `
@@ -401,7 +415,7 @@ func legacyControlAssignedInProgressWorkQueryScript(includeEphemeralReady bool) 
 		`legacy=""; case "$id" in *control-dispatcher) legacy="${id%control-dispatcher}workflow-control";; esac; ` +
 		`for cand in "$id" "$legacy"; do ` +
 		`[ -z "$cand" ] && continue; ` +
-		`r=$(bd list --status in_progress --assignee="$cand"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
+		`r=$(bd list --status in_progress --assignee="$cand"` + ExcludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`if [ -n "$r" ] && [ "$r" != "[]" ]; then ` +
 		inProgressBlockedByEnrichmentScript("r") +
 		`fi; ` +
@@ -416,7 +430,7 @@ func legacyControlAssignedReadyWorkQueryScript(includeEphemeralReady bool) strin
 		`legacy=""; case "$id" in *control-dispatcher) legacy="${id%control-dispatcher}workflow-control";; esac; ` +
 		`for cand in "$id" "$legacy"; do ` +
 		`[ -z "$cand" ] && continue; ` +
-		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$cand"` + excludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
+		`r=$(bd ready` + bdReadyIncludeEphemeralArg(includeEphemeralReady) + ` --assignee="$cand"` + ExcludeMessageTypeArg + ` --json --limit=1 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		ephemeralAssignedReadyProbeScript("cand", includeEphemeralReady) +
 		`done; ` +

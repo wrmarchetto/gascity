@@ -42,8 +42,8 @@ func TestPoolAliasDemandTierExcludesMailAddressedToThePool(t *testing.T) {
 	// in, it would raise demand no session can consume -- the session drains
 	// without reading it, the message never changes, and the next tick spawns
 	// another. That is #4419 at boot cadence, forever.
-	if !strings.Contains(got, excludeMessageTypeArg) {
-		t.Errorf("bdReadyPoolAliasDemandShell() = %q, missing %q", got, excludeMessageTypeArg)
+	if !strings.Contains(got, ExcludeMessageTypeArg) {
+		t.Errorf("bdReadyPoolAliasDemandShell() = %q, missing %q", got, ExcludeMessageTypeArg)
 	}
 }
 

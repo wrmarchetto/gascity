@@ -2432,7 +2432,7 @@ func TestEffectiveWorkQueryExcludesEpics(t *testing.T) {
 		// routed/pool tier still excludes epics (gc-udx guard)
 		`bd ready --metadata-field "gc.routed_to=$target" --unassigned --exclude-type=epic --exclude-label "hold:mayor" --exclude-label "hold:external" --json`,
 		// assigned tiers carry NO epic exclusion (they do exclude mail --
-		// see excludeMessageTypeArg; that is a different type and a
+		// see ExcludeMessageTypeArg; that is a different type and a
 		// different reason)
 		`bd list --status in_progress --assignee="$id" --exclude-type=message --json`,
 		`bd ready --assignee="$id" --exclude-type=message --json`,
