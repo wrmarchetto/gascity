@@ -155,13 +155,28 @@ test_full_decision_leaves_scope_unset() {
 }
 
 test_none_decision_runs_no_suite() {
+    # The observation this case is really about is an ABSENCE -- make never
+    # ran -- and a hook that died early, or never ran at all, produces that
+    # same absence. So the push status and the guard log stand in as positive
+    # proof the hook executed and reached the decision, rather than falling
+    # over before it. Not hypothetical: with the hook replaced by a bare
+    # `exit 0` this case still reported ok while the other six failed.
     local name="a none decision runs no suite at all"
     read -r repo bindir <<<"$(new_push_fixture 'none')"
     export PGS_MAKE_LOG="$bindir/make.log" PGS_GUARD_LOG="$bindir/guard.log"
     export PGS_SELECTOR_STDIN="$bindir/selector.stdin"
     : >"$PGS_MAKE_LOG"
+    : >"$PGS_GUARD_LOG"
 
     do_push "$repo" "$bindir" >/dev/null
+    if [ "$PUSH_STATUS" -ne 0 ]; then
+        record_fail "$name" "push failed with status $PUSH_STATUS; an empty make log proves nothing about the none path"
+        return
+    fi
+    if ! grep -q 'ownership-guard: ran' "$PGS_GUARD_LOG"; then
+        record_fail "$name" "the hook never reached the scope decision"
+        return
+    fi
     if [ -s "$PGS_MAKE_LOG" ]; then
         record_fail "$name" "make ran anyway: $(cat "$PGS_MAKE_LOG")"
         return
@@ -269,10 +284,34 @@ repo_root_marker_packages() {
         | sed 's|^|./|'
 }
 
+# The package the manifest header's load-bearing claim rests on:
+# resourcecensus does its walking from census.go, a NON-test file, so it is
+# precisely what a test-files-only scan would drop. Pinning it by name means
+# a rename has to come back through this file and that prose together.
+MANIFEST_SCAN_ANCHOR="./internal/testpolicy/resourcecensus"
+
 test_manifest_names_every_repo_wide_scanner() {
+    # comm reports only what the scan found and the manifest lacks, so a scan
+    # that finds NOTHING reports nothing missing and this case passes while
+    # guarding nothing -- which would quietly retire the "membership is
+    # mechanical" guarantee the manifest header stakes its Do-NOT-prune rule
+    # on. Proven reachable, not theorized: breaking the marker pattern left
+    # the pipeline printing `dirname: missing operand` to stderr and the
+    # suite still green at 10 passed / 0 failed. The two guards below are
+    # what refuse that, and they fail toward "this file is broken" rather
+    # than toward a clean manifest.
     local name="the always-run manifest names every repo-wide scanner"
-    local missing
-    missing="$(comm -23 <(repo_root_marker_packages) <(manifest_entries | sort))"
+    local scanned missing
+    scanned="$(repo_root_marker_packages)"
+    if [ -z "$scanned" ]; then
+        record_fail "$name" "the scan found no repo-wide scanners at all; the pipeline in this file is broken, not the manifest"
+        return
+    fi
+    if ! printf '%s\n' "$scanned" | grep -qxF "$MANIFEST_SCAN_ANCHOR"; then
+        record_fail "$name" "the scan missed $MANIFEST_SCAN_ANCHOR, which it must always find; the pipeline in this file is broken, not the manifest"
+        return
+    fi
+    missing="$(comm -23 <(printf '%s\n' "$scanned") <(manifest_entries | sort))"
     if [ -n "$missing" ]; then
         record_fail "$name" "packages read the repository root but are absent from the manifest: $(echo $missing)"
         return
