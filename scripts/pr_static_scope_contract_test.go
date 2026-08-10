@@ -679,6 +679,7 @@ func TestCIStaticScopeClassifierFailsClosedOutsideValidatedPullRequestMerge(t *t
 		"scripts/cipolicy/",
 		"scripts/ci-static-scope",
 		"scripts/ci-static-select",
+		"scripts/goaffected.py",
 	} {
 		if !strings.Contains(string(body), protected) {
 			t.Errorf("static-scope protected paths must explicitly include %q", protected)
@@ -713,6 +714,7 @@ func TestCIStaticScopeClassifierFailsClosedOutsideValidatedPullRequestMerge(t *t
 			"vendor/example.com/dependency/file.go",
 			"scripts/ci-static-scope",
 			"scripts/ci-static-select",
+			"scripts/goaffected.py",
 		} {
 			t.Run(strings.ReplaceAll(protectedPath, "/", "_"), func(t *testing.T) {
 				fixture, baseSHA := newSyntheticPRStaticScopeFixture(t, protectedPath)

@@ -17,6 +17,11 @@ PROTECTED_FILES = frozenset(
         "Makefile",
         "scripts/ci-static-scope",
         "scripts/ci-static-select",
+        # The shared graph engine both selectors compute their answer from.
+        # A change to it must be reviewed at full scope for the same reason
+        # the selectors above are: otherwise the code deciding what to check
+        # is the code that decided it needed no checking.
+        "scripts/goaffected.py",
     }
 )
 PROTECTED_PREFIXES = (

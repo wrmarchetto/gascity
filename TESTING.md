@@ -958,6 +958,88 @@ axis 2 leaves unconfined (`test-acceptance*`, `test-integration`,
 `test-integration-huma`, `test-worker-*`, `test-cover`, and similar direct
 `go test` invocations) are outside this bound too.
 
+#### Scoping the push gate to what a change can reach
+
+A fourth axis, and the one that actually bounds city throughput: how much
+suite a push runs at all. `.githooks/pre-push` used to reduce the pushed
+range to a single boolean — "did any `*.go` file change" — and spend the
+whole 187-package sweep answering it, the same price for a one-line fix as
+for a refactor. Combined with the slot cap above, concurrent agents do not
+oversubscribe the box, they *serialize*, so gate wall clock set a hard
+ceiling of roughly four pushes an hour however many agents existed
+(ci-4w2t).
+
+Measured on this repo, 2026-08-09, under normal concurrent agent load:
+
+| Job                              | Wall clock |
+| -------------------------------- | ---------- |
+| `unit-core` (187-package sweep)   | 995s       |
+| └ `internal/productmetrics` alone | 887s       |
+| one `cmd/gc` shard (1 of 6)       | 70s        |
+| scoped `fast` for a cmd/gc change | 275–350s   |
+| `scripts/push-gate-select` itself | 1–2s       |
+
+The sweep is the long pole by a wide margin and one package is most of it,
+so the win comes entirely from not sweeping packages a change cannot reach.
+`scripts/push-gate-select` turns the pushed range into that package set,
+using the same graph engine (`scripts/goaffected.py`) the CI lint gate
+selects with — one implementation, so the two cannot drift the way ci-c000's
+Go/shell copies did. The hook exports the result as
+`GC_SCOPED_TEST_PACKAGES`; `test-local-parallel` honors it in `fast` mode
+only, and skips the `cmd/gc` shards when `./cmd/gc` is not in the set.
+
+**Everything about this is built to fail toward a slow push, never a skipped
+test**, because a gate that stops running a package it should have run looks
+exactly like a green build. The selector prints `full` — the whole suite —
+on every uncertainty: an unreadable graph, a base the clone does not have, a
+malformed hook hand-off, and, critically, **any changed path outside the Go
+import-and-embed graph**. A test may open testdata, a shell script, or the
+Makefile at run time and nothing enumerates that, so a changed path the
+graph cannot account for widens the run rather than being assumed inert. The
+hook treats an unrecognized decision, a crash, and a missing selector the
+same way. `none` is reachable only when no Go build input changed at all,
+which is precisely the old hook's skip condition, kept so this can never run
+less than before.
+
+The order of those two questions is load-bearing and worth stating because
+getting it backwards leaves every test green. "Did any Go source change" is
+asked FIRST and a no ends the run immediately; only then does the
+unknown-path rule apply. Asked the other way round, a docs-only push — about
+a quarter of recent commits — has no path inside the Go graph, so the
+unknown-path rule fires and converts a push that used to cost nothing into a
+full 16-minute suite, making the gate slower on average.
+
+The one thing the closure genuinely cannot see is a test that reads the
+repository instead of its own imports — `internal/testpolicy/resourcecensus`
+walking every tracked `*.go` file, the `git ls-files` source guards, the
+whole-tree walkers. No import edge connects them to a changed leaf.
+`scripts/push-gate-always-run.manifest` lists those packages and the
+selector adds them to every scoped run. Membership is mechanical, not
+curated: any tracked Go file mentioning a repo-root marker puts its package
+on the list, and `scripts/test-push-gate-select.sh` fails the build when one
+is missing. The marker scan deliberately covers all `*.go`, not just
+`*_test.go` — the resource census does its walking from a non-test file, so
+a test-files-only scan drops the single most repo-wide package in the tree.
+Over-inclusion costs wall clock; omission costs a green build that tested
+nothing, so the rule never tries to be clever about which markers "really"
+reach outside a fixture.
+
+The bead-ownership guard (`scripts/push-ownership-guard.sh`) runs before the
+scope selection and outside every branch of it: a scoped run must never be
+the reason it did not fire.
+
+Coverage: `scripts/push_gate_select_test.go` (selector decisions, against
+fixture modules in real temp repos) plus
+`scripts/test-push-gate-select.sh` (hook wiring and always-run manifest
+completeness), the latter run directly as the `push-gate-select-selftest`
+job in `fast` and `full`. That split is not stylistic: driving those checks
+from Go would need `exec.Command` for the script, `git ls-files`, and
+`go list`, and each is a tracked subprocess occurrence in the census whose
+`scope=all` invariant is "totals cannot grow". A first draft of ci-4w2t did
+exactly that and its own push gate rejected it at +3 calls / +2 files over
+baseline — the same ratchet, and the same resolution, as the
+`push-gate-lock-selftest` job described above.
+
 This mechanism does not extend `bd` claim-lease heartbeats across the
 wait+run phases. An earlier draft of the originating bead (`ga-owh20p`)
 assumed an existing bd-heartbeat workaround needed extending for this

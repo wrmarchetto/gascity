@@ -12,6 +12,11 @@ Environment:
   GC_TEST_INNER_P        override the per-job GOFLAGS=-p= value (default:
                          outer job budget divided across concurrent jobs)
   GO_TEST_TIMEOUT       per-package go test budget, <n>s|m|h (default: 20m)
+  GC_SCOPED_TEST_PACKAGES
+                        fast mode only: run just these package args instead
+                        of the whole tree. Set by .githooks/pre-push from
+                        scripts/push-gate-select; never set it by hand to
+                        "save time" on a real push.
 USAGE
 }
 
@@ -90,6 +95,38 @@ if ! [[ "$go_test_timeout" =~ ^[0-9]+[smh]$ ]]; then
   exit 1
 fi
 
+# Scoped fast suite (ci-4w2t). .githooks/pre-push sets
+# GC_SCOPED_TEST_PACKAGES to the package args a push can actually affect, as
+# decided by scripts/push-gate-select, so a one-line fix stops paying for a
+# 187-package sweep. Two rules make the narrowing safe to read here:
+#
+#   1. Only `fast` honors it. The merge-baseline targets (full, integration,
+#      cmd-gc-process) must stay complete no matter what the environment
+#      carries, so a stale export in a shell cannot quietly shrink them.
+#   2. ./cmd/gc is split out rather than passed to the unit sweep, because
+#      the sharded jobs below own it. Leaving it in both would run cmd/gc
+#      twice -- once unsharded, at full serial cost, defeating the sharding.
+#
+# An empty scope after the split is a real answer, not a failure: a push that
+# only touched cmd/gc has no unit-sweep work left, and add_unit_core_job
+# adds no job at all.
+scoped_unit_packages=""
+scoped_has_cmd_gc=0
+if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then
+  if [[ "$mode" != "fast" ]]; then
+    echo "GC_SCOPED_TEST_PACKAGES is only honored by the fast target; ignoring it for ${mode}" >&2
+    unset GC_SCOPED_TEST_PACKAGES
+  else
+    for pkg in ${GC_SCOPED_TEST_PACKAGES}; do
+      if [[ "$pkg" == "./cmd/gc" ]]; then
+        scoped_has_cmd_gc=1
+        continue
+      fi
+      scoped_unit_packages+="${scoped_unit_packages:+ }${pkg}"
+    done
+  fi
+fi
+
 gopath_val="$(go env GOPATH)"
 gocache_val="$(go env GOCACHE)"
 gomodcache_val="$(go env GOMODCACHE)"
@@ -114,8 +151,17 @@ add_fsys_compile_job() {
 # timeout budget. Package parallelism is bounded separately for every job by the
 # GOFLAGS -p export below (ga-04m84s), so it is not pinned on this command.
 add_unit_core_job() {
+  local package_expr="\$(go list ./... | grep -v '^github.com/gastownhall/gascity/cmd/gc\$')"
+  if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then
+    # Already excludes ./cmd/gc: the caller strips it, because cmd/gc runs
+    # through the sharded jobs below and would otherwise be tested twice.
+    package_expr="${scoped_unit_packages}"
+    if [[ -z "$package_expr" ]]; then
+      return 0
+    fi
+  fi
   add_job "unit-core" \
-    "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} \$(go list ./... | grep -v '^github.com/gastownhall/gascity/cmd/gc\$')"
+    "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ${package_expr}"
 }
 
 # Runs as a direct shell job rather than through a `go test` wrapper because a
@@ -134,6 +180,15 @@ add_push_gate_lock_selftest_job() {
 # resourcecensus scope=all audit total.
 add_local_concurrency_selftest_job() {
   add_job "local-concurrency-selftest" "bash scripts/test-local-concurrency.sh"
+}
+
+# Hook wiring and always-run manifest completeness for the scoped push gate
+# (ci-4w2t). Same census-avoidance rationale again, and it was not a
+# hypothetical here: the first draft drove these from Go test files and the
+# push gate rejected it at +3 subprocess calls / +2 files over the scope=all
+# baseline, whose invariant forbids growth outright.
+add_push_gate_select_selftest_job() {
+  add_job "push-gate-select-selftest" "bash scripts/test-push-gate-select.sh"
 }
 
 add_cmd_gc_shards() {
@@ -184,11 +239,18 @@ add_integration_jobs() {
 
 case "$mode" in
   fast)
+    # The three jobs below the sweep stay unconditional under a scoped run.
+    # They are self-tests of this harness and of the cross-compile, they cost
+    # seconds rather than minutes, and making their inclusion depend on the
+    # selection would put the gate's own correctness behind the gate.
     add_fsys_compile_job
     add_unit_core_job
     add_push_gate_lock_selftest_job
     add_local_concurrency_selftest_job
-    add_cmd_gc_shards "unit-cmd-gc" "1" ""
+    add_push_gate_select_selftest_job
+    if [[ -z "${GC_SCOPED_TEST_PACKAGES:-}" || "$scoped_has_cmd_gc" -eq 1 ]]; then
+      add_cmd_gc_shards "unit-cmd-gc" "1" ""
+    fi
     ;;
   cmd-gc-process)
     add_cmd_gc_shards "cmd-gc-process" "0" ""
@@ -202,6 +264,7 @@ case "$mode" in
     add_unit_core_job
     add_push_gate_lock_selftest_job
     add_local_concurrency_selftest_job
+    add_push_gate_select_selftest_job
     add_cmd_gc_shards "cmd-gc-process" "0" ""
     add_productmetrics_testhook_job
     add_integration_jobs
