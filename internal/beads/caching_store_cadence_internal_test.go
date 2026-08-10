@@ -4,15 +4,38 @@ import (
 	"bytes"
 	"log"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
+// syncLogBuffer is a mutex-guarded log sink. A bare bytes.Buffer is NOT safe
+// here: the store's own goroutines log (the reconcile loop and the stall
+// watchdog both do), so a test that polls the buffer while one of them writes
+// races -- caught by -race in the stall watchdog's wiring test, invisible
+// without it. Only String() is exposed because that is all any caller needs.
+type syncLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // captureLog redirects the default logger's output to a buffer for the
 // duration of the test.
-func captureLog(t *testing.T) *bytes.Buffer {
+func captureLog(t *testing.T) *syncLogBuffer {
 	t.Helper()
-	buf := &bytes.Buffer{}
+	buf := &syncLogBuffer{}
 	prev := log.Writer()
 	prevFlags := log.Flags()
 	log.SetOutput(buf)

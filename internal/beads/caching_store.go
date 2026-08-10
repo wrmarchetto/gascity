@@ -49,20 +49,43 @@ type CachingStore struct {
 	mutationSeq       uint64
 	primePartialErr   error
 
-	reconciling    atomic.Bool
-	syncFailures   int
-	circuitTripped bool
-	stats          CacheStats
-	onChange       func(eventType, beadID, runID, sessionID, stepID string, dependsOnStepIDs *[]string, payload json.RawMessage)
-	problemf       func(string)
-	problemLog     map[string]cacheProblemLogState
+	reconciling atomic.Bool
+	// reconcileStartedAt is when the in-flight full-scan pass began, or zero
+	// when none is running. Guarded by c.mu, distinct from the reconciling CAS
+	// gate above: the gate answers "may another pass start", this answers "for
+	// how long has this one been running", which is the ONLY in-process fact
+	// that separates a wedged pass from a starved schedule. Every other
+	// reconciler signal is written after backing.List returns, so a pass that
+	// never returns leaves no other trace. See
+	// caching_store_reconcile_stall.go.
+	reconcileStartedAt time.Time
+	syncFailures       int
+	circuitTripped     bool
+	stats              CacheStats
+	onChange           func(eventType, beadID, runID, sessionID, stepID string, dependsOnStepIDs *[]string, payload json.RawMessage)
+	problemf           func(string)
+	problemLog         map[string]cacheProblemLogState
 
 	// lastReconcileLogAt rate-limits the per-reconcile success log line
 	// emitted by runReconciliation. Without this, a busy cache at SMALL
 	// cadence (30 s) would still produce 2 lines/min — and at faster test
 	// cadences would flood logs. cacheReconcileSuccessLogWindow caps the
 	// rate at one line per minute, matching cacheProblemLogWindow.
-	lastReconcileLogAt     time.Time
+	lastReconcileLogAt time.Time
+	// cadenceLog rate-limits the cadence transition line per ordered tier
+	// pair, keyed "small→medium" and so on. Keyed rather than a single
+	// timestamp because a promote and its matching demote are different
+	// findings that can land in the same instant on an oscillating store, and
+	// one shared timestamp would swallow the second of the two.
+	cadenceLog map[string]cacheProblemLogState
+	// stallLog rate-limits the reconciler stall line per mode; see
+	// reconcilerStallLogLocked for why the key is the mode and not the store.
+	stallLog map[string]cacheProblemLogState
+	// stallWatchdogInterval and stallThresholdOverride are test-only period
+	// overrides (SetStallWatchdogForTest). Zero means use the package
+	// constants, which is always the case in production.
+	stallWatchdogInterval  time.Duration
+	stallThresholdOverride time.Duration
 	primeMu                sync.Mutex
 	primeRunning           bool
 	primeCycle             *fullPrimeCycle
@@ -146,6 +169,19 @@ type CacheStats struct {
 	// "latency" (P95 above the high-water mark), or "both" (bead count
 	// and latency both push to MEDIUM).
 	CadenceDriver string
+	// ReconcilerArmedAt is when StartReconciler armed the loop, or zero on a
+	// store whose reconciler was never started. Reported so a reader can tell
+	// "never armed" from "armed and starved" -- both show LastReconcileAt zero.
+	ReconcilerArmedAt time.Time
+	// ReconcileInFlight reports that a full-scan pass has started and not
+	// returned. Together with ReconcileStartedAt this is what distinguishes a
+	// WEDGED reconciler (in flight far past its cadence) from a STARVED one
+	// (never in flight, LastReconcileAt zero) -- states that are otherwise
+	// identical from outside, since both emit no success and no problem line.
+	ReconcileInFlight bool
+	// ReconcileStartedAt is when the in-flight pass began, or zero when none is
+	// running. Derived at read time like State, not accumulated.
+	ReconcileStartedAt time.Time
 }
 
 const (
@@ -163,6 +199,14 @@ const (
 	// the reconciler's footprint in the operator-visible log stays bounded
 	// regardless of cadence.
 	cacheReconcileSuccessLogWindow = time.Minute
+	// cacheCadenceLogWindow rate-limits the cadence transition line per tier
+	// pair. Longer than cacheProblemLogWindow because the transition writer is
+	// updateCadenceStatsLocked, which runs on every mutation: a store hovering
+	// on a bead-count threshold crosses it on each create/close pair, and
+	// beadCountCadence has no hysteresis to absorb that. Five minutes bounds an
+	// oscillating store at two lines per window (one per direction) while
+	// leaving a genuine tier move visible within one poll of when it happened.
+	cacheCadenceLogWindow = 5 * time.Minute
 )
 
 // StaggerOption configures the deterministic startup stagger applied
@@ -309,6 +353,8 @@ func newCachingStore(backing Store, idPrefix string, onChange func(eventType, be
 		localBeadAt: make(map[string]time.Time),
 		deletedSeq:  make(map[string]uint64),
 		problemLog:  make(map[string]cacheProblemLogState),
+		cadenceLog:  make(map[string]cacheProblemLogState),
+		stallLog:    make(map[string]cacheProblemLogState),
 		onChange:    onChange,
 		problemf: func(msg string) {
 			log.Printf("beads cache: %s", msg)
@@ -1102,7 +1148,11 @@ func (c *CachingStore) StartReconciler(ctx context.Context, stagger StaggerOptio
 		return
 	}
 	c.cancelFn = cancel
-	c.lifecycleWG.Add(1)
+	// Two goroutines, deliberately. The stall watchdog cannot share the
+	// reconcile loop's goroutine: reconcileLoop calls runReconciliation inline,
+	// so a backing.List that blocks forever parks the very goroutine that would
+	// report it. See caching_store_reconcile_stall.go.
+	c.lifecycleWG.Add(2)
 	c.lifecycleMu.Unlock()
 
 	offset := stagger.resolve(agentID)
@@ -1117,6 +1167,10 @@ func (c *CachingStore) StartReconciler(ctx context.Context, stagger StaggerOptio
 	go func() {
 		defer c.lifecycleWG.Done()
 		c.reconcileLoop(ctx, offset)
+	}()
+	go func() {
+		defer c.lifecycleWG.Done()
+		c.reconcilerStallWatchdog(ctx)
 	}()
 }
 
@@ -1142,17 +1196,27 @@ func (c *CachingStore) Stats() CacheStats {
 	defer c.mu.RUnlock()
 
 	s := c.stats
-	switch c.state {
-	case cachePartial:
-		s.State = "partial"
-	case cacheLive:
-		s.State = "live"
-	case cacheDegraded:
-		s.State = "degraded"
-	default:
-		s.State = "uninitialized"
-	}
+	s.State = cacheStateLabel(c.state)
+	s.ReconcilerArmedAt = c.reconcilerArmedAt
+	s.ReconcileStartedAt = c.reconcileStartedAt
+	s.ReconcileInFlight = !c.reconcileStartedAt.IsZero()
 	return s
+}
+
+// cacheStateLabel renders a cacheState for operators. Shared by Stats and the
+// stall watchdog so the two never disagree about what a store's state is
+// called.
+func cacheStateLabel(state cacheState) string {
+	switch state {
+	case cachePartial:
+		return "partial"
+	case cacheLive:
+		return "live"
+	case cacheDegraded:
+		return "degraded"
+	default:
+		return "uninitialized"
+	}
 }
 
 // IsLive reports whether reads are served from the cache.
@@ -1199,18 +1263,32 @@ func (c *CachingStore) problemLogMessageLocked(msg string, now time.Time) (strin
 	if c.problemLog == nil {
 		c.problemLog = make(map[string]cacheProblemLogState)
 	}
-	state := c.problemLog[msg]
-	if !state.lastAt.IsZero() && now.Sub(state.lastAt) < cacheProblemLogWindow {
-		state.suppressed++
-		c.problemLog[msg] = state
+	return rateLimitLogLocked(c.problemLog, msg, msg, now, cacheProblemLogWindow)
+}
+
+// rateLimitLogLocked decides whether one log line may be emitted now, keyed by
+// key within window, and returns the message to emit with a suppressed-count
+// suffix when repeats were swallowed since the last emission. The state map is
+// mutated in place, so the caller must hold whichever lock guards it.
+//
+// key is separate from msg because the cadence transition line varies its text
+// (bead counts, P95) between occurrences of the same finding: keying on the
+// text would make every line unique and defeat the limiter. Reporting the
+// suppressed count rather than dropping repeats silently is load-bearing -- a
+// high count is itself the finding on a store oscillating across a threshold.
+func rateLimitLogLocked(state map[string]cacheProblemLogState, key, msg string, now time.Time, window time.Duration) (string, bool) {
+	entry := state[key]
+	if !entry.lastAt.IsZero() && now.Sub(entry.lastAt) < window {
+		entry.suppressed++
+		state[key] = entry
 		return "", false
 	}
 
 	logMsg := msg
-	if state.suppressed > 0 {
-		logMsg = fmt.Sprintf("%s (suppressed %d duplicate logs)", msg, state.suppressed)
+	if entry.suppressed > 0 {
+		logMsg = fmt.Sprintf("%s (suppressed %d duplicate logs)", msg, entry.suppressed)
 	}
-	c.problemLog[msg] = cacheProblemLogState{lastAt: now}
+	state[key] = cacheProblemLogState{lastAt: now}
 	return logMsg, true
 }
 
