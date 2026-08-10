@@ -280,6 +280,88 @@ func TestBeadPolicyStoreHandleReadsArePolicyAware(t *testing.T) {
 	}
 }
 
+func TestControllerStoreCompositionPreservesCacheLiveness(t *testing.T) {
+	// Driven through wrapWithCachingStore rather than by hand-assembling
+	// policy-over-cache, because the wrap ORDER is half the defect: the
+	// controller sets cityBeadStore from this exact call (api_state.go), and a
+	// hand-assembled sandwich would keep passing if production later moved the
+	// cache to the outside, where no wrapper hides it.
+	//
+	// Both wrapper types are covered. Only a graph-apply-capable backing
+	// produces beadPolicyGraphStore -- which every real bd/Dolt store is, so
+	// the graph case is the production one and the plain case is the fallback.
+	for _, tc := range []struct {
+		name    string
+		backing beads.Store
+		want    string
+	}{
+		{"plain policy store", beads.NewMemStore(), "*main.beadPolicyStore"},
+		{"graph policy store", &captureGraphStore{Store: beads.NewMemStore()}, "*main.beadPolicyGraphStore"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// backgroundRefresh=false keeps the reconciler unarmed, so cache
+			// state moves only where this test moves it.
+			store := wrapWithCachingStore(t.Context(), wrapStoreWithBeadPolicies(tc.backing, &config.City{}), nil, false)
+			if got := fmt.Sprintf("%T", store); got != tc.want {
+				t.Fatalf("controller store type = %s, want %s", got, tc.want)
+			}
+			// Reach the cache independently of the capability under test --
+			// resolving it through beads.LivenessFor would make the transition
+			// assertions below circular.
+			inner, _, wrapped := unwrapBeadPolicyStore(store)
+			if !wrapped {
+				t.Fatalf("controller store %T is not policy-wrapped; the composition under test is gone", store)
+			}
+			cache, ok := inner.(*beads.CachingStore)
+			if !ok {
+				t.Fatalf("policy wrapper holds %T, want *beads.CachingStore", inner)
+			}
+
+			reporter, ok := beads.LivenessFor(store)
+			if !ok {
+				t.Fatalf("controller store (%T) reports no liveness capability; the API's staleness gate "+
+					"degrades to an unconditional pass and X-GC-Cache-Age-S reads 0 regardless of cache state", store)
+			}
+			// PrimeActive (called inside wrapWithCachingStore) leaves the cache
+			// partial, so the not-live state here is the real startup state, not
+			// a contrivance. Reading across the transition is what proves the
+			// handle stays bound to the cache: one that captured liveness at wrap
+			// time would answer "priming" for the life of the controller.
+			if reporter.IsLive() {
+				t.Fatal("IsLive = true after PrimeActive, want false (cache is partial)")
+			}
+			if err := cache.Prime(t.Context()); err != nil {
+				t.Fatalf("Prime: %v", err)
+			}
+			if !reporter.IsLive() {
+				t.Fatal("IsLive = false after Prime, want true through the same handle")
+			}
+			// Stats is asserted separately from IsLive because the measured
+			// symptom rode on Stats alone: cacheAgeSeconds reads LastFreshAt, and
+			// a zero there still renders X-GC-Cache-Age-S: 0 whatever IsLive says.
+			got, want := reporter.Stats().LastFreshAt, cache.Stats().LastFreshAt
+			if got.IsZero() {
+				t.Fatal("Stats().LastFreshAt is zero after Prime; the cache-age header would still read 0")
+			}
+			if !got.Equal(want) {
+				t.Fatalf("Stats().LastFreshAt = %v, want the wrapped cache's %v", got, want)
+			}
+		})
+	}
+}
+
+func TestBeadPolicyStoreReportsNoLivenessForUncachedBacking(t *testing.T) {
+	// The absence is load-bearing. A policy store that answered IsLive=true for
+	// a backing with no cache would satisfy the same assertion as a genuinely
+	// live one, so callers could no longer tell "nothing to gate on" from "gate
+	// checked and passed". main.go and scoped_store.go both policy-wrap plain
+	// stores, so this is a live path, not a hypothetical.
+	store := wrapStoreWithBeadPolicies(beads.NewMemStore(), &config.City{})
+	if reporter, ok := beads.LivenessFor(store); ok {
+		t.Fatalf("LivenessFor(policy-wrapped MemStore) = (%T, true), want no capability", reporter)
+	}
+}
+
 func TestBeadPolicyStoreContextReadyIsPolicyAware(t *testing.T) {
 	backing := &recordingPolicyReadStore{MemStore: beads.NewMemStore()}
 	store := wrapStoreWithBeadPolicies(backing, &config.City{})

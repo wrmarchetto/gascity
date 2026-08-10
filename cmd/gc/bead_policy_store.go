@@ -53,7 +53,31 @@ func (s *beadPolicyStore) ConditionalWritesResolveTarget() beads.Store { return 
 var (
 	_ beads.BatchDeleter = (*beadPolicyStore)(nil)
 	_ beads.BatchDeleter = (*beadPolicyGraphStore)(nil)
+
+	_ beads.LivenessHandleProvider = (*beadPolicyStore)(nil)
+	_ beads.LivenessHandleProvider = (*beadPolicyGraphStore)(nil)
 )
+
+// LivenessHandle forwards the wrapped store's cache-liveness capability — the
+// same explicit delegation the batch and conditional-write seams need, for the
+// same reason: the embedded Store interface does not promote optional methods.
+// Left unforwarded, every API read of a controller store (always a
+// policy-wrapped CachingStore, per wrapWithCachingStore) took the "no cache to
+// gate on" branch, so the staleness gate never fired and X-GC-Cache-Age-S
+// reported 0 whether the cache was one second or twenty-nine hours stale.
+//
+// Delegating rather than implementing IsLive/Stats here is deliberate. A direct
+// implementation would also have to answer for the plain stores this wrapper
+// covers on the main.go and scoped_store.go paths, and its only options there
+// are a live=true indistinguishable from a measured one and a live=false that
+// 503s an uncached deployment forever. Returning the inner store's handle keeps
+// "no cache" reportable as absent. Pinned by
+// TestControllerStoreCompositionPreservesCacheLiveness and
+// TestBeadPolicyStoreReportsNoLivenessForUncachedBacking; beadPolicyGraphStore
+// inherits the forward through its embedded *beadPolicyStore.
+func (s *beadPolicyStore) LivenessHandle() (beads.LivenessReporter, bool) {
+	return beads.LivenessFor(s.Store)
+}
 
 func wrapStoreWithBeadPolicies(store beads.Store, cfg *config.City) beads.Store {
 	if store == nil {

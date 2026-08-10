@@ -90,7 +90,7 @@ func TestCacheAgeSeconds(t *testing.T) {
 	}
 }
 
-// stubLivenessReporter is a fully controllable livenessReporter for the
+// stubLivenessReporter is a fully controllable beads.LivenessReporter for the
 // cache-age conformance lane. It embeds a nil beads.Store so it satisfies the
 // Store type cacheAgeSeconds/cacheLiveOr503 accept; only the two liveness
 // methods those helpers actually call are implemented.
@@ -137,6 +137,60 @@ func TestCacheLiveOr503_StubStates(t *testing.T) {
 	err := cacheLiveOr503(stubLivenessReporter{live: false})
 	if err == nil || !strings.Contains(err.Error(), "cache_not_live") {
 		t.Errorf("not-live stub = %v, want cache_not_live 503", err)
+	}
+}
+
+// policyWrapperStub reproduces the shape the controller actually hands these
+// handlers: an embedded beads.Store interface, which drops the inner store's
+// optional methods, plus the LivenessHandle delegation that puts them back.
+// internal/api cannot import cmd/gc, so the shape is restated here rather than
+// exercised directly; that the real wrapper carries the delegation is pinned by
+// TestControllerStoreCompositionPreservesCacheLiveness in cmd/gc. That split is
+// the structural reason this defect survived — neither package's suite could
+// see the other half.
+type policyWrapperStub struct{ beads.Store }
+
+func (w policyWrapperStub) LivenessHandle() (beads.LivenessReporter, bool) {
+	return beads.LivenessFor(w.Store)
+}
+
+func TestCacheLiveOr503_ResolvesThroughWrapperHandle(t *testing.T) {
+	// Every controller store reaches these handlers wrapped. Asserting the
+	// liveness capability on the wrapper itself fails, and it fails silently:
+	// the gate reads that as "no cache to gate on" and passes a priming store's
+	// partial reads through as though they were complete.
+	if err := cacheLiveOr503(policyWrapperStub{Store: stubLivenessReporter{live: true}}); err != nil {
+		t.Errorf("wrapped live store = %v, want nil", err)
+	}
+	err := cacheLiveOr503(policyWrapperStub{Store: stubLivenessReporter{live: false}})
+	if err == nil || !strings.Contains(err.Error(), "cache_not_live") {
+		t.Errorf("wrapped not-live store = %v, want cache_not_live 503", err)
+	}
+	// A wrapper over an uncached store must still pass: resolving through the
+	// handle must not manufacture a gate where no cache exists.
+	if err := cacheLiveOr503(policyWrapperStub{Store: beads.NewMemStore()}); err != nil {
+		t.Errorf("wrapped uncached store = %v, want nil", err)
+	}
+}
+
+func TestCacheAgeSeconds_ResolvesThroughWrapperHandle(t *testing.T) {
+	// 35s is past the CLI's 30s stale-read banner on purpose: the reported
+	// symptom was a header reading 0 while the store had not reconciled in 29
+	// hours, so the assertion has to distinguish a real age from the unresolved
+	// path's constant zero, not merely be non-zero.
+	base := time.Date(2026, 8, 9, 12, 0, 0, 0, time.UTC)
+	restore := SetLivenessClockForTest(&clock.Fake{Time: base})
+	defer restore()
+
+	wrapped := policyWrapperStub{Store: stubLivenessReporter{
+		live:      true,
+		lastFresh: base.Add(-35 * time.Second),
+	}}
+	if got := cacheAgeSeconds(wrapped); got != 35 {
+		t.Errorf("cacheAgeSeconds(wrapped) = %v, want exactly 35", got)
+	}
+	if got := cacheAgeSeconds(policyWrapperStub{Store: beads.NewMemStore()}); got != 0 {
+		t.Errorf("cacheAgeSeconds(wrapped uncached) = %v, want 0", got)
 	}
 }
 
