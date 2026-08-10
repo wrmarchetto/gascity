@@ -31,14 +31,24 @@
 # content-hashed chunk that renames nothing -- and to a brand-new source file
 # that is as much a build input as a modified one.
 #
-# Invariants verified by scripts/test-check-artifact-drift.sh. The dashboard-ci
-# wiring is pinned by scripts/check_artifact_drift_test.go.
+# --artifact is repeatable, and one regeneration command writing several paths
+# must pass all of them to ONE invocation. Every named artifact is excluded from
+# the source scan, so splitting a set across invocations makes each run see the
+# others' rebuilt output as dirty sources -- which is not a cosmetic loss: the
+# verdict degrades to unattributable, or to exit 0 when the drifted path is not
+# the one that run was scanning. make spec-ci writes six paths, two of them
+# inside its own internal/ source pathspec (bead ci-d4lw).
+#
+# Invariants verified by scripts/test-check-artifact-drift.sh. The Makefile
+# wiring of every caller is pinned by scripts/check_artifact_drift_test.go, and
+# scripts/check-generated-docs-drift.sh -- the one caller that is not a Makefile
+# recipe -- by scripts/test-check-generated-docs-drift.sh.
 
 set -uo pipefail
 
 usage() {
     cat <<'EOF'
-usage: check-artifact-drift.sh --label <text> --artifact <path>
+usage: check-artifact-drift.sh --label <text> --artifact <path> [--artifact <path>]...
                                --source <path> [--source <path>]...
                                --regen <command> [--note <text>]
 
@@ -46,7 +56,9 @@ Run from the repository root, after the artifact has been rebuilt into the
 worktree.
 
   --label     human name for the artifact, used in the verdict
-  --artifact  path (file or directory) holding the generated artifact
+  --artifact  path (file or directory) holding a generated artifact.
+              Repeatable -- pass every path one regeneration command writes
+              to a single invocation
   --source    path the artifact is generated from; repeatable
   --regen     command that regenerates the artifact, quoted in the remedy
   --note      one line of artifact-specific explanation, printed with a
@@ -58,8 +70,8 @@ EOF
 }
 
 label=""
-artifact=""
 regen=""
+artifacts=()
 sources=()
 notes=()
 
@@ -72,7 +84,7 @@ while [ $# -gt 0 ]; do
         fi
         case "$1" in
         --label) label="$2" ;;
-        --artifact) artifact="$2" ;;
+        --artifact) artifacts+=("$2") ;;
         --source) sources+=("$2") ;;
         --regen) regen="$2" ;;
         --note) notes+=("$2") ;;
@@ -91,13 +103,18 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-for required in label artifact regen; do
+for required in label regen; do
     if [ -z "${!required}" ]; then
         printf 'check-artifact-drift.sh: --%s is required\n' "$required" >&2
         usage >&2
         exit 2
     fi
 done
+if [ "${#artifacts[@]}" -eq 0 ]; then
+    printf 'check-artifact-drift.sh: at least one --artifact is required\n' >&2
+    usage >&2
+    exit 2
+fi
 if [ "${#sources[@]}" -eq 0 ]; then
     printf 'check-artifact-drift.sh: at least one --source is required\n' >&2
     usage >&2
@@ -123,16 +140,26 @@ changed_paths() {
         git ls-files --others --exclude-standard -- "$@"
 }
 
-if ! artifact_changed="$(changed_paths "$artifact")"; then
+if ! artifact_changed="$(changed_paths "${artifacts[@]}")"; then
     printf 'check-artifact-drift.sh: git failed reading %s -- cannot judge drift\n' \
-        "$artifact" >&2
+        "${artifacts[*]}" >&2
     exit 2
 fi
-# The artifact is never one of its own sources. Excluding it by pathspec
-# rather than documenting "pass disjoint paths" is what keeps a caller that
-# points --source at an ancestor directory from getting a gate that can only
-# ever answer "unattributable" -- a gate that cannot fire is worse than none.
-if ! source_changed="$(changed_paths "${sources[@]}" ":(exclude)$artifact")"; then
+# No artifact is ever one of its own sources, and that has to hold for EVERY
+# path in the set, not just one. Excluding them by pathspec rather than
+# documenting "pass disjoint paths" is what keeps a caller that points --source
+# at an ancestor directory from getting a gate that can only ever answer
+# "unattributable" -- a gate that cannot fire is worse than none. Missing even
+# one exclusion is worse than that: spec-ci writes six paths, so five of them
+# would read as dirty sources and turn a real stale-index into either an
+# unattributable failure or -- when the drifted path is not the one being
+# scanned -- an exit-0 pass. Pinned by test-check-artifact-drift.sh's
+# a_sibling_artifact_is_not_a_dirty_source.
+excludes=()
+for a in "${artifacts[@]}"; do
+    excludes+=(":(exclude)$a")
+done
+if ! source_changed="$(changed_paths "${sources[@]}" "${excludes[@]}")"; then
     printf 'check-artifact-drift.sh: git failed reading %s -- cannot judge drift\n' \
         "${sources[*]}" >&2
     exit 2
@@ -190,7 +217,7 @@ printf 'ERROR: %s drift (class: stale-index)\n' "$label" >&2
 printf '  The rebuild differs from the copy in the index, and every source path\n' >&2
 printf '  is identical to the index -- so the committed artifact is not a build\n' >&2
 printf '  of the committed sources.\n' >&2
-printf '  Fix: %s && git add -- %s\n' "$regen" "$artifact" >&2
+printf '  Fix: %s && git add -- %s\n' "$regen" "${artifacts[*]}" >&2
 if [ "${#notes[@]}" -gt 0 ]; then
     printf '  %s\n' "${notes[@]}" >&2
 fi

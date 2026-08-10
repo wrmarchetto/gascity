@@ -70,6 +70,13 @@ tmp_*.diff
 tmp_*.patch
 issues.jsonl
 
+# Regeneration patch that scripts/check-generated-docs-drift.sh writes on drift
+# and removes when the docs are fresh. CI uploads it as an artifact for the
+# docs-autofix workflow. `make check-schema` now runs the same script, so it can
+# appear in any local worktree, where an unignored one is a file a pathless
+# `git add -A` would sweep into a commit.
+/generated-docs-freshness.patch
+
 # Python bytecode from script tests
 __pycache__/
 
