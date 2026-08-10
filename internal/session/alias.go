@@ -1,6 +1,9 @@
 package session
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 const aliasHistoryMetadataKey = "alias_history"
 
@@ -44,6 +47,45 @@ func UpdatedAliasMetadataFromInfo(info Info, nextAlias string) map[string]string
 		"alias":                 strings.TrimSpace(nextAlias),
 		aliasHistoryMetadataKey: strings.Join(history, ","),
 	}
+}
+
+// PrunedAliasHistoryMetadata returns the alias_history mutation that drops name
+// from the history recorded in metadata, and reports whether name was there to
+// drop. Callers write the mutation only when it was, so a history that never
+// held the name costs no store write per reconciler tick.
+//
+// It reads and writes alias_history and nothing else, which is what lets one
+// helper serve both callers in the pool sync path: the raw session-bead
+// metadata map on a tick that renames nothing, and the mutation map
+// UpdatedAliasMetadata just produced on a tick that does. Composing over the
+// mutation map is the load-bearing half -- the entry being pruned is usually
+// the alias that rotation moved into history microseconds earlier, so a helper
+// that only read stored metadata would miss the case this exists for.
+//
+// The reported bool is presence of name, NOT inequality between the joined
+// result and the stored string, and the difference is deliberate. AliasHistory
+// normalizes on every read, so a stored history that is merely denormalized
+// ("nux, nux") already behaves identically to its normalized form; rewriting it
+// would buy no observable change and would put an alias_history write on every
+// pool session on the tick after any writer stored a loose value. Prune what
+// the caller named and leave formatting alone.
+//
+// No caller prunes a session's CURRENT alias, and none should: this is the
+// exception carved out for a name owned by a pool rather than by a session
+// (see AssigneeIdentities), and a pool's slot holds its current alias under
+// the city alias lock, which is the guarantee history has no equivalent of.
+func PrunedAliasHistoryMetadata(metadata map[string]string, name string) (map[string]string, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, false
+	}
+	// AliasHistory returns trimmed, deduplicated, non-empty entries, so an
+	// exact match against the trimmed name is the whole presence test.
+	history := AliasHistory(metadata)
+	if !slices.Contains(history, name) {
+		return nil, false
+	}
+	return map[string]string{aliasHistoryMetadataKey: strings.Join(normalizeAliasList(history, name), ",")}, true
 }
 
 func normalizeAliasList(values []string, exclude string) []string {
