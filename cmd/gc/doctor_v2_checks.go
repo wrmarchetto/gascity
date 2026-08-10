@@ -1182,6 +1182,14 @@ func (v2WorkspaceNameCheck) Fix(ctx *doctor.CheckContext) error {
 	if err != nil {
 		return err
 	}
+	// This autofix rewrites city.toml directly rather than through
+	// config.WriteCityAndRigSiteBindingsForEdit, so it has to carry the
+	// authored comments itself. Prose attached to the two identity keys being
+	// removed goes with them, which is the intent -- the keys it described are
+	// gone.
+	if existing, readErr := (fsys.OSFS{}).ReadFile(writePath); readErr == nil {
+		content = config.CarryAuthoredComments(existing, content)
+	}
 	return fsys.WriteFileIfChangedAtomic(fsys.OSFS{}, writePath, content, 0o644)
 }
 

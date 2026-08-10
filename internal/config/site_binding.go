@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/gastownhall/gascity/internal/citylayout"
 	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/tomlcomments"
 )
 
 const (
@@ -425,6 +426,12 @@ func writeCityAndRigSiteBindingsForEdit(fs fsys.FS, tomlPath string, cfg *City, 
 	if err != nil {
 		return err
 	}
+	// Restore the authored comments the struct encode cannot emit. Read from
+	// writePath, not tomlPath, so a symlinked city.toml carries the target's
+	// prose rather than nothing.
+	if existing, readErr := fs.ReadFile(writePath); readErr == nil {
+		content = CarryAuthoredComments(existing, content)
+	}
 	// Snapshot the .gc/site.toml target persistSiteBinding actually writes,
 	// not the link itself: resolve-only (no key-loss guard, the rollback
 	// rewrites snapshotted bytes), mirroring the resolved forward write so a
@@ -449,6 +456,34 @@ func writeCityAndRigSiteBindingsForEdit(fs fsys.FS, tomlPath string, cfg *City, 
 		return fmt.Errorf("writing .gc/site.toml failed; restored city.toml and previous site binding, fix the site binding write error and retry: %w", err)
 	}
 	return nil
+}
+
+// CarryAuthoredComments returns rendered with the comment layout of the
+// existing on-disk document re-applied, or rendered unchanged when that cannot
+// be done safely.
+//
+// Failing open is deliberate. A comment is worth less than the mutation
+// carrying it: an operator who cannot suspend an agent because the comment
+// scanner tripped over their file is worse off than one whose comments were
+// dropped, and dropping them is exactly what every release before this did. So
+// the refusal path is the old behavior, not a new failure.
+//
+// The consequence, stated because the alternative reading is that it is a bug:
+// a city.toml shaped in a way tomlcomments declines to scan loses its prose on
+// the next edit with nothing printed. There is no error return here to surface
+// it, because a warning on stderr from deep inside a config write reaches no
+// one -- most of these callers are API handlers and doctor autofixes. The
+// mechanical version of that alarm is a doctor check comparing comment counts
+// before and after a dry-run rewrite, and it is not written.
+func CarryAuthoredComments(existing, rendered []byte) []byte {
+	if len(bytes.TrimSpace(existing)) == 0 {
+		return rendered
+	}
+	carried, err := tomlcomments.Carry(existing, rendered)
+	if err != nil {
+		return rendered
+	}
+	return carried
 }
 
 // ResolveCityRewritePath returns the path an edit-rewrite of city.toml must
