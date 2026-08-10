@@ -423,7 +423,14 @@ func writeCityPackManifest(fs fsys.FS, cityPath string, manifest *cityPackManife
 	if err := config.GuardRewriteKeyLoss[cityPackManifest](fs, writePath); err != nil {
 		return err
 	}
-	return fsys.WriteFileAtomic(fs, writePath, buf.Bytes(), 0o644)
+	// Restore the authored comments the struct encode above cannot emit. The
+	// key-loss guard covers keys this binary does not know; comments are lost
+	// even for keys it does (bead ci-bzy4).
+	content := buf.Bytes()
+	if existing, readErr := fs.ReadFile(writePath); readErr == nil {
+		content = config.CarryAuthoredComments(existing, content)
+	}
+	return fsys.WriteFileAtomic(fs, writePath, content, 0o644)
 }
 
 func writeOrderedDefaultRigImports(buf *bytes.Buffer, manifest *cityPackManifest) error {
