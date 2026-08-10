@@ -2166,7 +2166,7 @@ gc init --template gascity --default-provider claude \
 | `--from` | string |  | path to an example city directory to copy |
 | `--json` | bool |  | emit JSON summary |
 | `--name` | string |  | workspace name (default: target directory basename) |
-| `--no-start` | bool |  | initialize files and imports without registering or starting the city |
+| `--no-start` | bool |  | skip supervisor registration and city startup; the bead store is still initialized, so a managed-local city is left with a Dolt server running until 'gc stop' |
 | `--preserve-existing` | bool |  | keep any pre-authored pack.toml, city.toml, or agent prompt files instead of overwriting them |
 | `--providers` | stringArray |  | readiness-aware providers to write to city.toml (repeatable or comma-separated) |
 | `--skip-provider-readiness` | bool |  | skip provider login/readiness checks during init and continue startup |
