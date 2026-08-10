@@ -2901,6 +2901,12 @@ func TestStartReconcilerStaggerAutoIsDeterministic(t *testing.T) {
 	t.Parallel()
 
 	// Acceptance criterion 2: pinned FNV-32a-derived offset for a known agent_id.
+	//
+	// NewCachingStoreForTest leaves the cache prefix-less, which is the case
+	// staggerKey deliberately does NOT compose: the agent ID is the whole key,
+	// so these two values are the bare FNV-32a of the agent ID and survive
+	// unchanged from ga-zor1n2. The composed case is pinned separately by
+	// TestStartReconcilerStaggerAutoSeparatesStoresByPrefix.
 	cases := []struct {
 		agentID      string
 		wantOffsetMs int64
@@ -2960,6 +2966,68 @@ func TestStartReconcilerStaggerAutoDifferentAgentsDiffer(t *testing.T) {
 	off2 := cs2.Stats().StaggerOffsetMs
 	if off1 == off2 {
 		t.Fatalf("expected different stagger offsets for distinct agents; both got %d", off1)
+	}
+}
+
+// TestStartReconcilerStaggerAutoSeparatesStoresByPrefix pins the per-store
+// half of the auto stagger key.
+//
+// One process holds several caches -- the supervisor opens one per rig plus
+// the city's -- and hands every one of them the same process-wide agent id.
+// In the supervisor that id is empty, because GC_AGENT is set only for agent
+// sessions. With the agent id as the whole key, all 37 stagger lines across
+// 14 priming epochs of a supervisor log read stagger=16261ms: FNV-32a's
+// offset basis mod the 30 s interval, one value for every store. The caches
+// therefore fired in exactly the lockstep StaggerOption exists to break up
+// (ci-2t6n).
+//
+// The offsets below are literals rather than values recomputed here from the
+// same recipe the implementation follows. A test that rebuilt the key the way
+// StartReconciler does would still pass with the prefix dropped from it
+// again, which is the regression this pins.
+func TestStartReconcilerStaggerAutoSeparatesStoresByPrefix(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		agentID      string
+		idPrefix     string
+		wantOffsetMs int64
+	}{
+		// The supervisor's own shape: no agent id, several stores. These two
+		// are the pair that collapsed onto 16261 ms.
+		{"supervisor city store", "", "ci", 7351},
+		{"supervisor rig store", "", "gs", 19137},
+		// An agent process holds several stores too, so a non-empty agent id
+		// is not on its own enough to separate them.
+		{"agent city store", "toolsmith-2", "ci", 18575},
+		{"agent rig store", "toolsmith-2", "gs", 15433},
+		// The agent half stays live: one store, two processes reading it.
+		{"builder-1 on city store", "beads/builder-1", "ci", 16952},
+		{"builder-2 on city store", "beads/builder-2", "ci", 19483},
+	}
+
+	offsets := make(map[int64]string, len(cases))
+	for _, tc := range cases {
+		mem := beads.NewMemStore()
+		cs := beads.NewCachingStoreForTestWithPrefix(mem, tc.idPrefix, nil)
+		if err := cs.Prime(context.Background()); err != nil {
+			t.Fatalf("%s: Prime: %v", tc.name, err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cs.StartReconciler(ctx, beads.WithStaggerAuto(), tc.agentID)
+		got := cs.Stats().StaggerOffsetMs
+		cancel()
+
+		if got != tc.wantOffsetMs {
+			t.Errorf("%s: StaggerOffsetMs for agent %q prefix %q = %d, want %d (FNV-32a pin over agent+prefix)",
+				tc.name, tc.agentID, tc.idPrefix, got, tc.wantOffsetMs)
+		}
+		if prior, dup := offsets[got]; dup {
+			t.Errorf("%s and %s both resolved to %d; distinct stores must not share an offset",
+				prior, tc.name, got)
+		}
+		offsets[got] = tc.name
 	}
 }
 

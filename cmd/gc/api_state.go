@@ -309,6 +309,12 @@ func wrapWithCachingStore(ctx context.Context, store beads.Store, ep events.Prov
 	}
 	// Full prime runs async — backfills remaining beads for List()
 	// callers (convergence reconcile, sweep, API handlers).
+	//
+	// GC_AGENT is empty here whenever the supervisor is the caller, and is
+	// the same value for every store this process wraps either way. It is
+	// still passed because it is the only thing that separates two processes
+	// holding the same store; the per-store half of the stagger key comes
+	// from the cache's own bead prefix (beads.CachingStore.staggerKey).
 	go primeThenStartReconciler(ctx, cs, os.Getenv("GC_AGENT"))
 	if policyWrapped {
 		return wrapStoreWithBeadPolicies(cs, policyStore.cfg)
