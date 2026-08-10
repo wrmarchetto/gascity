@@ -168,9 +168,24 @@ generate:
 	go run ./cmd/genschema
 
 ## check-schema: verify generated docs are up to date
-check-schema: generate
-	@git diff --exit-code docs/reference/ || \
-		(echo "Error: generated docs stale. Run 'make generate'" && exit 1)
+##
+## Delegates to the gate CI runs instead of carrying a second copy. The copy it
+## replaced had drifted from CI's in both directions: it diffed all of
+## docs/reference/, only 6 of whose 28 tracked files cmd/genschema writes, and it
+## ran the generator without the CGO_ENABLED=0 the script sets so the transitive
+## dolt ICU dependency does not have to compile. The script regenerates, so
+## `generate` is not a prerequisite here.
+##
+## Narrowing to those 6 loses no coverage. Four more of the 28 are cmd/genspec
+## output -- the docs/reference/schema/openapi.* and events.* mirrors -- and
+## spec-ci gates those against their own generator, which this target never
+## runs. The remaining 18 are hand-written, and failing this gate on an edit to
+## one of them was the old pathspec's defect.
+##
+## Leaves generated-docs-freshness.patch in the worktree on failure and removes
+## it on success; it is gitignored.
+check-schema:
+	@./scripts/check-generated-docs-drift.sh
 
 ## clean: remove build artifacts
 clean:
@@ -959,14 +974,47 @@ dashboard-ci: dashboard-check
 ## Used by CI to enforce that internal/api/openapi.json, docs/reference/schema JSON
 ## artifacts, compatibility .txt mirrors, and internal/api/genclient/client_gen.go
 ## are all in lock-step with Huma.
+##
+## All six paths go to ONE scripts/check-artifact-drift.sh invocation, not one
+## each. Two of them live under the internal/ source pathspec, so a per-path
+## invocation would read the other five rebuilt paths as dirty sources and
+## answer `class: unattributable` on a clean CI checkout -- or exit 0 when the
+## drifted path is not the one that run was scanning. See ci-c425 for why the
+## bare `git diff --quiet` this replaced could not name which fault it found,
+## and ci-d4lw for the source set.
+##
+## The npm tree under internal/api/dashboardspa/web is NOT excluded from
+## --source internal, even though a bundle cannot change a Huma-derived spec.
+## CI runs dashboard-ci in this same job first (ci.yml preflight-generated), so
+## anything those rebuilds leave behind is already in the worktree by the time
+## this gate reads it -- but the same paths are dashboard-ci's own sources, so it
+## fails first and an exclusion here would only move the verdict, not prevent
+## it. Measured on a tree with node_modules and a built dist present: the
+## source scan reports 0 changed paths, because web/.gitignore covers
+## node_modules and both generated trees are tracked.
 spec-ci: install-oapi-codegen
 	go run ./cmd/genspec
 	go generate ./internal/api/genclient
-	@if ! git diff --quiet -- internal/api/openapi.json docs/reference/schema/openapi.json docs/reference/schema/openapi.txt docs/reference/schema/events.json docs/reference/schema/events.txt internal/api/genclient/client_gen.go; then \
-		echo "ERROR: spec/client artifacts drifted — run 'make spec-ci' locally and commit." >&2; \
-		git --no-pager diff --stat -- internal/api/openapi.json docs/reference/schema/openapi.json docs/reference/schema/openapi.txt docs/reference/schema/events.json docs/reference/schema/events.txt internal/api/genclient/client_gen.go; \
-		exit 1; \
-	fi
+	@./scripts/check-artifact-drift.sh \
+		--label 'API spec and generated Go client' \
+		--artifact internal/api/openapi.json \
+		--artifact docs/reference/schema/openapi.json \
+		--artifact docs/reference/schema/openapi.txt \
+		--artifact docs/reference/schema/events.json \
+		--artifact docs/reference/schema/events.txt \
+		--artifact internal/api/genclient/client_gen.go \
+		--source cmd \
+		--source internal \
+		--source go.mod \
+		--source go.sum \
+		--source scripts/gen-client.sh \
+		--regen 'make spec-ci' \
+		--note 'client_gen.go is oapi-codegen output and the version is NOT a' \
+		--note 'source path this gate can diff: confirm `oapi-codegen -version`' \
+		--note 'reports v2.6.0 (the pin in install-oapi-codegen) before reading' \
+		--note 'a client_gen.go-only verdict as a stale committed artifact.' \
+		--note 'The four docs/reference/schema paths are byte copies written by' \
+		--note 'cmd/genspec, so a diff in a mirror alone means it was hand-edited.'
 
 ## docker-base: build base image with system dependencies (~2.5 min, rebuild rarely)
 docker-base: check-docker

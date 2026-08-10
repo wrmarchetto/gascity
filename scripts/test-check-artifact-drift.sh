@@ -80,10 +80,57 @@ new_fixture() {
     printf '%s' "$d"
 }
 
+# new_multi_fixture: new_fixture plus a SECOND artifact, gen/client.go, and a
+# source path that is an ancestor of both. That is the spec-ci shape reduced to
+# its minimum: spec-ci passes six paths, two of them under the internal/api tree
+# it also reads as a source, but the defect is per-exclusion, so two
+# artifacts is enough to catch a gate that excludes only one of them.
+new_multi_fixture() {
+    local d
+    d="$(new_fixture)"
+    mkdir -p "$d/gen"
+    printf 'generated client\n' >"$d/gen/client.go"
+    git -C "$d" add -A
+    git -C "$d" commit -qm gen
+    printf '%s' "$d"
+}
+
+# run_multi_gate <repo>: the gate over BOTH artifacts at once, with the repo
+# root as the source path so every artifact is inside a source pathspec.
+run_multi_gate() {
+    local repo="$1"
+    # An empty fixture path would `cd ""`, which bash treats as a successful
+    # no-op -- the gate would then judge the REAL repository this suite lives
+    # in and report whatever the developer happens to have uncommitted. 98 is
+    # a status no test expects, so a broken fixture fails instead of passing.
+    if [ -z "$repo" ]; then
+        GATE_OUT="fixture path is empty"
+        GATE_STATUS=98
+        return
+    fi
+    GATE_OUT="$(
+        cd "$repo" || exit 99
+        "$GATE" \
+            --label 'spec artifacts' \
+            --artifact out \
+            --artifact gen/client.go \
+            --source . \
+            --regen 'make spec-ci' 2>&1
+    )"
+    GATE_STATUS=$?
+}
+
 # run_gate <repo>: run the gate at the repo root the way dashboard-ci does.
 # Sets GATE_OUT (stdout+stderr merged) and GATE_STATUS.
 run_gate() {
     local repo="$1"
+    # See run_multi_gate: `cd ""` succeeds, so an empty fixture path would aim
+    # the gate at the real repository.
+    if [ -z "$repo" ]; then
+        GATE_OUT="fixture path is empty"
+        GATE_STATUS=98
+        return
+    fi
     GATE_OUT="$(
         cd "$repo" || exit 99
         "$GATE" \
@@ -325,6 +372,90 @@ test_the_two_failure_verdicts_are_distinguishable() {
     record_pass "$name"
 }
 
+# The defect that would have made the spec-ci wiring useless (ci-d4lw). One
+# regeneration command writes six paths, two of them inside internal/api --
+# which is also a source. With only ONE --artifact excluded from the source
+# scan, the other five rebuilt artifacts count as dirty sources and the gate
+# can only ever answer "unattributable", on a clean CI checkout included. It
+# would exit 1 either way, so the exit code alone cannot catch this; the class
+# token is the only evidence the gate is still able to fire.
+#
+# The drifted path here is the FIRST --artifact deliberately. A gate that keeps
+# only the last one both misses the drift and reads it as a dirty source, and
+# the second half is what makes the exit code useless as a check: the verdict
+# comes back exit 0 with an "unproven" note, so this must assert the class.
+test_a_sibling_artifact_is_not_a_dirty_source() {
+    local name="a_sibling_artifact_is_not_a_dirty_source"
+    local repo
+    repo="$(new_multi_fixture)"
+    printf 'rebuilt from a\n' >"$repo/out/asset-aaaa.js"
+    run_multi_gate "$repo"
+    assert_status "$name" 1 || return
+    assert_contains "$name" "class: stale-index" || return
+    assert_absent "$name" "class: unattributable" || return
+    assert_absent "$name" "class: unproven" || return
+    record_pass "$name"
+}
+
+# The mirror image of the case above, and it needs its own test rather than a
+# second assertion: the drift is in the LAST --artifact and nothing else moved.
+# A gate that scans only artifacts[0] sees an unchanged tree and exits 0, and a
+# gate that excludes only artifacts[0] from the source scan counts this drift as
+# a dirty source and hedges. Neither is visible to any case that drifts the
+# first artifact, which is what every other multi-artifact case here does.
+test_drift_in_a_later_artifact_is_found_and_attributed() {
+    local name="drift_in_a_later_artifact_is_found_and_attributed"
+    local repo
+    repo="$(new_multi_fixture)"
+    printf 'rebuilt client\n' >"$repo/gen/client.go"
+    run_multi_gate "$repo"
+    assert_status "$name" 1 || return
+    assert_contains "$name" "class: stale-index" || return
+    assert_absent "$name" "class: unattributable" || return
+    assert_contains "$name" "1 artifact path(s) changed" || return
+    record_pass "$name"
+}
+
+# An artifact set is one artifact for verdict purposes: a rebuild that moved
+# paths in two of them is one fault with one remedy, and the remedy has to name
+# every path or a reader stages half the set and gets the same failure again.
+#
+# The COUNT is what proves both paths were judged. Asserting the two names is
+# vacuous -- the remedy line enumerates every --artifact whether or not it
+# moved, so `gen/client.go` appears even when the gate never scanned it.
+test_multiple_artifacts_share_one_verdict() {
+    local name="multiple_artifacts_share_one_verdict"
+    local repo
+    repo="$(new_multi_fixture)"
+    printf 'rebuilt from a\n' >"$repo/out/asset-aaaa.js"
+    printf 'rebuilt client\n' >"$repo/gen/client.go"
+    run_multi_gate "$repo"
+    assert_status "$name" 1 || return
+    assert_contains "$name" "class: stale-index" || return
+    assert_contains "$name" "2 artifact path(s) changed" || return
+    assert_contains "$name" "    out/asset-aaaa.js" || return
+    assert_contains "$name" "    gen/client.go" || return
+    assert_contains "$name" "git add -- out gen/client.go" || return
+    record_pass "$name"
+}
+
+# A dirty source outside the artifact set must still be attributed with several
+# artifacts named, or the multi-artifact form silently loses the class the
+# single-artifact form gets right. The drifted artifact is again the first one,
+# so a last-wins gate reports this as exit 0 rather than as either failure.
+test_multiple_artifacts_still_report_unattributable() {
+    local name="multiple_artifacts_still_report_unattributable"
+    local repo
+    repo="$(new_multi_fixture)"
+    printf 'source a, edited\n' >"$repo/src/a.tsx"
+    printf 'rebuilt from a\n' >"$repo/out/asset-aaaa.js"
+    run_multi_gate "$repo"
+    assert_status "$name" 1 || return
+    assert_contains "$name" "class: unattributable" || return
+    assert_contains "$name" "src/a.tsx" || return
+    record_pass "$name"
+}
+
 # A gate invoked wrong must not answer "no drift". Exit 2 keeps the usage
 # error distinguishable from a real finding for a caller that only reads the
 # status.
@@ -332,28 +463,59 @@ test_missing_required_flag_is_a_usage_error() {
     local name="missing_required_flag_is_a_usage_error"
     local repo
     repo="$(new_fixture)"
-    GATE_OUT="$(cd "$repo" && "$GATE" --label 'dashboard bundle' --source src 2>&1)"
+    # Every flag but --artifact is supplied, so --artifact is the ONLY thing
+    # missing. Omitting --regen too -- as this case originally did -- makes the
+    # gate report the first missing flag it finds and never reach the --artifact
+    # check at all, leaving the assertion satisfied by the usage() block that
+    # every exit-2 path prints. Assert the message line for the same reason.
+    GATE_OUT="$(cd "$repo" && "$GATE" --label 'dashboard bundle' --source src \
+        --regen 'make dashboard-build' 2>&1)"
     GATE_STATUS=$?
     assert_status "$name" 2 || return
-    assert_contains "$name" "--artifact" || return
+    assert_contains "$name" "at least one --artifact is required" || return
     record_pass "$name"
 }
 
 # --- run ---
+#
+# Driven from an array and reconciled against it below. Calling the functions
+# directly reports a misspelled or deleted name as a green run: bash prints
+# "command not found" to stderr, the suite has no `set -e`, and neither the
+# pass/fail tally nor the exit status records that a case never executed.
+
+TESTS=(
+    test_clean_tree_passes_silently
+    test_rewritten_but_identical_artifact_passes
+    test_rebuilt_artifact_with_clean_sources_is_stale_index
+    test_rebuild_that_only_adds_an_untracked_asset_is_stale_index
+    test_artifact_under_a_source_path_is_not_its_own_dirty_source
+    test_staged_source_edit_without_rebuild_is_stale_index
+    test_unstaged_source_edit_is_unattributable
+    test_untracked_source_file_is_unattributable
+    test_dirty_sources_with_matching_artifact_pass_unproven
+    test_the_two_failure_verdicts_are_distinguishable
+    test_a_sibling_artifact_is_not_a_dirty_source
+    test_drift_in_a_later_artifact_is_found_and_attributed
+    test_multiple_artifacts_share_one_verdict
+    test_multiple_artifacts_still_report_unattributable
+    test_missing_required_flag_is_a_usage_error
+)
 
 echo "check-artifact-drift.sh"
-test_clean_tree_passes_silently
-test_rewritten_but_identical_artifact_passes
-test_rebuilt_artifact_with_clean_sources_is_stale_index
-test_rebuild_that_only_adds_an_untracked_asset_is_stale_index
-test_artifact_under_a_source_path_is_not_its_own_dirty_source
-test_staged_source_edit_without_rebuild_is_stale_index
-test_unstaged_source_edit_is_unattributable
-test_untracked_source_file_is_unattributable
-test_dirty_sources_with_matching_artifact_pass_unproven
-test_the_two_failure_verdicts_are_distinguishable
-test_missing_required_flag_is_a_usage_error
+for t in "${TESTS[@]}"; do
+    if ! declare -F "$t" >/dev/null; then
+        record_fail "$t" "no such test function"
+        continue
+    fi
+    "$t"
+done
 
 echo
 echo "passed: $pass  failed: $fail"
+if [ "$((pass + fail))" -ne "${#TESTS[@]}" ]; then
+    printf 'ERROR: %d cases collected, %d reported a verdict -- a case returned\n' \
+        "${#TESTS[@]}" "$((pass + fail))" >&2
+    printf '  without recording pass or fail, which reads as green.\n' >&2
+    exit 1
+fi
 [ "$fail" -eq 0 ]
