@@ -673,6 +673,16 @@ gates unrunnable cannot exhaust `max_attempts` and fail a step whose work
 was fine. Once that budget is spent the outcome counts as a fail, so a
 permanently unrunnable script still terminates the loop.
 
+An iteration that closes `gc.outcome = fail` with
+`gc.failure_class = hard` ends the loop on that iteration regardless of
+remaining budget, closing the control `gc.outcome = fail` with
+`gc.final_disposition = hard_fail`. A failure the iteration itself reports
+as unrepairable does not become repairable by being re-run. This is the one
+classification where `check` and `retry` diverge: an **empty**
+`gc.failure_class` is hard for `retry` (section 3.2) but repairable here, as
+is any class other than `hard`, because iterating on a failure nobody
+classified is what this loop is for.
+
 | Key | Purpose |
 |---|---|
 | `max_attempts` | Total run/check attempts including the first (≥ 1) |
