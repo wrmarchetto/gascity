@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""Decide how much of the fast suite a push has to run (bead ci-4w2t).
+
+Reads git's pre-push stdin records and prints ONE decision line:
+
+    full                 run the whole fast suite
+    none                 no Go build input changed; run nothing
+    scoped ./a ./b ...   run only these packages
+
+Why this exists: .githooks/pre-push used to reduce the pushed range to a
+single boolean -- "did any *.go file change" -- and spend ~16 minutes of
+187-package fan-out on the answer, charged identically to a one-line fix and
+to a refactor. Measured 2026-08-09 on this repo, the unit sweep is the
+wall-clock long pole by a wide margin (a whole cmd/gc shard finishes in ~70s
+against it), so narrowing that sweep to the packages a change can actually
+reach is where the time goes.
+
+CONSERVATISM IS THE WHOLE CONTRACT. A gate that stops running a package it
+should have run is indistinguishable from a green build. Every uncertain
+input therefore decides `full`, never a subset: an unreadable graph, a base
+this clone does not have, a path shape the Go graph cannot account for, a
+manifest that will not load. The narrow answer is only ever produced from a
+complete inventory. Concretely, the rules that are easy to get backwards:
+
+  - Any changed path that is neither a Go build input owned by a package nor
+    an embedded file with a known owner decides `full`. Tests read testdata,
+    shell scripts, and the Makefile at run time, and no mechanical inventory
+    of that exists -- go list models imports and embeds, nothing more.
+  - The always-run manifest is REQUIRED, not best-effort. Its packages scan
+    the whole repository instead of their own imports, so no changed leaf
+    ever reaches them through the import closure. Failing to load it decides
+    `full` rather than dropping them.
+  - `none` is reachable only when no Go build input changed at all. That is
+    exactly the pre-existing hook's skip condition, kept byte-for-byte in
+    effect so this change can never run LESS than before.
+
+DELIBERATE ABSENCE: an embed-only change (a pack TOML, a prompt template,
+with no .go alongside) still decides `none`, because the old hook skipped it
+too and engaging on embeds would turn a free push into a full-suite push --
+the bootstrap packs are embedded by a package ~180 others import. Embedded
+files do contribute seeds once the gate is engaged by a Go change. Widening
+the trigger to embeds is a coverage improvement this bead did not ask for
+and would cost more than it saves; it needs its own measurement first.
+
+Verified by scripts/push_gate_select_test.go and, end to end through the
+hook, by scripts/test-push-gate-select.sh.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+# Resolve the shared graph engine from this file's own directory so the
+# selector works regardless of the caller's cwd -- git runs hooks from the
+# repository root, but the tests drive this from a fixture repo.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from goaffected import (  # noqa: E402
+    SelectionError,
+    affected_package_args,
+    command_output,
+    is_go_build_input,
+    package_inventory,
+    parse_name_status,
+)
+
+ZERO_SHA = "0" * 40
+
+DEFAULT_MANIFEST_RELATIVE_PATH = "scripts/push-gate-always-run.manifest"
+
+
+def push_records(stream: str) -> list[tuple[str, str]]:
+    """Parse git's pre-push stdin into (local_sha, remote_sha) pairs.
+
+    Returns only the pushed (non-deleted) refs. Raises SelectionError on any
+    line that is not exactly four fields: a garbled hand-off is not the same
+    fact as "no refs pushed", and reading it as the latter would skip the
+    suite entirely.
+    """
+    records: list[tuple[str, str]] = []
+    saw_line = False
+    for line in stream.splitlines():
+        if not line.strip():
+            continue
+        saw_line = True
+        fields = line.split()
+        if len(fields) != 4:
+            raise SelectionError(f"unparseable pre-push record {line!r}")
+        _local_ref, local_sha, _remote_ref, remote_sha = fields
+        if local_sha == ZERO_SHA:
+            # Branch deletion: nothing to test.
+            continue
+        records.append((local_sha, remote_sha))
+    if not saw_line:
+        raise SelectionError("no pre-push records on stdin")
+    return records
+
+
+def changed_records(pushed: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """Union the name-status diff of every pushed ref.
+
+    A push can carry several refs and git feeds one line per ref. Selecting
+    from only the first would leave the rest untested.
+    """
+    changed: set[tuple[str, str]] = set()
+    for local_sha, remote_sha in pushed:
+        if remote_sha == ZERO_SHA:
+            raise SelectionError("new remote branch has no base to diff against")
+        output = command_output(
+            [
+                "git",
+                "diff",
+                "--name-status",
+                "-z",
+                "--no-renames",
+                "--diff-filter=ACDMRT",
+                remote_sha,
+                local_sha,
+                "--",
+            ]
+        )
+        changed.update(parse_name_status(output))
+    return sorted(changed, key=lambda record: (record[1], record[0]))
+
+
+def classify_paths(records: list[tuple[str, str]], inventory: dict) -> bool:
+    """Return True when a Go build input changed; raise when scoping is unsafe.
+
+    ORDER IS LOAD-BEARING. The trigger question -- did any Go source change
+    at all -- is answered FIRST, and a no ends the run right there, because
+    that is precisely the old hook's `git diff -- '*.go'` skip. Asking the
+    accountability question first instead turns a docs-only push, which used
+    to cost nothing, into a full 16-minute suite: its paths are outside the
+    Go graph, so the unknown-path rule fires and widens. Roughly a quarter of
+    recent commits here touch no Go file, so that ordering mistake makes the
+    gate slower on average while every scoped-run test stays green.
+
+    Once a Go change HAS engaged the gate, every changed path must be
+    accountable. The Go graph knows two shapes: build inputs, which belong to
+    the package in their directory, and embedded files, which go list names
+    an owner for. A test can also open a shell script, a golden file, or the
+    Makefile at run time, and nothing enumerates that -- so a path outside
+    both shapes is unaccountable and the caller must widen.
+
+    The trigger is extension-based, matching the old hook rather than the
+    stricter "build input that resolves to a package": a stray testdata/*.go
+    engaged the suite before and still does.
+    """
+    import_by_dir = inventory["import_by_dir"]
+    embed_owners = inventory["embed_owners"]
+
+    if not any(is_go_build_input(path) for _status, path in records):
+        return False
+
+    for _status, path in records:
+        if path in embed_owners:
+            continue
+        if is_go_build_input(path):
+            directory = os.path.dirname(path) or "."
+            if directory in import_by_dir:
+                continue
+        raise SelectionError(f"changed path {path!r} is outside the Go package graph")
+    return True
+
+
+def always_run_packages(inventory: dict) -> list[str]:
+    """Packages that must run on every scoped push, from the manifest.
+
+    These read the whole repository rather than their own imports -- the
+    resource census and the git-tracked-source guards -- so the import
+    closure from a changed leaf never reaches them. A manifest that cannot
+    be read, or that names a package the graph does not contain, raises:
+    both mean the always-run set can no longer be honored, and skipping it
+    silently is the failure this file exists to prevent.
+    """
+    manifest_path = os.environ.get("PUSH_GATE_ALWAYS_RUN_MANIFEST")
+    if not manifest_path:
+        repo_root = os.fsdecode(
+            command_output(["git", "rev-parse", "--show-toplevel"])
+        ).strip()
+        manifest_path = os.path.join(repo_root, DEFAULT_MANIFEST_RELATIVE_PATH)
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError as error:
+        raise SelectionError(f"cannot read always-run manifest: {error}") from error
+
+    known = set(inventory["arg_by_import"].values())
+    packages: list[str] = []
+    for line in lines:
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry not in known:
+            raise SelectionError(
+                f"always-run manifest names {entry!r}, which is not a package in this module"
+            )
+        packages.append(entry)
+    return packages
+
+
+def decide() -> str:
+    go_tool = os.environ.get("PUSH_GATE_GO", "go")
+
+    pushed = push_records(sys.stdin.read())
+    if not pushed:
+        return "none"
+
+    records = changed_records(pushed)
+    if not records:
+        return "none"
+
+    inventory = package_inventory(go_tool)
+    if not classify_paths(records, inventory):
+        # Only embedded files changed. The pre-existing hook skipped this
+        # case and so does this one; see the DELIBERATE ABSENCE note above.
+        return "none"
+
+    packages = affected_package_args(records, go_tool, inventory)
+    if not packages:
+        return "none"
+
+    selected = sorted(set(packages) | set(always_run_packages(inventory)))
+    return "scoped " + " ".join(selected)
+
+
+def main() -> int:
+    try:
+        decision = decide()
+    except SelectionError as error:
+        # Every uncertainty lands here, and every one of them widens.
+        print(f"push-gate-select: running the full suite: {error}", file=sys.stderr)
+        decision = "full"
+    print(decision)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

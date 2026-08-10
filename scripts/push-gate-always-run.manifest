@@ -1,0 +1,60 @@
+# Packages the scoped pre-push gate must run on EVERY push (bead ci-4w2t).
+#
+# scripts/push-gate-select narrows a push to the packages its changed files
+# can reach through the Go import and embed graph. These packages are not
+# reachable that way: their tests resolve the repository root and read source
+# they do not import -- the resource census over every tracked *.go file, the
+# git-tracked-source guards, the walkers that assert a property of the whole
+# tree. A change to a leaf package can break any of them while sharing no
+# import edge with them, so the closure alone would silently drop them.
+#
+# MEMBERSHIP IS MECHANICAL, NOT CURATED. Every package with a Go file
+# mentioning a repository-root marker -- `repoRoot`-style helper names,
+# `git ls-files`, `rev-parse --show-toplevel` -- must appear here, and
+# push_gate_always_run_test.go fails the build when one does not. That test
+# is the guarantee; this list is only its current answer. Do NOT prune an
+# entry because it looks like it only reads a fixture repo: the marker is
+# deliberately over-broad, because a package listed here costs wall clock
+# while a package missing from here costs a green build that tested nothing.
+#
+# The scan covers every tracked *.go file, NOT only *_test.go, and that is
+# load-bearing rather than lazy. internal/testpolicy/resourcecensus walks
+# every tracked source file from census.go, a non-test file its _test.go
+# merely calls -- a test-files-only scan drops the single most repo-wide
+# package in the tree.
+#
+# Entries that are integration-tagged (test/...) compile to no tests under
+# the untagged fast suite and cost ~nothing; they are listed anyway so no
+# build-tag judgment enters the rule.
+#
+# Regenerate the current answer with:
+#   git ls-files -z -- '*.go' | xargs -0 grep -lEi 'repo_?root|ls-files|show-toplevel' \
+#     | xargs -n1 dirname | sort -u | sed 's|^|./|'
+
+./cmd/gc
+./examples/bd/dolt
+./examples/gastown
+./internal/agentutil
+./internal/api
+./internal/api/genclient
+./internal/beadmeta
+./internal/beads
+./internal/beads/contract
+./internal/bootstrap
+./internal/builtinpacks
+./internal/config
+./internal/formula
+./internal/importsvc
+./internal/molecule
+./internal/pgauth
+./internal/session
+./internal/testenv
+./internal/testpolicy/resourcecensus
+./internal/testutil/providerledger
+./internal/worker/workertest
+./scripts
+./test/docsync
+./test/integration
+./test/packlint
+./test/qualification
+./test/workflows
