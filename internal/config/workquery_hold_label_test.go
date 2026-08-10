@@ -24,7 +24,7 @@ func TestBdReadyPoolDemandShellExcludesDispatchHoldLabels(t *testing.T) {
 }
 
 func TestBdReadyPoolDemandMigrationShellExcludesDispatchHoldLabels(t *testing.T) {
-	got := bdReadyPoolDemandMigrationShell("--limit=20", false)
+	got := bdReadyPoolDemandMigrationShell(false)
 	for _, label := range beadmeta.DispatchHoldLabels {
 		want := `--exclude-label "` + label + `"`
 		if !strings.Contains(got, want) {

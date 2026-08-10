@@ -159,9 +159,9 @@ resolution and predicates: `bdReadyPoolDemandShell(limitFlag)` reads the
 canonical `gc.routed_to=<target>` route with `--include-ephemeral`, and
 the temporary migration predicate reads `gc.run_target=<target>` only on
 `gc.kind=workflow` roots that predate root `gc.routed_to` stamping. The
-work-query form appends `--sort oldest --limit=20` to the canonical probe
-and prints the first match, then filters the migration probe to roots with
-empty `gc.routed_to`. That is an intentional routed-queue policy:
+work-query form appends `--sort oldest` to the canonical probe and prints
+the first match, then filters the migration probe to roots with empty
+`gc.routed_to`. That is an intentional routed-queue policy:
 unassigned routed pool work is FIFO before priority, so newer
 high-priority work does not jump ahead of older ready work already queued
 for the same target. The pool-alias tier (`--assignee=<pool>`) carries the
@@ -173,17 +173,22 @@ Targets resolve to `Agent.PoolName` when set and
 `Agent.QualifiedName()` otherwise, so pool instances and pool templates
 land on the same routed queue.
 
-`--sort oldest` and `--limit=20` compose into a second effect the policy
-paragraph above does not cover: the sort key also decides what is a
-candidate at all. Once a target's ready queue is longer than the window,
-everything past the oldest 20 is invisible to the claim until the head
-drains, whatever its priority. Measured on the city store 2026-08-09
-(ci-q2vx): 41 ready beads on the `toolsmith` pool alias, and the one P1
-created that evening sat at row 21+, unreachable. A Go-side re-sort of the
-returned rows would not have reached it -- only asking bd for a different
-window would. Treat the window as a queue-length ceiling, not a cheap
-bound: raising it costs a wider `bd` read, leaving it costs invisibility
-for the tail.
+The row limit is where that sort key stopped being only about order. Both
+pool tiers pass `--limit 0`, so there is **no candidate ceiling** between
+the store and the claim: the sort decides which ready bead is taken first,
+never which ones are eligible. That flag is not a knob to tune when the
+read looks wide. At `--limit=20` everything past the oldest 20 was
+invisible to the claim until the head drained, whatever its priority --
+measured on the city store 2026-08-09: 41 ready beads on the `toolsmith`
+pool alias, with the one P1 created that evening at row 21, never returned
+by `bd` and so unreachable by any Go-side re-sort (ci-q2vx observed it,
+ci-rzq2 removed it). A larger constant would be the same defect further
+out. The limit was only ever load-bearing for a different property -- a
+self-blocked head needs ready work behind it to fall through to, because
+the hook layer strips the blocked head -- and any window wider than one row
+satisfies that, unbounded included. The wider read costs nothing new: the
+count form has always run the same predicate at `--limit 0`, on every
+reconciler tick rather than once per session boot.
 
 Supported handoff forms are intentionally distinct. Generic pool demand is
 ready work with `assignee=""` and `gc.routed_to=<target>`. Work hand-assigned
@@ -319,7 +324,10 @@ regressions.
     worker and reconciler must also share the temporary migration predicate
     for `gc.run_target=<target>` on `gc.kind=workflow` roots with empty
     `gc.routed_to`; only the worker's first-row form adds native
-    `bd ready --sort oldest --limit=20` selection to the canonical probe.
+    `bd ready --sort oldest` selection to the canonical probe. The row limit
+    is NOT one of the differences: both forms pass `--limit 0`, because a
+    ceiling on one side alone makes the reconciler count demand the worker
+    cannot reach (ci-rzq2).
     Any pool-demand predicate change to one (added filter, modified target
     resolution, new state) MUST be reflected in the other. Diverging the two
     re-introduces the protocol-mismatch class — the reconciler
