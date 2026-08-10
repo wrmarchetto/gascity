@@ -99,8 +99,11 @@ All arguments after "gc bd" are forwarded to bd unchanged, except the
 a long-running worker keeps both halves of its claim alive — bd's own
 "heartbeat" to push the claim lease forward, then
 "update <issue-id> --set-metadata gc.last_heartbeat_at=<RFC3339 UTC now>"
-for the dashboard, which cannot see the node-local lease. A lease bd refuses
-stops the command before the stamp. Also excepted is
+for the dashboard, which cannot see the node-local lease. bd matches a lease on
+holder = actor, so the refresh runs as the bead's own lease holder whenever that
+is another identity form of the calling session — an alias, a runtime session
+name, or a session bead id. A lease bd refuses stops the command before the
+stamp. Also excepted is
 "release-if-current <issue-id> <assignee>", which conditionally resets an
 in-progress assignment only when the bead still has that assignee.
 
@@ -214,6 +217,105 @@ func parseBdHeartbeatArgs(bdArgs []string) (id string, ok bool, err error) {
 	return rest[0], true, nil
 }
 
+// bdHeartbeatIdentityForms lists the identities under which THIS session may
+// legitimately hold a bd lease: its alias, its agent name, its runtime session
+// name, and its session bead id. Any of the four can be the holder, because
+// gc hook --claim takes the lease under whichever form the bead was already
+// assigned to rather than under $BEADS_ACTOR.
+//
+// GC_TEMPLATE is deliberately ABSENT. It is set on every suffixed pool worker
+// and holds the bare template name, which is ALSO the [[named_session]]
+// holder's identity -- admitting it would let toolsmith-3 refresh a lease held
+// by toolsmith, the same cross-session adoption gc hook --claim excludes it to
+// prevent (ga-80pen8). Pinned by
+// TestBdHeartbeatIdentityFormsExcludeTheBarePoolTemplate.
+func bdHeartbeatIdentityForms() []string {
+	return hookClaimIdentityCandidates(
+		os.Getenv("GC_ALIAS"),
+		os.Getenv("GC_AGENT"),
+		os.Getenv("GC_SESSION_NAME"),
+		os.Getenv("GC_SESSION_ID"),
+	)
+}
+
+// bdHeartbeatLeaseActor returns the actor gc must present to bd's lease refresh
+// so the holder check matches, or "" to leave bd on its own default.
+//
+// bd matches a lease on holder = actor (HeartbeatIssueInTx:
+// `WHERE issue_id = ? AND holder = ?`), and the holder is whoever claimed the
+// bead -- which gc hook --claim deliberately sets to the bead's own assignee,
+// since a bead can be pre-assigned by session bead id or session name. An agent
+// whose $BEADS_ACTOR is its alias therefore could not heartbeat its own work
+// when the claim went in under a different form of its identity (ci-eaon).
+//
+// Two rejected alternatives:
+//
+//   - Pass the assignee unconditionally. That lets any caller refresh any other
+//     agent's lease, and it deletes the "learn to stop" signal -- bd's refusal
+//     after a reclaim is the only thing that tells a worker its claim is gone.
+//   - Forward a caller-supplied --actor. gc bd heartbeat accepts no flags on
+//     purpose (see parseBdHeartbeatArgs), and a caller cannot know which
+//     identity form the claim went in under anyway. Resolving that is the whole
+//     job of this function.
+func bdHeartbeatLeaseActor(assignee, ambientActor string, identities []string) string {
+	assignee = strings.TrimSpace(assignee)
+	// Already what bd would default to: forwarding it changes nothing, so leave
+	// the argv the shape every other gc bd write has.
+	if assignee == "" || assignee == strings.TrimSpace(ambientActor) {
+		return ""
+	}
+	// Some other session's lease. Say nothing and let bd refuse.
+	if !hookClaimHasIdentity(assignee, identities) {
+		return ""
+	}
+	return assignee
+}
+
+// bdHeartbeatLeaseActorForBead resolves the lease actor for id by reading the
+// bead's current assignee out of the store `gc bd` would route the heartbeat
+// to, then applying bdHeartbeatLeaseActor.
+//
+// Fail-open by construction: every failure returns "", which leaves bd on
+// $BEADS_ACTOR -- exactly the behavior every heartbeat had before this lookup
+// existed. The three resolutions before the read run again inside doBdScoped a
+// moment later and report their own errors there, so failures here stay silent
+// rather than printing each one twice. The config load discards warnings for
+// the same reason.
+//
+// The extra store read costs one bd subprocess per heartbeat. Deliberate at a
+// cadence of minutes, and it is the only trustworthy source: the run-map
+// (writeRunMap) knows which bead a session claimed but is documented
+// unauthenticated best-effort telemetry that must not feed a trust decision,
+// and which identity holds a lease is exactly that.
+func bdHeartbeatLeaseActorForBead(cityName, rigName, id string, stderr io.Writer) string {
+	cityPath, err := resolveBdCity(cityName)
+	if err != nil {
+		return ""
+	}
+	cfg, err := loadCityConfig(cityPath, io.Discard)
+	if err != nil {
+		return ""
+	}
+	target, err := resolveBdScopeTarget(cfg, cityPath, rigName, []string{"heartbeat", id}, cityName != "", io.Discard)
+	if err != nil {
+		return ""
+	}
+	store, err := openStoreAtForCityWithConfig(target.ScopeRoot, cityPath, cfg)
+	if err != nil {
+		return ""
+	}
+	bead, err := store.Get(id)
+	if err != nil {
+		// A missing bead needs no diagnostic: bd's own resolution error is
+		// about to name it better than gc can.
+		if !errors.Is(err, beads.ErrNotFound) {
+			fmt.Fprintf(stderr, "gc bd heartbeat: cannot read %s to identify its lease holder (%v); refreshing as $BEADS_ACTOR. If bd refuses the refresh, repair the store read first: gc bd show %s\n", id, err, id) //nolint:errcheck // best-effort stderr
+		}
+		return ""
+	}
+	return bdHeartbeatLeaseActor(bead.Assignee, os.Getenv("BEADS_ACTOR"), bdHeartbeatIdentityForms())
+}
+
 // doBdHeartbeat performs the two writes `gc bd heartbeat <issue-id>` owes,
 // each through the ordinary guarded passthrough.
 //
@@ -238,20 +340,31 @@ func parseBdHeartbeatArgs(bdArgs []string) (id string, ok bool, err error) {
 // store. Deliberate: at a heartbeat cadence of minutes that costs nothing, and
 // a bespoke path would have to re-implement the silent-fallback detection.
 //
-// Two gaps, both left open on purpose. The exact-ID collision guard covers the
-// update only -- bdMutationWriteIDs switches on update/close/reopen/delete,
-// and adding "heartbeat" means declaring its flags in the lint-shared
-// internal/bdflags manifest. Exposure is bounded to an id colliding with
-// another bead the caller ALSO holds, since bd matches the lease on
-// holder = actor: the cost is one stray 5-minute lease. And a bead whose
-// holder is a different identity form of this same session (gc hook --claim
-// claims with the bead's own assignee, which may be a session bead id rather
-// than $BEADS_ACTOR) refuses the refresh, and by the ordering above loses the
-// stamp it used to get. Measured 2026-08-09 across this city: 54 beads, 0
-// assignees in session-id or session-name form, so that class is empty today
-// -- the bound expires the moment work is assigned by session id.
+// The lease refresh carries `--actor=<holder>` when this session holds the bead
+// under an identity form other than $BEADS_ACTOR -- see
+// bdHeartbeatLeaseActorForBead for why that happens and when the flag is
+// withheld (ci-eaon). The =-joined single argv element is load-bearing: a
+// two-token `--actor <id>` would put a bead id into the args
+// resolveBdScopeTarget scans, and its city-prefix probe accepts any existing
+// city bead as the command's subject, so a heartbeat on a RIG bead held by a
+// session-id holder would be re-scoped to the city store and fail to resolve.
+// Every arg scanner in this file skips a token starting with "-". Measured, not
+// assumed: TestResolveBdScopeTargetReadsATwoTokenFlagValueAsTheSubject. The
+// constraint retires when that scan drops flag values, for which
+// bdflags.Positionals is the tested vocabulary.
+//
+// One gap left open on purpose: the exact-ID collision guard covers the update
+// only -- bdMutationWriteIDs switches on update/close/reopen/delete, and adding
+// "heartbeat" means declaring its flags in the lint-shared internal/bdflags
+// manifest. Exposure is bounded to an id colliding with another bead the caller
+// ALSO holds, since bd matches the lease on holder = actor: the cost is one
+// stray 5-minute lease.
 func doBdHeartbeat(cityName, rigName, id string, stdout, stderr io.Writer) int {
-	if code := doBdScoped(cityName, rigName, []string{"heartbeat", id}, stdout, stderr); code != 0 {
+	lease := []string{"heartbeat", id}
+	if actor := bdHeartbeatLeaseActorForBead(cityName, rigName, id, stderr); actor != "" {
+		lease = append(lease, "--actor="+actor)
+	}
+	if code := doBdScoped(cityName, rigName, lease, stdout, stderr); code != 0 {
 		return code
 	}
 	stamp := bdHeartbeatNow().UTC().Format(time.RFC3339)
