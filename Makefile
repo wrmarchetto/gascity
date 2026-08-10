@@ -848,10 +848,15 @@ dashboard-dev:
 	cd internal/api/dashboardspa/web && npm run --workspace gas-city-dashboard-frontend dev
 
 # Its own target rather than another recipe line in dashboard-check so a style
-# failure names itself. The dashboard-build prerequisite is there ONLY for the
-# npm ci: eslint's type-aware rules need node_modules, and a second npm ci here
-# would wipe and refetch the tree the build just installed. Rationale in `#`
-# rather than `##` because `help` prints every `##` line verbatim.
+# failure names itself. The dashboard-build prerequisite carries TWO
+# dependencies, and dropping it for a bare `npm ci` satisfies only the first:
+# eslint's type-aware rules need node_modules, and they also resolve
+# gas-city-dashboard-shared through the gitignored shared/dist that only the
+# build produces -- lint without it and every cross-workspace import reads as
+# `unknown` (bead ci-nwu2, where ci.yml's own SPA job had exactly that gap).
+# A second npm ci here would also wipe and refetch the tree the build just
+# installed. Rationale in `#` rather than `##` because `help` prints every
+# `##` line verbatim.
 ## dashboard-lint: eslint (--max-warnings=0) + prettier --check over the SPA workspaces
 dashboard-lint: dashboard-build
 	cd internal/api/dashboardspa/web && npm run lint && npm run format:check
