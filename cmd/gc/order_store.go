@@ -86,6 +86,20 @@ type orderTrackingSweepScopedStore struct {
 	key   string
 }
 
+// Handles forwards to the wrapped store's own handles. Embedding beads.Store
+// carries List/Get/Create but NOT Handles, which is not a Store method, so
+// without this beads.HandlesFor cannot see through the wrapper and falls back
+// to its logical readers. That fallback is not inert: logicalLiveStoreReader
+// re-enters the wrapped store's List with Live set, which for a CachingStore is
+// the read-through-refresh branch rather than the backing-store bypass the
+// native liveStoreReader gives. The retention sweep's ClosedRunsForRetention is
+// the caller that noticed — its unbounded closed-order-tracking read was
+// installing the whole closed corpus in the city cache every 15 minutes
+// (ci-an8f).
+func (s orderTrackingSweepScopedStore) Handles() beads.StoreHandles {
+	return beads.HandlesFor(s.Store)
+}
+
 func (s orderTrackingSweepScopedStore) orderTrackingSweepLabel() string {
 	return s.label
 }

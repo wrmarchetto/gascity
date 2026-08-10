@@ -209,6 +209,41 @@ func (c *CachingStore) CachedList(query ListQuery) ([]Bead, bool) {
 	return cached, true
 }
 
+// absorbableOnRefreshLocked reports whether a row a Live or parent-scoped list
+// just read from the backing store may be installed in c.beads. Caller must
+// hold c.mu (write lock).
+//
+// c.beads is the ACTIVE bead universe: cacheFullScanQuery pins
+// IncludeClosed:false, so a closed row for an id the cache does not already
+// hold can never be refreshed by a later scan — it sits until the next
+// reconcile diffs it against the active snapshot and evicts it. Installing it
+// buys the caller nothing, because refreshCachedBeads builds its result slice
+// from the backing row either way. It cost the ci city 21,505 closed
+// order-tracking rows absorbed and evicted on every 15-minute retention read,
+// which pushed the store into the LARGE cadence tier for the width of one
+// reconcile interval (ci-an8f).
+//
+// Two carve-outs, both deliberate, and narrowing either one is the mistake to
+// avoid:
+//
+//   - A RESIDENT id still absorbs. That is how a row the cache holds as active
+//     converges once the backing store reports it closed; declining here would
+//     leave the cache serving a stale open row until reconcile.
+//   - A DIRTY id still absorbs. The absorb is what clears the dirty fence
+//     (clearDirty), and cachedListOnly refuses to serve while len(c.dirty) > 0
+//     — so skipping would pin the cache in backing-store fallback until the
+//     reconcile fence GC ran.
+func (c *CachingStore) absorbableOnRefreshLocked(item Bead) bool {
+	if item.Status != "closed" {
+		return true
+	}
+	if _, resident := c.beads[item.ID]; resident {
+		return true
+	}
+	_, dirty := c.dirty[item.ID]
+	return dirty
+}
+
 func (c *CachingStore) refreshCachedBeads(query ListQuery, startSeq uint64, items []Bead) []Bead {
 	refreshedParents := make(map[string]Bead)
 	removedParents := make(map[string]struct{})
@@ -270,11 +305,13 @@ func (c *CachingStore) refreshCachedBeads(query ListQuery, startSeq uint64, item
 				continue
 			}
 		}
-		c.absorbFreshLocked(item.ID, item, now, absorbOpts{
-			depsMode:   depsFromFieldsIfCarried,
-			seqMode:    seqClearGuarded,
-			clearDirty: true,
-		})
+		if c.absorbableOnRefreshLocked(item) {
+			c.absorbFreshLocked(item.ID, item, now, absorbOpts{
+				depsMode:   depsFromFieldsIfCarried,
+				seqMode:    seqClearGuarded,
+				clearDirty: true,
+			})
+		}
 		if query.Matches(item) {
 			refreshed = append(refreshed, cloneBead(item))
 		}
