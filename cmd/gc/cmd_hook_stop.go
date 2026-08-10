@@ -19,6 +19,19 @@
 // and gives the closing block verbatim. A rule with no gate behind it rots;
 // this is the gate.
 //
+// Where it is NOT installed, and this absence is deliberate:
+// internal/hooks/config/claude.json. That template is //go:embed-ed into the
+// binary and written into EVERY city gc installs, so wiring the gate there
+// ships one deployment's closing contract to deployments that have no such
+// contract and no gc hook stop expectation. A city that wants the gate adds a
+// Stop block to its own <city>/.claude/settings.json, which
+// internal/hooks/hooks.go's desiredClaudeSettings merges OVER the embedded
+// defaults -- so that city gains the gate and keeps inheriting every default
+// added later. TestInstallClaudeMergesCityOverrideAddingANewHookEvent in
+// internal/hooks/hooks_test.go pins both halves. The command itself stays
+// unconditionally registered: an unwired gate costs nothing, and a city
+// wiring one that does not exist is the worse failure.
+//
 // Editing constraints, each of which can make this worse than the bug it
 // fixes. TestStopGate* in cmd_hook_stop_test.go pins all four:
 //
@@ -47,6 +60,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 )
 
@@ -343,6 +357,22 @@ func readStopGateSessionSignals(stderr io.Writer) (bool, bool) {
 		return restart, true
 	}
 	return restart, acked
+}
+
+// hookStopProbe carries the stop gate's read-only query result back out of
+// cmdHookWithOptions. Err is set for a query that could not be answered, which
+// the gate must distinguish from an answered "nothing outstanding" -- the two
+// reach opposite verdicts.
+//
+// Declared here rather than beside the hookCommandOptions field that carries
+// it: cmd_hook.go is upstream-owned and this type is not, so keeping it in
+// this file leaves the gate one hunk in that file instead of two. The field
+// and its branch cannot follow -- they ARE the seam, and duplicating
+// cmdHookWithOptions' store resolution to avoid them would let the gate and
+// the claim drift apart, which is the one thing the design forbids.
+type hookStopProbe struct {
+	Outstanding []beads.Bead
+	Err         error
 }
 
 // probeStopGateOutstanding runs the agent's assigned-in-progress query across

@@ -230,16 +230,10 @@ type hookCommandOptions struct {
 	// result lands here. Reusing this path rather than resolving stores
 	// separately is the point -- the stop gate must see exactly the beads the
 	// claim saw, including the rig-store federation a rig-scoped agent gets.
+	// The type and the probe itself live in cmd_hook_stop.go; this field and
+	// the branch that reads it are the whole of the stop gate's footprint in
+	// this file.
 	StopProbe *hookStopProbe
-}
-
-// hookStopProbe carries the stop gate's read-only query result back out of
-// cmdHookWithOptions. Err is set for a query that could not be answered, which
-// the gate must distinguish from an answered "nothing outstanding" -- the two
-// reach opposite verdicts.
-type hookStopProbe struct {
-	Outstanding []beads.Bead
-	Err         error
 }
 
 // cmdHook is the CLI entry point for gc hook. Resolves the agent from
