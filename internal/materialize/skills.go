@@ -690,6 +690,12 @@ func Run(req Request) (Result, error) {
 	}
 
 	sort.Strings(result.Materialized)
+	// Declare what this pass wrote as ignored, so the sink stops reading as
+	// uncommitted work in the rig repository. Sorted names above are the
+	// input, so this must follow the sort. See skills_sinkignore.go.
+	if warn := writeSinkIgnore(absSink, result.Materialized); warn != "" {
+		result.Warnings = append(result.Warnings, warn)
+	}
 	sort.Slice(result.Skipped, func(i, j int) bool { return result.Skipped[i].Name < result.Skipped[j].Name })
 	sort.Strings(result.LegacyMigrated)
 	sort.Strings(result.Warnings)
