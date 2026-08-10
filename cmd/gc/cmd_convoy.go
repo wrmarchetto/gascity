@@ -742,12 +742,19 @@ func listConvoyChildren(store beads.Store, convoyID string, includeClosed bool) 
 // open, unowned convoy with at least one child, and every child has reached a
 // terminal status.
 //
-// This is the single definition of "collectable", shared by the three places
-// that must agree -- the event-driven autoclose, the `gc convoy check` sweep,
-// and the doctor gate that fails when a collectable convoy was never
-// collected. Restating the condition in the gate is the obvious alternative
-// and is exactly what lets a gate report green while the collector it guards
-// has changed its mind about "owned" or about childless convoys.
+// This is the single definition of "collectable", shared by the two paths that
+// must agree -- the event-driven autoclose (autocloseConvoyIfComplete) and the
+// `gc convoy check` sweep. Restating the condition in either is the obvious
+// alternative and is exactly what lets one report a convoy live while the other
+// collects it, once they disagree about "owned" or about childless convoys.
+//
+// A third consumer sits outside this binary: a deployment that wants a gate on
+// uncollected convoys writes it as a pack doctor script over
+// `gc convoy list --json`, whose progress.closed is counted with the same
+// IsTerminalStatus this function uses. Such a gate is NOT registered here --
+// whether a stale convoy should fail `gc doctor` is a deployment's policy about
+// its own reconciler, and a Go check would impose it on every user (ci-4kg7,
+// which reverted exactly that).
 //
 // Two exclusions, both deliberate. A convoy with ZERO children is not
 // complete: sling mints the convoy bead before attaching its child, so
@@ -757,8 +764,7 @@ func listConvoyChildren(store beads.Store, convoyID string, includeClosed bool) 
 // closing it here would retire the owner's convoy out from under it.
 //
 // A store error yields (false, err): the caller must decide, because "cannot
-// tell" is not "not collectable". Callers that collect treat it as no-op;
-// the gate reports the leak set as unknown rather than empty.
+// tell" is not "not collectable". Callers that collect treat it as no-op.
 func convoyIsComplete(store beads.Store, convoy beads.Bead) (bool, error) {
 	if convoy.Type != "convoy" || convoycore.IsTerminalStatus(convoy.Status) || hasLabel(convoy.Labels, "owned") {
 		return false, nil
