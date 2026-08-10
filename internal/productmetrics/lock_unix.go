@@ -90,6 +90,14 @@ func (directory *unixStorageDirectory) acquireLockInternal(
 			if err := ctx.Err(); err != nil {
 				return nil, false, fmt.Errorf("productmetrics: acquire lock %q: %w", name, err)
 			}
+			// A caller waiting under a foreground decision budget bounds the
+			// wait with that budget's own clock, injected through the storage
+			// hooks -- ctx carries only a liveness backstop. See the
+			// state-lock wait in RecordOnce for why the two must stay
+			// separate. Callers with no decision gate are unaffected.
+			if err := directory.hooks.canStartStorageWork(); err != nil {
+				return nil, false, fmt.Errorf("productmetrics: acquire lock %q: %w", name, err)
+			}
 		}
 		if err := directory.hooks.run(storageStepLock); err != nil {
 			return nil, false, fmt.Errorf("productmetrics: injected advisory-lock failure: %w", err)
