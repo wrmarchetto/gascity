@@ -13,22 +13,70 @@ import (
 // here: the store's own goroutines log (the reconcile loop and the stall
 // watchdog both do), so a test that polls the buffer while one of them writes
 // races -- caught by -race in the stall watchdog's wiring test, invisible
-// without it. Only String() is exposed because that is all any caller needs.
+// without it. Tests that only inspect settled output use String(); tests
+// waiting on a line another goroutine has yet to write use waitFor.
 type syncLogBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
+	mu      sync.Mutex
+	buf     bytes.Buffer
+	waiters []logWaiter
+}
+
+// logWaiter pairs a substring with the channel closed once it is present.
+type logWaiter struct {
+	substr string
+	found  chan struct{}
 }
 
 func (b *syncLogBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.Write(p)
+	n, err := b.buf.Write(p)
+	b.notifyLocked()
+	return n, err
 }
 
 func (b *syncLogBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// waitFor returns a channel closed once the buffer holds substr, so a caller
+// can select on it against a deadline.
+//
+// The alternative a reader reaches for first is polling String() with a short
+// time.Sleep between reads. That is banned twice over: TESTING.md forbids
+// open-coded polling loops in tests outright, and every time.Sleep is a
+// fixed_sleep row in the resource census (test/test-resources.toml), which has
+// no per-file exemption, so a polling waiter cannot land without a baseline
+// bump.
+//
+// Registration matches what is ALREADY buffered before it enqueues. The line
+// being waited for is written by a store goroutine that may well beat the test
+// to the buffer, and a waiter consulted only from Write would then never fire.
+func (b *syncLogBuffer) waitFor(substr string) <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	found := make(chan struct{})
+	b.waiters = append(b.waiters, logWaiter{substr: substr, found: found})
+	b.notifyLocked()
+	return found
+}
+
+func (b *syncLogBuffer) notifyLocked() {
+	if len(b.waiters) == 0 {
+		return
+	}
+	out := b.buf.String()
+	kept := b.waiters[:0]
+	for _, w := range b.waiters {
+		if strings.Contains(out, w.substr) {
+			close(w.found)
+			continue
+		}
+		kept = append(kept, w)
+	}
+	b.waiters = kept
 }
 
 // captureLog redirects the default logger's output to a buffer for the

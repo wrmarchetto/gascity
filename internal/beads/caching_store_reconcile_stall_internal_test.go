@@ -366,12 +366,11 @@ func TestStallWatchdogSpeaksWhileTheReconcileGoroutineIsParked(t *testing.T) {
 	// correct for a just-armed store but is not the claim under test -- waiting
 	// on the bare "reconciler stalled" prefix would be satisfied by that line
 	// and would pass with the watchdog wired into the reconcile loop.
-	deadline := time.Now().Add(10 * time.Second)
-	for !strings.Contains(logBuf.String(), "mode=pass-in-flight") {
-		if time.Now().After(deadline) {
-			t.Fatalf("no pass-in-flight stall line while the reconcile goroutine was parked in backing.List; output=%q",
-				logBuf.String())
-		}
-		time.Sleep(2 * time.Millisecond)
+	wedgeReported := logBuf.waitFor("mode=pass-in-flight")
+	select {
+	case <-wedgeReported:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no pass-in-flight stall line while the reconcile goroutine was parked in backing.List; output=%q",
+			logBuf.String())
 	}
 }
