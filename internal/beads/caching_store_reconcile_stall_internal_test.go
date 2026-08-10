@@ -367,6 +367,10 @@ func TestStallWatchdogSpeaksWhileTheReconcileGoroutineIsParked(t *testing.T) {
 	// on the bare "reconciler stalled" prefix would be satisfied by that line
 	// and would pass with the watchdog wired into the reconcile loop.
 	wedgeReported := logBuf.waitFor("mode=pass-in-flight")
+	// The 10 s below is a safety deadline on the failure path, not a wait
+	// that sets this test's normal duration (TESTING.md:173). time.After is
+	// not a censused resource, unlike the sleep-poll it replaces, which
+	// would have moved a fixed_sleep row in test/test-resources.toml.
 	select {
 	case <-wedgeReported:
 	case <-time.After(10 * time.Second):

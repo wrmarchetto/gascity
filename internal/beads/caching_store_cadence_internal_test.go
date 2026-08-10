@@ -11,17 +11,26 @@ import (
 
 // syncLogBuffer is a mutex-guarded log sink. A bare bytes.Buffer is NOT safe
 // here: the store's own goroutines log (the reconcile loop and the stall
-// watchdog both do), so a test that polls the buffer while one of them writes
-// races -- caught by -race in the stall watchdog's wiring test, invisible
-// without it. Tests that only inspect settled output use String(); tests
-// waiting on a line another goroutine has yet to write use waitFor.
+// watchdog both do), so their Write -- and the notifyLocked it runs, which
+// reads buf.String() -- races against the test goroutine's waitFor
+// registration and its settled-output String() read. Caught by -race in
+// TestStallWatchdogSpeaksWhileTheReconcileGoroutineIsParked
+// (caching_store_reconcile_stall_internal_test.go), the only test that runs
+// StartReconciler's background goroutines under captureLog. Tests that only
+// inspect settled output use String(); tests waiting on a line another
+// goroutine has yet to write use waitFor. Those two stay the only exported
+// reads -- no Reset, no Lines -- because no caller needs to clear or
+// line-split captured output.
 type syncLogBuffer struct {
 	mu      sync.Mutex
 	buf     bytes.Buffer
 	waiters []logWaiter
 }
 
-// logWaiter pairs a substring with the channel closed once it is present.
+// logWaiter pairs a substring with a channel that Write and waitFor close
+// once the substring is present. found is only ever closed, never sent to,
+// so it is one-shot and safe for multiple selectors, and a waitFor call
+// against an already-satisfied buffer returns an already-closed channel.
 type logWaiter struct {
 	substr string
 	found  chan struct{}
@@ -45,11 +54,14 @@ func (b *syncLogBuffer) String() string {
 // can select on it against a deadline.
 //
 // The alternative a reader reaches for first is polling String() with a short
-// time.Sleep between reads. That is banned twice over: TESTING.md forbids
-// open-coded polling loops in tests outright, and every time.Sleep is a
+// time.Sleep between reads. That is banned twice over: TESTING.md's
+// "Asynchronous tests wait for facts, not elapsed time" (TESTING.md:154)
+// forbids open-coded polling loops outright, and every time.Sleep is a
 // fixed_sleep row in the resource census (test/test-resources.toml), which has
 // no per-file exemption, so a polling waiter cannot land without a baseline
-// bump.
+// bump. That same section carves out a safety deadline around the wait, as
+// long as the deadline does not set the normal test duration -- the carve-out
+// the select callers below rely on.
 //
 // Registration matches what is ALREADY buffered before it enqueues. The line
 // being waited for is written by a store goroutine that may well beat the test
@@ -63,6 +75,17 @@ func (b *syncLogBuffer) waitFor(substr string) <-chan struct{} {
 	return found
 }
 
+// notifyLocked closes the channel of every waiter whose substring is now
+// present in buf, and drops matched waiters from b.waiters. It skips the
+// O(buffer) buf.String() copy when b.waiters is empty -- the common case,
+// since most Write calls have no pending waiter -- and test log output runs
+// to a few KB, so the copy cost when a waiter IS pending is not worth
+// avoiding further.
+//
+// There is no unregister/cancel path: a waiter whose select-side deadline
+// expires stays in b.waiters with found never closed. Left unfixed because
+// the leak is bounded by the per-test buffer lifetime -- captureLog drops
+// the buffer at test end -- so it cannot accumulate across tests.
 func (b *syncLogBuffer) notifyLocked() {
 	if len(b.waiters) == 0 {
 		return
