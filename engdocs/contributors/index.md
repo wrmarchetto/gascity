@@ -24,6 +24,9 @@ description: The shortest path for new contributors to get productive in Gas Cit
 - [Where `gc hook --claim` spends its wall clock](hook-claim-latency-decomposition.md)
   before proposing any claim-latency fix -- a per-subprocess and per-syscall
   decomposition of one run, plus the strace flags that make it reproducible
+- [Merging upstream through the committed dashboard bundle](upstream-merge-dashboard-bundle.md)
+  before resolving a single conflict in `internal/api/dashboardspa/dist` -- the
+  bundle is generated output and is rebuilt, never merged
 - [Release Gate Criteria Conventions](release-gate-criteria-conventions.md)
   when signing off the "Tests pass" criterion on a `release-gates/*.md`
   deploy gate — it must cite the CI jobs `ci-required` actually gates on
