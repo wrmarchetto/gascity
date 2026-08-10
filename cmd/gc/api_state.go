@@ -2377,7 +2377,10 @@ func (cs *controllerState) rigProvisionDeps(editCfg *config.City, r config.Rig, 
 		WriteRoutes: func(cp string, c *config.City) error {
 			return writeAllRigRoutes(collectRigRoutes(cp, c))
 		},
-		ProbeBranch:         func(p string) string { return git.New(p).ProbeDefaultBranch() },
+		ProbeBranch: func(p string) (string, bool) {
+			branch, src := git.New(p).ProbeDefaultBranch()
+			return branch, src == git.DefaultBranchFromCheckedOut
+		},
 		ResolveRegistryPack: cachedRegistryPackSource,
 		NormalizeScopes: func(cp string, c *config.City) error {
 			return normalizeCanonicalBdScopeFiles(cp, c, io.Discard)

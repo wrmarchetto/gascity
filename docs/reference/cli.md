@@ -3378,9 +3378,13 @@ same name.
 Use --name to set the rig name explicitly (default: directory basename).
 Use --prefix to set the bead ID prefix explicitly (default: derived from name).
 Use --default-branch to set the rig's mainline branch explicitly. By default,
-gc rig add probes the repo's origin/HEAD (and falls back to the currently
-checked-out branch) and stores the result in city.toml so polecats and the
-refinery target the right branch without manual metadata patching.
+gc rig add probes the repo's origin/HEAD, then asks the remote directly
+(git ls-remote --symref origin HEAD), and only then falls back to the
+currently checked-out branch, storing the result in city.toml so polecats and
+the refinery target the right branch without manual metadata patching. That
+last fallback is a guess -- it is whatever branch happens to be on disk, which
+for a checkout shared by several sessions is one session's feature branch --
+so gc rig add warns when it lands there.
 Use --start-suspended to add the rig in a suspended state (dormant-by-default).
 The rig's agents won't spawn until explicitly resumed with "gc rig resume".
 
@@ -3411,7 +3415,7 @@ gc rig add /path/to/existing --adopt
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--adopt` | bool |  | adopt existing .beads/ directory (skip init) |
-| `--default-branch` | string |  | mainline branch (default: auto-detect from origin/HEAD or current branch) |
+| `--default-branch` | string |  | mainline branch (default: auto-detect from origin/HEAD, the remote's HEAD, or the current branch) |
 | `--git-url` | string |  | git URL to clone into a new rig on a REMOTE city (server-side provisioning) |
 | `--include` | stringArray |  | pack source or pack name for rig agents (repeatable; writes canonical rig imports) |
 | `--json` | bool |  | Output in JSONL format |

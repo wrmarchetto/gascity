@@ -94,9 +94,13 @@ same name.
 Use --name to set the rig name explicitly (default: directory basename).
 Use --prefix to set the bead ID prefix explicitly (default: derived from name).
 Use --default-branch to set the rig's mainline branch explicitly. By default,
-gc rig add probes the repo's origin/HEAD (and falls back to the currently
-checked-out branch) and stores the result in city.toml so polecats and the
-refinery target the right branch without manual metadata patching.
+gc rig add probes the repo's origin/HEAD, then asks the remote directly
+(git ls-remote --symref origin HEAD), and only then falls back to the
+currently checked-out branch, storing the result in city.toml so polecats and
+the refinery target the right branch without manual metadata patching. That
+last fallback is a guess -- it is whatever branch happens to be on disk, which
+for a checkout shared by several sessions is one session's feature branch --
+so gc rig add warns when it lands there.
 Use --start-suspended to add the rig in a suspended state (dormant-by-default).
 The rig's agents won't spawn until explicitly resumed with "gc rig resume".
 
@@ -196,7 +200,7 @@ check remains informational.`,
 	cmd.Flags().StringArrayVar(&includes, "include", nil, "pack source or pack name for rig agents (repeatable; writes canonical rig imports)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "rig name (default: directory basename, or git URL basename for --git-url)")
 	cmd.Flags().StringVar(&prefixFlag, "prefix", "", "bead ID prefix (default: derived from name)")
-	cmd.Flags().StringVar(&defaultBranchFlag, "default-branch", "", "mainline branch (default: auto-detect from origin/HEAD or current branch)")
+	cmd.Flags().StringVar(&defaultBranchFlag, "default-branch", "", "mainline branch (default: auto-detect from origin/HEAD, the remote's HEAD, or the current branch)")
 	cmd.Flags().BoolVar(&startSuspended, "start-suspended", false, "add rig in suspended state (dormant-by-default)")
 	cmd.Flags().BoolVar(&adoptFlag, "adopt", false, "adopt existing .beads/ directory (skip init)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output in JSONL format")
@@ -312,7 +316,10 @@ func doRigAddWithResult(fs fsys.FS, cityPath, rigPath string, includes []string,
 		WriteRoutes: func(cp string, c *config.City) error {
 			return writeAllRigRoutes(collectRigRoutes(cp, c))
 		},
-		ProbeBranch:         func(p string) string { return git.New(p).ProbeDefaultBranch() },
+		ProbeBranch: func(p string) (string, bool) {
+			branch, src := git.New(p).ProbeDefaultBranch()
+			return branch, src == git.DefaultBranchFromCheckedOut
+		},
 		ResolveRegistryPack: cachedRegistryPackSource,
 		NormalizeScopes: func(cp string, c *config.City) error {
 			return normalizeCanonicalBdScopeFiles(cp, c, io.Discard)

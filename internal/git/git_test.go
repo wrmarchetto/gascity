@@ -289,9 +289,110 @@ func TestProbeDefaultBranch_FromOriginHEAD(t *testing.T) {
 	runGit(t, clone, "symbolic-ref", "refs/remotes/origin/HEAD", target)
 
 	g := New(clone)
-	got := g.ProbeDefaultBranch()
+	got, src := g.ProbeDefaultBranch()
 	if got != "master" {
 		t.Errorf("ProbeDefaultBranch() = %q, want %q", got, "master")
+	}
+	if src != DefaultBranchFromOriginHEAD {
+		t.Errorf("source = %q, want %q", src, DefaultBranchFromOriginHEAD)
+	}
+}
+
+// cloneWithUnsetOriginHEAD builds the ci-6m97 fixture: a bare repo whose HEAD
+// names mainline, and a clone of it whose refs/remotes/origin/HEAD has been
+// deleted and whose working tree is parked on a feature branch. That is the
+// normal state of a shared multi-agent checkout -- clone wrote origin/HEAD, a
+// later `git remote set-head --delete` or a clone made before git 2.28 left it
+// unset, and some session's branch is checked out.
+//
+// mainline is a parameter, and callers pass something that is neither "main"
+// nor "master", so a candidate-ref guess cannot pass a test that means to
+// prove the answer came from the remote.
+func cloneWithUnsetOriginHEAD(t *testing.T, mainline string) string {
+	t.Helper()
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+
+	seed := t.TempDir()
+	runGit(t, seed, "clone", bare, ".")
+	runGit(t, seed, "config", "user.email", "test@test.com")
+	runGit(t, seed, "config", "user.name", "Test")
+	runGit(t, seed, "checkout", "-b", mainline)
+	runGit(t, seed, "commit", "--allow-empty", "-m", "init")
+	runGit(t, seed, "push", "origin", mainline)
+	runGit(t, bare, "symbolic-ref", "HEAD", "refs/heads/"+mainline)
+
+	clone := t.TempDir()
+	runGit(t, clone, "clone", bare, ".")
+	// The clone wired origin/HEAD from the remote; drop it so the probe has to
+	// go ask. Not defensive -- without this the test would pass on step 1 and
+	// never reach the ls-remote leg it exists to pin.
+	runGit(t, clone, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+	runGit(t, clone, "checkout", "-b", "fix/ci-yxpd-stop-gate")
+	return clone
+}
+
+// TestProbeDefaultBranch_PrefersRemoteHEADOverCheckedOutBranch pins ci-6m97:
+// registering a rig from a shared checkout that happens to sit on a feature
+// branch must not record that branch as the rig's mainline. The remote answers
+// authoritatively via `git ls-remote --symref origin HEAD` even when the local
+// refs/remotes/origin/HEAD was never set, so the checked-out-branch guess must
+// not be reached while that answer is available.
+//
+// default_branch is what polecats and the refinery target, so the failure mode
+// this guards is work slung at a branch that gets deleted.
+func TestProbeDefaultBranch_PrefersRemoteHEADOverCheckedOutBranch(t *testing.T) {
+	clone := cloneWithUnsetOriginHEAD(t, "trunk")
+	g := New(clone)
+	got, src := g.ProbeDefaultBranch()
+	if got != "trunk" {
+		t.Errorf("ProbeDefaultBranch() = %q, want %q (remote HEAD, not the checked-out branch)", got, "trunk")
+	}
+	// The branch assertion alone cannot distinguish "the remote answered" from
+	// "some later leg happened to guess trunk", and the source is what drives
+	// the rig-add warning, so both are pinned.
+	if src != DefaultBranchFromRemoteHEAD {
+		t.Errorf("source = %q, want %q", src, DefaultBranchFromRemoteHEAD)
+	}
+}
+
+// TestProbeDefaultBranch_RejectsRemoteHEADOutsideRefsHeads pins the guard in
+// parseRemoteHeadSymref. git accepts `symbolic-ref HEAD refs/foo/bar` in a bare
+// repo, and ls-remote reports it verbatim, so a parser that trimmed to the last
+// path component would record "bar" as the rig's default_branch -- a ref no
+// merge could ever target. The probe must decline and fall through to the
+// checked-out branch, which at least exists as a branch.
+func TestProbeDefaultBranch_RejectsRemoteHEADOutsideRefsHeads(t *testing.T) {
+	clone := cloneWithUnsetOriginHEAD(t, "trunk")
+	remote, err := New(clone).run("remote", "get-url", "origin")
+	if err != nil {
+		t.Fatalf("remote get-url: %v", err)
+	}
+	bare := strings.TrimSpace(remote)
+	runGit(t, bare, "update-ref", "refs/foo/bar", "refs/heads/trunk")
+	runGit(t, bare, "symbolic-ref", "HEAD", "refs/foo/bar")
+
+	got, src := New(clone).ProbeDefaultBranch()
+	if got != "fix/ci-yxpd-stop-gate" || src != DefaultBranchFromCheckedOut {
+		t.Errorf("ProbeDefaultBranch() = (%q, %q), want (%q, %q)",
+			got, src, "fix/ci-yxpd-stop-gate", DefaultBranchFromCheckedOut)
+	}
+}
+
+// TestProbeDefaultBranch_FallsBackWhenRemoteUnreachable covers the offline
+// case, which is the only one where the checked-out-branch guess still gets
+// recorded. It must be reported as a guess so gc rig add can say so; a probe
+// that returned the branch with an authoritative source would silently
+// reintroduce ci-6m97 for anyone adding a rig without network.
+func TestProbeDefaultBranch_FallsBackWhenRemoteUnreachable(t *testing.T) {
+	repo := initTestRepo(t)
+	runGit(t, repo, "checkout", "-b", "develop")
+	runGit(t, repo, "remote", "add", "origin", filepath.Join(t.TempDir(), "absent.git"))
+
+	got, src := New(repo).ProbeDefaultBranch()
+	if got != "develop" || src != DefaultBranchFromCheckedOut {
+		t.Errorf("ProbeDefaultBranch() = (%q, %q), want (%q, %q)",
+			got, src, "develop", DefaultBranchFromCheckedOut)
 	}
 }
 
@@ -301,9 +402,12 @@ func TestProbeDefaultBranch_FallsBackToCurrentBranch(t *testing.T) {
 	// or "master" depending on the host's git init.defaultBranch.
 	runGit(t, repo, "checkout", "-b", "develop")
 	g := New(repo)
-	got := g.ProbeDefaultBranch()
+	got, src := g.ProbeDefaultBranch()
 	if got != "develop" {
 		t.Errorf("ProbeDefaultBranch() = %q, want %q (current branch fallback)", got, "develop")
+	}
+	if src != DefaultBranchFromCheckedOut {
+		t.Errorf("source = %q, want %q", src, DefaultBranchFromCheckedOut)
 	}
 }
 
@@ -311,9 +415,57 @@ func TestProbeDefaultBranch_NoRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(dir))
 	g := New(dir)
-	got := g.ProbeDefaultBranch()
+	got, src := g.ProbeDefaultBranch()
 	if got != "" {
 		t.Errorf("ProbeDefaultBranch() = %q, want empty (no repo)", got)
+	}
+	if src != DefaultBranchUnresolved {
+		t.Errorf("source = %q, want %q", src, DefaultBranchUnresolved)
+	}
+}
+
+// TestParseRemoteHeadSymref covers the output shapes the network leg cannot
+// reach from a local fixture: the unborn-HEAD empty response, and a symref line
+// for a ref other than HEAD (git prints one per requested pattern, so a future
+// caller adding patterns must not pick up the wrong one).
+func TestParseRemoteHeadSymref(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want string
+	}{
+		{
+			name: "symref then sha",
+			out:  "ref: refs/heads/main\tHEAD\n9187121b3\tHEAD\n",
+			want: "main",
+		},
+		{
+			name: "empty bare repo answers with no symref line",
+			out:  "",
+			want: "",
+		},
+		{
+			name: "sha only, origin/HEAD unset on the remote too",
+			out:  "9187121b3\tHEAD\n",
+			want: "",
+		},
+		{
+			name: "symref for a ref other than HEAD is not the answer",
+			out:  "ref: refs/heads/main\trefs/remotes/upstream/HEAD\n",
+			want: "",
+		},
+		{
+			name: "branch name containing a slash survives intact",
+			out:  "ref: refs/heads/release/2.1\tHEAD\n",
+			want: "release/2.1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseRemoteHeadSymref(tt.out); got != tt.want {
+				t.Errorf("parseRemoteHeadSymref(%q) = %q, want %q", tt.out, got, tt.want)
+			}
+		})
 	}
 }
 

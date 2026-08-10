@@ -590,8 +590,9 @@ type Rig struct {
 	// DefaultBranch is the rig repository's mainline branch (e.g. "main",
 	// "master", "develop"). When set, routing formulas use this as the
 	// default merge target instead of probing origin/HEAD at sling time.
-	// Captured by `gc rig add` from the rig's git config; set manually for
-	// rigs whose mainline isn't reachable via origin/HEAD.
+	// Captured by `gc rig add`, which reads origin/HEAD, then the remote's own
+	// HEAD, and warns if it can only fall back to the checked-out branch.
+	// Set it manually when neither the clone nor the remote records a mainline.
 	DefaultBranch string `toml:"default_branch,omitempty"`
 	// Suspended is the deprecated pre-runtime-state suspension flag.
 	// Parsed for backwards compatibility and treated as an alias for

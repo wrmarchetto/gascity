@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Worktree represents a single git worktree entry.
@@ -80,25 +81,142 @@ func (g *Git) DefaultBranch() (string, error) {
 	return "main", nil
 }
 
-// ProbeDefaultBranch returns the repo's mainline branch name with a richer
-// fallback chain than DefaultBranch:
-//  1. refs/remotes/origin/HEAD symref (the configured default)
-//  2. the currently checked-out branch (when origin/HEAD is unset, the
-//     first branch is usually the mainline)
-//  3. empty string (caller decides)
+// DefaultBranchSource is a provenance token naming which leg of
+// ProbeDefaultBranch answered. It is deliberately NOT display text: the CLI
+// warning and the API's provisioning event word the same fact differently, so
+// each caller phrases its own message and only compares this value.
+type DefaultBranchSource string
+
+const (
+	// DefaultBranchUnresolved means no leg answered: the path is not a repo, or
+	// it is a repo with no reachable remote sitting on a detached HEAD.
+	DefaultBranchUnresolved DefaultBranchSource = ""
+	// DefaultBranchFromOriginHEAD is refs/remotes/origin/HEAD, the default the
+	// clone recorded locally. Authoritative and free.
+	DefaultBranchFromOriginHEAD DefaultBranchSource = "origin/HEAD"
+	// DefaultBranchFromRemoteHEAD is the remote's own HEAD, read over the
+	// network. Authoritative, one round trip.
+	DefaultBranchFromRemoteHEAD DefaultBranchSource = "ls-remote"
+	// DefaultBranchFromCheckedOut is the checked-out branch. This leg is a
+	// GUESS, and it is wrong for every shared multi-agent checkout parked on
+	// some session's feature branch, so a caller that persists the result must
+	// report when it landed here (ci-6m97).
+	DefaultBranchFromCheckedOut DefaultBranchSource = "checked-out"
+)
+
+// ProbeDefaultBranch returns the repo's mainline branch name and how it was
+// resolved, with a richer chain than DefaultBranch:
+//  1. refs/remotes/origin/HEAD symref (the default the clone recorded)
+//  2. the remote's own HEAD via remoteHeadBranch (authoritative, network)
+//  3. the currently checked-out branch (a guess)
+//  4. empty string (caller decides)
 //
-// Use this at registration time (gc rig add) where we want to record the
-// repo's actual mainline rather than a generic "main" placeholder.
-func (g *Git) ProbeDefaultBranch() string {
+// Step 2 exists because step 1 is absent in exactly the case step 3 is worst.
+// A clone whose origin/HEAD was never set locally is the normal state, and when
+// several agent sessions share that checkout the branch on disk is whatever one
+// of them last worked on. Registering gascity that way wrote a transient
+// feature branch into city.toml as the rig's mainline (ci-6m97).
+//
+// DefaultBranch's local main-then-master candidate pass is deliberately NOT
+// mirrored here. It answers "main" for a develop-mainline repo that also has a
+// main branch, step 2 answers those correctly, and when step 2 cannot run the
+// caller wants the honest step-3 warning rather than a second guess dressed up
+// as an answer.
+//
+// Use this at registration time (gc rig add) where we want to record the repo's
+// actual mainline rather than a generic "main" placeholder.
+func (g *Git) ProbeDefaultBranch() (string, DefaultBranchSource) {
 	if out, err := g.run("symbolic-ref", "refs/remotes/origin/HEAD"); err == nil {
 		ref := strings.TrimSpace(out)
 		if branch := strings.TrimPrefix(ref, "refs/remotes/origin/"); branch != "" {
-			return branch
+			return branch, DefaultBranchFromOriginHEAD
 		}
+	}
+	if branch := g.remoteHeadBranch(); branch != "" {
+		return branch, DefaultBranchFromRemoteHEAD
 	}
 	if branch, err := g.CurrentBranch(); err == nil {
 		branch = strings.TrimSpace(branch)
 		if branch != "" && branch != "HEAD" {
+			return branch, DefaultBranchFromCheckedOut
+		}
+	}
+	return "", DefaultBranchUnresolved
+}
+
+const (
+	// remoteHeadTimeout bounds the ls-remote leg of ProbeDefaultBranch. gc rig
+	// add is interactive and the leg is optional -- on timeout the probe still
+	// answers from the checked-out branch and warns -- so the budget covers a
+	// normal forge's TLS or SSH handshake and no more. A longer wait buys
+	// nothing an operator would not rather settle with --default-branch.
+	remoteHeadTimeout = 5 * time.Second
+	// remoteHeadWaitDelay caps how long Wait blocks after the context expires.
+	// Killing git does not reap an ssh grandchild holding the output pipe, and
+	// CombinedOutput waits on that pipe, so without this the timeout above is
+	// not a guarantee -- an ssh passphrase prompt would still hang rig add.
+	remoteHeadWaitDelay = time.Second
+)
+
+// remoteHeadBranch returns the branch the remote's own HEAD points at, or ""
+// when there is no origin, the remote is unreachable or slow, its HEAD is
+// unborn (an empty bare repo answers with no symref line), or it points outside
+// refs/heads/.
+//
+// It runs non-interactively. A git that stops to ask for a credential would
+// hang rig add with no visible question, because this probe's output is
+// discarded on failure.
+//
+// It builds its own exec.Cmd rather than calling runCtx, which every other git
+// invocation here uses: runCtx takes no extra env and sets no WaitDelay, and
+// this is the only leg that touches the network, so it is the only one where a
+// credential prompt is reachable at all.
+func (g *Git) remoteHeadBranch() string {
+	ctx, cancel := context.WithTimeout(context.Background(), remoteHeadTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--symref", "origin", "HEAD")
+	cmd.Dir = g.workDir
+	cmd.WaitDelay = remoteHeadWaitDelay
+	cmd.Env = append(sanitizeGitEnv(os.Environ()),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ASKPASS=/bin/false",
+		"SSH_ASKPASS=/bin/false",
+	)
+	// Only pin BatchMode when the operator has not pinned an ssh command of
+	// their own -- clobbering theirs would drop a deploy key and turn a
+	// resolvable remote into the step-3 guess. When it is set we defer to it,
+	// and remoteHeadWaitDelay is then the only thing bounding a prompt.
+	if os.Getenv("GIT_SSH_COMMAND") == "" {
+		cmd.Env = append(cmd.Env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return parseRemoteHeadSymref(string(out))
+}
+
+// parseRemoteHeadSymref pulls the branch name out of `git ls-remote --symref`
+// output, whose symref line is "ref: <full-ref>\tHEAD" ahead of the ordinary
+// "<sha>\tHEAD" line.
+//
+// A ref outside refs/heads/ is rejected rather than trimmed to its last path
+// component: git accepts `symbolic-ref HEAD refs/foo/bar` in a bare repo, and
+// recording "bar" as a rig's default_branch would aim merge work at something
+// that is not a branch. ProbeDefaultBranch's step-1 leg has no matching guard
+// because that ref is written only by clone and `git remote set-head`, which
+// point it into refs/remotes/origin/ or not at all.
+func parseRemoteHeadSymref(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "ref: ")
+		if !ok {
+			continue
+		}
+		ref, name, ok := strings.Cut(rest, "\t")
+		if !ok || strings.TrimSpace(name) != "HEAD" {
+			continue
+		}
+		if branch, ok := strings.CutPrefix(strings.TrimSpace(ref), "refs/heads/"); ok && branch != "" {
 			return branch
 		}
 	}

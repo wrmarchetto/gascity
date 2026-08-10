@@ -2526,7 +2526,7 @@
         },
         "default_branch": {
           "type": "string",
-          "description": "DefaultBranch is the rig repository's mainline branch (e.g. \"main\",\n\"master\", \"develop\"). When set, routing formulas use this as the\ndefault merge target instead of probing origin/HEAD at sling time.\nCaptured by `gc rig add` from the rig's git config; set manually for\nrigs whose mainline isn't reachable via origin/HEAD."
+          "description": "DefaultBranch is the rig repository's mainline branch (e.g. \"main\",\n\"master\", \"develop\"). When set, routing formulas use this as the\ndefault merge target instead of probing origin/HEAD at sling time.\nCaptured by `gc rig add`, which reads origin/HEAD, then the remote's own\nHEAD, and warns if it can only fall back to the checked-out branch.\nSet it manually when neither the clone nor the remote records a mainline."
         },
         "suspended": {
           "type": "boolean",

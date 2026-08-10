@@ -57,9 +57,15 @@ type Deps struct {
 	// collectRigRoutes + writeAllRoutes). Required — it runs after the config
 	// write, so a nil here would panic past the topology rollback.
 	WriteRoutes func(cityPath string, cfg *config.City) error
-	// ProbeBranch returns the rig's git default branch, or "" when unknown.
-	// nil = skip the probe.
-	ProbeBranch func(rigPath string) string
+	// ProbeBranch returns the rig's git default branch, or "" when unknown, and
+	// whether that name is a GUESS rather than a default the repo or its remote
+	// recorded (git.ProbeDefaultBranch answering from its checked-out-branch
+	// leg). Provisioning emits a warning step for a guessed name: registering a
+	// rig from a checkout several agent sessions share would otherwise write
+	// whichever session's feature branch was on disk into city.toml as the
+	// mainline that polecats and the refinery target (ci-6m97). guessed carries
+	// no meaning when branch is "". nil = skip the probe.
+	ProbeBranch func(rigPath string) (branch string, guessed bool)
 	// ResolveRegistryPack maps a registry pack name (flat "<name>" or scoped
 	// "<owner>/<name>") to the import source published for it, for --include
 	// tokens that name a registry pack instead of a path. It must not fetch or
