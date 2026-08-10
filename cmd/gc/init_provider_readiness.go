@@ -110,6 +110,22 @@ func finalizeInit(cityPath string, stdout, stderr io.Writer, opts initFinalizeOp
 		fmt.Fprintln(stderr, `hint: run "gc doctor" for diagnostics`) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	// --no-start scopes to the SUPERVISOR only, not to everything gc init
+	// starts: the bead store is already up by this point, so a managed-local
+	// city returns from here with a dolt sql-server running. Decided, not
+	// overlooked (ci-iu6w) -- returning above initDirIfReady is the smaller
+	// change the flag name invites, and it would move the managed store's only
+	// real verification (dolt binds, bd init creates the schema, hooks
+	// install) out of init and into gc start.
+	//
+	// The cost, for whoever reopens this: the reclaim is "gc stop <path>"
+	// (stopCityManagedBeadsProvider -> shutdownBeadsProvider) and it is NOT
+	// unconditional -- cmd_stop.go returns early on a controller-stop failure
+	// or a session provider that will not construct, both before the store is
+	// reached, and there is no store-scoped stop to fall back on. Callers that
+	// must start nothing pair --no-start with GC_DOLT=skip, as the in-pod
+	// bootstrap in internal/runtime/k8s/provider.go does.
+	// Pinned by TestFinalizeInitNoStartStillStartsBeadStore.
 	if opts.noStart {
 		if opts.showProgress {
 			logInitProgress(stdout, 7, "Skipping supervisor startup")

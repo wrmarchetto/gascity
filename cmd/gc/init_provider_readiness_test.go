@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -836,6 +837,178 @@ func TestCmdInitSkipProviderReadinessAllowsBuiltinWithoutProbe(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "unknown provider") {
 		t.Fatalf("stderr = %q, want no unknown-provider rejection for a skipped-readiness builtin", stderr.String())
+	}
+}
+
+// TestFinalizeInitNoStartStillStartsBeadStore pins the scope of --no-start on
+// a managed-local city: it suppresses supervisor registration and nothing
+// else. The bead store is brought up either way, so gc init --no-start returns
+// with the store started and, on a real box, a dolt sql-server listening. That
+// asymmetry is the decided contract, not an oversight -- see the comment on
+// the noStart branch in init_provider_readiness.go (ci-iu6w).
+//
+// Two env settings are load-bearing, and getting either wrong produces a test
+// that passes against the inverted branch:
+//
+//   - GC_BEADS=bd. contract.ProviderUsesBDContract accepts only "bd", "", or
+//     an exec: script named gc-beads-bd, so any other provider leaves
+//     cityUsesBdStoreContract false and routes initDirIfReady down the generic
+//     exec branch instead of the managed-local one under test.
+//   - GC_DOLT cleared, not the suite's "skip" default. Under skip,
+//     initDirIfReady short-circuits to deferred seeding before it reaches the
+//     managed bring-up at all.
+//
+// Both are asserted rather than assumed, because neither shows up as a failure
+// on its own -- the wrong one just quietly covers a different branch.
+//
+// The bring-up is observed at the three initDirIfReady* lifecycle seams rather
+// than by letting a real provider script run. A process-level spy is the more
+// faithful observation and was tried first, but ensureBeadsProvider publishes
+// managed-Dolt runtime state immediately after the start op, and that
+// publication validates against a live server -- so a spy that starts nothing
+// fails the step, and a spy that satisfies it would have to fake a running
+// dolt. The seams are what lifecycle_coordination_test.go already uses.
+//
+// The seams record an ordered log, not three counters, and every argument they
+// are handed is asserted. Counters alone cannot see order, and a stand-in that
+// returns success for any argument hands a pass to whatever it was not asked
+// about: with counters and ignored parameters, running bd init and installing
+// hooks BEFORE the store is started, dropping the query-ready wait, resolving
+// an empty issue prefix, or initializing the store in the wrong directory all
+// leave this test green. The wait in particular is the step that keeps bd init
+// off a store that is not yet answering queries.
+//
+// NOT asserted, deliberately: that nothing stops the store again before
+// finalizeInit returns. The rejected alternative "start it, then stop it"
+// would call shutdownBeadsProvider, which has no seam here, and adding one
+// purely so this test could watch it would put a production hook in place of a
+// design decision. If that alternative is ever implemented, this test stays
+// green -- the comment on the noStart branch is what holds that half.
+func TestFinalizeInitNoStartStillStartsBeadStore(t *testing.T) {
+	configureIsolatedRuntimeEnv(t)
+	t.Setenv("GC_BEADS", "bd")
+	t.Setenv("GC_DOLT", "")
+	disableBootstrapForTests(t)
+	stubInitDependencyChecks(t)
+	stubInitDoltAuthorIdentity(t, map[string]string{
+		"user.name":  "gc-test",
+		"user.email": "gc-test@test.local",
+	})
+
+	cityPath := filepath.Join(t.TempDir(), "bright-lights")
+	var initStdout, initStderr bytes.Buffer
+	if code := doInit(fsys.OSFS{}, cityPath, wizardConfig{
+		configName: "minimal",
+		provider:   "claude",
+	}, "", &initStdout, &initStderr, false); code != 0 {
+		t.Fatalf("doInit = %d, want 0: %s", code, initStderr.String())
+	}
+	if !cityUsesManagedDoltBeadsLifecycle(cityPath) {
+		t.Fatal("city is not on the managed-local Dolt lifecycle, so this test would cover the generic exec branch instead")
+	}
+	if gcDoltSkip() {
+		t.Fatal("GC_DOLT=skip defers the store, so this test would pass with the noStart branch inverted")
+	}
+
+	type seamCall struct {
+		op       string
+		cityPath string
+		dir      string
+		prefix   string
+	}
+	var calls []seamCall
+	oldEnsure := initDirIfReadyEnsureBeadsProvider
+	oldWait := initDirIfReadyWaitForManagedDolt
+	oldInitAndHook := initDirIfReadyInitAndHookDir
+	oldRegister := registerCityWithSupervisorTestHook
+	t.Cleanup(func() {
+		initDirIfReadyEnsureBeadsProvider = oldEnsure
+		initDirIfReadyWaitForManagedDolt = oldWait
+		initDirIfReadyInitAndHookDir = oldInitAndHook
+		registerCityWithSupervisorTestHook = oldRegister
+	})
+	initDirIfReadyEnsureBeadsProvider = func(city string) error {
+		calls = append(calls, seamCall{op: "ensure", cityPath: city})
+		return nil
+	}
+	initDirIfReadyWaitForManagedDolt = func(city string, _ time.Duration) error {
+		calls = append(calls, seamCall{op: "wait", cityPath: city})
+		return nil
+	}
+	initDirIfReadyInitAndHookDir = func(city, dir, prefix string) error {
+		calls = append(calls, seamCall{op: "initAndHook", cityPath: city, dir: dir, prefix: prefix})
+		return nil
+	}
+
+	calledRegister := false
+	registerCityWithSupervisorTestHook = func(_ string, _ string, _ io.Writer, _ io.Writer) (bool, int) {
+		calledRegister = true
+		return true, 0
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := finalizeInit(cityPath, &stdout, &stderr, initFinalizeOptions{
+		commandName:           "gc init",
+		skipProviderReadiness: true,
+		noStart:               true,
+	})
+	if code != 0 {
+		t.Fatalf("finalizeInit(noStart) = %d, want 0; stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if calledRegister {
+		t.Fatal("registerCityWithSupervisor ran under noStart; --no-start must suppress supervisor registration")
+	}
+
+	var gotOps []string
+	for _, call := range calls {
+		gotOps = append(gotOps, call.op)
+	}
+	wantOps := []string{"ensure", "wait", "initAndHook"}
+	if !slices.Equal(gotOps, wantOps) {
+		t.Fatalf("bead store lifecycle under noStart = %v, want %v; --no-start must still bring the store up, started before it is initialized", gotOps, wantOps)
+	}
+	for _, call := range calls {
+		if call.cityPath != cityPath {
+			t.Errorf("%s got cityPath %q, want %q", call.op, call.cityPath, cityPath)
+		}
+	}
+	initAndHook := calls[2]
+	if initAndHook.dir != cityPath {
+		t.Errorf("initAndHookDir got dir %q, want the city's own scope %q", initAndHook.dir, cityPath)
+	}
+	// Non-emptiness is the assertion that bites. The equality below shares
+	// EffectiveHQPrefix with the code under test, so it cannot catch that
+	// resolution being dropped -- only a different prefix reaching the store
+	// than the config names.
+	if initAndHook.prefix == "" {
+		t.Error("initAndHookDir got an empty issue prefix; init and runtime would then disagree on the bead prefix")
+	}
+	cfg, _, err := config.LoadWithIncludes(fsys.OSFS{}, filepath.Join(cityPath, "city.toml"))
+	if err != nil {
+		t.Fatalf("re-loading city.toml to check the resolved prefix: %v", err)
+	}
+	if want := config.EffectiveHQPrefix(cfg); initAndHook.prefix != want {
+		t.Errorf("initAndHookDir got prefix %q, want %q", initAndHook.prefix, want)
+	}
+}
+
+// TestInitNoStartHelpDisclosesTheBeadStore pins the disclosure half of the
+// ci-iu6w decision: whatever --no-start does, the help text has to say that
+// the bead store is exempt from it. The flag name alone reads as "start
+// nothing", which is what made the behavior look like a defect.
+//
+// This asserts a string, not a behavior -- TestFinalizeInitNoStartStillStarts
+// BeadStore holds the behavior. It earns its place because nothing else
+// guards the clause: scripts/check-generated-docs-drift.sh keeps
+// docs/reference/cli.md equal to whatever this string says, and
+// TestCLIDocsFreshness byte-compares only a fixed list of commands that does
+// not include gc init, so deleting the clause leaves every gate green.
+func TestInitNoStartHelpDisclosesTheBeadStore(t *testing.T) {
+	usage := newInitCmd(io.Discard, io.Discard).Flags().Lookup("no-start").Usage
+	for _, want := range []string{"bead store", "gc stop"} {
+		if !strings.Contains(usage, want) {
+			t.Fatalf("--no-start usage = %q, want it to mention %q; the flag must disclose that the store is still initialized (ci-iu6w)", usage, want)
+		}
 	}
 }
 
