@@ -1852,6 +1852,28 @@ func syncSessionBeadsWithSnapshotAndRigStores(
 			}
 		}
 		needsAliasSync := b.Metadata["alias"] != managedAlias
+		// A pool's own name is the agent template's name, and once the pool has
+		// more than one slot it addresses the POOL, not any one session. The
+		// generic rotation rule cannot see that difference: raising
+		// max_active_sessions renames the singleton's session from "toolsmith"
+		// to "toolsmith-1" and files "toolsmith" in that slot's alias_history,
+		// which AssigneeIdentities reads back as a full assignee identity. Every
+		// bead assigned to the pool then resolved to that ONE session bead, so
+		// they collapsed into duplicate resume requests for it and pool demand
+		// stayed pinned at 1 at any cap (ci-ako1). Recomputed every tick rather
+		// than only on the rename, because a bead poisoned before this landed
+		// never takes the rename branch again.
+		poolOwnedAlias := ""
+		if isManagedPool && !isConfiguredNamed {
+			if cfgAgent := findAgentByTemplate(cfg, tp.TemplateName); cfgAgent != nil && !cfgAgent.UsesCanonicalSingletonPoolIdentity() {
+				poolOwnedAlias = cfgAgent.QualifiedName()
+			}
+		}
+		if mutation, pruned := session.PrunedAliasHistoryMetadata(b.Metadata, poolOwnedAlias); pruned {
+			for key, value := range mutation {
+				queueMeta(key, value)
+			}
+		}
 		if b.Metadata["pool_slot"] == "" {
 			queuePoolSlotMeta := queueMeta
 			if needsAliasSync && isManagedPool && isPoolInstance {
@@ -2071,7 +2093,17 @@ func syncSessionBeadsWithSnapshotAndRigStores(
 				} else {
 					clearAliasConflict()
 					if needsAliasSync {
-						for key, value := range session.UpdatedAliasMetadata(b.Metadata, managedAlias) {
+						aliasMutations := session.UpdatedAliasMetadata(b.Metadata, managedAlias)
+						// The rotation just moved the outgoing alias into
+						// history, so the prune above (which read the stored
+						// metadata) cannot have caught it. This is the cap-raise
+						// tick itself.
+						if mutation, pruned := session.PrunedAliasHistoryMetadata(aliasMutations, poolOwnedAlias); pruned {
+							for key, value := range mutation {
+								aliasMutations[key] = value
+							}
+						}
+						for key, value := range aliasMutations {
 							queueMeta(key, value)
 						}
 						queueAliasChangeDriftRebaseline(sessFront, b, tp, queueMeta, stderr)
