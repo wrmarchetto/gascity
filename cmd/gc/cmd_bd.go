@@ -18,12 +18,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// heartbeatMetadataKey is the bead-metadata key freshened by the gc-only
-// `gc bd heartbeat <issue-id>` subcommand. The gas-city-dashboard will read
-// this exact key — with the `_at` suffix — to tell a live worker from a dead
-// one (gastownhall/gascity#1855; reader tracked in dashboard #324). Unrelated
-// benchmark/test code writes the suffixless `gc.last_heartbeat` for a
-// different purpose; do not unify them.
+// heartbeatMetadataKey is the bead-metadata key freshened by the
+// `gc bd heartbeat <issue-id>` subcommand alongside bd's own lease refresh.
+// The gas-city-dashboard will read this exact key — with the `_at` suffix — to
+// tell a live worker from a dead one (gastownhall/gascity#1855; reader tracked
+// in dashboard #324). It is not redundant with the lease: bd holds leases in
+// an ephemeral node-local table that is never committed, so a reader off the
+// granting machine has nothing else to go on. Unrelated benchmark/test code
+// writes the suffixless `gc.last_heartbeat` for a different purpose; do not
+// unify them.
 const heartbeatMetadataKey = beadmeta.LastHeartbeatAtMetadataKey
 
 // bdHeartbeatNow supplies the timestamp stamped by `gc bd heartbeat`. It is a
@@ -86,9 +89,12 @@ city store and disables rig auto-detection (GC_RIG, cwd, bead prefix), so a
 deliberate city-scoped query is never silently downgraded to a rig store.
 
 All arguments after "gc bd" are forwarded to bd unchanged, except the
-gc-only "heartbeat <issue-id>" subcommand, which rewrites to
+"heartbeat <issue-id>" subcommand (alias "hb"), which performs two writes so
+a long-running worker keeps both halves of its claim alive — bd's own
+"heartbeat" to push the claim lease forward, then
 "update <issue-id> --set-metadata gc.last_heartbeat_at=<RFC3339 UTC now>"
-so long-running workers can signal liveness to the dashboard, and
+for the dashboard, which cannot see the node-local lease. A lease bd refuses
+stops the command before the stamp. Also excepted is
 "release-if-current <issue-id> <assignee>", which conditionally resets an
 in-progress assignment only when the bead still has that assignee.
 
@@ -100,7 +106,7 @@ auto-export behavior, invoke bd directly.`,
   gc bd show my-project-abc          # auto-detects rig from bead prefix
   gc bd list --rig my-project -s open
   gc bd --city /path/to/city list    # pins the city (HQ) store, no rig auto-detect
-  gc bd heartbeat my-project-abc     # stamp gc.last_heartbeat_at=now
+  gc bd heartbeat my-project-abc     # refresh the claim lease + stamp gc.last_heartbeat_at
   gc bd release-if-current my-project-abc worker-1`,
 		DisableFlagParsing: true,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -170,20 +176,26 @@ func warnExternalBdOverrideDrift(stderr io.Writer, cityPath string, target execS
 	_, _ = fmt.Fprintf(stderr, "gc bd: warning: ignoring ambient Dolt host/port override for external target: %s\n", strings.Join(drift, ", "))
 }
 
-// rewriteBdHeartbeatArgs expands the gc-only `heartbeat <issue-id>`
-// subcommand into the bd command that performs the write:
+// parseBdHeartbeatArgs recognizes `heartbeat <issue-id>` and its bd-published
+// alias `hb`, returning the issue id. ok reports that the args were CLAIMED by
+// the heartbeat path (so a usage error is still ok=true); args for any other
+// subcommand are left to the generic passthrough.
 //
-//	update <issue-id> --set-metadata gc.last_heartbeat_at=<RFC3339 UTC>
+// Both spellings are matched deliberately. gc used to intercept only the
+// literal "heartbeat", so the two spellings of one bd command reached
+// different code -- `hb` fell through to bd's real lease refresh while
+// `heartbeat` did not (ci-ctkz).
 //
-// Long-running workers call `gc bd heartbeat {{issue}}` periodically so the
-// dashboard can distinguish a live worker from a dead one
-// (gastownhall/gascity#1855). It reuses bd's existing metadata-write path
-// rather than adding a new store method, and leaves the issue id in place so
-// the generic scope resolver still routes the write to the correct rig store.
-// Args that do not begin with "heartbeat" pass through unchanged.
-func rewriteBdHeartbeatArgs(bdArgs []string) ([]string, error) {
-	if len(bdArgs) == 0 || bdArgs[0] != "heartbeat" {
-		return bdArgs, nil
+// No flags are accepted on either spelling, which costs `gc bd hb <id> --json`
+// the passthrough it had before both spellings were claimed. Forwarding them
+// would mean deciding what each flag does across two writes -- --json would
+// emit two documents for one logical call, and --actor means different things
+// to a lease holder-check and to a metadata write. A caller who wants bd's
+// raw heartbeat with flags invokes bd directly, as the command's help already
+// says for auto-export.
+func parseBdHeartbeatArgs(bdArgs []string) (id string, ok bool, err error) {
+	if len(bdArgs) == 0 || (bdArgs[0] != "heartbeat" && bdArgs[0] != "hb") {
+		return "", false, nil
 	}
 	rest := bdArgs[1:]
 	// A bead id never contains whitespace; reject any (leading, trailing, or
@@ -191,21 +203,73 @@ func rewriteBdHeartbeatArgs(bdArgs []string) ([]string, error) {
 	// prefix-based rig auto-detection. Also reject empty and flag-shaped args.
 	if len(rest) != 1 || rest[0] == "" || strings.HasPrefix(rest[0], "-") ||
 		strings.IndexFunc(rest[0], unicode.IsSpace) >= 0 {
-		return nil, fmt.Errorf("usage: gc bd heartbeat <issue-id>")
+		return "", true, fmt.Errorf("usage: gc bd heartbeat <issue-id>")
+	}
+	return rest[0], true, nil
+}
+
+// doBdHeartbeat performs the two writes `gc bd heartbeat <issue-id>` owes,
+// each through the ordinary guarded passthrough.
+//
+//	heartbeat <issue-id>                                        (bd's own)
+//	update <issue-id> --set-metadata gc.last_heartbeat_at=<now>
+//
+// Neither write subsumes the other. bd's `heartbeat` pushes lease_expires_at
+// forward, which is what stops `bd reclaim` reverting the bead to ready and
+// handing it to a second agent mid-work -- but bd keeps leases in an ephemeral
+// node-local table that is never committed to Dolt, so no remote reader can
+// see one. The gc.last_heartbeat_at stamp is the committed, cross-node half
+// the dashboard reads (gastownhall/gascity#1855, reader dashboard #324).
+//
+// The lease goes first, and a refusal there returns without stamping. bd
+// refuses a heartbeat exactly when the caller is no longer the owner -- the
+// lease was already reclaimed, or the issue closed -- so stamping afterward
+// would advertise a live worker on a bead bd has just said it does not hold.
+// That refusal is the signal telling the worker to stop; absorbing it to keep
+// the stamp landing would delete the only warning it gets.
+//
+// Going through doBdScoped twice re-resolves the config and re-opens the
+// store. Deliberate: at a heartbeat cadence of minutes that costs nothing, and
+// a bespoke path would have to re-implement the silent-fallback detection.
+//
+// Two gaps, both left open on purpose. The exact-ID collision guard covers the
+// update only -- bdMutationWriteIDs switches on update/close/reopen/delete,
+// and adding "heartbeat" means declaring its flags in the lint-shared
+// internal/bdflags manifest. Exposure is bounded to an id colliding with
+// another bead the caller ALSO holds, since bd matches the lease on
+// holder = actor: the cost is one stray 5-minute lease. And a bead whose
+// holder is a different identity form of this same session (gc hook --claim
+// claims with the bead's own assignee, which may be a session bead id rather
+// than $BEADS_ACTOR) refuses the refresh, and by the ordering above loses the
+// stamp it used to get. Measured 2026-08-09 across this city: 54 beads, 0
+// assignees in session-id or session-name form, so that class is empty today
+// -- the bound expires the moment work is assigned by session id.
+func doBdHeartbeat(cityName, rigName, id string, stdout, stderr io.Writer) int {
+	if code := doBdScoped(cityName, rigName, []string{"heartbeat", id}, stdout, stderr); code != 0 {
+		return code
 	}
 	stamp := bdHeartbeatNow().UTC().Format(time.RFC3339)
-	return []string{"update", rest[0], "--set-metadata", heartbeatMetadataKey + "=" + stamp}, nil
+	return doBdScoped(cityName, rigName, []string{"update", id, "--set-metadata", heartbeatMetadataKey + "=" + stamp}, stdout, stderr)
 }
 
 func doBd(args []string, stdout, stderr io.Writer) int {
 	cityName, rigName, bdArgs := extractBdScopeFlags(args)
 
-	bdArgs, err := rewriteBdHeartbeatArgs(bdArgs)
-	if err != nil {
-		fmt.Fprintf(stderr, "gc bd: %v\n", err) //nolint:errcheck // best-effort stderr
-		return 1
+	if id, ok, err := parseBdHeartbeatArgs(bdArgs); ok {
+		if err != nil {
+			fmt.Fprintf(stderr, "gc bd: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		return doBdHeartbeat(cityName, rigName, id, stdout, stderr)
 	}
 
+	return doBdScoped(cityName, rigName, bdArgs, stdout, stderr)
+}
+
+// doBdScoped is the single guarded handoff to the bd binary, taking the scope
+// already extracted from the caller's args so a multi-write subcommand can
+// reuse it without re-serializing --city / --rig back into a string.
+func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Writer) int {
 	// Refuse a dropped --set-metadata pair before any store work, so nothing is
 	// written and the exit code is honest. bd applies the subset and exits 0.
 	if msg, mistyped := mistypedMetadataPairRefusal(bdArgs); mistyped {

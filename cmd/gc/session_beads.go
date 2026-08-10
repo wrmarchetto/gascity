@@ -2965,6 +2965,23 @@ func staleReapStartBoundaryInfo(i session.Info) (time.Time, bool) {
 // pool reconciler can re-pick them. Without this, work orphaned by a
 // reap stays orphaned until someone clears the assignee by hand.
 func closeBead(store beads.Store, id, reason string, now time.Time, stderr io.Writer) bool {
+	return closeBeadWithTerminalPatch(store, id, reason, nil, now, stderr)
+}
+
+// closeBeadWithTerminalPatch is closeBead with terminalPatch merged OVER the
+// ClosePatch the close writes. A nil patch is closeBead exactly.
+//
+// The overlay exists for close reasons the state code cannot carry -- today only
+// the drain-ack origin, where "drained" alone cannot say whether the agent or
+// the reconciler decided. It is merged inside the same Tx as the Close, not
+// written as a follow-up patch: a closed bead that briefly carried the generic
+// reason would be read by an operator or a tail-follower as the ambiguous record
+// this overlay exists to retire.
+//
+// Overlay keys WIN over ClosePatch's, which is what lets close_reason be
+// replaced. state is deliberately not overlaid by any caller; see
+// closeSessionBeadIfReachableStoreUnassignedWithTerminalPatch.
+func closeBeadWithTerminalPatch(store beads.Store, id, reason string, terminalPatch session.MetadataPatch, now time.Time, stderr io.Writer) bool {
 	if stderr == nil {
 		stderr = io.Discard
 	}
@@ -2996,7 +3013,8 @@ func closeBead(store beads.Store, id, reason string, now time.Time, stderr io.Wr
 	// while the Close fails; the helper then reports failure and the reconciler
 	// re-runs the close next tick, so no bead is durably left half-closed.
 	txErr := store.Tx("gc: close session "+id, func(tx beads.Tx) error {
-		if err := tx.SetMetadataBatch(id, session.ClosePatch(now, reason)); err != nil {
+		batch := session.MetadataPatch(mergeMetadataPatch(session.ClosePatch(now, reason), terminalPatch))
+		if err := tx.SetMetadataBatch(id, batch); err != nil {
 			return err
 		}
 		return tx.Close(id)

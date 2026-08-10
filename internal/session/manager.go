@@ -407,6 +407,15 @@ type Info struct {
 	// idempotency marker the stranded-diagnostic emitter checks (trimmed != "")
 	// before firing once.
 	StrandedEventEmittedAt string // stranded_event_emitted_at (raw)
+	// DrainOriginMetadata / DrainAckReasonMetadata are the RAW drain_origin /
+	// drain_ack_reason mirrors (see drain_origin.go). The reconciler stamps them
+	// when it observes a drain-ack -- the last moment the runtime's
+	// GC_DRAIN_ACK_SOURCE is still readable -- and reads them back on a LATER
+	// tick to render the close reason, by which point the runtime is gone. They
+	// are Info fields rather than a raw-bead read because the finalize path
+	// carries only Info and its Store.Get budget is pinned.
+	DrainOriginMetadata    string // drain_origin (raw; NormalizeDrainOrigin gates it)
+	DrainAckReasonMetadata string // drain_ack_reason (raw)
 	// UnknownStateFirstSeen / UnknownStateValue / UnknownStateEscalatedAt are the
 	// RAW unknown_state_first_seen / _value / _escalated_at metadata, the durable
 	// throttle markers the unknown-state diagnostic emitter reads to gate emission

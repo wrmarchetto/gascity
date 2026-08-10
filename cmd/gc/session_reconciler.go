@@ -126,14 +126,22 @@ func isDrainAckStopPendingInfo(info sessionpkg.Info) bool {
 // the wakeTargets/startCandidates append, and the post-loop scans read only
 // orderedBeads[i].ID. On a persist error the input Info is returned unchanged with a
 // false ok, so the caller skips the fold (identical to the old bool-return).
-func markDrainAckStopPending(info sessionpkg.Info, sessFront *sessionpkg.Store, clk clock.Clock, stderr io.Writer) (sessionpkg.Info, bool) {
+func markDrainAckStopPending(info sessionpkg.Info, sessFront *sessionpkg.Store, dops drainOps, name string, clk clock.Clock, stderr io.Writer) (sessionpkg.Info, bool) {
 	if info.ID == "" || sessFront == nil {
 		return info, false
 	}
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	updated, err := sessFront.ApplyPatchInfo(info, sessionpkg.DrainAckStopPendingPatch(clk.Now().UTC()))
+	// Stamp the drain origin HERE, not at the close. This is the last tick on
+	// which the runtime still exists: queueDrainAckAsyncStop kills it below, and
+	// the finalize that renders the close reason runs on a later tick, against a
+	// provider that no longer holds GC_DRAIN_ACK_SOURCE.
+	patch := sessionpkg.MetadataPatch(mergeMetadataPatch(
+		sessionpkg.DrainAckStopPendingPatch(clk.Now().UTC()),
+		drainAckOriginPatch(dops, name),
+	))
+	updated, err := sessFront.ApplyPatchInfo(info, patch)
 	if err != nil {
 		name := strings.TrimSpace(info.SessionNameMetadata)
 		if name == "" {
@@ -143,6 +151,40 @@ func markDrainAckStopPending(info sessionpkg.Info, sessFront *sessionpkg.Store, 
 		return info, false
 	}
 	return updated, true
+}
+
+// drainAckOriginPatch reads who acknowledged the drain off the runtime and
+// returns the durable stamp for it. Empty dops or name yields the
+// unrecorded-origin patch, which CLEARS both keys rather than leaving them --
+// a bead reused across incarnations must not inherit the previous drain's actor.
+func drainAckOriginPatch(dops drainOps, name string) sessionpkg.MetadataPatch {
+	if dops == nil || strings.TrimSpace(name) == "" {
+		return sessionpkg.DrainAckOriginPatch(sessionpkg.DrainOriginUnrecorded, "")
+	}
+	origin, reason := dops.drainAckOrigin(name)
+	return sessionpkg.DrainAckOriginPatch(origin, reason)
+}
+
+// resolveDrainAckOrigin answers who to name in a drained session's close reason.
+//
+// The LIVE runtime read wins; the durable bead stamp is the fallback. That
+// order, not the other one, is what makes the answer safe. The stamp is written
+// from a runtime read, so the two can only disagree when the runtime has been
+// re-acked since -- in which case the runtime is the newer fact. Preferring the
+// stamp would let a bead that entered stop-pending under one actor, escaped, and
+// later drained under the other close naming the wrong one with full
+// confidence: the very failure this record exists to end.
+//
+// The stamp carries the far commoner case: the stop-pending path killed the
+// runtime one or more ticks before this close, so the runtime read answers
+// "unrecorded" and the bead is the only surviving witness.
+func resolveDrainAckOrigin(info sessionpkg.Info, dops drainOps, name string) (sessionpkg.DrainOrigin, string) {
+	if dops != nil && strings.TrimSpace(name) != "" {
+		if origin, reason := dops.drainAckOrigin(name); origin != sessionpkg.DrainOriginUnrecorded {
+			return origin, reason
+		}
+	}
+	return sessionpkg.NormalizeDrainOrigin(info.DrainOriginMetadata), strings.TrimSpace(info.DrainAckReasonMetadata)
 }
 
 func clearDrainTrackerForStopPending(id string, dt *drainTracker) {
@@ -548,8 +590,16 @@ func finalizeDrainAckStoppedSession(
 		hasAssignedWork = true
 	}
 	if closeIfUnassigned && !hasAssignedWork {
-		if closeSessionBeadIfReachableStoreUnassigned(cityPath, cfg, store, rigStores, info, "drained", clk.Now().UTC(), stderr, true) {
-			closePatch := sessionpkg.ClosePatch(clk.Now().UTC(), "drained")
+		// The close carries WHO retired the session, not just that it drained.
+		// state stays the short code "drained" (reconciler logic and
+		// closedNamedSessionReopenEligible switch on it); the overlay replaces
+		// close_reason and adds the machine-readable origin/reason pair.
+		drainOrigin, drainReason := resolveDrainAckOrigin(info, dops, name)
+		overlay := sessionpkg.DrainAckCloseOverlay(drainOrigin, drainReason)
+		if closeSessionBeadIfReachableStoreUnassignedWithTerminalPatch(cityPath, cfg, store, rigStores, info, "drained", overlay, clk.Now().UTC(), stderr, true) {
+			closePatch := sessionpkg.MetadataPatch(mergeMetadataPatch(
+				sessionpkg.ClosePatch(clk.Now().UTC(), "drained"), overlay,
+			))
 			if dops != nil {
 				_ = dops.clearDrain(name)
 			}
@@ -1971,7 +2021,7 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 							if template == "" {
 								template = infoPostHeal.Template
 							}
-							if updated, ok := markDrainAckStopPending(infoByID[id], sessFront, clk, stderr); ok {
+							if updated, ok := markDrainAckStopPending(infoByID[id], sessFront, dops, name, clk, stderr); ok {
 								// markDrainAckStopPending persisted the stop-pending transition and
 								// returned the folded snapshot Info (write-returns-Info, Step 6d) —
 								// assign it directly. Cross-session isDrainAckStopPendingInfo reader.
@@ -2356,7 +2406,7 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 						continue
 					}
 					if alive {
-						if updated, ok := markDrainAckStopPending(infoByID[id], sessFront, clk, stderr); ok {
+						if updated, ok := markDrainAckStopPending(infoByID[id], sessFront, dops, name, clk, stderr); ok {
 							// markDrainAckStopPending persisted + folded the stop-pending
 							// transition (write-returns-Info, Step 6d) — assign the returned Info,
 							// same as the orphan-arm site above (STEP6-PREPASS-AUDIT group 3).
@@ -3759,7 +3809,19 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 			if closeReason == "" {
 				closeReason = "drained"
 			}
-			if closeBead(store, target.info.ID, closeReason, clk.Now().UTC(), stderr) {
+			// "drained" is the one sleep_reason that names no actor, so a bead
+			// carrying a durable drain origin from an earlier drain-ack would
+			// otherwise close saying "origin not recorded" while its
+			// drain_origin key names one. Render the origin here too. The other
+			// codes (idle, idle-timeout) already name the mechanism and never
+			// contradict the key, so they keep CanonicalCloseReason unchanged.
+			var terminal sessionpkg.MetadataPatch
+			if closeReason == "drained" {
+				if origin := sessionpkg.NormalizeDrainOrigin(info.DrainOriginMetadata); origin != sessionpkg.DrainOriginUnrecorded {
+					terminal = sessionpkg.DrainAckCloseOverlay(origin, info.DrainAckReasonMetadata)
+				}
+			}
+			if closeBeadWithTerminalPatch(store, target.info.ID, closeReason, terminal, clk.Now().UTC(), stderr) {
 				// Store-only close family: mirror the close onto the snapshot
 				// (write-returns-Info) so a later reader sees Closed=true.
 				tick.markClosed(target.info.ID)

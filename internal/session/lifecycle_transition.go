@@ -556,7 +556,13 @@ func CanonicalCloseReason(stateCode string) string {
 	case "orphaned":
 		return "session orphaned: configured agent removed"
 	case "drained":
-		return "session drained: pool slot retired by reconciler"
+		// Deliberately names NO actor. The state code says the drain completed,
+		// not who started it -- a self-retired agent and a reconciler-retired
+		// slot both land here. The old text asserted the reconciler and cost the
+		// first investigation of ci-fh4o a trip through the wrong subsystem
+		// (ci-wxag). Callers that know the origin render DrainedCloseReason
+		// instead; this is the fallback for the ones that do not.
+		return "session drained: drain origin not recorded"
 	case "failed-create":
 		return "session create failed: aborted before creation_complete"
 	case "stale-session":

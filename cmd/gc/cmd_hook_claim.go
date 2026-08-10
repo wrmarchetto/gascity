@@ -83,12 +83,17 @@ type (
 	hookPoolClaimFunc          func(ctx context.Context, dir string, env []string, beadID, poolAlias, assignee string) (beads.Bead, bool, error)
 	hookListContinuationFunc   func(context.Context, string, []string, string, string) ([]beads.Bead, error)
 	hookAssignContinuationFunc func(context.Context, string, []string, string, string) error
-	hookDrainAckFunc           func(io.Writer) error
 	hookEmitClaimRejectedFunc  func(beadID, existingClaimant, attemptedClaimant string)
 	hookResolveWorkBranchFunc  func(dir string) string
 	hookStampWorkMetaFunc      func(ctx context.Context, dir string, env []string, beadID, assignee string, patch map[string]string) error
 	hookPublishRunMapFunc      func(runID, beadID string, sessionKeys ...string) error
 )
+
+// hookDrainAckFunc acknowledges the drain, carrying the hook's own drain reason
+// so the closed session bead records WHY the agent retired itself and not just
+// that it did. Without the reason the two self-drain shapes -- an idle store and
+// a store whose every claim write failed -- close identically (ci-wxag).
+type hookDrainAckFunc func(reason string, stderr io.Writer) error
 
 type hookClaimJSONResult struct {
 	SchemaVersion        string   `json:"schema_version"`
@@ -558,7 +563,7 @@ func writeHookClaimDrain(reason string, jsonOut, drainAck bool, drainAckFn hookD
 		Reason:        reason,
 	}
 	if drainAck {
-		if err := drainAckFn(stderr); err != nil {
+		if err := drainAckFn(reason, stderr); err != nil {
 			fmt.Fprintf(stderr, "gc hook --claim: drain-ack failed: %v\n", err) //nolint:errcheck
 			return 1
 		}
@@ -1338,8 +1343,8 @@ func hookAssignContinuationWithBdStore(_ context.Context, dir string, env []stri
 	return store.Update(beadID, beads.UpdateOpts{Assignee: &assignee})
 }
 
-func hookRuntimeDrainAck(stderr io.Writer) error {
-	if code := cmdRuntimeDrainAck(nil, false, io.Discard, stderr); code != 0 {
+func hookRuntimeDrainAck(reason string, stderr io.Writer) error {
+	if code := cmdRuntimeDrainAck(nil, reason, false, io.Discard, stderr); code != 0 {
 		return errors.New("runtime drain-ack returned non-zero")
 	}
 	return nil

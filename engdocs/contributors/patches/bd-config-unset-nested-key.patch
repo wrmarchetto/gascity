@@ -1,0 +1,711 @@
+From 28105b2e5e1662e78ecdbbcf16377a10c740a811 Mon Sep 17 00:00:00 2001
+From: Willie Marchetto <orange@devbuildzero.com>
+Date: Sun, 9 Aug 2026 20:39:03 -0500
+Subject: [PATCH] fix(config): make bd config unset remove nested keys, and
+ report what it did
+
+`bd config unset <dotted.key>` reported success and removed nothing whenever
+the key was stored in nested form. The value stayed live, and for sync.remote
+-- a Dolt PUSH TARGET -- `bd dolt remote remove origin` went on to commit the
+unchanged, git-tracked .beads/config.yaml with the message
+"bd: clear sync.remote", propagating the still-configured target to every
+clone under a commit saying it was cleared.
+
+Two independent defects composed into the no-op:
+
+1. commentOutYamlKey matched only `^(\s*)<literal-key>\s*:`, which can match a
+   flat `sync.remote:` line and nothing else. setYamlConfigAtPath routes the
+   same dotted key through updateNestedYamlKey and writes `sync:` with an
+   indented `remote:`, so set and unset disagreed about where the key lives.
+   Which spelling a key wears is decided by updateNestedYamlKey's
+   `len(root.Content) == 0` early return: the first dotted key written into an
+   empty config.yaml lands flat and stays flat, every later one lands nested.
+   So removability depended on the order keys were first written, months
+   earlier -- which is why two adjacent dolt.* keys in one file behaved
+   differently and the failure looked intermittent.
+
+2. commentOutYamlKey returned only a string, so "matched nothing" was not
+   representable. UnsetYamlConfig could not detect it and cmd/bd/config.go
+   printed "Unset %s" unconditionally. Fixing (1) alone would still report a
+   removal for a key that was never set.
+
+commentOutYamlKey now resolves the nested path through the YAML node tree and
+comments out the key line plus its whole value block, and returns whether it
+matched. The nested arm walks the tree rather than widening the regex to the
+leaf name: `^(\s*)remote\s*:` would also match `remote:` under any other
+parent, so unsetting sync.remote could clear an unrelated key. Both spellings
+are commented when both are present -- viper resolves a duplicated key to the
+flat one, so removing only the nested copy would leave the value live.
+
+`bd config unset` now prints "<key> was not set" instead of "Unset <key>" when
+nothing matched, and reports `removed` in --json. Exit status stays 0 either
+way so unset remains idempotent for provisioning scripts; the change is to
+stop claiming a removal that did not happen. Side-effect advice is printed
+only on an actual removal, since it describes what a removal implies.
+`bd dolt remote remove origin` commits config.yaml only when the clear
+changed it, and otherwise warns that the push target is still configured.
+
+Two adjacent defects fall out of the same rewrite. A key that matches nothing
+now leaves the file untouched instead of rewriting it byte-identically, and
+the terminal newline is no longer stripped from a git-tracked file on every
+unset. commentOutYamlKey no longer uses a bufio.Scanner, whose default 64 KiB
+token cap would have silently discarded everything past an over-long line and
+written the truncated file anyway, with no scanner.Err() check to notice.
+updateYamlKey still uses a Scanner and is left alone.
+
+Verified: TestUnsetYamlConfigRemovesWhatSetYamlConfigWrote drives the real
+SetYamlConfig/UnsetYamlConfig pair and asserts the key is unbound afterward.
+It fails on the parent commit for all three of sync.remote, dolt.local-only
+and backup.enabled, and passes here. The pre-existing TestUnsetYamlConfig did
+not catch this because its fixture hand-writes the flat spelling that
+SetYamlConfig would never have produced. Also confirmed end to end by
+building bd from this tree and re-running the original report: the nested key
+is removed, `bd config get` reports not-set, the trailing newline survives,
+unsetting a never-set key reports "was not set" at exit 0, and the flat path
+is unchanged. `go test ./internal/config/` and `go vet` are clean.
+---
+ cmd/bd/config.go                     |  20 ++-
+ cmd/bd/dolt.go                       |  38 ++++-
+ cmd/bd/dolt_remote_proxied_server.go |   7 +-
+ internal/config/yaml_config.go       | 183 ++++++++++++++++++----
+ internal/config/yaml_config_test.go  | 221 ++++++++++++++++++++++++---
+ 5 files changed, 400 insertions(+), 69 deletions(-)
+
+diff --git a/cmd/bd/config.go b/cmd/bd/config.go
+index 19c3e75..7d1b504 100644
+--- a/cmd/bd/config.go
++++ b/cmd/bd/config.go
+@@ -569,11 +569,12 @@ var configUnsetCmd = &cobra.Command{
+ 		if config.IsYamlOnlyKey(key) {
+ 			location := "config.yaml"
+ 			var unsetErr error
++			var removed bool
+ 			if config.IsUserGlobalKey(key) {
+-				unsetErr = config.UnsetUserYamlConfig(key)
++				removed, unsetErr = config.UnsetUserYamlConfig(key)
+ 				location = config.UserConfigYamlPath()
+ 			} else {
+-				unsetErr = config.UnsetYamlConfig(key)
++				removed, unsetErr = config.UnsetYamlConfig(key)
+ 			}
+ 			if unsetErr != nil {
+ 				return HandleError("unsetting config: %v", unsetErr)
+@@ -583,13 +584,24 @@ var configUnsetCmd = &cobra.Command{
+ 				if err := outputJSON(map[string]interface{}{
+ 					"key":      key,
+ 					"location": location,
++					"removed":  removed,
+ 				}); err != nil {
+ 					return err
+ 				}
+-			} else {
++			} else if removed {
+ 				fmt.Printf("Unset %s (in %s)\n", key, location)
++			} else {
++				// Not an error and not a nonzero exit: unset stays idempotent so
++				// a provisioning script can clear a key it may never have set.
++				// But it must not claim a removal it did not perform -- an
++				// operator clearing a Dolt push target reads "Unset" and stops.
++				fmt.Printf("%s was not set (in %s)\n", key, location)
++			}
++			// Side effects describe what a removal implies (restart the shared
++			// server, re-run export). Nothing was removed, so nothing follows.
++			if removed {
++				printConfigSideEffects(checkConfigUnsetSideEffects(key))
+ 			}
+-			printConfigSideEffects(checkConfigUnsetSideEffects(key))
+ 			return nil
+ 		}
+ 
+diff --git a/cmd/bd/dolt.go b/cmd/bd/dolt.go
+index fa8e68f..7a1899f 100644
+--- a/cmd/bd/dolt.go
++++ b/cmd/bd/dolt.go
+@@ -1752,12 +1752,7 @@ var doltRemoteRemoveCmd = &cobra.Command{
+ 
+ 		if name == "origin" {
+ 			if current := config.GetYamlConfig("sync.remote"); current != "" {
+-				if err := config.UnsetYamlConfig("sync.remote"); err != nil {
+-					fmt.Fprintf(os.Stderr, "Warning: failed to clear sync.remote from config.yaml: %v\n", err)
+-				}
+-				if isGitRepo() {
+-					commitBeadsConfig("bd: clear sync.remote")
+-				}
++				clearSyncRemoteFromConfig()
+ 			}
+ 		}
+ 
+@@ -1775,6 +1770,37 @@ var doltRemoteRemoveCmd = &cobra.Command{
+ 	},
+ }
+ 
++// clearSyncRemoteFromConfig drops sync.remote from config.yaml after the origin
++// Dolt remote is removed, and commits the file only if that actually changed
++// something.
++//
++// The commit is gated on the removal because sync.remote is a PUSH TARGET in a
++// git-tracked file. When the unset matched nothing, the old code still ran
++// commitBeadsConfig("bd: clear sync.remote") -- landing a commit whose message
++// says the remote was cleared on top of a file that still names it, and
++// propagating that to every clone. A warning naming the file is the honest
++// outcome: the caller has already confirmed the key is set, so reaching this
++// branch means the writer could not find the spelling it is stored in.
++//
++// Shared with the proxied-server path (dolt_remote_proxied_server.go); the two
++// had drifted into byte-identical copies of this sequence.
++func clearSyncRemoteFromConfig() {
++	removed, err := config.UnsetYamlConfig("sync.remote")
++	if err != nil {
++		fmt.Fprintf(os.Stderr, "Warning: failed to clear sync.remote from config.yaml: %v\n", err)
++		return
++	}
++	if !removed {
++		fmt.Fprintf(os.Stderr, "Warning: sync.remote is set but was not found in config.yaml; "+
++			"the push target is still configured. Remove it by hand, then verify with "+
++			"'bd config get sync.remote'.\n")
++		return
++	}
++	if isGitRepo() {
++		commitBeadsConfig("bd: clear sync.remote")
++	}
++}
++
+ // isTimeoutError checks if an error is a context deadline exceeded or timeout.
+ func isTimeoutError(err error) bool {
+ 	if err == nil {
+diff --git a/cmd/bd/dolt_remote_proxied_server.go b/cmd/bd/dolt_remote_proxied_server.go
+index 1ed7f94..3f23767 100644
+--- a/cmd/bd/dolt_remote_proxied_server.go
++++ b/cmd/bd/dolt_remote_proxied_server.go
+@@ -31,12 +31,7 @@ func runDoltRemoteRemoveProxied(ctx context.Context, name string) error {
+ 
+ 	if name == "origin" {
+ 		if current := config.GetYamlConfig("sync.remote"); current != "" {
+-			if err := config.UnsetYamlConfig("sync.remote"); err != nil {
+-				fmt.Fprintf(os.Stderr, "Warning: failed to clear sync.remote from config.yaml: %v\n", err)
+-			}
+-			if isGitRepo() {
+-				commitBeadsConfig("bd: clear sync.remote")
+-			}
++			clearSyncRemoteFromConfig()
+ 		}
+ 	}
+ 
+diff --git a/internal/config/yaml_config.go b/internal/config/yaml_config.go
+index 7f48e05..21423be 100644
+--- a/internal/config/yaml_config.go
++++ b/internal/config/yaml_config.go
+@@ -450,28 +450,34 @@ func MetricsNoticeShownByUserConfig() bool {
+ 	return shown
+ }
+ 
+-func UnsetUserYamlConfig(key string) error {
++// UnsetUserYamlConfig removes a configuration value from the user-global
++// config.yaml, returning whether the key was actually bound there. A missing
++// file is not an error: the key is absent, which is what the caller asked for.
++func UnsetUserYamlConfig(key string) (bool, error) {
+ 	configPath := UserConfigYamlPath()
+ 	normalizedKey := normalizeYamlKey(key)
+ 
+ 	content, err := os.ReadFile(configPath) //nolint:gosec // configPath is from UserConfigYamlPath
+ 	if err != nil {
+ 		if os.IsNotExist(err) {
+-			return nil
++			return false, nil
+ 		}
+-		return fmt.Errorf("failed to read user config.yaml: %w", err)
++		return false, fmt.Errorf("failed to read user config.yaml: %w", err)
+ 	}
+ 
+-	newContent := commentOutYamlKey(string(content), normalizedKey)
++	newContent, found := commentOutYamlKey(string(content), normalizedKey)
++	if !found {
++		return false, nil
++	}
+ 
+ 	// Preserve the owner-private 0600 posture every other user-global writer
+ 	// uses (SetUserYamlConfig, setYamlConfigAtPath, the metrics bootstrap);
+ 	// rewriting at 0644 would relax this shared user config to world-readable.
+ 	if err := os.WriteFile(configPath, []byte(newContent), 0o600); err != nil { //nolint:gosec // configPath is from UserConfigYamlPath
+-		return fmt.Errorf("failed to write user config.yaml: %w", err)
++		return false, fmt.Errorf("failed to write user config.yaml: %w", err)
+ 	}
+ 
+-	return nil
++	return true, nil
+ }
+ 
+ func SetUserYamlConfig(key, value string) error {
+@@ -528,28 +534,41 @@ func GetYamlConfig(key string) string {
+ 	return v.GetString(normalizedKey)
+ }
+ 
+-// UnsetYamlConfig removes a configuration value from the project's config.yaml file.
+-// The key line is commented out (prefixed with "# ") to preserve it as documentation.
+-func UnsetYamlConfig(key string) error {
++// UnsetYamlConfig removes a configuration value from the project's config.yaml
++// file, returning whether the key was actually bound there. The key line is
++// commented out (prefixed with "# ") to preserve it as documentation.
++//
++// The found return is what lets a caller tell "removed" from "was never set".
++// Without it the command layer had only the error to test, and an unset that
++// matched nothing was indistinguishable from one that worked -- which is how a
++// nested key could survive while `bd config unset` printed success.
++//
++// A key that matched nothing leaves the file untouched rather than rewriting it
++// byte-identically. config.yaml is git-TRACKED, so a no-op rewrite still dirties
++// the working tree.
++func UnsetYamlConfig(key string) (bool, error) {
+ 	configPath, err := findProjectConfigYaml()
+ 	if err != nil {
+-		return err
++		return false, err
+ 	}
+ 
+ 	normalizedKey := normalizeYamlKey(key)
+ 
+ 	content, err := os.ReadFile(configPath) //nolint:gosec // configPath is from findProjectConfigYaml
+ 	if err != nil {
+-		return fmt.Errorf("failed to read config.yaml: %w", err)
++		return false, fmt.Errorf("failed to read config.yaml: %w", err)
+ 	}
+ 
+-	newContent := commentOutYamlKey(string(content), normalizedKey)
++	newContent, found := commentOutYamlKey(string(content), normalizedKey)
++	if !found {
++		return false, nil
++	}
+ 
+ 	if err := os.WriteFile(configPath, []byte(newContent), 0600); err != nil { //nolint:gosec // configPath is validated
+-		return fmt.Errorf("failed to write config.yaml: %w", err)
++		return false, fmt.Errorf("failed to write config.yaml: %w", err)
+ 	}
+ 
+-	return nil
++	return true, nil
+ }
+ 
+ // findProjectConfigYaml finds the active config.yaml path for YAML-only config writes.
+@@ -812,27 +831,131 @@ func scalarStyleFor(value string) yaml.Style {
+ 	return 0
+ }
+ 
+-func commentOutYamlKey(content, key string) string {
++// commentOutYamlKey comments out every line binding key and reports whether it
++// matched anything. It handles BOTH spellings the writers emit for a dotted
++// key: the flat top-level line (`sync.remote: x`) and the nested path (`sync:`
++// with an indented `remote: x`). updateNestedYamlKey picks between them from
++// the state of the file at write time, so which one a given key wears is not
++// knowable here; matching only the flat one made `bd config unset sync.remote`
++// a silent no-op on every key that had been set into a non-empty config.yaml.
++//
++// Both spellings are commented rather than stopping at the first hit. A file
++// can legally carry the same key in each form, viper resolves that to the flat
++// one, and leaving either live means the value survives an unset.
++//
++// The nested arm resolves the path structurally instead of widening the regex
++// to the leaf name: `^(\s*)remote\s*:` would also match `remote:` under any
++// other parent, so unsetting sync.remote could clear an unrelated key.
++func commentOutYamlKey(content, key string) (string, bool) {
++	// strings.Split, not bufio.Scanner: Scanner drops the terminal newline, so
++	// the old implementation stripped it from a git-TRACKED file on every
++	// unset, and its default 64 KiB token cap silently truncated the rest of
++	// the file past an over-long line with no error path to notice.
++	lines := strings.Split(content, "\n")
++
++	commented := make(map[int]bool)
+ 	keyPattern := regexp.MustCompile(`^(\s*)` + regexp.QuoteMeta(key) + `\s*:`)
+-
+-	var result []string
+-	scanner := bufio.NewScanner(strings.NewReader(content))
+-	for scanner.Scan() {
+-		line := scanner.Text()
++	for i, line := range lines {
+ 		if keyPattern.MatchString(line) {
+-			matches := keyPattern.FindStringSubmatch(line)
+-			indent := ""
+-			if len(matches) > 1 {
+-				indent = matches[1]
+-			}
+-			// Comment out the line, preserving indentation
+-			result = append(result, indent+"# "+strings.TrimLeft(line, " \t"))
+-		} else {
+-			result = append(result, line)
++			commented[i] = true
++		}
++	}
++	for _, i := range nestedYamlKeyLines(lines, key) {
++		commented[i] = true
++	}
++
++	for i := range lines {
++		if !commented[i] {
++			continue
++		}
++		trimmed := strings.TrimLeft(lines[i], " \t")
++		// Blank lines inside a commented-out block stay blank; prefixing them
++		// would add "# " noise to lines that bind nothing.
++		if trimmed == "" {
++			continue
++		}
++		indent := lines[i][:len(lines[i])-len(trimmed)]
++		lines[i] = indent + "# " + trimmed
++	}
++
++	return strings.Join(lines, "\n"), len(commented) > 0
++}
++
++// nestedYamlKeyLines returns the 0-based indices of the lines carrying key
++// written as a nested path, spanning the key line and its whole value block. It
++// returns nil when the key is absent in that form, when the path runs through a
++// non-mapping, or when the content does not parse -- in each case the flat arm
++// of commentOutYamlKey is the only one that can match, which is the behavior
++// this function replaced.
++//
++// The value block matters because a leaf need not be a scalar: commenting out
++// only the `dolt:` line of a `dolt:` mapping would reparent its children and
++// leave the file unparseable.
++func nestedYamlKeyLines(lines []string, key string) []int {
++	if !strings.Contains(key, ".") {
++		return nil
++	}
++
++	var root yaml.Node
++	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &root); err != nil {
++		return nil
++	}
++	if len(root.Content) == 0 {
++		return nil
++	}
++	mapping := root.Content[0]
++	if mapping.Kind != yaml.MappingNode {
++		return nil
++	}
++
++	var keyNode *yaml.Node
++	current := mapping
++	parts := strings.Split(key, ".")
++	for i, part := range parts {
++		if current.Kind != yaml.MappingNode {
++			return nil
++		}
++		idx := findMappingChild(current, part)
++		if idx == -1 {
++			return nil
++		}
++		if i == len(parts)-1 {
++			keyNode = current.Content[idx]
++			break
++		}
++		current = current.Content[idx+1]
++	}
++	if keyNode == nil {
++		return nil
++	}
++
++	// yaml.Node positions are 1-based.
++	start := keyNode.Line - 1
++	if start < 0 || start >= len(lines) {
++		return nil
++	}
++	indent := keyNode.Column - 1
++
++	// The block runs to the last following line indented deeper than the key.
++	// Blank lines neither end it nor extend it, so a blank line before the next
++	// sibling is left outside the range.
++	end := start
++	for i := start + 1; i < len(lines); i++ {
++		trimmed := strings.TrimLeft(lines[i], " \t")
++		if trimmed == "" {
++			continue
+ 		}
++		if len(lines[i])-len(trimmed) <= indent {
++			break
++		}
++		end = i
+ 	}
+ 
+-	return strings.Join(result, "\n")
++	out := make([]int, 0, end-start+1)
++	for i := start; i <= end; i++ {
++		out = append(out, i)
++	}
++	return out
+ }
+ 
+ // formatYamlValue formats a value appropriately for YAML.
+diff --git a/internal/config/yaml_config_test.go b/internal/config/yaml_config_test.go
+index e1f470c..ea6478f 100644
+--- a/internal/config/yaml_config_test.go
++++ b/internal/config/yaml_config_test.go
+@@ -974,43 +974,86 @@ func TestCheckSecretKeyGitSafety_AllowsNonSecretKeyOnTrackedConfig(t *testing.T)
+ 
+ func TestCommentOutYamlKey(t *testing.T) {
+ 	tests := []struct {
+-		name     string
+-		content  string
+-		key      string
+-		expected string
++		name      string
++		content   string
++		key       string
++		expected  string
++		wantFound bool
+ 	}{
+ 		{
+-			name:     "comment out existing key",
+-			content:  "backup.enabled: false\nother: value",
+-			key:      "backup.enabled",
+-			expected: "# backup.enabled: false\nother: value",
++			name:      "comment out existing key",
++			content:   "backup.enabled: false\nother: value",
++			key:       "backup.enabled",
++			expected:  "# backup.enabled: false\nother: value",
++			wantFound: true,
+ 		},
+ 		{
+-			name:     "already commented - no change",
+-			content:  "# backup.enabled: false\nother: value",
+-			key:      "backup.enabled",
+-			expected: "# backup.enabled: false\nother: value",
++			name:      "already commented - no change",
++			content:   "# backup.enabled: false\nother: value",
++			key:       "backup.enabled",
++			expected:  "# backup.enabled: false\nother: value",
++			wantFound: false,
+ 		},
+ 		{
+-			name:     "key not found - no change",
+-			content:  "other: value",
+-			key:      "backup.enabled",
+-			expected: "other: value",
++			name:      "key not found - no change",
++			content:   "other: value",
++			key:       "backup.enabled",
++			expected:  "other: value",
++			wantFound: false,
+ 		},
+ 		{
+-			name:     "preserve indentation",
+-			content:  "  backup.enabled: true\nother: value",
+-			key:      "backup.enabled",
+-			expected: "  # backup.enabled: true\nother: value",
++			name:      "preserve indentation",
++			content:   "  backup.enabled: true\nother: value",
++			key:       "backup.enabled",
++			expected:  "  # backup.enabled: true\nother: value",
++			wantFound: true,
++		},
++		{
++			name:      "nested spelling is the one SetYamlConfig writes",
++			content:   "sync:\n  remote: \"git+ssh://git@example.com/foo.git\"\nother: value",
++			key:       "sync.remote",
++			expected:  "sync:\n  # remote: \"git+ssh://git@example.com/foo.git\"\nother: value",
++			wantFound: true,
++		},
++		{
++			name:      "same leaf name under a different parent is left alone",
++			content:   "backup:\n  remote: keep-me\nsync:\n  branch: main",
++			key:       "sync.remote",
++			expected:  "backup:\n  remote: keep-me\nsync:\n  branch: main",
++			wantFound: false,
++		},
++		{
++			name:      "both spellings present are both commented",
++			content:   "sync.remote: flat\nsync:\n  remote: nested",
++			key:       "sync.remote",
++			expected:  "# sync.remote: flat\nsync:\n  # remote: nested",
++			wantFound: true,
++		},
++		{
++			name:      "nested value block is commented whole",
++			content:   "dolt:\n  auth:\n    user: bd\n    password: hunter2\nother: value",
++			key:       "dolt.auth",
++			expected:  "dolt:\n  # auth:\n    # user: bd\n    # password: hunter2\nother: value",
++			wantFound: true,
++		},
++		{
++			name:      "trailing newline survives",
++			content:   "sync:\n  remote: x\n",
++			key:       "sync.remote",
++			expected:  "sync:\n  # remote: x\n",
++			wantFound: true,
+ 		},
+ 	}
+ 
+ 	for _, tt := range tests {
+ 		t.Run(tt.name, func(t *testing.T) {
+-			got := commentOutYamlKey(tt.content, tt.key)
++			got, found := commentOutYamlKey(tt.content, tt.key)
+ 			if got != tt.expected {
+ 				t.Errorf("commentOutYamlKey() =\n%q\nwant:\n%q", got, tt.expected)
+ 			}
++			if found != tt.wantFound {
++				t.Errorf("commentOutYamlKey() found = %v, want %v", found, tt.wantFound)
++			}
+ 		})
+ 	}
+ }
+@@ -1057,9 +1100,13 @@ other-setting: value
+ 	defer os.Chdir(oldWd)
+ 
+ 	// Test UnsetYamlConfig
+-	if err := UnsetYamlConfig("backup.enabled"); err != nil {
++	removed, err := UnsetYamlConfig("backup.enabled")
++	if err != nil {
+ 		t.Fatalf("UnsetYamlConfig() error = %v", err)
+ 	}
++	if !removed {
++		t.Fatalf("UnsetYamlConfig() reported the key was not set, want removed")
++	}
+ 
+ 	// Read back and verify
+ 	content, err := os.ReadFile(configPath)
+@@ -1076,6 +1123,132 @@ other-setting: value
+ 	}
+ }
+ 
++// yamlKeyStillBound reports whether a dotted key still resolves to a value in
++// the given config.yaml text, accepting EITHER spelling the writers can emit:
++// the flat top-level `sync.remote:` line and the nested `sync:` / `  remote:`
++// path.
++//
++// It parses the YAML directly instead of calling GetYamlConfig so the assertion
++// cannot inherit the lookup bug it exists to catch: the whole defect was that
++// one half of the code knew about only one spelling. A checker that consulted
++// the same production helper as the writer would agree with it and pass.
++func yamlKeyStillBound(t *testing.T, content, key string) bool {
++	t.Helper()
++	var root map[string]interface{}
++	if err := yaml.Unmarshal([]byte(content), &root); err != nil {
++		t.Fatalf("config.yaml is not parseable YAML after unset: %v\n%s", err, content)
++	}
++	if _, ok := root[key]; ok {
++		return true
++	}
++	var node interface{} = root
++	for _, part := range strings.Split(key, ".") {
++		m, ok := node.(map[string]interface{})
++		if !ok {
++			return false
++		}
++		node, ok = m[part]
++		if !ok {
++			return false
++		}
++	}
++	return node != nil
++}
++
++// TestUnsetYamlConfigRemovesWhatSetYamlConfigWrote pins the round trip for
++// dotted keys: after SetYamlConfig then UnsetYamlConfig, the key must no longer
++// be bound in config.yaml.
++//
++// The test drives the real writers rather than asserting a fixed file layout,
++// because the layout is precisely what diverged. setYamlConfigAtPath routes a
++// dotted key through updateNestedYamlKey and writes `sync:` / `  remote: x`,
++// while commentOutYamlKey only ever matched a flat `sync.remote:` line -- so
++// unset rewrote the file unchanged and still reported success. Asserting on the
++// nested layout instead would pin today's spelling and go green again the day
++// the writer switches back to flat, which is the one thing this must not do.
++//
++// sync.remote is the exemplar and the reason this matters beyond tidiness: it
++// is the Dolt PUSH TARGET, `bd dolt remote remove origin` clears it through
++// this same UnsetYamlConfig (cmd/bd/dolt.go), and on the nested spelling that
++// path went on to `commitBeadsConfig("bd: clear sync.remote")` -- committing
++// the still-populated file, to a git-TRACKED config, with a message saying the
++// remote was cleared.
++func TestUnsetYamlConfigRemovesWhatSetYamlConfigWrote(t *testing.T) {
++	keys := []struct {
++		key   string
++		value string
++	}{
++		{"sync.remote", "git+ssh://git@example.com/foo/bar.git"},
++		{"dolt.local-only", "true"},
++		{"backup.enabled", "false"},
++	}
++
++	for _, tc := range keys {
++		t.Run(tc.key, func(t *testing.T) {
++			dir := withProjectConfigYaml(t, "# Beads Config\nother-setting: value\n")
++			configPath := filepath.Join(dir, ".beads", "config.yaml")
++
++			if err := SetYamlConfig(tc.key, tc.value); err != nil {
++				t.Fatalf("SetYamlConfig(%q) error = %v", tc.key, err)
++			}
++			written, err := os.ReadFile(configPath)
++			if err != nil {
++				t.Fatalf("Failed to read config.yaml: %v", err)
++			}
++			if !yamlKeyStillBound(t, string(written), tc.key) {
++				t.Fatalf("SetYamlConfig(%q) did not bind the key; the round trip is untestable:\n%s", tc.key, written)
++			}
++
++			removed, err := UnsetYamlConfig(tc.key)
++			if err != nil {
++				t.Fatalf("UnsetYamlConfig(%q) error = %v", tc.key, err)
++			}
++			if !removed {
++				t.Errorf("UnsetYamlConfig(%q) reported the key was not set, want removed", tc.key)
++			}
++			cleared, err := os.ReadFile(configPath)
++			if err != nil {
++				t.Fatalf("Failed to read config.yaml: %v", err)
++			}
++			if yamlKeyStillBound(t, string(cleared), tc.key) {
++				t.Errorf("UnsetYamlConfig(%q) reported success but the key is still bound:\n%s", tc.key, cleared)
++			}
++			if !strings.Contains(string(cleared), "other-setting: value") {
++				t.Errorf("UnsetYamlConfig(%q) disturbed unrelated keys:\n%s", tc.key, cleared)
++			}
++		})
++	}
++}
++
++// withProjectConfigYaml creates a temp project whose .beads/config.yaml holds
++// the given content, points config resolution at it, and returns the project
++// root. BEADS_DIR is cleared so resolution walks up from CWD, matching how the
++// operator's shell reaches the file.
++func withProjectConfigYaml(t *testing.T, content string) string {
++	t.Helper()
++	t.Setenv("BEADS_DIR", "")
++
++	dir := t.TempDir()
++	beadsDir := filepath.Join(dir, ".beads")
++	if err := os.MkdirAll(beadsDir, 0755); err != nil {
++		t.Fatalf("Failed to create .beads dir: %v", err)
++	}
++	if err := os.WriteFile(filepath.Join(beadsDir, "config.yaml"), []byte(content), 0644); err != nil {
++		t.Fatalf("Failed to write config.yaml: %v", err)
++	}
++
++	oldWd, err := os.Getwd()
++	if err != nil {
++		t.Fatalf("Failed to get working directory: %v", err)
++	}
++	if err := os.Chdir(dir); err != nil {
++		t.Fatalf("Failed to chdir: %v", err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(oldWd) })
++
++	return dir
++}
++
+ func TestFindProjectConfigYaml_UsesBEADS_DIRFirst(t *testing.T) {
+ 	tmpDir, err := os.MkdirTemp("", "beads-yaml-beadsdir-*")
+ 	if err != nil {
+@@ -1183,8 +1356,10 @@ func TestSetAndUnsetYamlConfig_WithBEADS_DIR_FromOutsideRepo(t *testing.T) {
+ 		t.Fatalf("expected runtime config to contain no-git-ops: true, got:\n%s", contentStr)
+ 	}
+ 
+-	if err := UnsetYamlConfig("no-git-ops"); err != nil {
++	if removed, err := UnsetYamlConfig("no-git-ops"); err != nil {
+ 		t.Fatalf("UnsetYamlConfig() error = %v", err)
++	} else if !removed {
++		t.Fatalf("UnsetYamlConfig() reported the key was not set, want removed")
+ 	}
+ 	content, err = os.ReadFile(configPath)
+ 	if err != nil {
+-- 
+2.43.0
+

@@ -105,6 +105,27 @@ These record types are usually the fastest path to the bug:
 - `operation`: scale check, start, interrupt, and drain boundary calls
 - `mutation`: bead or runtime writes that actually landed
 
+## Reading A Drained Session's Close Record
+
+A session bead in state `drained` does not say who retired it. Two unrelated
+events land there: an agent that booted, found nothing claimable, and retired
+itself, and the reconciler deciding the slot was surplus. Start from the
+closed bead's metadata, not from `state`:
+
+| `close_reason` | `drain_origin` | What happened |
+| --- | --- | --- |
+| `session drained: agent retired itself (self: <reason>)` | `self` | The agent acked its own drain. `<reason>` is the hook's code — `no_work`, `claims_errored`, `stale_session` — or whatever `gc runtime drain-ack --reason` was given. Nothing about the reconciler is implicated. |
+| `session retired: reconciler reclaimed the slot (reconciler: <reason>)` | `reconciler` | The reconciler started the drain. `<reason>` is its own drain reason: `idle`, `no-wake-reason`, `config-drift`, `orphaned`, `suspended`. |
+| `session drained: drain origin not recorded` | absent | Nothing captured the actor: a bead closed before this record existed, or a close whose runtime metadata was already gone. It is NOT a synonym for either row above. |
+
+`drain_ack_reason` carries the same `<reason>` as its own key for machine reads.
+
+A `self` row that is arriving repeatedly and immediately after spawn means the
+sessions are dying at their FIRST command on an unsatisfiable work query — look
+at the work query and the route, not at the reconciler. That misdiagnosis, made
+back when both rows rendered one string naming the reconciler, is what ci-wxag
+retired.
+
 ## Acceptance And Integration Failures
 
 For acceptance or integration failures, keep baseline tracing as-is and collect trace artifacts on failure. Prefer template-scoped detail tracing only for tests that intentionally exercise reconciler or lifecycle behavior.
