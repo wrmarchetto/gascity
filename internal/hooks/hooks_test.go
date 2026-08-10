@@ -170,22 +170,61 @@ func TestInstallClaude(t *testing.T) {
 	}
 }
 
-// TestInstallClaudeWiresStopGate pins that a fresh install carries the
-// turn-end gate that refuses to let a session stop with its closing contract
-// unfinished (cmd/gc/cmd_hook_stop.go).
+// cityStopGateOverride is a .claude/settings.json carrying ONE hook event and
+// nothing else -- the shape a deployment uses to wire an event the embedded
+// defaults do not have.
 //
-// Asserted against the INSTALLED settings rather than the embedded template
-// because that is the file the provider actually reads; an install path that
-// dropped the event would leave the gate present in the tree and absent in
-// every city, which is exactly the shape of the original bug (a recovery
-// mechanism wired to an event that never reaches the failing state).
+// Stop is the fixture rather than an invented event because it is the case
+// this path is used for: gc ships `gc hook stop`, a turn-end gate that refuses
+// to end a turn while the session's claimed work is unclosed
+// (cmd/gc/cmd_hook_stop.go), and it is deliberately absent from
+// config/claude.json. A closing contract belongs to one deployment's prompts,
+// and the embedded template is shipped to every city gc installs. Nothing here
+// depends on the command being that one; any command an override adds must
+// merge the same way.
+const cityStopGateOverride = `{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && gc hook run --timeout 15s --timeout-exit-code 0 -- hook stop"
+          }
+        ]
+      }
+    ]
+  }
+}`
+
+// TestInstallClaudeMergesCityOverrideAddingANewHookEvent pins the half of the
+// override chain that lets a city add an event without forking the embedded
+// template: the override's event lands in the installed settings AND every
+// default the override did not mention survives.
 //
-// The wrapper and its timeout exit code are part of the invariant, not
-// incidental: --timeout-exit-code 0 is what makes a wedged store query end
-// the turn instead of trapping the session, and the gate's whole fail-open
-// argument rests on it.
-func TestInstallClaudeWiresStopGate(t *testing.T) {
+// Both halves are the invariant, and the second is the one that decays
+// quietly. An override that replaced the settings wholesale would pass a
+// Stop-only assertion while freezing that city on the defaults current at the
+// day it was written, so every later upstream hook would silently never reach
+// it.
+//
+// Asserted against .gc/settings.json rather than the merge function because
+// that is the file the provider actually reads.
+func TestInstallClaudeMergesCityOverrideAddingANewHookEvent(t *testing.T) {
+	base, err := readEmbedded("config/claude.json")
+	if err != nil {
+		t.Fatalf("readEmbedded: %v", err)
+	}
+	// A precondition, not decoration. If the embedded defaults ever carry Stop
+	// themselves, every assertion below passes with the override contributing
+	// nothing and the test stops covering the merge it exists for.
+	if entries := claudeHookEntries(t, base, "Stop"); len(entries) != 0 {
+		t.Fatalf("embedded defaults now carry Stop (%d entries), so this test can no longer tell a merged override from a default -- pick an event the defaults lack", len(entries))
+	}
+
 	fs := fsys.NewFake()
+	fs.Files["/city/.claude/settings.json"] = []byte(cityStopGateOverride)
 	if err := Install(fs, "/city", "/work", []string{"claude"}); err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -193,52 +232,61 @@ func TestInstallClaudeWiresStopGate(t *testing.T) {
 	if !ok {
 		t.Fatal("expected /city/.gc/settings.json to be written")
 	}
-	command := claudeHookCommand(t, runtimeData, "Stop")
-	if !strings.Contains(command, "gc hook run --timeout 15s --timeout-exit-code 0 -- hook stop") {
-		t.Errorf("claude Stop hook should run the stop gate through the bounded gc hook run wrapper, got %q", command)
+
+	if command := claudeHookCommand(t, runtimeData, "Stop"); !strings.Contains(command, "gc hook run --timeout 15s --timeout-exit-code 0 -- hook stop") {
+		t.Errorf("city Stop override did not reach the installed settings, got %q", command)
+	}
+	for _, event := range []string{"SessionStart", "PreCompact", "UserPromptSubmit"} {
+		if entries := claudeHookEntries(t, runtimeData, event); len(entries) == 0 {
+			t.Errorf("merging a Stop-only city override dropped the default %s hook", event)
+		}
+	}
+	if !strings.Contains(string(runtimeData), `"skipDangerousModePermissionPrompt": true`) {
+		t.Error("merging a Stop-only city override dropped a default non-hook setting")
 	}
 }
 
-// TestInstallClaudeAddsStopGateToACityMissingIt pins that the gate reaches
-// cities that already have a settings.json, not only fresh installs.
+// TestInstallClaudeDoesNotDuplicateACityOverriddenHookEvent pins that
+// re-installing over a city that already carries the override appends nothing.
+// Repeated installs are the normal case: gc doctor reinstalls hooks on every
+// run, and duplicate growth stays invisible until a provider runs the same
+// command a dozen times per turn boundary.
 //
-// This is the propagation path that matters in practice: every city that
-// predates the gate has a settings file with no Stop event, and a gate that
-// only ships to new cities protects nobody. The user customization here must
-// survive, since discarding it is the failure mode
-// readClaudeSettingsOverride's history is a record of.
-func TestInstallClaudeAddsStopGateToACityMissingIt(t *testing.T) {
-	current, err := readEmbedded("config/claude.json")
-	if err != nil {
-		t.Fatalf("readEmbedded: %v", err)
-	}
-	var existing map[string]any
-	if err := json.Unmarshal(current, &existing); err != nil {
-		t.Fatalf("unmarshal embedded: %v", err)
-	}
-	hooks, ok := existing["hooks"].(map[string]any)
-	if !ok {
-		t.Fatal("embedded claude settings have no hooks object")
-	}
-	delete(hooks, "Stop")
-	existing["customUserSetting"] = "preserved"
-	prior, err := json.Marshal(existing)
-	if err != nil {
-		t.Fatalf("marshal prior settings: %v", err)
-	}
-
+// Source precedence is what holds this, NOT the merge identity key, and the
+// obvious reading being wrong is why it is written down.
+// readClaudeSettingsOverride returns <city>/.claude/settings.json first, so
+// every pass recomputes base + that one constant file and overwrites
+// .gc/settings.json -- a merge output is never a merge input. Verified by
+// mutation: stubbing hookEntryKey to return no identity at all leaves this
+// test green. Stop survives that mutation twice over, because the embedded
+// base carries no Stop entry for the override's to collide with.
+//
+// Read this as coverage of the identity key and a real regression walks past
+// it. That key matters on the path this fixture does NOT take -- a city with
+// no .claude/settings.json, where .gc/settings.json becomes its own override
+// and entries present in BOTH base and override do accumulate (the same
+// mutation drives SessionStart to 2, 3, 4 across three installs). It is
+// pinned in internal/overlay by
+// TestMergeSettingsJSON_MatcherlessWrapper_IdempotentAcrossManyMerges.
+//
+// The entry count is asserted rather than the bytes because a duplicate is
+// the specific failure -- byte equality would also fail for a harmless
+// reordering.
+func TestInstallClaudeDoesNotDuplicateACityOverriddenHookEvent(t *testing.T) {
 	fs := fsys.NewFake()
-	fs.Files["/city/.gc/settings.json"] = prior
-	if err := Install(fs, "/city", "/work", []string{"claude"}); err != nil {
-		t.Fatalf("Install: %v", err)
+	fs.Files["/city/.claude/settings.json"] = []byte(cityStopGateOverride)
+	for i := 1; i <= 3; i++ {
+		if err := Install(fs, "/city", "/work", []string{"claude"}); err != nil {
+			t.Fatalf("Install %d: %v", i, err)
+		}
 	}
 
-	updated := fs.Files["/city/.gc/settings.json"]
-	if command := claudeHookCommand(t, updated, "Stop"); !strings.Contains(command, "-- hook stop") {
-		t.Errorf("Stop gate did not propagate to an existing city, got %q", command)
+	entries := claudeHookEntries(t, fs.Files["/city/.gc/settings.json"], "Stop")
+	if len(entries) != 1 {
+		t.Fatalf("repeated installs should leave exactly one Stop entry, got %d", len(entries))
 	}
-	if !strings.Contains(string(updated), "customUserSetting") {
-		t.Error("propagating the Stop gate discarded the city's own settings")
+	if len(entries[0].Hooks) != 1 {
+		t.Fatalf("repeated installs should leave exactly one Stop command, got %d", len(entries[0].Hooks))
 	}
 }
 
