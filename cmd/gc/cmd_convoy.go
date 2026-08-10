@@ -1427,11 +1427,14 @@ func hasLabel(labels []string, target string) bool { //nolint:unparam // general
 	return false
 }
 
-// convoyAutocloseReason is the close_reason metadata value stamped on
-// convoys auto-closed because all of their children are closed. The
-// 38-character form satisfies bd's validation.on-close=error length
-// requirement while remaining a meaningful audit-trail entry.
-const convoyAutocloseReason = "convoy autoclose: all children closed"
+// --- convoy close reasons ---
+//
+// Absent here on purpose: a single autoclose reason constant. The three
+// collectors that auto-close convoys all stamped one string, which left a
+// closed convoy unattributable and cost a misdiagnosis (ci-eh7h). The reason is
+// now rendered per collector by convoyAutocloseReasonFor
+// (convoy_close_origin.go). The two below stay constants because each has
+// exactly one call site and so is unambiguous by construction.
 
 const convoyManualCloseReason = "convoy close: requested by operator"
 
@@ -1489,7 +1492,7 @@ func doConvoyCheckAcrossStoresJSON(stores []convoyStoreView, rec events.Recorder
 			return 1
 		}
 		if complete {
-			if err := closeConvoyWithReason(item.store, item.bead.ID, convoyAutocloseReason); err != nil {
+			if err := closeConvoyWithOrigin(item.store, item.bead.ID, convoyCloseOriginSweep); err != nil {
 				fmt.Fprintf(stderr, "gc convoy check: closing %s: %v\n", item.bead.ID, err) //nolint:errcheck // best-effort stderr
 				return 1
 			}
@@ -1808,7 +1811,7 @@ func doConvoyAutoclose(beadID string, stdout, stderr io.Writer) {
 	// so rig-store closes autoclose their convoys instead of silently
 	// no-op'ing (#3411).
 	if store, _, ok := autocloseOwningStore(beadID, cityPath); ok {
-		doConvoyAutocloseWith(store, rec, beadID, stdout, stderr)
+		doConvoyAutocloseWith(store, rec, convoyCloseOriginCloseHook, beadID, stdout, stderr)
 		return
 	}
 
@@ -1820,7 +1823,7 @@ func doConvoyAutoclose(beadID string, stdout, stderr io.Writer) {
 	if err != nil {
 		return
 	}
-	doConvoyAutocloseWith(store, rec, beadID, stdout, stderr)
+	doConvoyAutocloseWith(store, rec, convoyCloseOriginCloseHook, beadID, stdout, stderr)
 }
 
 // autocloseOwningStore resolves the store that owns beadID, and the store
@@ -1883,7 +1886,13 @@ func autocloseCityPathForStoreRoot(storeRoot string) string {
 // tracks dependents are convoys with all children closed, and if so closes
 // them. All errors are silently swallowed — this is best-effort
 // infrastructure called from a bd hook script.
-func doConvoyAutocloseWith(store beads.Store, rec events.Recorder, beadID string, stdout, _ io.Writer) {
+//
+// origin is a required parameter rather than a default, because both of this
+// function's callers are reactive close handlers that a reader would otherwise
+// assume are the same actor: the controller's in-process handler and the
+// standalone `gc convoy autoclose` CLI. A defaulted origin would let a third
+// caller be added that silently records nothing (see convoy_close_origin.go).
+func doConvoyAutocloseWith(store beads.Store, rec events.Recorder, origin convoyCloseOrigin, beadID string, stdout, _ io.Writer) {
 	bead, err := store.Get(beadID)
 	if err != nil {
 		return
@@ -1894,7 +1903,7 @@ func doConvoyAutocloseWith(store beads.Store, rec events.Recorder, beadID string
 		parent, err := store.Get(bead.ParentID)
 		if err == nil {
 			seen[parent.ID] = true
-			autocloseConvoyIfComplete(store, rec, parent, stdout)
+			autocloseConvoyIfComplete(store, rec, origin, parent, stdout)
 		}
 	}
 
@@ -1907,16 +1916,16 @@ func doConvoyAutocloseWith(store beads.Store, rec events.Recorder, beadID string
 			continue
 		}
 		seen[convoy.ID] = true
-		autocloseConvoyIfComplete(store, rec, convoy, stdout)
+		autocloseConvoyIfComplete(store, rec, origin, convoy, stdout)
 	}
 }
 
-func autocloseConvoyIfComplete(store beads.Store, rec events.Recorder, convoy beads.Bead, stdout io.Writer) {
+func autocloseConvoyIfComplete(store beads.Store, rec events.Recorder, origin convoyCloseOrigin, convoy beads.Bead, stdout io.Writer) {
 	if complete, err := convoyIsComplete(store, convoy); err != nil || !complete {
 		return
 	}
 
-	if err := closeConvoyWithReason(store, convoy.ID, convoyAutocloseReason); err != nil {
+	if err := closeConvoyWithOrigin(store, convoy.ID, origin); err != nil {
 		return
 	}
 
