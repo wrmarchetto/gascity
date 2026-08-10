@@ -732,6 +732,12 @@ func workflowServeControlReadyQuery(agentCfg config.Agent, controlSessionNames .
 // bd-ready calls (ga-x9kptu / ga-5736js) -- a bead intentionally parked on a
 // dispatch hold must never surface here. assignee_ready() (Tier 1/2) must
 // stay hold-transparent by design and must never call this.
+//
+// The message exclusion beside it in assignee_ready() runs the opposite way and
+// is deliberately NOT a local mirror: it reads config.ExcludeMessageTypeArg
+// directly, because a hand-copied second spelling of that predicate is what
+// ci-bhvf was. Only the hold labels are copied here, and only because
+// beadmeta.DispatchHoldLabels is a slice this file has to render itself.
 func controlReadyExcludeHoldLabelsShellArgs() string {
 	var args string
 	for _, label := range beadmeta.DispatchHoldLabels {
@@ -777,7 +783,7 @@ func workflowServeControlReadyQueryForBeads(agentCfg config.Agent, beadsCfg conf
 		`tmp=$(mktemp); seen="$tmp.seen"; err="$tmp.err"; : > "$seen"; trap "rm -f \"$tmp\" \"$seen\" \"$err\"" EXIT; ` +
 		`emit_ready() { r=$("$@" 2>"$err") || { status=$?; [ -n "$r" ] && printf "%s\n" "$r" >&2; cat "$err" >&2; return "$status"; }; [ -n "$r" ] && [ "$r" != "[]" ] && printf "%s\n" "$r" >> "$tmp"; return 0; }; ` +
 		`assignee_ready() { cand="$1"; [ -z "$cand" ] && return 0; if grep -Fxq "$cand" "$seen"; then return 0; fi; printf "%s\n" "$cand" >> "$seen"; ` +
-		`emit_ready bd --readonly --sandbox ready` + includeEphemeral + ` --assignee="$cand" --exclude-type=epic --json --limit=` + limit + `; }; ` +
+		`emit_ready bd --readonly --sandbox ready` + includeEphemeral + ` --assignee="$cand" --exclude-type=epic` + config.ExcludeMessageTypeArg + ` --json --limit=` + limit + `; }; ` +
 		`routed_ready() { route="$1"; [ -z "$route" ] && return 0; ` +
 		`emit_ready bd --readonly --sandbox ready` + includeEphemeral + ` --metadata-field "` + beadmeta.RunTargetMetadataKey + `=$route" --unassigned --exclude-type=epic` + controlReadyExcludeHoldLabelsShellArgs() + ` --json --sort oldest --limit=` + limit + `; ` +
 		`emit_ready bd --readonly --sandbox ready` + includeEphemeral + ` --metadata-field "` + beadmeta.RoutedToMetadataKey + `=$route" --unassigned --exclude-type=epic` + controlReadyExcludeHoldLabelsShellArgs() + ` --json --sort oldest --limit=` + limit + `; ` +

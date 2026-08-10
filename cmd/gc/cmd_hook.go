@@ -947,7 +947,7 @@ func filterUnreadyHookCandidates(output string, now time.Time) string {
 // disagreeing about what "work exists" means, with neither erroring.
 //
 // The generated work_query already excludes messages at every assigned tier
-// (internal/config/workquery.go excludeMessageTypeArg). This filter is the
+// (internal/config/workquery.go ExcludeMessageTypeArg). This filter is the
 // backstop for output that query did not generate -- a pack-supplied
 // work_query, or a legacy tier -- since every consumer funnels through here.
 // It cannot substitute for the query-side fix: the shell ladder exits on its
