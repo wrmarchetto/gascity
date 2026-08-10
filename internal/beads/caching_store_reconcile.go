@@ -163,24 +163,72 @@ func (c *CachingStore) latencyP95Locked() (time.Duration, bool) {
 	return sorted[idx], true
 }
 
-// updateCadenceStatsLocked refreshes the diagnostic cadence fields
-// without mutating hysteresis state or emitting transition logs. Caller
+// updateCadenceStatsLocked refreshes the diagnostic cadence fields without
+// mutating hysteresis state, and reports any tier move it just wrote. Caller
 // must hold c.mu.
+//
+// Detection lives HERE, in the sole writer of CurrentReconcileInterval, rather
+// than in recomputeCadenceLocked where it used to. recomputeCadenceLocked runs
+// only inside a reconcile pass, but this function also runs from
+// updateStatsLocked on every mutation -- so on any store busier than its own
+// cadence a mutation observed the new bead count first, advanced the field, and
+// left the reconcile-time detector comparing a tier against itself. The city
+// store swung 30 s<->120 s with no transition line in 29 hours of log that way
+// (bead ci-dirj gap 2). Comparing before writing is what makes the report
+// unmissable regardless of which caller gets there first.
 func (c *CachingStore) updateCadenceStatsLocked() {
 	p95, samplesEnough := c.latencyP95Locked()
 	var p95ms float64
 	if samplesEnough {
 		p95ms = float64(p95.Milliseconds())
 	}
+	prev := c.stats.CurrentReconcileInterval
+	prevDriver := c.stats.CadenceDriver
+
 	c.stats.CurrentReconcileInterval = effectiveCadence(len(c.beads), c.latencyDriverActive)
 	c.stats.LatencyP95Ms = p95ms
 	c.stats.CadenceDriver = cadenceDriver(len(c.beads), c.latencyDriverActive)
+
+	// prev == 0 is the first refresh on this store: there is no earlier tier to
+	// have moved from, so arming the report on it would log a transition at
+	// every process start.
+	if prev != 0 && prev != c.stats.CurrentReconcileInterval {
+		c.logCadenceTransitionLocked(prev, c.stats.CurrentReconcileInterval, prevDriver)
+	}
 }
 
-// recomputeCadenceLocked updates the latency-driver hysteresis state
-// based on the current P95, recomposes the effective cadence, refreshes
-// the diagnostic CacheStats fields, and emits a single transition log
-// line on small↔medium changes. Caller must hold c.mu.
+// logCadenceTransitionLocked emits the rate-limited cadence transition line for
+// a move from prev to next. Caller must hold c.mu.
+//
+// Every ordered tier pair reports. The predecessor switched on exactly two
+// pairs (small<->medium), so a store crossing the 5000-bead LARGE threshold
+// moved silently -- and the latency-driven tests that covered the log could not
+// see the hole, because latency alone never reaches LARGE.
+func (c *CachingStore) logCadenceTransitionLocked(prev, next time.Duration, prevDriver string) {
+	if prevDriver == "" {
+		prevDriver = cadenceDriver(len(c.beads), c.latencyDriverActive)
+	}
+	verb := "promoted"
+	if next < prev {
+		verb = "demoted"
+	}
+	transition := fmt.Sprintf("%s→%s", cadenceTierName(prev), cadenceTierName(next))
+	msg := fmt.Sprintf(
+		"beads cache: cadence %s %s driver=%s p95=%.0fms window=%d beads=%d",
+		verb, transition, cadenceTransitionDriver(prevDriver, c.stats.CadenceDriver),
+		c.stats.LatencyP95Ms, cacheLatencyWindowSize, len(c.beads),
+	)
+	if c.cadenceLog == nil {
+		c.cadenceLog = make(map[string]cacheProblemLogState)
+	}
+	if line, ok := rateLimitLogLocked(c.cadenceLog, transition, msg, time.Now(), cacheCadenceLogWindow); ok {
+		log.Print(line)
+	}
+}
+
+// recomputeCadenceLocked updates the latency-driver hysteresis state based on
+// the current P95, then refreshes the diagnostic CacheStats fields (which
+// reports any tier move the update produces). Caller must hold c.mu.
 //
 // Hysteresis is provided by the rolling window itself: a single slow
 // scan can promote (P95 jumps the moment the window fills), but
@@ -189,13 +237,6 @@ func (c *CachingStore) updateCadenceStatsLocked() {
 // One spike anywhere in that drain pushes P95 back up and re-arms the
 // driver, preventing thrash.
 func (c *CachingStore) recomputeCadenceLocked() {
-	prev := c.stats.CurrentReconcileInterval
-	hadPrev := prev != 0
-	prevDriver := c.stats.CadenceDriver
-	if prevDriver == "" {
-		prevDriver = cadenceDriver(len(c.beads), c.latencyDriverActive)
-	}
-
 	p95, samplesEnough := c.latencyP95Locked()
 	if samplesEnough {
 		if c.latencyDriverActive {
@@ -208,19 +249,6 @@ func (c *CachingStore) recomputeCadenceLocked() {
 	}
 
 	c.updateCadenceStatsLocked()
-	next := c.stats.CurrentReconcileInterval
-	driver := cadenceTransitionDriver(prevDriver, c.stats.CadenceDriver)
-
-	if hadPrev && prev != next {
-		switch {
-		case prev == cacheReconcileIntervalSmall && next == cacheReconcileIntervalMedium:
-			log.Printf("beads cache: cadence promoted small→medium driver=%s p95=%.0fms window=%d",
-				driver, c.stats.LatencyP95Ms, cacheLatencyWindowSize)
-		case prev == cacheReconcileIntervalMedium && next == cacheReconcileIntervalSmall:
-			log.Printf("beads cache: cadence demoted medium→small driver=%s p95=%.0fms window=%d",
-				driver, c.stats.LatencyP95Ms, cacheLatencyWindowSize)
-		}
-	}
 }
 
 // cadenceDriver classifies which input(s) are driving the current
@@ -237,6 +265,23 @@ func cadenceDriver(beadCount int, latencyDriverActive bool) string {
 	default:
 		return "default"
 	}
+}
+
+// cadenceTierName names a cadence duration for the transition log. The
+// fallback arm is deliberate: there are exactly three tiers today and no
+// fourth is planned, so a duration that is not one of them means the tier set
+// changed. Rendering the raw duration degrades the log instead of labeling
+// the value as a tier it is not.
+func cadenceTierName(d time.Duration) string {
+	switch d {
+	case cacheReconcileIntervalSmall:
+		return "small"
+	case cacheReconcileIntervalMedium:
+		return "medium"
+	case cacheReconcileIntervalLarge:
+		return "large"
+	}
+	return d.String()
 }
 
 func cadenceTransitionDriver(prevDriver, nextDriver string) string {
@@ -313,9 +358,21 @@ func (c *CachingStore) nextReconcileDelay(now time.Time) time.Duration {
 func (c *CachingStore) runReconciliation() {
 	start := time.Now()
 
-	c.mu.RLock()
+	// Stamped BEFORE backing.List and cleared on every exit including panic.
+	// This is the pass's only trace while it is running: every other signal --
+	// success line, problem line, latency sample, bd trace record -- is written
+	// after List returns, so a List that never returns writes nothing at all.
+	// Upgraded from RLock to Lock for the stamp; the section is two in-memory
+	// assignments.
+	c.mu.Lock()
 	startSeq := c.mutationSeq
-	c.mu.RUnlock()
+	c.reconcileStartedAt = start
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.reconcileStartedAt = time.Time{}
+		c.mu.Unlock()
+	}()
 
 	bdStart := time.Now()
 	fresh, err := c.backing.List(cacheFullScanQuery())

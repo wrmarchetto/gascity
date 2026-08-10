@@ -96,7 +96,19 @@ func TestMergeOracleFieldCoverage(t *testing.T) {
 		// nothing to compare. It gates WHEN a pass runs, not what one
 		// produces.
 		"reconcilerArmedAt": true,
-		"backing":           true, "idPrefix": true, "mu": true, "reconciling": true,
+		// reconcileStartedAt is pass-scoped observability state: runReconciliation
+		// stamps it before backing.List and clears it on exit, both OUTSIDE the
+		// merge seam's critical section. It records how long the current pass has
+		// been running, not anything the pass produces.
+		"reconcileStartedAt": true,
+		// cadenceLog and stallLog are log rate-limiter bookkeeping, in the same
+		// class as the already-excluded problemLog: they decide whether a line
+		// prints, never what the cache holds.
+		"cadenceLog": true, "stallLog": true,
+		// Test-only period overrides (SetStallWatchdogForTest). Zero in
+		// production, and read only by the stall watchdog.
+		"stallWatchdogInterval": true, "stallThresholdOverride": true,
+		"backing": true, "idPrefix": true, "mu": true, "reconciling": true,
 		"onChange": true, "problemf": true, "problemLog": true,
 		"lastReconcileLogAt": true, "primeMu": true, "primeRunning": true,
 		"primeCycle": true, "lastFullPrimeStartedAt": true, "primeRetryDelay": true,
@@ -116,6 +128,10 @@ func TestMergeOracleFieldCoverage(t *testing.T) {
 		"SyncFailures": true, "ProblemCount": true, "LastProblemAt": true,
 		"LastProblem": true, "State": true, "StaggerOffsetMs": true,
 		"CurrentReconcileInterval": true, "LatencyP95Ms": true, "CadenceDriver": true,
+		// Derived at read time by Stats() from CachingStore fields, exactly like
+		// the already-excluded State. The merge seam never writes them, so it has
+		// nothing for the oracle to compare.
+		"ReconcilerArmedAt": true, "ReconcileInFlight": true, "ReconcileStartedAt": true,
 	}
 	assertFieldsClassified(t, reflect.TypeOf(CacheStats{}), comparedStats, excludedStats)
 }
