@@ -65,6 +65,7 @@ hold-label-routed-to
 work-option-metadata-migration
 backlog-depth
 unclaimable-assignee
+unclaimable-work
 order-tracking-retention
 session-model
 dolt-server
