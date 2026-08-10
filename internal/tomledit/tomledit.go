@@ -19,6 +19,15 @@
 // scalars. Widening this to nested tables or array values wants that real
 // document model, not another special case bolted on.
 //
+// city.toml lost its comments the same way and is NOT fixed by widening this
+// package (bead ci-bzy4). It is nested tables and arrays of tables, so it took
+// the opposite approach: internal/tomlcomments re-renders the struct and then
+// carries the authored comments back onto the render. That inverts the risk --
+// this package edits value lines and a bug writes a wrong value, while carrying
+// only inserts comment lines and a bug misplaces prose. Reach for that package
+// when the whole document is being re-emitted; reach for this one when a known
+// key is being patched in place and the rest of the file must not move.
+//
 // # Correctness net
 //
 // Every edit is verified before it is returned: the result is decoded and

@@ -1,0 +1,150 @@
+[workspace]
+provider = "claude"
+
+[providers]
+
+# Every agent that does not name a provider lands here, so pointing the
+# "claude" name itself at the pool launcher rotates the whole city without
+# editing each agent.toml. The launcher execs the real claude, so
+# GT_PROCESS_NAMES=node,claude still matches and liveness detection is
+# unaffected.
+#
+# REVERT PATH: delete the `command` line. Every agent goes straight back to
+# bare `claude` on the default ~/.claude credentials, which is the proven
+# pre-rotation behavior. Nothing else here needs undoing.
+[providers.claude]
+base = "builtin:claude"
+command = "claude-pool"
+ready_delay_ms = 0
+
+# Accounts 0 and 1 are absent from the pool on purpose, for different reasons.
+# account1 is the mayor's pin below. account0 (willie@) is the account a plain
+# `claude` uses via ~/.claude, so it is the operator's interactive account --
+# putting it in the pool would let workers cap the account the operator is
+# sitting on, and the rotation cannot see interactive usage to compensate
+# (nothing records a binding, and the sweeper only scrapes tmux sessions on the
+# city socket).
+[providers.claude.env]
+CLAUDE_POOL = "2 3 4 5"
+
+# The mayor's pin. An orchestrator that gets rebound mid-plan loses the
+# conversation that holds the plan, and a handoff mail is a poor substitute for
+# it, so the mayor trades failover for stability: when its account caps, the
+# mayor stalls rather than moving. That is the intended trade, not an oversight
+# -- the sweeper reports such a session and explicitly does not bounce it,
+# because a pinned session has nowhere to go.
+#
+# Named for the ROLE, not the account. The account behind this pin has already
+# moved once (account0 -> account1 when account0 became the operator's
+# interactive account), and a name carrying the number forces a rename of the
+# provider on every move -- which also churns the projected sling targets in
+# every rig, since gc surfaces each provider as a target per scope. Moving the
+# pin again is a one-line `command` edit here.
+[providers.claude-mayor]
+base = "builtin:claude"
+command = "claude-1"
+ready_delay_ms = 0
+
+[defaults]
+[defaults.rig]
+[defaults.rig.imports]
+[defaults.rig.imports.gc]
+source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
+version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
+
+# Local pack, so no version pin: `version` is for git-backed imports only.
+# Every rig -- including one registered later -- gets its own lab.engineer
+# from this one definition. See packs/lab/pack.toml for why the role cannot
+# just live in the city's own agents/ directory.
+[defaults.rig.imports.lab]
+source = "packs/lab"
+
+# [mail]
+# retention_ttl controls how long read messages are retained before purge.
+# 0 disables retention; use "168h" for 7 days.
+# "7d" is not a valid Go duration.
+# retention_ttl = "0"
+
+[[rigs]]
+name = "dart"
+default_branch = "ci-setup"
+[rigs.imports]
+[rigs.imports.gc]
+source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
+version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
+[rigs.imports.lab]
+source = "packs/lab"
+
+[[rigs]]
+name = "astoria-sel4"
+default_branch = "main"
+[rigs.imports]
+[rigs.imports.gc]
+source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
+version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
+[rigs.imports.lab]
+source = "packs/lab"
+
+[[rigs]]
+name = "gascity"
+# `gs`, not the `ga` that `gc rig add` derives from the name. gascity's own
+# AGENTS.md cites upstream gastown beads by id -- ga-9wsri, ga-0eq, ga-gz19s4
+# -- and that tracker is not readable from this city. Minting local `ga-`
+# ids would make every one of those references ambiguous to a reader who
+# tried `bd show` on one.
+prefix = "gs"
+# Corrected by hand. `gc rig add` probes origin/HEAD and falls back to the
+# checked-out branch; this clone has no refs/remotes/origin/HEAD, so the
+# probe recorded whatever feature branch the shared checkout happened to be
+# on (fix/ci-yxpd-stop-gate) as the rig's mainline. The remote's own answer
+# is `git ls-remote --symref origin HEAD` -> refs/heads/main.
+default_branch = "main"
+[rigs.imports]
+[rigs.imports.gc]
+source = "https://github.com/gastownhall/gascity-packs/tree/main/gascity/roles"
+version = "sha:3b3b89f2011e06d84459aa7bea1552382f13930a"
+[rigs.imports.lab]
+source = "packs/lab"
+
+# --- no [session] stall timeouts, deliberately (ci-zr5g) ---
+#
+# gc ships the activity watchdog this city keeps wanting: the progress-aware
+# recycle in cmd/gc/session_reconciler.go, armed by [session]
+# progress_stall_timeout (claim-less sessions) and claim_holder_stall_timeout
+# (sessions holding in-progress work). Both are off until a city names a
+# threshold. Neither is named here, and that is a decision, not an oversight.
+#
+# There is no threshold this city can currently defend. `make
+# test-fast-parallel` runs as a CHILD of `git push` (.githooks/pre-push), and
+# a push is designed to block for up to 600s waiting on one of two
+# PUSH_GATE_MAX_CONCURRENT flock slots and then run a suite whose
+# GO_TEST_TIMEOUT is 20m PER PACKAGE -- which TESTING.md instructs raising to
+# 30m on a shared host. A push that queues nine minutes and then runs a
+# thirty-seven minute suite is a SUCCESSFUL push, and it is pane-silent
+# throughout. With four toolsmiths against two slots the queue is the steady
+# state, not the tail.
+#
+# The exposure lands at the worst possible moment. AGENTS.md makes `git push`
+# mandatory and LAST, so the session most likely to look stalled is the one
+# holding finished work one hook away from landing it -- and the recycle is not
+# a resume: it kills the tmux session, taking the in-flight push and its test
+# run with it, and rotates the session key so the replacement starts a new
+# conversation cold.
+#
+# What is missing is the measurement, not the mechanism: the distribution of
+# COMPLETED healthy quiet periods. Every sample taken for ci-zr5g was censored
+# -- the quiet sessions were quiet when sampling began and still quiet when it
+# ended, so the recorded maximum was the sampler stopping. A threshold picked
+# off that number is picked off an artifact.
+#
+# Before arming either value, run the collector described on ci-uq5z and read
+# completed intervals across a four-way push wave. If any healthy interval
+# reaches the threshold, that value is inside the healthy distribution and
+# separates nothing.
+#
+# What covers the gap meanwhile: orders/account-cap-sweep.toml detects a usage
+# cap in ~4 minutes and pages when it cannot repair one. Note that
+# account-cap-sweep.py's caret scan deliberately biases toward missing a
+# detection on the argument that this backstop catches it -- so the sweep is
+# currently calibrated against a guard that is not armed. That is the concrete
+# cost of leaving this off, recorded so it is weighed rather than rediscovered.

@@ -239,6 +239,12 @@ func writeCityPackConfigForEditFS(fs fsys.FS, packPath string, cfg *initPackConf
 	if err := config.GuardRewriteKeyLoss[initPackConfig](fs, writePath); err != nil {
 		return err
 	}
+	// pack.toml is authored and checked in, so the same prose the city.toml
+	// rewrite used to destroy lives here too -- marshalInitPackConfig is a
+	// struct encode and cannot emit a comment.
+	if existing, readErr := fs.ReadFile(writePath); readErr == nil {
+		content = config.CarryAuthoredComments(existing, content)
+	}
 	return fsys.WriteFileIfChangedAtomic(fs, writePath, content, 0o644)
 }
 

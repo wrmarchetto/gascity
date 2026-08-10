@@ -117,6 +117,61 @@ func TestUpdatedAliasMetadataPreservesPriorAliases(t *testing.T) {
 	}
 }
 
+// TestPrunedAliasHistoryMetadataReportsNoChangeWhenClean pins the second return
+// value, not the first. The pool sync path calls this for every pool session on
+// every reconciler tick, so a helper that reported a change unconditionally
+// would queue an alias_history write per session per tick against a Dolt-backed
+// store -- the exact per-key write cost syncSessionBeads batches to avoid.
+//
+// The last case is the one that constrains the implementation. Comparing the
+// joined result against the stored string is the obvious way to compute the
+// bool and it passes every other case here; on a denormalized history it
+// reports a change, and the pool sync path would then write alias_history for
+// every pool session to fix punctuation no reader can observe, because
+// AliasHistory normalizes on read.
+func TestPrunedAliasHistoryMetadataReportsNoChangeWhenClean(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		metadata map[string]string
+		prune    string
+	}{
+		{"name absent", map[string]string{"alias_history": "nux,slit"}, "pack/worker"},
+		{"history empty", map[string]string{"alias": "pack/worker-1"}, "pack/worker"},
+		{"nothing to prune", map[string]string{"alias_history": "nux"}, ""},
+		{"denormalized history without the name", map[string]string{"alias_history": "nux, nux"}, "pack/worker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mutation, pruned := PrunedAliasHistoryMetadata(tc.metadata, tc.prune)
+			if pruned {
+				t.Fatalf("pruned = true with mutation %v, want no write", mutation)
+			}
+		})
+	}
+}
+
+// TestPrunedAliasHistoryMetadataDropsOnlyTheNamedEntry pins that the survivors
+// keep their order. UpdatedAliasMetadata PREPENDS the outgoing alias, so the
+// list is most-recent-first by construction and it is the only record of the
+// rotation order a session went through. The fixture is deliberately in
+// non-sorted order: with "nux,...,slit" a prune that sorted its output would
+// produce the expected string anyway and this test would pass against it.
+func TestPrunedAliasHistoryMetadataDropsOnlyTheNamedEntry(t *testing.T) {
+	mutation, pruned := PrunedAliasHistoryMetadata(map[string]string{
+		"alias":         "pack/worker-1",
+		"alias_history": "slit,pack/worker,nux",
+	}, "pack/worker")
+
+	if !pruned {
+		t.Fatal("pruned = false, want true")
+	}
+	if got := mutation["alias_history"]; got != "slit,nux" {
+		t.Fatalf("alias_history = %q, want %q", got, "slit,nux")
+	}
+	if len(mutation) != 1 {
+		t.Fatalf("mutation = %v, want alias_history alone: touching alias here would rotate a name nobody asked to rotate", mutation)
+	}
+}
+
 func TestEnsureSessionNameAvailable_RejectsOpenIdentifierCollisions(t *testing.T) {
 	store := beads.NewMemStore()
 	open, err := store.Create(beads.Bead{
