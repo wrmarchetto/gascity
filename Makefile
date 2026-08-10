@@ -856,12 +856,28 @@ dashboard-dev:
 dashboard-lint: dashboard-build
 	cd internal/api/dashboardspa/web && npm run lint && npm run format:check
 
+# The frontend vitest step is here because .githooks/pre-commit already called
+# this target as its blocking gate on staged SPA source and stated that it ran
+# the suite, while only CI's Dashboard SPA job did -- so a frontend regression
+# committed clean and failed a job later (bead ci-w09j). A plain recipe line
+# rather than a wrapper script like scripts/dashboard-shared-tests.sh: `vitest
+# run` exits 1 when its glob collects no file (measured, vitest 4.1.9), so the
+# empty-suite hole that script hand-rolls a file count to close does not exist
+# here. It now runs twice in CI, here via preflight-generated's `make
+# dashboard-ci` and again as the dashboard job's own Vitest step -- ~9s, and
+# the same duplication the typecheck and shared-suite steps already carry.
+# Shared suite first so a shared/src regression is named by its own suite
+# instead of surfacing as a frontend failure through the source alias in
+# frontend/vitest.config.ts. Pinned by
+# scripts/dashboard_frontend_suite_gate_test.go.
 ## dashboard-check: lint + format + typecheck (src + test + e2e specs) + build the
-## SPA, then run the shared node:test suite and go test the embedded handler + BFF
+## SPA, then run the shared node:test suite, the frontend vitest suite, and go test
+## the embedded handler + BFF
 dashboard-check: dashboard-build dashboard-lint
 	cd internal/api/dashboardspa/web && npm run typecheck && npm run --workspace gas-city-dashboard-frontend typecheck:test
 	cd internal/api/dashboardspa/web && npm run --workspace gas-city-dashboard-frontend typecheck:e2e
 	./scripts/dashboard-shared-tests.sh
+	cd internal/api/dashboardspa/web && npm run --workspace gas-city-dashboard-frontend test
 	$(TEST_ENV) go test ./internal/api/dashboardspa/... ./internal/api/dashboardbff/...
 
 ## dashboard-smoke: serve the built SPA bundle via Vite preview and verify it responds

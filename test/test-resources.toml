@@ -10,8 +10,8 @@ version = 2
 [[audit_baseline]]
 scope = "all"
 resource = "subprocess"
-baseline_calls = 608
-baseline_files = 173
+baseline_calls = 609
+baseline_files = 174
 reported_calls = 495
 reported_files = 135
 owner_bead = "ga-80po0c.2"
@@ -51,8 +51,8 @@ expires = "2026-10-01"
 [[debt]]
 scope = "untagged"
 resource = "subprocess"
-baseline_calls = 412
-baseline_files = 117
+baseline_calls = 413
+baseline_files = 118
 reported_calls = 380
 reported_files = 98
 owner_bead = "ga-80po0c.2"
@@ -293,6 +293,17 @@ resources = ["subprocess"]
 owner_bead = "ga-80po0c.2.1"
 invariant = "Make/provider and suite-contract proof is a checked Medium owner"
 resource_owner = "the six isolated Make invocations are confined to TestProviderOverridesAndSuiteContractsCrossMakeIsolation"
+migration_target = "P0.1"
+expires = "2026-10-01"
+
+[[medium]]
+package_dir = "scripts"
+package_name = "scripts_test"
+owner = "TestDashboardCheckRunsFrontendVitestSuite"
+resources = ["subprocess"]
+owner_bead = "ga-80po0c.2.1"
+invariant = "the dashboard frontend vitest gate proof is a checked Medium owner"
+resource_owner = "the one make -n dashboard-check invocation is confined to TestDashboardCheckRunsFrontendVitestSuite, which must read the EXPANDED recipe because a step reached through a prerequisite or a variable is invisible to a Makefile grep"
 migration_target = "P0.1"
 expires = "2026-10-01"
 
