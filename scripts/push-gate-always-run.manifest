@@ -37,6 +37,7 @@
 ./internal/agentutil
 ./internal/api
 ./internal/api/genclient
+./internal/bdflags
 ./internal/beadmeta
 ./internal/beads
 ./internal/beads/contract

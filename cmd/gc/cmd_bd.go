@@ -190,10 +190,11 @@ func warnExternalBdOverrideDrift(stderr io.Writer, cityPath string, target execS
 // the heartbeat path (so a usage error is still ok=true); args for any other
 // subcommand are left to the generic passthrough.
 //
-// Both spellings are matched deliberately. gc used to intercept only the
-// literal "heartbeat", so the two spellings of one bd command reached
+// The spellings come from bdHeartbeatVerb rather than from literals here, so
+// they are bd's own alias group for the command gc wraps. gc used to intercept
+// only the literal "heartbeat", so the two spellings of one bd command reached
 // different code -- `hb` fell through to bd's real lease refresh while
-// `heartbeat` did not (ci-ctkz).
+// `heartbeat` did not (ci-ctkz). See bd_intercepts.go.
 //
 // No flags are accepted on either spelling, which costs `gc bd hb <id> --json`
 // the passthrough it had before both spellings were claimed. Forwarding them
@@ -203,7 +204,7 @@ func warnExternalBdOverrideDrift(stderr io.Writer, cityPath string, target execS
 // raw heartbeat with flags invokes bd directly, as the command's help already
 // says for auto-export.
 func parseBdHeartbeatArgs(bdArgs []string) (id string, ok bool, err error) {
-	if len(bdArgs) == 0 || (bdArgs[0] != "heartbeat" && bdArgs[0] != "hb") {
+	if len(bdArgs) == 0 || !bdHeartbeatVerb.claims(bdArgs[0]) {
 		return "", false, nil
 	}
 	rest := bdArgs[1:]
@@ -576,8 +577,12 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	return 0
 }
 
+// parseBdReleaseIfCurrentArgs recognizes gc's own `release-if-current
+// <issue-id> <assignee>`, returning the pair. The verb is registered in
+// bd_intercepts.go as a name bd does not use, which is what fails the build if
+// a beads bump ever claims it.
 func parseBdReleaseIfCurrentArgs(args []string) (id, expectedAssignee string, ok bool, err error) {
-	if len(args) == 0 || args[0] != "release-if-current" {
+	if len(args) == 0 || !bdReleaseIfCurrentVerb.claims(args[0]) {
 		return "", "", false, nil
 	}
 	if len(args) != 3 || invalidBdReleaseIfCurrentArg(args[1]) || invalidBdReleaseIfCurrentArg(args[2]) {
