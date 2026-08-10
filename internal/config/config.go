@@ -2334,6 +2334,19 @@ type DoctorConfig struct {
 	// unpushed commits, no stashes) — never by role identity.
 	NestedWorktreePrune bool `toml:"nested_worktree_prune,omitempty" jsonschema:"default=false"`
 
+	// ExternalAssignees lists assignee names that are deliberately not
+	// session identities -- an operator, a rota, a downstream team. The
+	// unclaimable-assignee check treats work parked on one of these as
+	// intended rather than stranded.
+	//
+	// gc ships no default list, and that absence is the design. Which
+	// names mean "a person, not an agent" is city-local vocabulary: a
+	// built-in "human" would be a role name in Go, and would still miss
+	// every city that spells it "operator" or "ops-rota". Leaving the
+	// list empty makes those beads visible, which is the failure mode
+	// the check exists for; the operator silences them by naming them.
+	ExternalAssignees []string `toml:"external_assignees,omitempty"`
+
 	// Checks holds city-local inline doctor checks declared via
 	// [[doctor.check]] in city.toml.
 	Checks []LocalDoctorCheck `toml:"check,omitempty"`

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -30,6 +31,28 @@ name = "mayor"
 	}
 	if !cfg.Doctor.NestedWorktreePrune {
 		t.Error("NestedWorktreePrune = false, want true")
+	}
+}
+
+// TestParseDoctorExternalAssignees pins that the operator can declare assignee
+// names that are deliberately not session identities. The literal "human" is
+// written in the fixture and NOT in any Go source: the whole reason the field
+// exists is that gc must not know which names mean "not an agent".
+func TestParseDoctorExternalAssignees(t *testing.T) {
+	data := []byte(`
+[workspace]
+name = "test-city"
+
+[doctor]
+external_assignees = ["human", "ops-rota"]
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"human", "ops-rota"}
+	if got := cfg.Doctor.ExternalAssignees; !reflect.DeepEqual(got, want) {
+		t.Errorf("ExternalAssignees = %v, want %v", got, want)
 	}
 }
 

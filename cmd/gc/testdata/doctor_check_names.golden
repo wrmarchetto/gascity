@@ -64,6 +64,7 @@ run-target-routed-to-backfill
 hold-label-routed-to
 work-option-metadata-migration
 backlog-depth
+unclaimable-assignee
 order-tracking-retention
 session-model
 dolt-server
