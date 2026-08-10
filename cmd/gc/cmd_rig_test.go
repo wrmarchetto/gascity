@@ -286,6 +286,115 @@ func makeMasterRig(t *testing.T) string {
 	return rigPath
 }
 
+// makeSharedCheckoutRig builds the ci-6m97 fixture end to end: a rig clone with
+// no refs/remotes/origin/HEAD, parked on a feature branch, whose remote's HEAD
+// names "trunk". That is the state of a checkout several agent sessions share.
+//
+// The mainline is "trunk" rather than main or master so a local candidate-ref
+// guess cannot pass a test meant to prove the remote was asked. When reachable
+// is false the remote is pointed at a path that does not exist, which is the
+// offline case -- the only one where the checked-out branch still gets
+// recorded.
+func makeSharedCheckoutRig(t *testing.T, reachable bool) string {
+	t.Helper()
+	bare := t.TempDir()
+	runGitInTest(t, bare, "init", "--bare")
+
+	seed := t.TempDir()
+	runGitInTest(t, seed, "clone", bare, ".")
+	runGitInTest(t, seed, "config", "user.email", "test@test.com")
+	runGitInTest(t, seed, "config", "user.name", "Test")
+	runGitInTest(t, seed, "checkout", "-b", "trunk")
+	runGitInTest(t, seed, "commit", "--allow-empty", "-m", "init")
+	runGitInTest(t, seed, "push", "origin", "trunk")
+	runGitInTest(t, bare, "symbolic-ref", "HEAD", "refs/heads/trunk")
+
+	rigPath := filepath.Join(t.TempDir(), "shared-rig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGitInTest(t, rigPath, "clone", bare, ".")
+	runGitInTest(t, rigPath, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+	runGitInTest(t, rigPath, "checkout", "-b", "fix/ci-yxpd-stop-gate")
+	if !reachable {
+		runGitInTest(t, rigPath, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "absent.git"))
+	}
+	return rigPath
+}
+
+// TestDoRigAdd_RecordsRemoteMainlineWhenOriginHEADUnset is the end-to-end
+// regression for ci-6m97. Registering gascity from a shared checkout wrote the
+// feature branch that happened to be on disk into city.toml as the rig's
+// mainline; default_branch is what polecats and the refinery target, so the
+// symptom was merge work aimed at a branch about to be deleted.
+//
+// It asserts on city.toml, not only on stdout: the printed line and the
+// persisted value come from different code (the emit and buildNextRigConfig),
+// and the persisted one is what the fleet reads.
+func TestDoRigAdd_RecordsRemoteMainlineWhenOriginHEADUnset(t *testing.T) {
+	cityPath := t.TempDir()
+	writeSchema2RigCity(t, cityPath, "test-city", "[workspace]\n", "")
+
+	rigPath := makeSharedCheckoutRig(t, true)
+
+	t.Setenv("GC_DOLT", "skip")
+	t.Setenv("GC_BEADS", "bd")
+
+	var stdout, stderr bytes.Buffer
+	code := doRigAdd(fsys.OSFS{}, cityPath, rigPath, nil, "", "", "", false, false, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("doRigAdd returned %d, stderr: %s", code, stderr.String())
+	}
+
+	data, err := os.ReadFile(filepath.Join(cityPath, "city.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `default_branch = "trunk"`) {
+		t.Errorf("city.toml should record the remote's mainline, not the checked-out branch:\n%s", data)
+	}
+	if !strings.Contains(stdout.String(), "Default branch: trunk") {
+		t.Errorf("output should report the remote's mainline:\n%s", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "only the branch checked out") {
+		t.Errorf("an authoritative answer must not warn:\n%s", stderr.String())
+	}
+}
+
+// TestDoRigAdd_WarnsWhenDefaultBranchIsOnlyTheCheckedOutBranch covers the
+// offline half. The add still proceeds and still records the guess -- refusing
+// would strand anyone registering a rig without network -- so the warning is
+// the entire remedy, and it has to name the branch and how to correct it.
+func TestDoRigAdd_WarnsWhenDefaultBranchIsOnlyTheCheckedOutBranch(t *testing.T) {
+	cityPath := t.TempDir()
+	writeSchema2RigCity(t, cityPath, "test-city", "[workspace]\n", "")
+
+	rigPath := makeSharedCheckoutRig(t, false)
+
+	t.Setenv("GC_DOLT", "skip")
+	t.Setenv("GC_BEADS", "bd")
+
+	var stdout, stderr bytes.Buffer
+	code := doRigAdd(fsys.OSFS{}, cityPath, rigPath, nil, "", "", "", false, false, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("doRigAdd returned %d, stderr: %s", code, stderr.String())
+	}
+
+	warning := stderr.String()
+	for _, want := range []string{"fix/ci-yxpd-stop-gate", "refs/remotes/origin/HEAD", "default_branch", "--default-branch"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("warning is missing %q:\n%s", want, warning)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(cityPath, "city.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `default_branch = "fix/ci-yxpd-stop-gate"`) {
+		t.Errorf("the add should still record the guess it warned about:\n%s", data)
+	}
+}
+
 func TestDoRigAdd_DetectsDefaultBranchFromOriginHEAD(t *testing.T) {
 	cityPath := t.TempDir()
 	writeSchema2RigCity(t, cityPath, "test-city", "[workspace]\n", "")

@@ -68,7 +68,7 @@ func Provision(deps Deps, req ProvisionRequest) (config.Rig, ProvisionResult, er
 	}
 
 	// Step 3: detect git and resolve the default branch.
-	hasGit, defaultBranchOverride, resolvedDefaultBranch := resolveGitDefaultBranch(deps, req, rigPath)
+	hasGit, defaultBranchOverride, resolvedDefaultBranch, defaultBranchGuessed := resolveGitDefaultBranch(deps, req, rigPath)
 
 	// Step 4: canonicalize --include tokens that name a pack (builtin or
 	// registry) rather than a path, and reject any token that resolves to no
@@ -101,7 +101,7 @@ func Provision(deps Deps, req ProvisionRequest) (config.Rig, ProvisionResult, er
 	// --- Phase 1: Infrastructure (all fallible, before touching city.toml) ---
 
 	// Step 12: banner + warn lines.
-	emitRigBannerAndWarnings(deps, req, plan, includes, hasGit, rigPath, resolvedDefaultBranch, defaultBranchOverride, emit)
+	emitRigBannerAndWarnings(deps, req, plan, includes, hasGit, defaultBranchGuessed, rigPath, resolvedDefaultBranch, defaultBranchOverride, emit)
 
 	// Step 13: beads-store init.
 	deferred, err := initRigBeadsStore(deps, req, rigPath, plan.prefix, emit)
@@ -171,6 +171,22 @@ type rigMutationPlan struct {
 	explicitRigImports    []config.BoundImport
 	defaultRigImports     []config.BoundImport
 	commitRigImports      func() error
+}
+
+// persistsDefaultBranch reports whether resolved is about to be written to
+// city.toml. A fresh add always records it; a re-add records it only when the
+// existing entry has none, because buildNextRigConfig never overwrites a branch
+// already in config.
+//
+// It gates the guessed-branch warning, so that re-adding a rig whose
+// default_branch an operator has already corrected by hand stays quiet -- a
+// warning about a value the run is not going to touch is noise that teaches
+// people to skip the one that matters.
+func (p rigMutationPlan) persistsDefaultBranch(resolved string) bool {
+	if resolved == "" {
+		return false
+	}
+	return p.existingRig == nil || p.existingRig.EffectiveDefaultBranch() == ""
 }
 
 // planRigMutation runs steps 5-9: it resolves the explicit bundled imports,
@@ -387,17 +403,21 @@ func maybeCloneRig(deps Deps, req ProvisionRequest, rigPath string, rigPathExist
 // resolveGitDefaultBranch reports whether the rig path is a git repo and resolves
 // the default branch: the explicit --default-branch override wins, otherwise a
 // probe of the repo (when one is present and a prober is injected). It returns
-// hasGit, the trimmed override, and the resolved branch (which equals the
-// override when no probe runs).
-func resolveGitDefaultBranch(deps Deps, req ProvisionRequest, rigPath string) (hasGit bool, override, resolved string) {
+// hasGit, the trimmed override, the resolved branch (which equals the override
+// when no probe runs), and whether the probe could only guess the name.
+//
+// guessed stays false for an override: the operator naming a branch is not a
+// guess, and warning about their own argument would train them to ignore the
+// warning that matters.
+func resolveGitDefaultBranch(deps Deps, req ProvisionRequest, rigPath string) (hasGit bool, override, resolved string, guessed bool) {
 	_, gitErr := deps.FS.Stat(filepath.Join(rigPath, ".git"))
 	hasGit = gitErr == nil
 	override = strings.TrimSpace(req.DefaultBranch)
 	resolved = override
 	if resolved == "" && hasGit && deps.ProbeBranch != nil {
-		resolved = deps.ProbeBranch(rigPath)
+		resolved, guessed = deps.ProbeBranch(rigPath)
 	}
-	return hasGit, override, resolved
+	return hasGit, override, resolved, guessed
 }
 
 // createRigDirIfMissing creates the rig directory when the earlier stat (or a
@@ -488,9 +508,10 @@ func validateAdoptAndBeadsStore(deps Deps, req ProvisionRequest, rigPath string,
 // emitRigBannerAndWarnings emits step 12's banner and the re-add warning lines:
 // on a re-add it warns that --start-suspended, --include, --prefix, and
 // --default-branch overrides are ignored in favor of the existing rig; on a
-// fresh add it announces the prefix, default branch, and resolved imports. It is
-// pure progress emission — every branch ends in an emit, never an error.
-func emitRigBannerAndWarnings(deps Deps, req ProvisionRequest, plan rigMutationPlan, includes []string, hasGit bool, rigPath, resolvedDefaultBranch, defaultBranchOverride string, emit func(ProvisionStep)) {
+// fresh add it announces the prefix, default branch, and resolved imports, and
+// warns when the default branch is only a guess. It is pure progress emission —
+// every branch ends in an emit, never an error.
+func emitRigBannerAndWarnings(deps Deps, req ProvisionRequest, plan rigMutationPlan, includes []string, hasGit, defaultBranchGuessed bool, rigPath, resolvedDefaultBranch, defaultBranchOverride string, emit func(ProvisionStep)) {
 	name := req.Name
 	if plan.reAdd {
 		emit(ProvisionStep{Name: "banner", Detail: fmt.Sprintf("Re-initializing rig '%s'...", name)})
@@ -522,6 +543,20 @@ func emitRigBannerAndWarnings(deps Deps, req ProvisionRequest, plan rigMutationP
 	emit(ProvisionStep{Name: "prefix", Detail: fmt.Sprintf("  Prefix: %s", plan.prefix)})
 	if !plan.reAdd && resolvedDefaultBranch != "" {
 		emit(ProvisionStep{Name: "default-branch", Detail: fmt.Sprintf("  Default branch: %s", resolvedDefaultBranch)})
+	}
+	// A rig added from a checkout several agent sessions share hits the guess
+	// every time, and the silence is what let a transient feature branch become
+	// gascity's recorded mainline (ci-6m97). Gated on the write rather than on
+	// !reAdd: the re-add backfill persists the same guess, and it emits no
+	// "Default branch:" line at all, so the warning is the only signal there.
+	if defaultBranchGuessed && plan.persistsDefaultBranch(resolvedDefaultBranch) {
+		emit(ProvisionStep{Name: "default-branch-guessed", Warn: true, Detail: fmt.Sprintf(
+			"warning: default branch %q for rig %q is only the branch checked out at %s"+
+				" (no refs/remotes/origin/HEAD, and the remote did not answer);"+
+				" polecats and the refinery target it, so if that is a feature branch"+
+				" set default_branch under [[rigs]] in city.toml"+
+				" -- or pass --default-branch=<mainline> to skip the probe",
+			resolvedDefaultBranch, name, rigPath)})
 	}
 	if !plan.reAdd {
 		switch {
