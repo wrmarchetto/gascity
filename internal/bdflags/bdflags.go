@@ -1,9 +1,19 @@
-// Package bdflags is the single source of truth for bd CLI flag names per
-// subcommand. It backs both the write-mutation ID guard in cmd/gc/cmd_bd.go
-// and the gc lint check that validates bd invocations embedded in prompt
-// templates, so the two call sites cannot drift apart from each other.
+// Package bdflags is the single source of truth for what the bd CLI is named:
+// flag names per subcommand, and the top-level subcommand and alias names
+// themselves. The flag manifests back both the write-mutation ID guard in
+// cmd/gc/cmd_bd.go and the gc lint check that validates bd invocations
+// embedded in prompt templates, so the two call sites cannot drift apart from
+// each other. The command-name list (commands.go) backs the gate that stops a
+// verb gc handles itself from silently shadowing one of bd's.
 //
-// Sourced from bd <sub> --help output (2026-07-13, bd v1.1.0).
+// The two halves have different provenance and different freshness gates, so
+// do not reason from one to the other. Flag manifests are transcribed from
+// bd <sub> --help output (2026-07-13, bd v1.1.0) and checked against an
+// installed binary only under the integration tag (freshness_test.go), which
+// SKIPS when bd is absent -- tolerable because a stale flag manifest degrades
+// a lint check. Command names are re-derived from the beads module source on
+// every ordinary test run and NEVER skip, because a stale name list is the
+// defect itself (ci-mosn).
 package bdflags
 
 import "sort"
