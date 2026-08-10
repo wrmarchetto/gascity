@@ -2419,6 +2419,12 @@ func runProviderOpWithEnvContext(parent context.Context, script string, environ 
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	// Adopt whatever managed dolt server the script recorded before the exit
+	// status is interpreted, and for every op rather than just "start": a start
+	// that spawned a server and then failed its ready probe, or one whose
+	// script was killed by the deadline above, is exactly the case that leaks.
+	// No-op outside test mode; see dolt_test_process_adoption.go.
+	adoptScriptSpawnedManagedDoltForTests(environ)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("exec beads %s: %w", args[0], ctxErr)
