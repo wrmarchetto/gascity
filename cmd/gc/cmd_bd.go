@@ -85,8 +85,14 @@ in the arguments.
 
 Use --rig <name> to pin a specific rig store, or --city <path> to pin the
 city (HQ) store. An explicit --city is a true scope override: it forces the
-city store and disables rig auto-detection (GC_RIG, cwd, bead prefix), so a
-deliberate city-scoped query is never silently downgraded to a rig store.
+city store and disables rig auto-detection (GC_RIG, GC_BEADS_SCOPE_ROOT, cwd,
+bead prefix), so a deliberate city-scoped query is never silently downgraded to
+a rig store.
+
+Inside a gc-managed agent session, GC_BEADS_SCOPE_ROOT -- the scope gc stamped
+on the session from that agent's own config -- decides the store, ahead of cwd.
+An agent whose work_dir is a worktree of another rig therefore reads and writes
+the same store instead of reading its own and writing the worktree's.
 
 All arguments after "gc bd" are forwarded to bd unchanged, except the
 "heartbeat <issue-id>" subcommand (alias "hb"), which performs two writes so
@@ -678,7 +684,9 @@ func extractBdDirectoryFlag(args []string) string {
 }
 
 // resolveBdScopeTarget determines the canonical scope root for a bd command.
-// Priority: explicit rig name > explicit city > bead prefix auto-detection > -C dir rig match > GC_RIG env > enclosing rig > city root.
+// Priority: explicit rig name > explicit city > bead prefix auto-detection > -C
+// dir rig match > GC_RIG env > GC_BEADS_SCOPE_ROOT env > enclosing rig > city
+// root.
 //
 // stderr receives a best-effort warning when a set-but-unresolvable GC_RIG is
 // discarded (see the GC_RIG block below); pass io.Discard when the caller does
@@ -774,15 +782,69 @@ func resolveBdScopeTarget(cfg *config.City, cityPath, rigName string, args []str
 		gcRigDiscarded = gcRig
 	}
 
+	// Honor GC_BEADS_SCOPE_ROOT above cwd. gc stamps it on every session it
+	// launches, from the agent's own config -- the city path for a city-scoped
+	// agent, the rig root for a rig-scoped one (template_resolve.go, which also
+	// clears GC_RIG for city agents, so the tier above cannot answer for them).
+	// It states which store the session's WORK lives in; cwd only states where
+	// the session happens to stand.
+	//
+	// For an agent whose work_dir is a worktree of some other rig those two
+	// disagree, and the disagreement was silent and asymmetric (ci-qbkr): the
+	// worktree's .beads/redirect routed every bd command carrying no bead id to
+	// that rig, so `gc bd show <city-bead>` answered from the city store via the
+	// prefix tier above while `gc bd create` filed into the rig and printed a
+	// confident "Created issue: gs-5u8". An agent that verified its own setup
+	// with a read therefore got a passing answer and filed into the other store
+	// anyway, and the follow-up landed assigned to an agent in a store no such
+	// agent reads -- zero pool demand, so it waited for a human to notice.
+	//
+	// This is the same var scopedBeadsProviderOverride (providers.go) compares
+	// against the resolved scope root to decide the beads provider, so a target
+	// that disagrees with it was also silently discarding the session's pinned
+	// provider and re-peeking city.toml.
+	//
+	// Not a tier above GC_RIG: GC_RIG names one rig, which is the more specific
+	// statement, and gc never emits the two in conflict. Operator shells carry
+	// no GC_BEADS_SCOPE_ROOT at all, so `cd` into a rig and `gc bd list` is
+	// untouched.
 	target := cityTarget
-	if rig, ok, err := bdRigFromCwd(cfg, cityPath); err != nil {
-		return execStoreTarget{}, err
-	} else if ok {
-		// resolveRigForDir already skips unbound rigs, so rig.Path is
-		// guaranteed non-empty here.
-		target = bdRigScopeTarget(cityPath, rig)
+	scopeRootHonored := false
+	scopeRootDiscarded := ""
+	if scopeRoot := strings.TrimSpace(os.Getenv("GC_BEADS_SCOPE_ROOT")); scopeRoot != "" {
+		resolved := resolveStoreScopeRoot(cityPath, scopeRoot)
+		if samePath(resolved, resolveStoreScopeRoot(cityPath, cityPath)) {
+			// The city case is settled before resolveRigForDir gets a look
+			// because that helper also follows a .beads/redirect found under
+			// the path it is given. The city root holds the real store and
+			// never a redirect, and letting a stray file retarget the one
+			// scope that must stay fixed is the failure this tier exists to
+			// end, not one to reintroduce.
+			scopeRootHonored = true
+		} else if rig, ok, rerr := resolveRigForDir(cfg, cityPath, resolved); rerr == nil && ok {
+			target = bdRigScopeTarget(cityPath, rig)
+			scopeRootHonored = true
+		} else {
+			// Names neither this city nor a bound rig. Mirrors the GC_RIG
+			// discard directly above: fall through to cwd rather than error,
+			// because a cross-city query from an agent stamped for another city
+			// still has to work -- but do not do it silently.
+			scopeRootDiscarded = scopeRoot
+		}
+	}
+	if !scopeRootHonored {
+		if rig, ok, err := bdRigFromCwd(cfg, cityPath); err != nil {
+			return execStoreTarget{}, err
+		} else if ok {
+			// resolveRigForDir already skips unbound rigs, so rig.Path is
+			// guaranteed non-empty here.
+			target = bdRigScopeTarget(cityPath, rig)
+		}
 	}
 
+	if scopeRootDiscarded != "" {
+		fmt.Fprintf(stderr, "gc bd: warning: GC_BEADS_SCOPE_ROOT=%q names neither this city nor a bound rig; ignoring it and answering from the %s store instead\n", scopeRootDiscarded, scopeLabel(target)) //nolint:errcheck // best-effort stderr
+	}
 	if gcRigDiscarded != "" {
 		fmt.Fprintf(stderr, "gc bd: warning: GC_RIG=%q does not name a bound rig in this city; ignoring it and answering from the %s store instead (the same value via --rig would exit 1)\n", gcRigDiscarded, scopeLabel(target)) //nolint:errcheck // best-effort stderr
 	}

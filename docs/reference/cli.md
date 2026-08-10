@@ -268,8 +268,14 @@ in the arguments.
 
 Use --rig &lt;name&gt; to pin a specific rig store, or --city &lt;path&gt; to pin the
 city (HQ) store. An explicit --city is a true scope override: it forces the
-city store and disables rig auto-detection (GC_RIG, cwd, bead prefix), so a
-deliberate city-scoped query is never silently downgraded to a rig store.
+city store and disables rig auto-detection (GC_RIG, GC_BEADS_SCOPE_ROOT, cwd,
+bead prefix), so a deliberate city-scoped query is never silently downgraded to
+a rig store.
+
+Inside a gc-managed agent session, GC_BEADS_SCOPE_ROOT -- the scope gc stamped
+on the session from that agent's own config -- decides the store, ahead of cwd.
+An agent whose work_dir is a worktree of another rig therefore reads and writes
+the same store instead of reading its own and writing the worktree's.
 
 All arguments after "gc bd" are forwarded to bd unchanged, except the
 "heartbeat &lt;issue-id&gt;" subcommand (alias "hb"), which performs two writes so
