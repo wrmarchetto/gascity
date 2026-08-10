@@ -19,6 +19,27 @@ import (
 	"github.com/gastownhall/gascity/internal/pathutil"
 )
 
+// maxCheckInfraRetries bounds how many times a ralph check gate may be re-run
+// because it could not EXECUTE before that infra outcome is treated as a
+// genuine failure. Infra re-runs do NOT burn a gc.attempt, so a
+// transport/store outage cannot exhaust a loop's attempts and abort_scope a
+// green subject (maintainer-city "zero-merge day": three attempts burned in
+// one outage). The bound guarantees a gate that can NEVER run -- a broken
+// interpreter, a perpetual timeout -- still terminates the workflow instead of
+// pending forever. The counter lives on the ralph control bead, so this is the
+// loop's total infra-retry budget.
+//
+// It bounds RETRIES, not wall-clock, and the two infra outcomes cost very
+// different amounts of it. A GateError fails at exec and costs only the ~15s
+// reconcile cadence, so 20 of them ride a five-minute outage. A GateTimeout
+// costs its whole gc.check_timeout (5m by default) per re-run, so the same 20
+// can hold a molecule open for hours. That is accepted rather than fixed here:
+// a time budget would need a first-infra-failure timestamp on the control bead
+// and a clock in the dispatcher, and a gate whose script hangs for five minutes
+// is already a defect the operator wants to see pending rather than silently
+// converted into a failed workflow.
+const maxCheckInfraRetries = 20
+
 func runRalphCheck(store beads.Store, bead, subject beads.Bead, attempt int, opts ProcessOptions) (convergence.GateResult, error) {
 	if subject.Metadata[beadmeta.OutcomeMetadataKey] == beadmeta.OutcomeFail {
 		exitCode := 1
@@ -280,6 +301,53 @@ func gateObservationMetadata(result convergence.GateResult) map[string]string {
 // config intact, and prefix-adjacent names invite clearing one with the other.
 func persistGateObservation(store beads.Store, beadID string, result convergence.GateResult) error {
 	return store.SetMetadataBatch(beadID, gateObservationMetadata(result))
+}
+
+// isGateInfraOutcome reports whether a gate outcome means the gate never
+// produced a verdict, as opposed to producing an adverse one.
+//
+// Enumerated rather than written as `outcome != GatePass && outcome !=
+// GateFail`, because the open form silently absorbs any outcome convergence
+// adds later: a new verdict-bearing outcome would start riding the infra-retry
+// path and stop consuming attempts, turning gc.max_attempts into a no-op for
+// it. convergence.GateResult documents exactly four outcomes
+// (convergence/gate.go), so the closed form costs nothing.
+func isGateInfraOutcome(outcome string) bool {
+	return outcome == convergence.GateError || outcome == convergence.GateTimeout
+}
+
+// recordRalphGateInfraRetry charges one unit of the ralph loop's infra-retry
+// budget for a gate that could not execute, returning whether the caller should
+// re-run the gate (pend) rather than treat the outcome as a failed attempt.
+//
+// The counter lives on the control bead and is never reset -- not on a GatePass,
+// not on a GateFail. That is deliberate: the budget bounds the WHOLE loop, and
+// a per-iteration reset would let a gate that fails to execute every other run
+// pend indefinitely, which is the failure the bound exists to prevent. It is
+// also absent from clearRetryEphemera's scrub list because the control bead is
+// never cloned; adding a clone path for the control would need this key carried
+// forward, or the budget silently restarts.
+//
+// A store failure recording the bump is classified through the controller spawn
+// boundary rather than returned, so a transient store outage -- the exact
+// condition that makes gates unrunnable in the first place -- pends instead of
+// erroring the control out.
+func recordRalphGateInfraRetry(store beads.Store, control beads.Bead, iteration int, result convergence.GateResult, opts ProcessOptions) (bool, error) {
+	infraRetries, _ := strconv.Atoi(strings.TrimSpace(control.Metadata[beadmeta.CheckInfraRetryMetadataKey]))
+	if infraRetries >= maxCheckInfraRetries {
+		opts.tracef("ralph check-infra-exhausted bead=%s outcome=%s infra_retry=%d iteration=%d (falling through to the attempt budget)",
+			control.ID, result.Outcome, infraRetries, iteration)
+		return false, nil
+	}
+	if err := store.SetMetadata(control.ID, beadmeta.CheckInfraRetryMetadataKey, strconv.Itoa(infraRetries+1)); err != nil {
+		if controllerSpawnBoundaryPending(store, control.ID, err, opts) {
+			return true, nil
+		}
+		return false, fmt.Errorf("%s: recording gate infra-retry: %w", control.ID, err)
+	}
+	opts.tracef("ralph check-infra-retry bead=%s outcome=%s infra_retry=%d/%d iteration=%d (attempt not burned)",
+		control.ID, result.Outcome, infraRetries+1, maxCheckInfraRetries, iteration)
+	return true, nil
 }
 
 func retryPreservedAssigneeWithConfig(bead beads.Bead, cfg *config.City) string {
