@@ -277,9 +277,12 @@ func evaluateRetryAttempt(store beads.Store, bead, attempt beads.Bead, _ int, op
 
 // evaluateRalphIteration propagates the iteration's non-gc metadata onto the
 // ralph control, reloads the control so the check sees the updated values, and
-// runs the check script. A GatePass closes the control passed and an iteration
-// that declared a hard failure closes it terminally; anything else spawns the
-// next iteration or exhausts.
+// runs the check script. A GatePass closes the control and a GateFail spawns
+// the next iteration or exhausts, except that an iteration which declared a
+// hard failure closes the control terminally whatever budget remains. A gate
+// that could not run at all (GateError/GateTimeout) is none of those: it
+// returns ErrControlPending for a re-run that costs no attempt, until the
+// infra-retry budget is spent.
 func evaluateRalphIteration(store beads.Store, bead, iteration beads.Bead, iterationNum int, opts ProcessOptions) (attemptEvaluation, error) {
 	// Propagate non-gc metadata from the iteration to the ralph control BEFORE
 	// running the check. This makes the iteration's output (e.g.,
@@ -316,6 +319,21 @@ func evaluateRalphIteration(store beads.Store, bead, iteration beads.Bead, itera
 	// overwrites them -- only gc.attempt_log accumulates.
 	if err := persistGateObservation(store, bead.ID, checkResult); err != nil {
 		return attemptEvaluation{}, fmt.Errorf("%s: recording check observation: %w", bead.ID, err)
+	}
+	// A gate that could not RUN produced no verdict, and a loop that spends an
+	// attempt on it is fabricating one. Re-run instead, off the attempt budget
+	// and bounded by maxCheckInfraRetries. Reads the count off `reloaded`
+	// rather than `bead`: the propagation above is a write to this same bead,
+	// and a stale copy would re-derive the budget from whatever the caller
+	// happened to load.
+	if isGateInfraOutcome(checkResult.Outcome) {
+		pending, err := recordRalphGateInfraRetry(store, reloaded, iterationNum, checkResult, opts)
+		if err != nil {
+			return attemptEvaluation{}, err
+		}
+		if pending {
+			return attemptEvaluation{}, ErrControlPending
+		}
 	}
 	eval := attemptEvaluation{logOutcome: checkResult.Outcome, logDetail: checkResult.Stderr}
 	switch {

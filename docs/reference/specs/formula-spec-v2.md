@@ -665,6 +665,14 @@ after each iteration closes, the orchestrator runs the configured script;
 pass closes the step, fail with budget left spawns the next iteration,
 exhaustion closes the step as failed.
 
+A script that cannot run at all — it exits via `check.timeout`, or the
+interpreter or the file itself cannot be executed — is neither a pass nor
+a fail, and does **not** consume an attempt. The orchestrator re-runs it
+on the next cycle, up to a fixed internal budget, so an outage that makes
+gates unrunnable cannot exhaust `max_attempts` and fail a step whose work
+was fine. Once that budget is spent the outcome counts as a fail, so a
+permanently unrunnable script still terminates the loop.
+
 An iteration that closes `gc.outcome = fail` with
 `gc.failure_class = hard` ends the loop on that iteration regardless of
 remaining budget, closing the control `gc.outcome = fail` with

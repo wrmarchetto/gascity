@@ -19,8 +19,19 @@ import (
 )
 
 // moleculeAutocloseReason is the close_reason metadata value stamped on
-// molecule roots auto-closed because all of their step children are
-// terminal. Mirrors convoyAutocloseReason for the convoy path.
+// molecule roots auto-closed because all of their step children are terminal.
+//
+// The three molecule closers already write three distinct reasons -- this one,
+// moleculeSourceAutocloseReason below, and abandonedRootCloseReason in
+// wisp_gc.go -- so the collision that ci-eh7h fixed on the convoy side does
+// NOT exist here. What is still shared is the ENTRY POINT: this string is
+// written whether the controller's in-process bead.closed handler
+// (runBeadCloseAutoclose) or the standalone `gc molecule autoclose` CLI
+// resolved the root, so a closed molecule names its trigger but not its
+// plumbing. The convoy path separates those with convoyCloseOrigin
+// (convoy_close_origin.go); molecules deliberately do not yet, because no
+// investigation has needed the distinction and adding it would make the
+// molecule record two-dimensional (trigger x entry point).
 const moleculeAutocloseReason = "molecule autoclose: all step children closed"
 
 // moleculeSourceAutocloseReason is the close_reason stamped on graph-workflow
