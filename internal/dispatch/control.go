@@ -29,7 +29,9 @@ const (
 	// attemptPass closes the control as passed.
 	attemptPass attemptDisposition = iota
 	// attemptHardFail closes the control as a terminal hard failure regardless
-	// of attempts remaining (only the retry classifier produces this).
+	// of attempts remaining. Both loops emit it, on deliberately different
+	// classifications of an empty gc.failure_class -- see
+	// hardIterationFailure.
 	attemptHardFail
 	// attemptContinue spawns the next attempt when attempts remain, or disposes
 	// of the exhausted control via the strategy when max_attempts is reached.
@@ -275,8 +277,9 @@ func evaluateRetryAttempt(store beads.Store, bead, attempt beads.Bead, _ int, op
 
 // evaluateRalphIteration propagates the iteration's non-gc metadata onto the
 // ralph control, reloads the control so the check sees the updated values, and
-// runs the check script. A GatePass closes the control; anything else spawns
-// the next iteration or exhausts.
+// runs the check script. A GatePass closes the control passed and an iteration
+// that declared a hard failure closes it terminally; anything else spawns the
+// next iteration or exhausts.
 func evaluateRalphIteration(store beads.Store, bead, iteration beads.Bead, iterationNum int, opts ProcessOptions) (attemptEvaluation, error) {
 	// Propagate non-gc metadata from the iteration to the ralph control BEFORE
 	// running the check. This makes the iteration's output (e.g.,
@@ -315,12 +318,61 @@ func evaluateRalphIteration(store beads.Store, bead, iteration beads.Bead, itera
 		return attemptEvaluation{}, fmt.Errorf("%s: recording check observation: %w", bead.ID, err)
 	}
 	eval := attemptEvaluation{logOutcome: checkResult.Outcome, logDetail: checkResult.Stderr}
-	if checkResult.Outcome == convergence.GatePass {
+	switch {
+	case checkResult.Outcome == convergence.GatePass:
 		eval.disposition = attemptPass
-	} else {
+	case hardIterationFailure(iteration):
+		// Terminal on this iteration rather than cloning up to
+		// gc.max_attempts. That treadmill is what abort_scope-killed
+		// molecules: iteration 1 reported a failure no re-run repairs, and the
+		// loop spent the whole budget re-reporting it.
+		//
+		// Ordered after the pass, mirroring the branch this recovers. The two
+		// cannot both hold today -- runRalphCheck synthesizes a GateFail for
+		// any gc.outcome=fail subject without executing the script -- but a
+		// later change to that short-circuit must not silently let a stale
+		// class outrank a gate that ran and passed.
+		//
+		// The log fields take the retry loop's hard values rather than keeping
+		// the gate's: appendAttemptLogValue renders only "hard" as
+		// action=hard-fail, so recording the synthesized "fail" would leave a
+		// terminal iteration indistinguishable from a repairable one in the
+		// gc.attempt_log history that diagnosing this loop rests on.
+		//
+		// "hard" is written raw, not as beadmeta.FailureClassHard. The
+		// attempt-log outcome domain is {pass, hard, transient} and only
+		// coincides with the gc.failure_class vocabulary on this value -- the
+		// same separation persistRetryEvalResult keeps, and for the same
+		// reason: binding them invites a miscompare when one moves.
+		reason := retryFailureReason(iteration)
+		eval.disposition = attemptHardFail
+		eval.logOutcome = "hard"
+		eval.logDetail = reason
+		eval.reason = reason
+	default:
 		eval.disposition = attemptContinue
 	}
 	return eval, nil
+}
+
+// hardIterationFailure reports whether a closed ralph iteration declared a
+// failure that no further iteration can repair.
+//
+// Deliberately NOT classifyRetryAttempt, whose fail branch reads
+// `case beadmeta.FailureClassHard, "":` and so maps an EMPTY gc.failure_class
+// to hard. An iteration closing fail without classifying itself is the ordinary
+// repairable case here -- iterating on it is what the ralph loop is for -- so
+// only an explicit "hard" terminates, and an unrecognized class stays
+// repairable too. Reusing the retry classifier would make every unclassified
+// iteration failure terminal.
+//
+// The gc.outcome comparison is untrimmed on purpose, to match runRalphCheck's
+// already-failed short-circuit exactly. If one side trimmed and the other did
+// not, an iteration with a stray newline in gc.outcome would be a failure to
+// the classifier and a runnable subject to the gate.
+func hardIterationFailure(iteration beads.Bead) bool {
+	return iteration.Metadata[beadmeta.OutcomeMetadataKey] == beadmeta.OutcomeFail &&
+		strings.TrimSpace(iteration.Metadata[beadmeta.FailureClassMetadataKey]) == beadmeta.FailureClassHard
 }
 
 func ensureBlockingDependency(store beads.Store, issueID, dependsOnID string) error {
