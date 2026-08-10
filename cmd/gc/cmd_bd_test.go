@@ -515,6 +515,270 @@ func TestResolveBdScopeTargetErrorsOnForeignRedirect(t *testing.T) {
 	}
 }
 
+// redirectedWorktreeCity builds the fixture that reproduces ci-qbkr: a city
+// holding two bound rigs, plus an agent work_dir under .gc/worktrees/ whose
+// .beads/redirect points at the first rig's store. Returns the city root and
+// that rig root, and leaves cwd inside the worktree.
+//
+// The redirect file is what makes cwd detection disagree with the agent's
+// configured scope, so it is the whole point of the fixture -- a worktree
+// without one resolves to the city by accident and every assertion below
+// passes whether or not the implementation reads GC_BEADS_SCOPE_ROOT.
+//
+// The worktree path is deliberately not returned. Every caller wants cwd set
+// to it, which the helper already does, and handing it back invited a caller
+// to plant a second redirect there and split the fixture's one story in two.
+func redirectedWorktreeCity(t *testing.T) (cityDir, rigDir string) {
+	t.Helper()
+	cityDir = t.TempDir()
+	rigDir = filepath.Join(cityDir, "rigs", "gascity")
+	worktreeDir := filepath.Join(cityDir, ".gc", "worktrees", "gascity", "toolsmith-2")
+	for _, dir := range []string{filepath.Join(worktreeDir, ".beads"), rigDir, filepath.Join(cityDir, "rigs", "dart")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(worktreeDir, ".beads", "redirect"), []byte(filepath.Join(rigDir, ".beads")+"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(redirect): %v", err)
+	}
+	setCwd(t, worktreeDir)
+	return cityDir, rigDir
+}
+
+// redirectedWorktreeCityConfig declares two bound rigs. The second one exists
+// only so the "rig scope root" assertions can name a WRONG answer that the
+// resolver could plausibly give -- with a single rig, a test asserting the
+// named rig cannot distinguish a resolver that read the scope root from one
+// that followed a redirect to the only other candidate.
+func redirectedWorktreeCityConfig() *config.City {
+	return &config.City{
+		Workspace: config.Workspace{Name: "gascity", Prefix: "ci"},
+		Rigs: []config.Rig{
+			{Name: "gascity", Path: filepath.Join("rigs", "gascity"), Prefix: "gs"},
+			{Name: "dart", Path: filepath.Join("rigs", "dart"), Prefix: "da"},
+		},
+	}
+}
+
+// TestResolveBdScopeTargetHonorsAgentScopeRootOverRedirectedCwd pins that the
+// scope gc itself stamped on the session (GC_BEADS_SCOPE_ROOT, written by
+// template_resolve.go from the agent's config) outranks whatever store cwd
+// happens to imply.
+//
+// ci-qbkr: a city-scoped agent whose work_dir is a rig worktree filed its
+// follow-up beads into the RIG store. `gc bd show <city-bead>` resolved the
+// city store via bead-prefix detection while `gc bd create` -- carrying no bead
+// id -- fell all the way through to cwd, which the worktree's .beads/redirect
+// maps to the rig. Reads and writes therefore disagreed, and the write half
+// printed a confident "Created issue: gs-5u8". The bead landed assigned to an
+// agent in a store no such agent reads, raising zero pool demand.
+//
+// The subtests assert the resolved target rather than any warning text: the
+// defect was a silently wrong STORE, and a test pinning the diagnostic would
+// stay green if the store were still wrong.
+func TestResolveBdScopeTargetHonorsAgentScopeRootOverRedirectedCwd(t *testing.T) {
+	origProbe := bdBeadExists
+	defer func() { bdBeadExists = origProbe }()
+	bdBeadExists = func(_ string, _ *config.City, _ execStoreTarget, _ string) bool { return false }
+
+	t.Run("city scope root beats redirected cwd", func(t *testing.T) {
+		cityDir, _ := redirectedWorktreeCity(t)
+		t.Setenv("GC_BEADS_SCOPE_ROOT", cityDir)
+		var stderr bytes.Buffer
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "", []string{"create", "follow-up", "--assignee", "toolsmith"}, false, &stderr)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		want := execStoreTarget{ScopeRoot: cityDir, ScopeKind: "city", Prefix: "ci"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v", got, want)
+		}
+		// Honoring the configured scope is the correct answer here, not a
+		// salvaged fallback, so it must not warn. A warning on every bd call
+		// from an agent whose work_dir is a rig worktree is pure noise.
+		if warn := stderr.String(); warn != "" {
+			t.Fatalf("expected no warning when the scope root resolves, got %q", warn)
+		}
+	})
+
+	t.Run("rig scope root beats city cwd", func(t *testing.T) {
+		cityDir, rigDir := redirectedWorktreeCity(t)
+		setCwd(t, cityDir)
+		t.Setenv("GC_BEADS_SCOPE_ROOT", rigDir)
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "", []string{"list"}, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		want := execStoreTarget{ScopeRoot: rigDir, ScopeKind: "rig", Prefix: "gs", RigName: "gascity"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("explicit rig flag still wins", func(t *testing.T) {
+		cityDir, rigDir := redirectedWorktreeCity(t)
+		t.Setenv("GC_BEADS_SCOPE_ROOT", cityDir)
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "gascity", []string{"list"}, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		want := execStoreTarget{ScopeRoot: rigDir, ScopeKind: "rig", Prefix: "gs", RigName: "gascity"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("GC_RIG still wins", func(t *testing.T) {
+		cityDir, rigDir := redirectedWorktreeCity(t)
+		t.Setenv("GC_BEADS_SCOPE_ROOT", cityDir)
+		t.Setenv("GC_RIG", "gascity")
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "", []string{"list"}, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		want := execStoreTarget{ScopeRoot: rigDir, ScopeKind: "rig", Prefix: "gs", RigName: "gascity"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v", got, want)
+		}
+	})
+
+	t.Run("bead prefix in args still wins", func(t *testing.T) {
+		cityDir, rigDir := redirectedWorktreeCity(t)
+		t.Setenv("GC_BEADS_SCOPE_ROOT", cityDir)
+		origProbe2 := bdBeadExists
+		defer func() { bdBeadExists = origProbe2 }()
+		bdBeadExists = func(_ string, _ *config.City, target execStoreTarget, beadID string) bool {
+			return beadID == "gs-5u8" && target.RigName == "gascity"
+		}
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "", []string{"show", "gs-5u8"}, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		want := execStoreTarget{ScopeRoot: rigDir, ScopeKind: "rig", Prefix: "gs", RigName: "gascity"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v", got, want)
+		}
+	})
+
+	// A rig scope root wins by path containment, which resolveRigForDir checks
+	// before it walks for a .beads/redirect. Without this case the rig-scope-root
+	// assertion above passes whether or not the tier can be retargeted by a
+	// redirect planted under the root it was handed -- there is only one other
+	// rig it could wrongly name, and nothing ever names it.
+	t.Run("redirect under a rig scope root does not retarget it", func(t *testing.T) {
+		cityDir, rigDir := redirectedWorktreeCity(t)
+		otherRig := filepath.Join(cityDir, "rigs", "dart")
+		if err := os.MkdirAll(filepath.Join(rigDir, ".beads"), 0o755); err != nil {
+			t.Fatalf("MkdirAll(rig .beads): %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(rigDir, ".beads", "redirect"), []byte(filepath.Join(otherRig, ".beads")+"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(rig redirect): %v", err)
+		}
+		t.Setenv("GC_BEADS_SCOPE_ROOT", rigDir)
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "", []string{"list"}, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		want := execStoreTarget{ScopeRoot: rigDir, ScopeKind: "rig", Prefix: "gs", RigName: "gascity"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v (the named rig, not the redirect target)", got, want)
+		}
+	})
+
+	// Records a deliberate asymmetry with the cwd tier rather than leaving it to
+	// be discovered: the cwd tier propagates resolveRigForDir's foreign-redirect
+	// error (TestResolveBdScopeTargetErrorsOnForeignRedirect pins that), while
+	// this tier downgrades the same condition to the discard path. A stamped
+	// scope root is a hint about which store the session owns, not a command, so
+	// a broken redirect under it must not take out every bd call in the session
+	// -- cwd still gets its turn, and errors there on its own terms.
+	t.Run("foreign redirect at the scope root discards instead of erroring", func(t *testing.T) {
+		cityDir, rigDir := redirectedWorktreeCity(t)
+		strayRoot := filepath.Join(cityDir, "stray")
+		foreign := filepath.Join(t.TempDir(), "foreign")
+		for _, dir := range []string{filepath.Join(strayRoot, ".beads"), filepath.Join(foreign, ".beads")} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatalf("MkdirAll(%s): %v", dir, err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(strayRoot, ".beads", "redirect"), []byte(filepath.Join(foreign, ".beads")+"\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(stray redirect): %v", err)
+		}
+		t.Setenv("GC_BEADS_SCOPE_ROOT", strayRoot)
+		var stderr bytes.Buffer
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "", []string{"list"}, false, &stderr)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v, want the scope root discarded", err)
+		}
+		want := execStoreTarget{ScopeRoot: rigDir, ScopeKind: "rig", Prefix: "gs", RigName: "gascity"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v (cwd)", got, want)
+		}
+		if warn := stderr.String(); !strings.Contains(warn, "GC_BEADS_SCOPE_ROOT") {
+			t.Fatalf("expected the discard to warn, got %q", warn)
+		}
+	})
+
+	t.Run("scope root naming no known store falls through to cwd and warns", func(t *testing.T) {
+		cityDir, rigDir := redirectedWorktreeCity(t)
+		stray := filepath.Join(t.TempDir(), "not-a-city")
+		t.Setenv("GC_BEADS_SCOPE_ROOT", stray)
+		var stderr bytes.Buffer
+		got, err := resolveBdScopeTarget(redirectedWorktreeCityConfig(), cityDir, "", []string{"list"}, false, &stderr)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget() error = %v", err)
+		}
+		// Mirrors the GC_RIG discard tier: an unresolvable value does not
+		// error, but it must not redirect the query silently either.
+		want := execStoreTarget{ScopeRoot: rigDir, ScopeKind: "rig", Prefix: "gs", RigName: "gascity"}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget() = %#v, want %#v", got, want)
+		}
+		warn := stderr.String()
+		if !strings.Contains(warn, "GC_BEADS_SCOPE_ROOT") || !strings.Contains(warn, stray) {
+			t.Fatalf("expected a warning naming the discarded scope root, got %q", warn)
+		}
+		if !strings.Contains(warn, `rig "gascity"`) {
+			t.Fatalf("expected the warning to name the store answered, got %q", warn)
+		}
+	})
+}
+
+// TestResolveBdScopeTargetReadAndWriteAgreeUnderAgentScopeRoot pins the
+// asymmetry that made ci-qbkr invisible: an agent that verified its own setup
+// with a read got a passing answer and filed into the other store anyway.
+//
+// Both invocations are resolved from one unchanged environment, so the test
+// fails if either half moves -- it cannot be satisfied by teaching writes and
+// reads to agree on the WRONG store, because the expected target is the
+// configured scope root computed by the fixture, not whatever the first call
+// returned.
+func TestResolveBdScopeTargetReadAndWriteAgreeUnderAgentScopeRoot(t *testing.T) {
+	cityDir, _ := redirectedWorktreeCity(t)
+	t.Setenv("GC_BEADS_SCOPE_ROOT", cityDir)
+	origProbe := bdBeadExists
+	defer func() { bdBeadExists = origProbe }()
+	bdBeadExists = func(_ string, _ *config.City, target execStoreTarget, beadID string) bool {
+		return beadID == "ci-qbkr" && target.ScopeKind == "city"
+	}
+	cfg := redirectedWorktreeCityConfig()
+	want := execStoreTarget{ScopeRoot: cityDir, ScopeKind: "city", Prefix: "ci"}
+
+	for _, args := range [][]string{
+		{"show", "ci-qbkr"},
+		{"list", "--json"},
+		{"create", "follow-up", "--assignee", "toolsmith"},
+	} {
+		got, err := resolveBdScopeTarget(cfg, cityDir, "", args, false, io.Discard)
+		if err != nil {
+			t.Fatalf("resolveBdScopeTarget(%v) error = %v", args, err)
+		}
+		if got != want {
+			t.Fatalf("resolveBdScopeTarget(%v) = %#v, want %#v", args, got, want)
+		}
+	}
+}
+
 func TestBdCommandEnvUsesCanonicalRigTarget(t *testing.T) {
 	t.Setenv("GC_BEADS", "bd")
 	t.Setenv("GC_DOLT", "skip")
