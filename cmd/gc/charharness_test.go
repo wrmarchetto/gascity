@@ -17,6 +17,7 @@ import (
 	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/chartest"
+	"github.com/gastownhall/gascity/internal/clock"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/runtime"
@@ -87,7 +88,57 @@ func newCharCity(t *testing.T, cityToml string, seed func(t *testing.T, store be
 		t.Fatalf("load cfg: %v", err)
 	}
 	cs := newControllerState(context.Background(), cfg, runtime.NewFake(), events.NewFake(), charCityName, cityPath)
+	primeCharCityCache(t, cs)
 	return &charHarness{cityPath: cityPath, cs: cs}
+}
+
+// charCacheAgeS is the age, in seconds, every API lane reports in
+// X-GC-Cache-Age-S once primeCharCityCache freezes the clock.
+//
+// Not 0: that is precisely the value the header reported for 29 hours while
+// nothing measured it (ci-0lwn), so a golden holding 0 cannot distinguish a
+// measured age from a dead capability lookup. Not >30 either -- that trips the
+// CLI's stale-read banner, and these lanes exist to characterize the healthy
+// render path, not the banner.
+const charCacheAgeS = 2
+
+// primeCharCityCache drives the controller's city cache to live and pins the
+// age its lanes report.
+//
+// newControllerState is handed context.Background(), whose Done() is nil, so
+// wrapWithCachingStore takes the no-background-refresh branch: PrimeActive runs
+// (leaving the cache PARTIAL) and the full prime never does. The cache is
+// therefore not live, which production never is once the controller is up --
+// every non-test caller passes a cancellable context. Priming here explicitly,
+// rather than by handing over a cancellable context, keeps the harness
+// deterministic: the async prime a real context would start races the lanes.
+//
+// Until the cache-liveness capability was resolvable through the policy wrapper
+// this call was unnecessary, because cacheLiveOr503 could not see a cache to
+// gate on and every lane passed regardless of state. The goldens minted in that
+// window (2026-07-18) have never seen the gate fire.
+func primeCharCityCache(t *testing.T, cs *controllerState) {
+	t.Helper()
+	inner, _, wrapped := unwrapBeadPolicyStore(cs.CityBeadStore())
+	if !wrapped {
+		t.Fatalf("controller city store %T is not policy-wrapped; the composition the lanes characterize has changed", cs.CityBeadStore())
+	}
+	cache, ok := inner.(*beads.CachingStore)
+	if !ok {
+		t.Fatalf("policy wrapper holds %T, want *beads.CachingStore", inner)
+	}
+	if err := cache.Prime(t.Context()); err != nil {
+		t.Fatalf("prime char city cache: %v", err)
+	}
+	if !cache.IsLive() {
+		t.Fatal("cache not live after Prime; every API lane would 503 cache_not_live")
+	}
+	// Freeze at a fixed offset past the cache's own LastFreshAt rather than at
+	// an absolute instant: the age is a subtraction, so an absolute freeze would
+	// land before LastFreshAt and clamp to 0 -- re-encoding the very value this
+	// harness must be able to distinguish from a measured one.
+	restore := api.SetLivenessClockForTest(&clock.Fake{Time: cache.Stats().LastFreshAt.Add(charCacheAgeS * time.Second)})
+	t.Cleanup(restore)
 }
 
 // lanes stands up one in-process server (plain + TLS fronts) shared by the two
