@@ -223,9 +223,10 @@ type StaggerOption struct {
 	explicit time.Duration
 }
 
-// WithStaggerAuto enables a deterministic per-agent stagger derived
-// from FNV-32a(agentID) mod cacheReconcileIntervalSmall. The stagger
-// is reproducible across runs given the same agent ID.
+// WithStaggerAuto enables a deterministic stagger derived from
+// FNV-32a(staggerKey) mod cacheReconcileIntervalSmall, where the key
+// joins the caller's agent ID with the cache's own bead prefix. The
+// stagger is reproducible across runs given the same key.
 func WithStaggerAuto() StaggerOption {
 	return StaggerOption{auto: true}
 }
@@ -247,29 +248,58 @@ func WithStaggerFixed(d time.Duration) StaggerOption {
 }
 
 // resolve returns the concrete stagger duration for this option.
-// agentID is consulted only when the option is WithStaggerAuto.
-func (o StaggerOption) resolve(agentID string) time.Duration {
+// key is consulted only when the option is WithStaggerAuto.
+func (o StaggerOption) resolve(key string) time.Duration {
 	switch {
 	case o.fixed:
 		return o.explicit
 	case o.auto:
-		return computeAutoStagger(agentID)
+		return computeAutoStagger(key)
 	}
 	return 0
 }
 
-// computeAutoStagger hashes agentID with FNV-32a and reduces it modulo
-// cacheReconcileIntervalSmall (in milliseconds). The result lies in
-// [0, cacheReconcileIntervalSmall) and is fully deterministic — no
+// computeAutoStagger hashes the stagger key with FNV-32a and reduces it
+// modulo cacheReconcileIntervalSmall (in milliseconds). The result lies
+// in [0, cacheReconcileIntervalSmall) and is fully deterministic — no
 // time-seeding — so test runs reproduce.
-func computeAutoStagger(agentID string) time.Duration {
+func computeAutoStagger(key string) time.Duration {
 	h := fnv.New32a()
-	_, _ = h.Write([]byte(agentID))
+	_, _ = h.Write([]byte(key))
 	modMs := cacheReconcileIntervalSmall.Milliseconds()
 	if modMs <= 0 {
 		return 0
 	}
 	return time.Duration(int64(h.Sum32())%modMs) * time.Millisecond
+}
+
+// staggerKey composes the identity WithStaggerAuto hashes. Both halves
+// are load-bearing and neither spreads every case alone: the agent ID
+// separates two processes holding the same store, and the cache's own
+// bead prefix separates the several stores one process holds -- the
+// supervisor opens one per rig plus the city's.
+//
+// Hashing the agent ID alone put every supervisor store on 16261 ms,
+// FNV-32a's offset basis mod the 30 s interval, because GC_AGENT is
+// empty outside agent sessions. That is the thundering herd StaggerOption
+// was written to prevent, arriving in the one process that holds the most
+// stores (ci-2t6n). Composing at the call site instead was rejected: the
+// next call site to pass a process-wide ID reintroduces the collapse, and
+// nothing would catch it.
+//
+// A prefix-less cache keeps the agent ID as its whole key. Appending an
+// empty field buys no separation, and skipping it keeps the offsets pinned
+// by TestStartReconcilerStaggerAutoIsDeterministic -- and cited by the
+// ga-zor1n2 release gate -- valid. Two prefix-less caches in one process do
+// still collide; for bd-backed stores NewCachingStore already records the
+// missing prefix as a problem, since the same prefix is what filters
+// foreign bead events.
+func (c *CachingStore) staggerKey(agentID string) string {
+	prefix := c.IDPrefix()
+	if prefix == "" {
+		return agentID
+	}
+	return agentID + "\x00" + prefix
 }
 
 // NewCachingStore wraps a Store with an in-memory read cache.
@@ -1133,9 +1163,12 @@ func (c *CachingStore) cacheSleep(ctx context.Context, d time.Duration) error {
 // StartReconciler launches watchdog reconciliation. Cancel ctx to stop.
 // The stagger applies a one-time delay between this call and the first
 // reconciler tick (see StaggerOption); agentID is consulted only when
-// stagger is WithStaggerAuto. A single "beads cache: stagger=Nms
-// agent=..." log line is emitted before the loop starts, even when the
-// resolved stagger is zero, so absence is unambiguous.
+// stagger is WithStaggerAuto, and then only as one half of the key (see
+// staggerKey). A single "beads cache: stagger=Nms agent=... prefix=..."
+// log line is emitted before the loop starts, even when the resolved
+// stagger is zero, so absence is unambiguous. The prefix is on that line
+// because agentID alone does not identify which of a process's several
+// stores logged it -- in the supervisor it is empty on every one.
 func (c *CachingStore) StartReconciler(ctx context.Context, stagger StaggerOption, agentID string) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -1155,14 +1188,14 @@ func (c *CachingStore) StartReconciler(ctx context.Context, stagger StaggerOptio
 	c.lifecycleWG.Add(2)
 	c.lifecycleMu.Unlock()
 
-	offset := stagger.resolve(agentID)
+	offset := stagger.resolve(c.staggerKey(agentID))
 
 	c.mu.Lock()
 	c.stats.StaggerOffsetMs = offset.Milliseconds()
 	c.reconcilerArmedAt = time.Now()
 	c.mu.Unlock()
 
-	log.Printf("beads cache: stagger=%dms agent=%s", offset.Milliseconds(), agentID)
+	log.Printf("beads cache: stagger=%dms agent=%s prefix=%s", offset.Milliseconds(), agentID, c.IDPrefix())
 
 	go func() {
 		defer c.lifecycleWG.Done()
