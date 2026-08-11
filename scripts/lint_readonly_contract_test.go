@@ -9,6 +9,55 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func TestMakefileLintCacheIsWorktreeLocal(t *testing.T) {
+	worktree := t.TempDir()
+	wantDefault := filepath.Join(worktree, ".cache", "golangci-lint")
+	if got := runMakefileLintCachePrintTarget(t, worktree, nil); got != wantDefault {
+		t.Fatalf("default GOLANGCI_LINT_CACHE = %q, want %q", got, wantDefault)
+	}
+
+	callerCache := filepath.Join(t.TempDir(), "caller-cache")
+	if got := runMakefileLintCachePrintTarget(t, worktree, []string{"GOLANGCI_LINT_CACHE=" + callerCache}); got != callerCache {
+		t.Fatalf("caller-supplied GOLANGCI_LINT_CACHE = %q, want %q", got, callerCache)
+	}
+}
+
+func runMakefileLintCachePrintTarget(t *testing.T, worktree string, extraEnv []string) string {
+	t.Helper()
+
+	makefile, err := os.ReadFile(filepath.Join(repoRoot(t), "Makefile"))
+	if err != nil {
+		t.Fatalf("read Makefile: %v", err)
+	}
+	testMakefile := filepath.Join(t.TempDir(), "Makefile")
+	content := string(makefile) + `
+.PHONY: print-lint-cache
+print-lint-cache:
+	@printf '%s\n' "$(GOLANGCI_LINT_CACHE)"
+`
+	if err := os.WriteFile(testMakefile, []byte(content), 0o644); err != nil {
+		t.Fatalf("write test Makefile: %v", err)
+	}
+
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"USER=" + os.Getenv("USER"),
+		"SHELL=/bin/sh",
+		"SYS_USR_CGO_FALLBACK=0",
+	}
+	env = append(env, extraEnv...)
+	cmd := makeCommand("--no-print-directory", "-f", testMakefile, "print-lint-cache")
+	cmd.Dir = worktree
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make print-lint-cache failed: %v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	return lines[len(lines)-1]
+}
+
 func TestLintUsesReadonlyModuleDownloads(t *testing.T) {
 	configPath := filepath.Join(repoRoot(t), ".golangci.yml")
 	body, err := os.ReadFile(configPath)

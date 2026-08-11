@@ -7,6 +7,12 @@ GOARCH := $(shell go env GOARCH)
 
 BIN_DIR := $(shell go env GOPATH)/bin
 GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
+# golangci-lint stores findings keyed by absolute source paths. A shared cache
+# replays diagnostics from a different (and possibly deleted) worktree, so the
+# local default must be scoped to this checkout. Callers may still supply an
+# explicit cache, including CI's restored workspace cache.
+GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
+export GOLANGCI_LINT_CACHE
 
 BINARY     := gc
 BUILD_DIR  := bin
