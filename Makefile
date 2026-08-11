@@ -457,9 +457,17 @@ LOCAL_TEST_JOBS ?= $(shell ./scripts/test-local-job-count)
 # override from the environment directly.
 GO_TEST_TIMEOUT ?=
 
-## test-fast-parallel: run the default fast suite with cmd/gc sharded locally
+# Deliberately empty for the same reason as GO_TEST_TIMEOUT above: the shard
+# count's default belongs to scripts/test-local-parallel alone, which picks it
+# against the sweep's next-slowest package (ci-qst5). This assignment exists
+# only so `PRODUCTMETRICS_TOTAL=2 make test-fast-parallel` survives TEST_ENV's
+# env -i on a host with less I/O concurrency to spend.
+PRODUCTMETRICS_TOTAL ?=
+
+## test-fast-parallel: run the default fast suite with cmd/gc and
+## internal/productmetrics sharded locally
 test-fast-parallel:
-	$(TEST_ENV) GC_PUSH_GATE_NO_CAP="$${GC_PUSH_GATE_NO_CAP-}" PUSH_GATE_MAX_CONCURRENT="$${PUSH_GATE_MAX_CONCURRENT-}" PUSH_GATE_MAX_WAIT_SECONDS="$${PUSH_GATE_MAX_WAIT_SECONDS-}" PUSH_GATE_POLL_SECONDS="$${PUSH_GATE_POLL_SECONDS-}" LOCAL_TEST_JOBS=$(LOCAL_TEST_JOBS) CMD_GC_PROCESS_TOTAL=$(CMD_GC_PROCESS_TOTAL) GO_TEST_TIMEOUT=$(GO_TEST_TIMEOUT) ./scripts/test-local-parallel fast
+	$(TEST_ENV) GC_PUSH_GATE_NO_CAP="$${GC_PUSH_GATE_NO_CAP-}" PUSH_GATE_MAX_CONCURRENT="$${PUSH_GATE_MAX_CONCURRENT-}" PUSH_GATE_MAX_WAIT_SECONDS="$${PUSH_GATE_MAX_WAIT_SECONDS-}" PUSH_GATE_POLL_SECONDS="$${PUSH_GATE_POLL_SECONDS-}" LOCAL_TEST_JOBS=$(LOCAL_TEST_JOBS) CMD_GC_PROCESS_TOTAL=$(CMD_GC_PROCESS_TOTAL) PRODUCTMETRICS_TOTAL=$(PRODUCTMETRICS_TOTAL) GO_TEST_TIMEOUT=$(GO_TEST_TIMEOUT) ./scripts/test-local-parallel fast
 
 ## test-fsys-darwin-compile: cross-compile internal/fsys for macOS so
 ## unix.Stat_t field-type regressions fail in the default fast test path.
