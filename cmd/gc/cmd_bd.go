@@ -396,6 +396,9 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 		fmt.Fprint(stderr, msg) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if rejectReusableSlotBranchClose(bdArgs, stderr) {
+		return 1
+	}
 
 	cityPath, err := resolveBdCity(cityName)
 	if err != nil {
