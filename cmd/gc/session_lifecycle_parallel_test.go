@@ -854,6 +854,61 @@ func TestPrepareStartCandidate_UsesAssignedWorkSnapshotForTaskWorkDir(t *testing
 	}
 }
 
+func TestPrepareStartCandidateForCity_RejectsStaleAssignedTaskWorkDir(t *testing.T) {
+	store := beads.NewMemStore()
+	session, err := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel, "agent:frontend/worker-1"},
+		Metadata: map[string]string{
+			"template":     "worker",
+			"session_name": "custom-worker-1",
+			"pool_slot":    "1",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=builder/ci-o46v\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale worktree marker: %v", err)
+	}
+	task, err := store.Create(beads.Bead{
+		Title: "task",
+		Metadata: map[string]string{
+			"work_dir": workDir,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := "in_progress"
+	assignee := session.ID
+	if err := store.Update(task.ID, beads.UpdateOpts{Status: &status, Assignee: &assignee}); err != nil {
+		t.Fatal(err)
+	}
+	task, err = store.Get(task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = prepareStartCandidateForCity(startCandidate{
+		info: sessiontest.SeedBead(t, session),
+		tp: TemplateParams{
+			TemplateName: "frontend/worker",
+			SessionName:  "custom-worker-1",
+		},
+	}, "", "", &config.City{
+		Agents: []config.Agent{{Name: "worker", Dir: "frontend", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(2)}},
+	}, nil, store, &clock.Fake{Time: time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)}, nil, newAssignedTaskWorkDirResolver("", []beads.Bead{task}))
+	if err == nil {
+		t.Fatal("prepareStartCandidateForCity() error = nil, want stale worktree rejection")
+	}
+	if !strings.Contains(err.Error(), worktreeStaleFileName) || !strings.Contains(err.Error(), workDir) {
+		t.Fatalf("prepareStartCandidateForCity() error = %q, want stale marker path and work directory", err)
+	}
+}
+
 func TestPrepareStartCandidateReloadsOverridesBeforeWake(t *testing.T) {
 	store := beads.NewMemStore()
 	session, err := store.Create(beads.Bead{
