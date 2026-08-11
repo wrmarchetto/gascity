@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -33,6 +34,10 @@ type beadPolicyStore struct {
 type beadPolicyGraphStore struct {
 	*beadPolicyStore
 	applier beads.GraphApplyStore
+}
+
+type beadEventCacheApplier interface {
+	ApplyEvent(eventType string, payload json.RawMessage)
 }
 
 var (
@@ -77,6 +82,15 @@ var (
 // inherits the forward through its embedded *beadPolicyStore.
 func (s *beadPolicyStore) LivenessHandle() (beads.LivenessReporter, bool) {
 	return beads.LivenessFor(s.Store)
+}
+
+// ApplyEvent preserves cache event delivery through the policy wrapper. The
+// controller owns policy-wrapped stores, so the cache's optional method is not
+// promoted from the embedded beads.Store interface.
+func (s *beadPolicyStore) ApplyEvent(eventType string, payload json.RawMessage) {
+	if cache, ok := s.Store.(beadEventCacheApplier); ok {
+		cache.ApplyEvent(eventType, payload)
+	}
 }
 
 func wrapStoreWithBeadPolicies(store beads.Store, cfg *config.City) beads.Store {

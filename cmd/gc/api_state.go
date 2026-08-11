@@ -688,8 +688,8 @@ func (cs *controllerState) applyBeadEventToStores(evt events.Event) {
 	cs.mu.RUnlock()
 
 	for _, store := range stores {
-		if cached, ok := store.(*beads.CachingStore); ok {
-			cached.ApplyEvent(evt.Type, evt.Payload)
+		if cache, ok := store.(beadEventCacheApplier); ok {
+			cache.ApplyEvent(evt.Type, evt.Payload)
 		}
 	}
 	if evt.Actor != "cache-reconcile" {

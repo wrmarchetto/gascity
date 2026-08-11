@@ -2550,6 +2550,54 @@ func TestControllerStateBeadEventsUseScopePrefixWhenConfiguredPrefixDrifts(t *te
 	}
 }
 
+func TestControllerStateBeadEventsReachCachingStoresThroughPolicyWrappers(t *testing.T) {
+	// The controller wraps every opened store with policies before adding the
+	// cache, and wrapWithCachingStore restores that policy wrapper outside the
+	// cache. A bare cache fixture cannot exercise the production store shape.
+	for _, tc := range []struct {
+		name    string
+		backing beads.Store
+	}{
+		{"plain policy store", beads.NewMemStore()},
+		{"graph policy store", &captureGraphStore{Store: beads.NewMemStore()}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := wrapWithCachingStore(t.Context(), wrapStoreWithBeadPolicies(tc.backing, &config.City{}), nil, false)
+			inner, _, wrapped := unwrapBeadPolicyStore(store)
+			if !wrapped {
+				t.Fatalf("controller store %T is not policy-wrapped", store)
+			}
+			cache, ok := inner.(*beads.CachingStore)
+			if !ok {
+				t.Fatalf("policy wrapper holds %T, want *beads.CachingStore", inner)
+			}
+			if err := cache.Prime(t.Context()); err != nil {
+				t.Fatalf("Prime: %v", err)
+			}
+
+			cs := &controllerState{cityBeadStore: store, pokeCh: make(chan struct{}, 1)}
+			payload, err := json.Marshal(beads.Bead{ID: "event-bead", Title: "from event", Status: "open"})
+			if err != nil {
+				t.Fatalf("marshal bead: %v", err)
+			}
+			cs.applyBeadEventToStores(events.Event{
+				Type:    events.BeadCreated,
+				Actor:   "bd-hook",
+				Subject: "event-bead",
+				Payload: payload,
+			})
+
+			got, err := store.Get("event-bead")
+			if err != nil {
+				t.Fatalf("Get through controller store after event: %v", err)
+			}
+			if got.Title != "from event" {
+				t.Fatalf("Get().Title = %q, want event payload title", got.Title)
+			}
+		})
+	}
+}
+
 func TestControllerStateBuildStoresUsesScopeLocalFileStores(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
 
