@@ -780,6 +780,201 @@ func TestResolveBdScopeTargetReadAndWriteAgreeUnderAgentScopeRoot(t *testing.T) 
 	}
 }
 
+// redirectedWorktreeCityOnDisk extends redirectedWorktreeCity with the on-disk
+// city.toml and city .beads that the full doBd path needs. The resolver tests
+// above hand resolveBdScopeTarget a config built in memory; doBd loads one from
+// the city root and then probes the resolved scope for a bd-backed provider, so
+// a fixture without these two files fails at config load rather than at the
+// assertion. The declared rigs mirror redirectedWorktreeCityConfig so both
+// tiers of test read the same city.
+func redirectedWorktreeCityOnDisk(t *testing.T) (cityDir, rigDir string) {
+	t.Helper()
+	cityDir, rigDir = redirectedWorktreeCity(t)
+	for _, dir := range []string{filepath.Join(cityDir, ".beads"), filepath.Join(rigDir, ".beads")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(`[workspace]
+name = "gascity"
+prefix = "ci"
+
+[[rigs]]
+name = "gascity"
+path = "rigs/gascity"
+prefix = "gs"
+
+[[rigs]]
+name = "dart"
+path = "rigs/dart"
+prefix = "da"
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(city.toml): %v", err)
+	}
+	return cityDir, rigDir
+}
+
+// installRecordingBd puts a bd stand-in first on PATH that records the inputs
+// bd resolves its store from -- its working directory and BEADS_DIR -- plus the
+// forwarded args and gc's own scope annotations, and returns a reader for them.
+//
+// The stand-in records and exits 0 without opening a store or writing anything
+// to stdout. Deliberate: the assertion is about what gc HANDS bd, so a stand-in
+// that also answered would add a second thing that could be wrong. It accepts
+// any argv rather than refusing unscripted input because there is nothing to
+// script -- every bd subcommand reaches bd through the one handoff under test,
+// and the args it received are themselves asserted, so a command gc mangled
+// fails the check instead of passing silently.
+func installRecordingBd(t *testing.T) func() map[string]string {
+	t.Helper()
+	binDir := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "bd-routing.txt")
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(`#!/bin/sh
+set -eu
+{
+  printf 'pwd=%s\n' "$PWD"
+  printf 'args=%s\n' "$*"
+  printf 'BEADS_DIR=%s\n' "${BEADS_DIR:-}"
+  printf 'GC_RIG=%s\n' "${GC_RIG:-}"
+  printf 'GC_STORE_ROOT=%s\n' "${GC_STORE_ROOT:-}"
+  printf 'GC_STORE_SCOPE=%s\n' "${GC_STORE_SCOPE:-}"
+  printf 'GC_BEADS_PREFIX=%s\n' "${GC_BEADS_PREFIX:-}"
+} > "${CAPTURE_PATH}"
+`), 0o755); err != nil {
+		t.Fatalf("WriteFile(bd stand-in): %v", err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CAPTURE_PATH", capture)
+	return func() map[string]string {
+		t.Helper()
+		data, err := os.ReadFile(capture)
+		if err != nil {
+			t.Fatalf("reading bd routing capture (bd stand-in never ran?): %v", err)
+		}
+		got := make(map[string]string)
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if key, value, ok := strings.Cut(line, "="); ok {
+				got[key] = value
+			}
+		}
+		return got
+	}
+}
+
+// TestGcBdHandsBdTheAgentScopeStoreNotTheRedirectedWorktree pins the half of
+// ci-qbkr its own tests left open. resolveBdScopeTarget naming the right store
+// is necessary but not sufficient: two other values decide where the write
+// lands, and neither is the resolver's return. doBdScoped sets the subprocess
+// working directory from the target, and bdCommandEnv sets BEADS_DIR from it.
+// Both carry weight. BEADS_DIR is what pins the store at all -- without it the
+// provider derives its data root from GC_CITY_PATH, which is the city for a rig
+// scope too (bdRuntimeEnvForRigWithErrorRecoveryContext states this) -- and the
+// working directory is what bd's own .beads discovery walks up from, which is
+// the exact walk the worktree's .beads/redirect hijacks. Drop or reorder either
+// and the write goes back to the rig store with every resolver test green.
+//
+// ci-h1cu is that gap observed from outside: `gc bd create --assignee human`
+// answered "Created issue: gs-3k3" from a city-scoped agent, so the follow-up
+// landed in a store no city sweep reads and raised zero pool demand. No
+// resolver test could see it, because the resolver was already returning the
+// city.
+//
+// GC_RIG is asserted empty on the city leg for the same reason it is cleared:
+// bd is not the only reader. A leaked GC_RIG is a stronger tier than the scope
+// root in resolveBdScopeTarget itself, so any gc the subprocess invokes would
+// route to the rig.
+//
+// Both directions run off one fixture so the test cannot be satisfied by
+// hard-coding the city. The rig leg inverts the disagreement -- scope root on
+// the rig, cwd at the city root -- and the expected store moves with the scope
+// root, not with cwd and not with a constant.
+func TestGcBdHandsBdTheAgentScopeStoreNotTheRedirectedWorktree(t *testing.T) {
+	bdArgs := []string{"create", "follow-up", "--assignee", "toolsmith"}
+
+	for _, tc := range []struct {
+		name string
+		// scopeRoot and cwd pick which of the fixture's two roots plays the
+		// agent's stamped scope and which plays the directory it stands in.
+		scopeRoot  func(cityDir, rigDir string) string
+		cwd        func(cityDir, rigDir string) string
+		wantRoot   func(cityDir, rigDir string) string
+		wantScope  string
+		wantPrefix string
+		wantRig    string
+	}{
+		{
+			name:       "city scope root, cwd redirected to the rig",
+			scopeRoot:  func(cityDir, _ string) string { return cityDir },
+			cwd:        nil, // the fixture already leaves cwd in the worktree
+			wantRoot:   func(cityDir, _ string) string { return cityDir },
+			wantScope:  "city",
+			wantPrefix: "ci",
+			wantRig:    "",
+		},
+		{
+			name:       "rig scope root, cwd at the city root",
+			scopeRoot:  func(_, rigDir string) string { return rigDir },
+			cwd:        func(cityDir, _ string) string { return cityDir },
+			wantRoot:   func(_, rigDir string) string { return rigDir },
+			wantScope:  "rig",
+			wantPrefix: "gs",
+			wantRig:    "gascity",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			disableManagedDoltRecoveryForTest(t)
+			resetFlags(t)
+			origProbe := bdBeadExists
+			defer func() { bdBeadExists = origProbe }()
+			// No arg here is a bead id, so the probe must never decide the
+			// store. Stubbing it false keeps a real store open out of the test
+			// and makes an accidental prefix hit on the title a failure rather
+			// than a silent retarget.
+			bdBeadExists = func(string, *config.City, execStoreTarget, string) bool { return false }
+
+			cityDir, rigDir := redirectedWorktreeCityOnDisk(t)
+			if tc.cwd != nil {
+				setCwd(t, tc.cwd(cityDir, rigDir))
+			}
+			// GC_CITY_PATH is what a gc-managed session actually carries, and
+			// the test binary refuses the ambient cwd walk-up that would
+			// otherwise find the city (ga-klo4gz).
+			t.Setenv("GC_CITY_PATH", cityDir)
+			t.Setenv("GC_BEADS_SCOPE_ROOT", tc.scopeRoot(cityDir, rigDir))
+			readCapture := installRecordingBd(t)
+
+			var stdout, stderr bytes.Buffer
+			if code := doBd(bdArgs, &stdout, &stderr); code != 0 {
+				t.Fatalf("doBd(%v) = %d, want 0; stderr=%q", bdArgs, code, stderr.String())
+			}
+
+			wantRoot := tc.wantRoot(cityDir, rigDir)
+			got := readCapture()
+			if !samePath(got["pwd"], wantRoot) {
+				t.Errorf("bd cwd = %q, want %q", got["pwd"], wantRoot)
+			}
+			if want := filepath.Join(wantRoot, ".beads"); !samePath(got["BEADS_DIR"], want) {
+				t.Errorf("BEADS_DIR = %q, want %q", got["BEADS_DIR"], want)
+			}
+			if want := strings.Join(bdArgs, " "); got["args"] != want {
+				t.Errorf("bd args = %q, want %q", got["args"], want)
+			}
+			if !samePath(got["GC_STORE_ROOT"], wantRoot) {
+				t.Errorf("GC_STORE_ROOT = %q, want %q", got["GC_STORE_ROOT"], wantRoot)
+			}
+			if got["GC_STORE_SCOPE"] != tc.wantScope {
+				t.Errorf("GC_STORE_SCOPE = %q, want %q", got["GC_STORE_SCOPE"], tc.wantScope)
+			}
+			if got["GC_BEADS_PREFIX"] != tc.wantPrefix {
+				t.Errorf("GC_BEADS_PREFIX = %q, want %q", got["GC_BEADS_PREFIX"], tc.wantPrefix)
+			}
+			if got["GC_RIG"] != tc.wantRig {
+				t.Errorf("GC_RIG = %q, want %q", got["GC_RIG"], tc.wantRig)
+			}
+		})
+	}
+}
+
 func TestBdCommandEnvUsesCanonicalRigTarget(t *testing.T) {
 	t.Setenv("GC_BEADS", "bd")
 	t.Setenv("GC_DOLT", "skip")
