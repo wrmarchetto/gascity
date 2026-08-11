@@ -2422,6 +2422,59 @@ func TestCmdNudgeStatusJSON(t *testing.T) {
 	}
 }
 
+func TestCmdNudgeAckRetiresOnlyTheTargetSessionNudge(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	cityDir := t.TempDir()
+	writeNamedSessionCityTOML(t, cityDir)
+	t.Setenv("GC_CITY", cityDir)
+
+	now := time.Now().Add(-time.Minute)
+	owned := newQueuedNudge("mayor", "stale guardrail", now)
+	other := newQueuedNudge("worker", "other session reminder", now)
+	if err := enqueueQueuedNudge(cityDir, owned); err != nil {
+		t.Fatalf("enqueue owned nudge: %v", err)
+	}
+	if err := enqueueQueuedNudge(cityDir, other); err != nil {
+		t.Fatalf("enqueue other nudge: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdNudgeAck([]string{owned.ID}, "mayor", &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdNudgeAck = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, owned.ID) {
+		t.Fatalf("ack output = %q, want acknowledged nudge id", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+
+	pending, inFlight, dead, err := listQueuedNudges(cityDir, "mayor", time.Now())
+	if err != nil {
+		t.Fatalf("list mayor nudges: %v", err)
+	}
+	if len(pending) != 0 || len(inFlight) != 0 {
+		t.Fatalf("mayor queue after ack = pending:%d in_flight:%d, want empty", len(pending), len(inFlight))
+	}
+	if len(dead) != 0 {
+		t.Fatalf("mayor queue after ack retained dead items: %#v", dead)
+	}
+	shadow, found, err := nudgeFrontDoor(openNudgeBeadStore(cityDir)).FindIncludingTerminal(owned.ID)
+	if err != nil {
+		t.Fatalf("find acknowledged nudge shadow: %v", err)
+	}
+	if !found || shadow.State != "acknowledged" || shadow.TerminalReason != "acknowledged by recipient" {
+		t.Fatalf("acknowledged nudge shadow = %#v, want terminal acknowledged state", shadow)
+	}
+	pending, inFlight, _, err = listQueuedNudges(cityDir, "worker", time.Now())
+	if err != nil {
+		t.Fatalf("list worker nudges: %v", err)
+	}
+	if len(pending) != 1 || pending[0].ID != other.ID || len(inFlight) != 0 {
+		t.Fatalf("worker queue after mayor ack = pending:%#v in_flight:%#v, want only %q", pending, inFlight, other.ID)
+	}
+}
+
 func TestTryDeliverQueuedNudgesByPollerDeliversAndAcks(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
 	dir := t.TempDir()

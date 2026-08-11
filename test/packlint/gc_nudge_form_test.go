@@ -45,9 +45,10 @@ var nudgeAllowlistFiles = map[string]bool{
 }
 
 // validNudgeSubcommands are the still-supported `gc nudge` subcommands.
-// `gc nudge drain`, `gc nudge status`, and `gc nudge poll` remain valid;
+// `gc nudge ack`, `gc nudge drain`, `gc nudge status`, and `gc nudge poll` remain valid;
 // the bare positional form does not.
 var validNudgeSubcommands = map[string]bool{
+	"ack":    true,
 	"drain":  true,
 	"status": true,
 	"poll":   true,
@@ -114,6 +115,7 @@ func TestViolatesNudgeForm(t *testing.T) {
 		{name: "still-valid drain subcommand", line: `gc nudge drain --inject`, violation: false},
 		{name: "still-valid status subcommand", line: `gc nudge status`, violation: false},
 		{name: "still-valid poll subcommand", line: `gc nudge poll --json`, violation: false},
+		{name: "still-valid ack subcommand", line: `gc nudge ack queued-nudge-1`, violation: false},
 		{name: "markdown link to status", line: `[gc nudge status](#gc-nudge-status) | Show queued`, violation: false},
 		{name: "instructional backticked bare command", line: "Use `gc nudge` to alert the witness", violation: true},
 		{name: "instructional via backticked bare command", line: "Health check via `gc nudge`", violation: true},
