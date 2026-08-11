@@ -376,6 +376,12 @@ git diff --stat origin/{{base_branch}}...HEAD
 Check for: bugs, security issues, style violations, missing error handling,
 debug cruft, unintended file changes. Fix anything you find.
 
+**1a. Audit comments changed in this diff:** Read only the comments added or
+modified in `origin/{{base_branch}}...HEAD`. Confirm each still documents a
+current decision, tradeoff, invariant, or rejected alternative; remove or
+rewrite any comment the change has made stale. Do not re-review settled
+comments outside this diff.
+
 **2. Run quality checks (skip empty commands):**
 ```bash
 {{setup_command}}
