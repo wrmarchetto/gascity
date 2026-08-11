@@ -202,7 +202,41 @@ func (m cleanupTestingM) Run() int {
 	return code
 }
 
+// fakeDoltSQLServerIdle bounds how long the fake dolt stays up, matching the
+// `sleep 60` the shell fake used before ci-u3i2. The bound is deliberate: the
+// fake is now visible to the leak guard, and one that idled forever would
+// outlive a SIGKILLed run instead of self-reaping.
+const fakeDoltSQLServerIdle = 60 * time.Second
+
+// isFakeDoltSQLServerInvocation reports whether this binary was exec'd through
+// writeFakeDoltSQLServer's `dolt` symlink. Same argv[0] dispatch as
+// isTestscriptCommandInvocation above it, for the same reason: the name the
+// caller used is the only thing that distinguishes the roles.
+func isFakeDoltSQLServerInvocation(arg0 string) bool {
+	return strings.TrimSuffix(filepath.Base(strings.ReplaceAll(arg0, "\\", "/")), ".exe") == "dolt"
+}
+
+// runFakeDoltSQLServer stands in for `dolt sql-server`: validate, then idle.
+//
+// It REFUSES any other subcommand rather than idling anyway. A stand-in that
+// answers everything with success hands a pass to whatever the caller
+// mistyped, and from the outside a fake that ignored its argv is
+// indistinguishable from one that honored it.
+func runFakeDoltSQLServer(args []string, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "sql-server" {
+		fmt.Fprintf(stderr, "unexpected dolt args: %s\n", strings.Join(args, " ")) //nolint:errcheck
+		return 2
+	}
+	time.Sleep(fakeDoltSQLServerIdle)
+	return 0
+}
+
 func TestMain(m *testing.M) {
+	// Before every other dispatch and all of TestMain's setup: a fake dolt
+	// must not create a temp root, arm a leak guard, or run any spy.
+	if isFakeDoltSQLServerInvocation(os.Args[0]) {
+		os.Exit(runFakeDoltSQLServer(os.Args[1:], os.Stderr))
+	}
 	maybeRunProductMetricsDirectChildEnvSpy()
 
 	// testscript re-executes the test binary as "gc" or "bd" for each txtar

@@ -295,21 +295,41 @@ func clearManagedDoltTestProcessRegistry(t *testing.T) {
 	})
 }
 
+// writeFakeDoltSQLServer returns a directory holding an executable named
+// `dolt` that stands in for a real dolt sql-server: it validates the
+// subcommand, then idles.
+//
+// The stand-in is a symlink to this test binary rather than a shell script,
+// and that is the whole of gap 2 in bead ci-u3i2. A `#!/bin/sh` script named
+// `dolt` puts the INTERPRETER in argv[0] -- /proc/<pid>/cmdline read
+// `/bin/sh .../dolt sql-server ...`, and its `exec sleep 60` then rewrote
+// that to `sleep 60`. looksLikeDoltSQLServer requires
+// filepath.Base(argv[0]) == "dolt" (dolt_cleanup_discovery.go), so neither
+// form matched and discoverDoltProcesses never returned the process at all.
+// The fake was therefore invisible to TestMain's leak guard, to
+// requireNoLeakedDoltAfter, and to ci-9r6x's provider-op adoption alike:
+// every test that started one ran with no cleanup verification.
+//
+// Exec'ing a symlink preserves the caller's argv[0], so the fake now wears
+// `<dir>/dolt sql-server --config <path>` for its whole life and satisfies
+// that predicate unchanged. TestMain dispatches on the name before any of its
+// own setup; see isFakeDoltSQLServerInvocation (main_test.go).
+//
+// Rejected: teaching looksLikeDoltSQLServer to accept a shebang argv. It is
+// production code that `gc dolt-state` reaps against, so that fix would aim a
+// SIGKILL at an operator's unrelated shell scripts to close a test-only hole.
 func writeFakeDoltSQLServer(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
-		t.Skip("shell fake requires POSIX sh")
+		t.Skip("fake dolt relies on POSIX exec and symlink semantics")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatalf("resolve this test binary to stand in for dolt: %v", err)
 	}
 	dir := t.TempDir()
-	script := filepath.Join(dir, "dolt")
-	content := "#!/bin/sh\n" +
-		"if [ \"$1\" != \"sql-server\" ]; then\n" +
-		"  echo \"unexpected dolt args: $*\" >&2\n" +
-		"  exit 2\n" +
-		"fi\n" +
-		"exec sleep 60\n"
-	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
-		t.Fatalf("write fake dolt: %v", err)
+	if err := os.Symlink(self, filepath.Join(dir, "dolt")); err != nil {
+		t.Fatalf("link fake dolt: %v", err)
 	}
 	return dir
 }
