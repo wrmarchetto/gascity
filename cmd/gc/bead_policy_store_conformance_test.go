@@ -362,6 +362,18 @@ func TestBeadPolicyStoreReportsNoLivenessForUncachedBacking(t *testing.T) {
 	}
 }
 
+func TestBeadPolicyStoreReportsNoCacheApplierForUncachedBacking(t *testing.T) {
+	// The absence is load-bearing, for the same reason the liveness sibling
+	// above states: a policy store that claimed CacheApplier over an uncached
+	// backing could only discard the event, and a discarded event is
+	// indistinguishable at the fan-out from an absorbed one. main.go and
+	// scoped_store.go both policy-wrap plain stores, so this is a live path.
+	store := wrapStoreWithBeadPolicies(beads.NewMemStore(), &config.City{})
+	if applier, ok := beads.CacheApplierFor(store); ok {
+		t.Fatalf("CacheApplierFor(policy-wrapped MemStore) = (%T, true), want no capability", applier)
+	}
+}
+
 func TestBeadPolicyStoreContextReadyIsPolicyAware(t *testing.T) {
 	backing := &recordingPolicyReadStore{MemStore: beads.NewMemStore()}
 	store := wrapStoreWithBeadPolicies(backing, &config.City{})
