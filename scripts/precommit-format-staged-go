@@ -1,5 +1,57 @@
 #!/usr/bin/env bash
+#
+# scripts/precommit-format-staged-go -- rewrite every staged Go file through
+# `golangci-lint fmt`. Paths arrive on stdin, one per line, from
+# .githooks/pre-commit, which re-stages whatever this rewrites.
+#
+# Resolution prefers the Makefile's pinned install over PATH. PATH-first is
+# what this did, and on a shell whose PATH lacks $(go env GOPATH)/bin -- every
+# city agent session, though not the operator's own -- it died with bash's
+# `command not found` while `make lint-changed` three lines later in the same
+# hook ran fine off the absolute path. The hook read as broken rather than as
+# a missing directory, and the move that invites is --no-verify, which on the
+# push side also disarms scripts/push-ownership-guard.sh (bead ci-f6u4).
+# Preferring the pinned binary also keeps this formatting with the same
+# golangci-lint version lint-changed then checks with.
+#
+# The location is a copy of the Makefile's GOLANGCI_LINT rather than a read of
+# it, because a `make` subprocess per commit is not worth one variable.
+# TestPreCommitFormatterPrefersMakefilePinnedLinter binds the two copies.
+#
+# A multi-element GOPATH is not split, matching $(shell go env GOPATH)/bin in
+# the Makefile. Such a GOPATH resolves to a path that exists nowhere and falls
+# through to PATH, never to a different binary.
+
 set -euo pipefail
+
+resolve_linter() {
+  local gopath
+  gopath=$(go env GOPATH 2>/dev/null) || gopath=""
+  if [ -n "$gopath" ] && [ -x "$gopath/bin/golangci-lint" ]; then
+    printf '%s\n' "$gopath/bin/golangci-lint"
+    return 0
+  fi
+  command -v golangci-lint || return 1
+}
+
+if ! linter=$(resolve_linter); then
+  if ! command -v go >/dev/null 2>&1; then
+    echo "pre-commit: go is not on PATH either, so the pinned location below could not be checked." >&2
+  fi
+  cat >&2 <<'REMEDY'
+pre-commit: golangci-lint resolves nowhere, so no staged Go file was formatted.
+Checked $(go env GOPATH)/bin/golangci-lint -- the pinned install every lint
+target in this repo runs -- and then PATH.
+
+  not installed yet     make install-tools
+  installed already     export PATH="$(go env GOPATH)/bin:$PATH"
+
+Do NOT retry with --no-verify. The same flag on git push skips
+scripts/push-ownership-guard.sh, the guard that stops a stale claim from
+clobbering a branch another agent has taken over.
+REMEDY
+  exit 1
+fi
 
 status=0
 
@@ -9,8 +61,10 @@ while IFS= read -r file; do
   fi
 
   tmp=$(mktemp "${TMPDIR:-/tmp}/gc-precommit-fmt.XXXXXX")
-  if ! golangci-lint fmt --stdin <"$file" >"$tmp"; then
+  if ! "$linter" fmt --stdin <"$file" >"$tmp"; then
     rm -f "$tmp"
+    echo "pre-commit: golangci-lint fmt rejected $file -- see its output above. The linter ran and" >&2
+    echo "read the file, so this is a fault in the file, usually a parse error, not a missing tool." >&2
     status=1
     continue
   fi
@@ -20,12 +74,15 @@ while IFS= read -r file; do
     continue
   fi
 
+  # Copy the bytes back rather than `mv`: mv would carry the temp file's 0600
+  # mode onto a staged source, and nothing downstream restores it.
+  # TestPreCommitFormatterPreservesFileMode pins this.
   cat "$tmp" >"$file"
   rm -f "$tmp"
 done
 
 if [ "$status" -ne 0 ]; then
-  echo "pre-commit: golangci-lint fmt failed for one or more staged Go files" >&2
+  echo "pre-commit: blocked, one or more staged Go files could not be formatted (see above)" >&2
 fi
 
 exit "$status"
