@@ -5187,6 +5187,14 @@ func TestReconcileSessionBeads_RateLimitScreenQuarantinesBeforeHeal(t *testing.T
 	assertRateLimitScrollbackQuarantinesBeforeHeal(t, "You've hit your limit, Pro plan\n\n/rate-limit-options")
 }
 
+func TestReconcileSessionBeads_ClaudeSessionLimitQuarantinesBeforeHeal(t *testing.T) {
+	assertRateLimitScrollbackQuarantinesBeforeHeal(t, "You've hit your session limit · resets 10pm")
+}
+
+func TestReconcileSessionBeads_ClaudeCapOptionsQuarantineBeforeHeal(t *testing.T) {
+	assertRateLimitScrollbackQuarantinesBeforeHeal(t, "What do you want to do?\n1. Stop and wait for limit to reset\n2. Ask your admin for more usage\nEnter to confirm · Esc to cancel")
+}
+
 func TestReconcileSessionBeads_SpendLimitModalQuarantinesBeforeHeal(t *testing.T) {
 	assertRateLimitScrollbackQuarantinesBeforeHeal(t, "What do you want to do?\nUsage credit balance: $573.37\n❯ Adjust monthly spend limit: $1503.19\n  Wait for limit to reset      Resets Jul 12 at 11pm (America/Los_Angeles)\nEnter to confirm · Esc to cancel")
 }

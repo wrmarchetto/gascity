@@ -1133,10 +1133,10 @@ func TestAcceptStartupDialogsFromStreamReplaysCustomAPIKeyDialogAcrossPhases(t *
 	}
 }
 
-func TestAcceptStartupDialogsFromStreamReplaysRateLimitDialogAcrossPhases(t *testing.T) {
+func TestAcceptStartupDialogsFromStreamLeavesRateLimitScreenVisible(t *testing.T) {
 	var sent []string
 	snapshots := make(chan string, 1)
-	snapshots <- "Usage limit reached"
+	snapshots <- "What do you want to do?\n1. Stop and wait for limit to reset\n2. Ask your admin for more usage\nEnter to confirm · Esc to cancel"
 	close(snapshots)
 
 	err := AcceptStartupDialogsFromStream(
@@ -1151,8 +1151,8 @@ func TestAcceptStartupDialogsFromStreamReplaysRateLimitDialogAcrossPhases(t *tes
 	if err != nil {
 		t.Fatalf("AcceptStartupDialogsFromStream() error = %v", err)
 	}
-	if !reflect.DeepEqual(sent, []string{"Down", "Enter"}) {
-		t.Fatalf("sent keys = %v, want [Down Enter]", sent)
+	if len(sent) != 0 {
+		t.Fatalf("sent keys = %v, want none", sent)
 	}
 }
 
@@ -1381,7 +1381,7 @@ func TestRespectsContextCancellation(t *testing.T) {
 	}
 }
 
-func TestAcceptStartupDialogsDismissesRateLimitDialog(t *testing.T) {
+func TestAcceptStartupDialogsLeavesRateLimitScreenVisible(t *testing.T) {
 	withZeroDialogTimings(t)
 	dialogPollTimeout = time.Second
 
@@ -1394,7 +1394,7 @@ func TestAcceptStartupDialogsDismissesRateLimitDialog(t *testing.T) {
 			if call <= 2 {
 				return "normal startup output", nil
 			}
-			return "Usage limit reached for gemini-3-flash-preview.\n1. Keep trying\n2. Stop", nil
+			return "What do you want to do?\n1. Stop and wait for limit to reset\n2. Ask your admin for more usage\nEnter to confirm · Esc to cancel", nil
 		},
 		func(keys ...string) error {
 			sent = append(sent, keys...)
@@ -1404,9 +1404,8 @@ func TestAcceptStartupDialogsDismissesRateLimitDialog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcceptStartupDialogs() error = %v", err)
 	}
-	// Should select "Stop" (Down + Enter).
-	if !reflect.DeepEqual(sent, []string{"Down", "Enter"}) {
-		t.Fatalf("sent keys = %v, want [Down Enter]", sent)
+	if len(sent) != 0 {
+		t.Fatalf("sent keys = %v, want none", sent)
 	}
 }
 
@@ -1419,6 +1418,9 @@ func TestContainsRateLimitDialog(t *testing.T) {
 	}{
 		{name: "gemini usage limit", content: "Usage limit reached for gemini-3-flash-preview.", want: true},
 		{name: "claude hit limit", content: "You've hit your limit, Pro plan", want: true},
+		{name: "claude session limit", content: "You've hit your session limit · resets 10pm", want: true},
+		{name: "claude weekly limit", content: "You've hit your weekly limit · resets Aug 12, 3am", want: true},
+		{name: "claude cap options menu", content: "What do you want to do?\n1. Stop and wait for limit to reset\n2. Ask your admin for more usage\nEnter to confirm · Esc to cancel", want: true},
 		{name: "claude rate limit options", content: "/rate-limit-options", want: true},
 		{name: "generic rate limit", content: "rate limit exceeded", want: true},
 		{name: "Rate limit caps", content: "Rate limit: try again later", want: true},
@@ -1475,6 +1477,9 @@ func TestContainsProviderRateLimitScreen(t *testing.T) {
 	}{
 		{name: "gemini usage limit", content: "Usage limit reached for gemini-3-flash-preview.", want: true},
 		{name: "claude hit limit", content: "You've hit your limit, Pro plan", want: true},
+		{name: "claude session limit", content: "You've hit your session limit · resets 10pm", want: true},
+		{name: "claude weekly limit", content: "You've hit your weekly limit · resets Aug 12, 3am", want: true},
+		{name: "claude cap options menu", content: "What do you want to do?\n1. Stop and wait for limit to reset\n2. Ask your admin for more usage\nEnter to confirm · Esc to cancel", want: true},
 		{name: "claude rate limit options", content: "/rate-limit-options", want: true},
 		{name: "provider menu shape", content: "Rate limit reached\n1. Keep trying\n2. Stop", want: true},
 		{name: "claude spend limit modal", content: "What do you want to do?\nUsage credit balance: $573.37\n❯ Adjust monthly spend limit: $1503.19\n  Wait for limit to reset      Resets Jul 12 at 11pm (America/Los_Angeles)\nEnter to confirm · Esc to cancel", want: true},

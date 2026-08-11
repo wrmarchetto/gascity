@@ -2285,9 +2285,9 @@ func (t *Tmux) targetLooksLikeAnyProvider(target string, providers ...string) bo
 	return hasDescendantWithNames(pid, providers, 0)
 }
 
-// AcceptStartupDialogs dismisses all Claude Code startup dialogs that can block
-// automated sessions. Delegates to the shared [runtime.AcceptStartupDialogs]
-// with tmux-specific peek and send-keys callbacks.
+// AcceptStartupDialogs handles Claude Code startup dialogs that can block
+// automated sessions. It delegates to [runtime.AcceptStartupDialogs], which
+// preserves rate-limit screens for reconciliation rather than dismissing them.
 //
 // Call this after starting Claude and waiting for it to initialize (WaitForCommand),
 // but before sending any prompts. Idempotent: safe to call on sessions without dialogs.
@@ -2295,8 +2295,8 @@ func (t *Tmux) AcceptStartupDialogs(ctx context.Context, sess string) error {
 	return t.DismissKnownDialogs(ctx, sess, 8*time.Second)
 }
 
-// DismissKnownDialogs dismisses known trust, permissions, and rate-limit
-// dialogs using a bounded timeout.
+// DismissKnownDialogs dismisses known trust and permissions dialogs and
+// observes rate-limit screens using a bounded timeout.
 func (t *Tmux) DismissKnownDialogs(ctx context.Context, sess string, timeout time.Duration) error {
 	// Gate external-CLAUDE.md-import auto-acceptance to imports within the
 	// pane's own repository; an import that escapes the repo is left for a
