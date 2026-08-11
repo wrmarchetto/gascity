@@ -52,6 +52,7 @@
 ./internal/testenv
 ./internal/testpolicy/resourcecensus
 ./internal/testutil/providerledger
+./internal/toolpath
 ./internal/worker/workertest
 ./scripts
 ./test/docsync
