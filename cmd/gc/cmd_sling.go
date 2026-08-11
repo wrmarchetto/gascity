@@ -773,8 +773,13 @@ func (r cliBeadRouter) Route(_ context.Context, req sling.RouteRequest) error {
 	if r.deps.Cfg != nil {
 		routedTo = agentutil.NormalizePoolRouteTarget(r.deps.Cfg, req.Target)
 	}
-	if err := r.deps.Store.SetMetadata(req.BeadID, beadmeta.RoutedToMetadataKey, routedTo); err != nil {
-		return fmt.Errorf("setting gc.routed_to on %s: %w", req.BeadID, err)
+	update := beads.UpdateOpts{Metadata: map[string]string{beadmeta.RoutedToMetadataKey: routedTo}}
+	// Update preserves every omitted field, including a concrete pool slot
+	// assignment, in the same store mutation as the shared pool route. Avoid a
+	// read-before-write here: BD-backed inline routes may be writable before
+	// their created bead is readable through this store view.
+	if err := r.deps.Store.Update(req.BeadID, update); err != nil {
+		return fmt.Errorf("routing %s to %s: %w", req.BeadID, routedTo, err)
 	}
 	return nil
 }
