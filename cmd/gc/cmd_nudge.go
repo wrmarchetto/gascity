@@ -245,6 +245,7 @@ was asleep or was not at a safe interactive boundary yet.`,
 	}
 	cmd.AddCommand(
 		newNudgeStatusCmd(stdout, stderr),
+		newNudgeAckCmd(stdout, stderr),
 		newNudgeDrainCmd(stdout, stderr),
 		newNudgePollCmd(stdout, stderr),
 	)
@@ -268,6 +269,27 @@ Defaults to $GC_ALIAS or $GC_SESSION_ID when run inside a session.`,
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output as JSON")
+	return cmd
+}
+
+func newNudgeAckCmd(stdout, stderr io.Writer) *cobra.Command {
+	var sessionID string
+	cmd := &cobra.Command{
+		Use:   "ack <nudge-id...>",
+		Short: "Retire queued nudges that no longer need delivery",
+		Long: `Retire queued nudges for a session without delivering them again.
+
+The current session is used by default. Pass --session to acknowledge nudges
+for another session after verifying their IDs with gc nudge status.`,
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if cmdNudgeAck(args, sessionID, stdout, stderr) != 0 {
+				return errExit
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&sessionID, "session", "", "session alias or ID (defaults to $GC_ALIAS/$GC_SESSION_ID)")
 	return cmd
 }
 
@@ -398,6 +420,58 @@ func nonNilQueuedNudges(items []queuedNudge) []queuedNudge {
 		return []queuedNudge{}
 	}
 	return items
+}
+
+// cmdNudgeAck retires only items that currently belong to target. Requiring
+// every requested ID to be visible before writing makes a typo harmless and
+// prevents a session from acknowledging another session's reminder.
+func cmdNudgeAck(ids []string, targetID string, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(targetID) == "" {
+		targetID = os.Getenv("GC_ALIAS")
+		if targetID == "" {
+			targetID = os.Getenv("GC_SESSION_ID")
+		}
+	}
+	if strings.TrimSpace(targetID) == "" {
+		fmt.Fprintln(stderr, "gc nudge ack: session not specified (set $GC_ALIAS/$GC_SESSION_ID or pass --session)") //nolint:errcheck
+		return 1
+	}
+	target, err := resolveNudgeTarget(targetID, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc nudge ack: %v\n", err) //nolint:errcheck
+		return 1
+	}
+	pending, inFlight, _, err := listQueuedNudgesForTarget(target.cityPath, target, time.Now())
+	if err != nil {
+		fmt.Fprintf(stderr, "gc nudge ack: %v\n", err) //nolint:errcheck
+		return 1
+	}
+	owned := make(map[string]bool, len(pending)+len(inFlight))
+	for _, item := range pending {
+		owned[item.ID] = true
+	}
+	for _, item := range inFlight {
+		owned[item.ID] = true
+	}
+	seen := make(map[string]bool, len(ids))
+	ackIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || !owned[id] {
+			fmt.Fprintf(stderr, "gc nudge ack: nudge %q is not queued for %s\n", id, target.agentKey()) //nolint:errcheck
+			return 1
+		}
+		if !seen[id] {
+			seen[id] = true
+			ackIDs = append(ackIDs, id)
+		}
+	}
+	if err := ackQueuedNudgesWithOutcome(target.cityPath, ackIDs, "acknowledged", "acknowledged by recipient", "recipient-ack"); err != nil {
+		fmt.Fprintf(stderr, "gc nudge ack: %v\n", err) //nolint:errcheck
+		return 1
+	}
+	fmt.Fprintf(stdout, "Acknowledged nudge(s) %s for %s\n", strings.Join(ackIDs, ", "), target.agentKey()) //nolint:errcheck
+	return 0
 }
 
 func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdout, stderr io.Writer) int {

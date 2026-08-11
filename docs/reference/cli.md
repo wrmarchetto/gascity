@@ -2630,7 +2630,23 @@ gc nudge
 
 | Subcommand | Description |
 |------------|-------------|
+| [gc nudge ack](#gc-nudge-ack) | Retire queued nudges that no longer need delivery |
 | [gc nudge status](#gc-nudge-status) | Show queued and dead-letter nudges for a session |
+
+## gc nudge ack
+
+Retire queued nudges for a session without delivering them again.
+
+The current session is used by default. Pass --session to acknowledge nudges
+for another session after verifying their IDs with gc nudge status.
+
+```
+gc nudge ack <nudge-id...> [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--session` | string |  | session alias or ID (defaults to $GC_ALIAS/$GC_SESSION_ID) |
 
 ## gc nudge status
 
