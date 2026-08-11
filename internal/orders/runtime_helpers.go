@@ -2,6 +2,7 @@ package orders
 
 import (
 	"log"
+	"sort"
 	"time"
 )
 
@@ -29,6 +30,37 @@ func LastRunAcross(stores []*Store) LastRunFunc {
 		}
 		return latest, nil
 	}
+}
+
+// RecentRunsAcross returns the newest bounded execution history across a
+// federation of order front doors. Each scope contributes its newest limit
+// rows; that is sufficient for the global newest limit, then the merged result
+// is sorted by the canonical created-at/id order used by Store.RecentRuns.
+func RecentRunsAcross(stores []*Store, name string, limit int) ([]OrderRun, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	runs := make([]OrderRun, 0, len(stores)*limit)
+	for _, store := range stores {
+		if store == nil {
+			continue
+		}
+		scopeRuns, err := store.RecentRuns(name, limit)
+		if err != nil {
+			return nil, err
+		}
+		runs = append(runs, scopeRuns...)
+	}
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].CreatedAt.Equal(runs[j].CreatedAt) {
+			return runs[i].ID > runs[j].ID
+		}
+		return runs[i].CreatedAt.After(runs[j].CreatedAt)
+	})
+	if len(runs) > limit {
+		runs = runs[:limit]
+	}
+	return runs, nil
 }
 
 // CursorAcross returns a CursorFunc merging the event seq cursor for a named

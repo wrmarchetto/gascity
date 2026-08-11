@@ -39,6 +39,11 @@ const (
 	// exists to be a good citizen against the data plane rather than to
 	// protect the check — the wall time it saves is the whole point.
 	orderFiringLastRunConcurrency = 8
+	// OrderFiringCurrentFailureHistoryLimit is deliberately greater than one: some
+	// recurring orders use a nonzero exit to report that there was no work. A
+	// sequence this long with no intervening successful execution is the durable
+	// failure signal ci-sit2 found missing from every operator-facing surface.
+	OrderFiringCurrentFailureHistoryLimit = 3
 )
 
 // OrderFiringCurrentLastRunFunc reports the newest persisted run time for an
@@ -47,6 +52,10 @@ const (
 // lookups are store round-trips and running them serially is what pushes a
 // busy city past the check budget (ga-klv).
 type OrderFiringCurrentLastRunFunc func(order orders.Order) (time.Time, error)
+
+// OrderFiringCurrentHistoryFunc reports recent persisted execution outcomes
+// for an order, newest first. Implementations MUST be safe for concurrent use.
+type OrderFiringCurrentHistoryFunc func(order orders.Order) ([]orders.OrderRun, error)
 
 // OrderFiringCurrentOption configures the scheduled-order freshness check.
 type OrderFiringCurrentOption func(*OrderFiringCurrentCheck)
@@ -65,12 +74,21 @@ func WithOrderFiringCurrentLastRunFunc(fn OrderFiringCurrentLastRunFunc) OrderFi
 	}
 }
 
+// WithOrderFiringCurrentHistoryFunc supplies the bounded order history used to
+// detect repeated execution failures that a fresh order.fired event cannot show.
+func WithOrderFiringCurrentHistoryFunc(fn OrderFiringCurrentHistoryFunc) OrderFiringCurrentOption {
+	return func(c *OrderFiringCurrentCheck) {
+		c.history = fn
+	}
+}
+
 // OrderFiringCurrentCheck reports scheduled orders whose last firing is stale.
 type OrderFiringCurrentCheck struct {
 	cfg            *config.City
 	cityPath       string
 	clock          func() time.Time
 	lastRun        OrderFiringCurrentLastRunFunc
+	history        OrderFiringCurrentHistoryFunc
 	historyTimeout time.Duration
 	readEvents     orderFiringEventReadFunc
 }
@@ -178,20 +196,17 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 	// stay visible without converting an advisory error into a blocking gate.
 	var blockingErrors, advisoryErrors int
 	suspendedRigs := orderFiringCurrentSuspendedRigs(c.cfg)
+	monitoredOrders := monitoredOrderFiringOrders(allOrders, suspendedRigs)
 
 	// Resolve every order-run lookup the loop below will need up front and in
 	// parallel. The pre-pass shares the cron-interval cache with the loop, so
 	// the expected intervals — and therefore which orders need a lookup — are
 	// identical to what the loop derives for itself.
-	lastRunFor := c.prefetchedLastRunFunc(c.pendingLastRunOrders(allOrders, firedEvents, suspendedRigs, cronIntervals, now))
+	lastRunFor := c.prefetchedLastRunFunc(c.pendingLastRunOrders(monitoredOrders, firedEvents, nil, cronIntervals, now))
+	historyFor := c.prefetchedHistoryFunc(monitoredOrders)
+	var repeatedFailures bool
 
-	for _, order := range allOrders {
-		if order.Trigger != "cron" && order.Trigger != "cooldown" {
-			continue
-		}
-		if orderFiringCurrentOrderSuspended(suspendedRigs, order) {
-			continue
-		}
+	for _, order := range monitoredOrders {
 		monitored++
 		expected, err := expectedIntervalForOrder(order, cronIntervals)
 		if err != nil {
@@ -202,6 +217,28 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 			}
 			blockingErrors++
 			continue
+		}
+		if historyFor != nil {
+			runs, err := historyFor(order)
+			if err != nil {
+				worst = worseStatus(worst, StatusError)
+				result.Details = append(result.Details, fmt.Sprintf("%s: cannot read execution history: %v", orderDisplayName(order), err))
+				if firstNonOK == "" {
+					firstNonOK = orderHistoryHintTarget(order)
+				}
+				blockingErrors++
+				continue
+			}
+			if failures := consecutiveOrderExecutionFailures(runs); failures >= OrderFiringCurrentFailureHistoryLimit {
+				worst = worseStatus(worst, StatusError)
+				result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive execution failures", orderDisplayName(order), failures))
+				if firstNonOK == "" {
+					firstNonOK = orderHistoryHintTarget(order)
+				}
+				blockingErrors++
+				repeatedFailures = true
+				continue
+			}
 		}
 		lastFired, err := c.latestOrderFiredAtUsing(lastRunFor, firedEvents, order, expected, now)
 		if err != nil {
@@ -243,7 +280,11 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 	case StatusWarning:
 		result.Message = "scheduled orders are overdue"
 	case StatusError:
-		result.Message = "scheduled orders are stale"
+		if repeatedFailures {
+			result.Message = "scheduled orders have repeated execution failures"
+		} else {
+			result.Message = "scheduled orders are stale"
+		}
 	}
 	if blockingErrors == 0 && advisoryErrors > 0 {
 		result.Severity = SeverityAdvisory
@@ -252,6 +293,20 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		result.FixHint = fmt.Sprintf(orderFiringInspectHintFmt, firstNonOK)
 	}
 	return result
+}
+
+func monitoredOrderFiringOrders(allOrders []orders.Order, suspendedRigs map[string]bool) []orders.Order {
+	monitored := make([]orders.Order, 0, len(allOrders))
+	for _, order := range allOrders {
+		if order.Trigger != "cron" && order.Trigger != "cooldown" {
+			continue
+		}
+		if orderFiringCurrentOrderSuspended(suspendedRigs, order) {
+			continue
+		}
+		monitored = append(monitored, order)
+	}
+	return monitored
 }
 
 func scanOrderFiringCurrentOrders(cityPath string, cfg *config.City) ([]orders.Order, error) {
@@ -742,6 +797,73 @@ func (c *OrderFiringCurrentCheck) prefetchLastRuns(pending []orders.Order) map[s
 type orderFiringLastRunResult struct {
 	at  time.Time
 	err error
+}
+
+// prefetchedHistoryFunc resolves the bounded execution histories needed for
+// every monitored order. Unlike firing freshness, a recent order.fired event
+// cannot prove a command completed successfully, so this lookup intentionally
+// covers every monitored order and retains the same bounded concurrency as the
+// last-run prefetch.
+func (c *OrderFiringCurrentCheck) prefetchedHistoryFunc(pending []orders.Order) OrderFiringCurrentHistoryFunc {
+	if c.history == nil {
+		return nil
+	}
+	prefetched := c.prefetchHistories(pending)
+	return func(order orders.Order) ([]orders.OrderRun, error) {
+		if result, ok := prefetched[order.ScopedName()]; ok {
+			return result.runs, result.err
+		}
+		return c.history(order)
+	}
+}
+
+func (c *OrderFiringCurrentCheck) prefetchHistories(pending []orders.Order) map[string]orderFiringHistoryResult {
+	out := make(map[string]orderFiringHistoryResult, len(pending))
+	if c.history == nil || len(pending) == 0 {
+		return out
+	}
+
+	limit := orderFiringLastRunConcurrency
+	if len(pending) < limit {
+		limit = len(pending)
+	}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, limit)
+	for _, order := range pending {
+		wg.Add(1)
+		go func(order orders.Order) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			runs, err := c.history(order)
+			mu.Lock()
+			out[order.ScopedName()] = orderFiringHistoryResult{runs: runs, err: err}
+			mu.Unlock()
+		}(order)
+	}
+	wg.Wait()
+	return out
+}
+
+type orderFiringHistoryResult struct {
+	runs []orders.OrderRun
+	err  error
+}
+
+// consecutiveOrderExecutionFailures counts the failed terminal outcomes at the
+// newest edge of a history. A success, cancellation, or unfinished run breaks
+// the sequence: the check reports persistent execution failure, not an order's
+// ordinary individual nonzero exit.
+func consecutiveOrderExecutionFailures(runs []orders.OrderRun) int {
+	failed := 0
+	for _, run := range runs {
+		if run.Outcome.Display() != "failed" {
+			break
+		}
+		failed++
+	}
+	return failed
 }
 
 func latestOrderFiredAt(evts []events.Event, subject string) time.Time {
