@@ -496,6 +496,12 @@ func EnsureCanonicalConfig(fs fsys.FS, path string, state ConfigState) (bool, er
 		doltConfig.DisableEventFlush = &enabled
 	}
 	changed = setNestedBool(root, "dolt", "disable-event-flush", *doltConfig.DisableEventFlush) || changed
+	// Flat-only on purpose. The line above writes the NESTED spelling as
+	// canonical (readDoltConfigFromRoot resolves nested first), so pairing this
+	// with deleteNestedDottedKeys -- the obvious symmetry edit, applied
+	// everywhere else in this function -- would delete what was just written
+	// and revert a `false` to the true default.
+	// TestEnsureCanonicalConfigKeepsNestedDisableEventFlush pins that.
 	changed = deleteKeys(root, "dolt.disable-event-flush", "dolt.disable_event_flush") || changed
 	// Managed beads are Dolt-backed; issues.jsonl auto-export is redundant and
 	// triggers a re-import cycle that stalls bd writes for minutes on large
@@ -518,6 +524,13 @@ func EnsureCanonicalConfig(fs fsys.FS, path string, state ConfigState) (bool, er
 	host := strings.TrimSpace(state.DoltHost)
 	port := strings.TrimSpace(state.DoltPort)
 	user := strings.TrimSpace(state.DoltUser)
+	// Unconditional, in both branches below: gc reads these three keys in their
+	// FLAT spelling only (readConfigStateFromRoot) while bd resolves either, so
+	// a nested copy is invisible here and live there. It is inert only while the
+	// flat key is present -- viper resolves the duplicate to the flat one -- and
+	// goes live the moment a later canonicalization with empty state deletes
+	// that flat key, silently repointing bd at a stale endpoint.
+	changed = deleteNestedDottedKeys(root, "dolt.host", "dolt.port", "dolt.user") || changed
 	if host != "" {
 		changed = setString(root, "dolt.host", host) || changed
 	} else {
@@ -551,6 +564,7 @@ func EnsureCanonicalConfig(fs fsys.FS, path string, state ConfigState) (bool, er
 	}
 
 	changed = deleteKeys(root, deprecatedConfigKeys...) || changed
+	changed = deleteNestedDottedKeys(root, deprecatedConfigKeys...) || changed
 	if !changed {
 		return false, nil
 	}
@@ -672,6 +686,23 @@ func ensureCanonicalConfigFallback(fs fsys.FS, path string, state ConfigState) (
 		"dolt_port":                {},
 		"dolt_server_port":         {},
 	}
+	// Keys whose NESTED spelling must go too. Deliberately not `deletions`
+	// wholesale: dolt.disable-event-flush is on that list in its flat spelling
+	// only, because the nested one is canonical and
+	// ensureFallbackNestedDoltDisableEventFlush writes it back below. Including
+	// it here would drop and re-add an identical line, so an already-canonical
+	// file would report changed on every call and rewrite a git-tracked file
+	// forever. Caught by
+	// TestEnsureCanonicalConfigFallbackDeletesNestedDottedPasswordIsIdempotent.
+	nestedDeletions := make(map[string]struct{}, len(deprecatedConfigKeys)+3)
+	for _, key := range deprecatedConfigKeys {
+		nestedDeletions[key] = struct{}{}
+	}
+	// Unconditional for the same reason as the YAML path: a nested shadow is
+	// inert beside the flat key and live once the flat key is deleted.
+	for _, key := range []string{"dolt.host", "dolt.port", "dolt.user"} {
+		nestedDeletions[key] = struct{}{}
+	}
 	if host != "" {
 		replacements["dolt.host"] = "dolt.host: " + host
 	} else {
@@ -703,9 +734,16 @@ func ensureCanonicalConfigFallback(fs fsys.FS, path string, state ConfigState) (
 	disableEventFlush := doltDisableEventFlushFallbackValue(data, state)
 
 	lines := strings.Split(string(data), "\n")
+	// Ahead of the rewrite loop, not after it. That loop keeps only the LAST of
+	// a repeated top-level key, so a file with two `dolt:` headers loses the
+	// first one and orphans its indented children -- and a nested `password:`
+	// with no header above it to scope it would then be unreachable to a
+	// section-scoped deletion. Running first means every child is still under
+	// the header that names its section.
+	lines, nestedDropped := deleteFallbackNestedDottedKeys(lines, nestedDeletions)
 	out := make([]string, 0, len(lines)+len(replacements))
 	seen := make(map[string]bool, len(replacements))
-	changed := repaired
+	changed := repaired || nestedDropped
 
 	lastTopLevelIndex := lastTopLevelKeyIndex(lines)
 
@@ -765,6 +803,8 @@ func ensureCanonicalConfigFallback(fs fsys.FS, path string, state ConfigState) (
 		out = append(out, want)
 		changed = true
 	}
+	// Must stay AFTER the nested deletion above: it is what repopulates a
+	// `dolt:` block the deletion emptied.
 	var doltChanged bool
 	out, doltChanged = ensureFallbackNestedDoltDisableEventFlush(out, disableEventFlush)
 	changed = doltChanged || changed
@@ -1310,6 +1350,115 @@ func deleteKeys(root *yaml.Node, keys ...string) bool {
 		root.Content = out
 	}
 	return changed
+}
+
+// deleteNestedDottedKeys removes the NESTED spelling of each dotted key --
+// `dolt:` with an indented `password:` -- from an already-parsed config.
+// deleteKeys is its flat counterpart and the two are called together wherever
+// gc owns a key outright.
+//
+// Both spellings exist because bd picks one from whether config.yaml was empty
+// when the key was FIRST written (upstream updateNestedYamlKey's
+// `len(root.Content) == 0` early return), so the spelling a given key carries
+// is decided by write order months earlier and is not observable from the key
+// itself. viper resolves a duplicated key to the flat one, so removing only the
+// nested copy would leave the value live -- hence both, never one.
+//
+// Resolution is section AND leaf, deliberately not the leaf name alone:
+// `password:` is plausible under any section, and matching it at any
+// indentation would clear an unrelated credential. This is the same widening
+// the upstream bd patch declined for `sync.remote`
+// (engdocs/contributors/bd-config-unset-nested-key.md).
+//
+// Only ONE level is resolved. A key with two dots would be nested two deep and
+// is left alone rather than half-matched; every key on gc's deletion lists has
+// at most one dot, and a deeper one would need recursive descent with no caller
+// to justify it. Adding such a key silently gets no nested deletion --
+// TestDeleteNestedDottedKeysIgnoresUndottedAndScalarSections pins the
+// undotted no-op that shares the code path.
+func deleteNestedDottedKeys(root *yaml.Node, keys ...string) bool {
+	if root == nil || root.Kind != yaml.MappingNode {
+		return false
+	}
+	changed := false
+	for _, key := range keys {
+		section, leaf, ok := strings.Cut(key, ".")
+		if !ok || section == "" || leaf == "" || strings.Contains(leaf, ".") {
+			continue
+		}
+		sectionNode := findValue(root, section)
+		if sectionNode == nil || sectionNode.Kind != yaml.MappingNode {
+			continue
+		}
+		if !deleteKeys(sectionNode, leaf) {
+			continue
+		}
+		changed = true
+		// A section left with no children marshals as `section: null`, which
+		// reads as a deliberate null rather than an absent section. No current
+		// caller can reach this -- EnsureCanonicalConfig puts
+		// disable-event-flush in the dolt section before deleting from it --
+		// so this is pinned directly by
+		// TestDeleteNestedDottedKeysPrunesEmptiedSection.
+		if len(sectionNode.Content) == 0 {
+			deleteKeys(root, section)
+		}
+	}
+	return changed
+}
+
+// deleteFallbackNestedDottedKeys is deleteNestedDottedKeys for the
+// malformed-YAML line-rewrite path, where there is no node tree to walk.
+//
+// It does NOT prune a section its deletions emptied, which the node-tree
+// version does. The only sections reachable here are named by gc's dotted
+// deletion keys and every one of those is `dolt`, which
+// ensureFallbackNestedDoltDisableEventFlush repopulates immediately after this
+// runs -- so a childless `dolt:` never reaches the file. Adding a dotted
+// deletion key under any OTHER section breaks that and would emit
+// `<section>: null`.
+func deleteFallbackNestedDottedKeys(lines []string, keys map[string]struct{}) ([]string, bool) {
+	leavesBySection := make(map[string]map[string]struct{}, len(keys))
+	for key := range keys {
+		section, leaf, ok := strings.Cut(key, ".")
+		if !ok || section == "" || leaf == "" || strings.Contains(leaf, ".") {
+			continue
+		}
+		if leavesBySection[section] == nil {
+			leavesBySection[section] = map[string]struct{}{}
+		}
+		leavesBySection[section][leaf] = struct{}{}
+	}
+	if len(leavesBySection) == 0 {
+		return lines, false
+	}
+
+	out := make([]string, 0, len(lines))
+	changed := false
+	var leaves map[string]struct{}
+	for _, line := range lines {
+		if key, value, ok := topLevelConfigLine(line); ok {
+			// Only a bare `section:` opens a block. `dolt: something` is a
+			// scalar and has no nested children, matching the same test in
+			// scanNestedConfigLineValueFromData.
+			leaves = nil
+			if value == "" {
+				leaves = leavesBySection[key]
+			}
+			out = append(out, line)
+			continue
+		}
+		if leaves != nil {
+			if leaf, ok := nestedConfigLineKey(line); ok {
+				if _, drop := leaves[leaf]; drop {
+					changed = true
+					continue
+				}
+			}
+		}
+		out = append(out, line)
+	}
+	return out, changed
 }
 
 func trimmedString(value any) string {

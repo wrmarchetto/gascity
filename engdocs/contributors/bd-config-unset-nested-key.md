@@ -14,11 +14,13 @@ nothing in this repository would otherwise record it. Gas City calls
 `bd config set` and `bd config get` but never `bd config unset`, so no
 gascity code path is broken by this. What is affected is every operator and
 agent who types the command, and -- separately -- our own
-`internal/beads/contract` key deletion, which makes the same flat-only
-assumption against a key list that includes `dolt.password`.
+`internal/beads/contract` key deletion, which made the same flat-only
+assumption against a key list that includes `dolt.password`. That half is
+fixed; see the last section.
 
 Delete this page once a bd release containing the fix is pinned in
-`deps.env`.
+`deps.env`. The last section outlives that: it records which spelling is
+canonical for which key in our own tree, which is not an upstream fact.
 
 ## Reproduction
 
@@ -139,10 +141,10 @@ the nested key is removed, `bd config get` reports not-set, the trailing
 newline survives, unsetting a never-set key reports `was not set` at exit 0,
 and the flat path is unchanged.
 
-## The same assumption in our own tree
+## The same assumption in our own tree (fixed, ci-j97r)
 
 `internal/beads/contract/files.go` deletes keys from `.beads/config.yaml`
-through two paths, and both are top-level-only:
+through two paths, and both used to be top-level-only:
 
 - `deleteKeys` compares `root.Content[i].Value` against the key, which only
   ever sees top-level mapping entries.
@@ -150,20 +152,36 @@ through two paths, and both are top-level-only:
   explicitly rejects indented lines.
 
 Their input, `deprecatedConfigKeys`, includes `dolt.password`. Measured
-2026-08-09: `bd config set dolt.password <value>` against a non-empty
-`config.yaml` writes
+2026-08-09 and again 2026-08-10: `bd config set dolt.password <value>`
+against a non-empty `config.yaml` writes
 
 ```yaml
 dolt:
     password: <value>
 ```
 
-which neither path can see, so a deprecated stored password survives a
-canonicalization that reports success. This is a separate defect from the
-upstream one and is tracked on its own bead; it is recorded here because the
-two share a root assumption and a reader of one should know about the other.
+which neither path could see, so a deprecated stored password survived a
+canonicalization that reported success -- in a git-tracked file.
 
-That duality has already been hit once in this repository and patched per
-key rather than generally: `setNestedBool`, `nestedConfigBoolValue`, and
-`ensureFallbackNestedDoltDisableEventFlush` exist solely because
-`dolt.disable-event-flush` sometimes lands nested.
+`deleteNestedDottedKeys` (node tree) and `deleteFallbackNestedDottedKeys`
+(malformed-YAML lines) now remove the nested spelling alongside the flat one.
+Both resolve section AND leaf rather than the leaf name alone, for the reason
+the upstream patch declined to widen its regex. They are applied to
+`deprecatedConfigKeys` and to `dolt.host` / `dolt.port` / `dolt.user`: gc reads
+those three in their flat spelling only, so a nested copy is invisible to gc
+and live to bd, inert while the flat key is present and live the moment a
+canonicalization with empty state deletes it.
+
+`dolt.disable-event-flush` is deliberately excluded, and the exclusion is the
+part to read before generalizing anything here. It is the one key whose NESTED
+spelling is canonical -- `readDoltConfigFromRoot` resolves nested first and
+`setNestedBool` writes it -- so nested-deleting it would erase what the same
+function just wrote and revert an explicit `false` to the `true` default.
+`TestEnsureCanonicalConfigKeepsNestedDisableEventFlush` is the guard.
+
+For the same reason, `setNestedBool`, `nestedConfigBoolValue` and
+`ensureFallbackNestedDoltDisableEventFlush` are NOT retired by the general
+deletion, though the bead proposed they would be. Those three READ and WRITE
+the nested spelling; a deletion helper cannot stand in for a writer. Retiring
+them would mean re-deciding that flat is canonical for that key, which is a
+change to what bd reads and not a cleanup.
