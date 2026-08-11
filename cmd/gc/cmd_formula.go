@@ -1120,10 +1120,10 @@ type formulaScope struct {
 
 // resolveFormulaScope determines the rig (if any) under which a formula
 // invocation should run. Priority: --rig flag > explicit --city flag >
-// GC_RIG env > enclosing rig from cwd > city. The GC_RIG tier mirrors
-// resolveBdScopeTarget (cmd_bd.go): the controller sets GC_RIG reliably,
-// while cwd detection fails for pool/polecat worktrees under
-// .gc/worktrees/, which are not inside the registered rig.Path.
+// GC_RIG env > GC_BEADS_SCOPE_ROOT env > enclosing rig from cwd > city. The
+// environment tiers mirror resolveBdScopeTarget (cmd_bd.go): GC_RIG names the
+// more-specific rig, while GC_BEADS_SCOPE_ROOT records the session's configured
+// work scope when cwd is a worktree under another rig.
 func resolveFormulaScope(cfg *config.City, cityPath string, stderr io.Writer) (formulaScope, error) {
 	if name := strings.TrimSpace(rigFlag); name != "" {
 		rig, ok := rigByName(cfg, name)
@@ -1160,6 +1160,17 @@ func resolveFormulaScope(cfg *config.City, cityPath string, stderr io.Writer) (f
 		gcRigDiscarded = gcRig
 	}
 
+	scopeRootDiscarded := ""
+	if scope, ok := formulaScopeFromAgentScopeRoot(cfg, cityPath); ok {
+		return scope, nil
+	} else if scopeRoot := strings.TrimSpace(os.Getenv("GC_BEADS_SCOPE_ROOT")); scopeRoot != "" {
+		// Like the GC_RIG tier above, a stamped scope from a different city is
+		// a fallthrough hint rather than a command-line override. In particular,
+		// a malformed redirect under it must not prevent commands from resolving
+		// normally from their cwd.
+		scopeRootDiscarded = scopeRoot
+	}
+
 	scope := formulaScope{
 		storeRoot:   cityPath,
 		searchPaths: cfg.FormulaLayers.City,
@@ -1180,8 +1191,31 @@ func resolveFormulaScope(cfg *config.City, cityPath string, stderr io.Writer) (f
 	if gcRigDiscarded != "" {
 		fmt.Fprintf(stderr, "gc formula: warning: GC_RIG=%q does not name a bound rig in this city; ignoring it and using the %s scope instead (the same value via --rig would error)\n", gcRigDiscarded, scopeDesc) //nolint:errcheck // best-effort stderr
 	}
+	if scopeRootDiscarded != "" {
+		fmt.Fprintf(stderr, "gc formula: warning: GC_BEADS_SCOPE_ROOT=%q names neither this city nor a bound rig; ignoring it and using the %s scope instead\n", scopeRootDiscarded, scopeDesc) //nolint:errcheck // best-effort stderr
+	}
 
 	return scope, nil
+}
+
+// formulaScopeFromAgentScopeRoot resolves the scope gc stamped on an agent
+// session from its configuration. It returns false when the scope names neither
+// this city nor a bound rig, including when an invalid redirect lies under it;
+// callers then intentionally fall through to their normal cwd resolution.
+func formulaScopeFromAgentScopeRoot(cfg *config.City, cityPath string) (formulaScope, bool) {
+	scopeRoot := strings.TrimSpace(os.Getenv("GC_BEADS_SCOPE_ROOT"))
+	if scopeRoot == "" {
+		return formulaScope{}, false
+	}
+
+	resolved := resolveStoreScopeRoot(cityPath, scopeRoot)
+	if samePath(resolved, resolveStoreScopeRoot(cityPath, cityPath)) {
+		return formulaScope{storeRoot: cityPath, searchPaths: cfg.FormulaLayers.City}, true
+	}
+	if rig, ok, err := resolveRigForDir(cfg, cityPath, resolved); err == nil && ok {
+		return rigFormulaScope(cfg, cityPath, rig), true
+	}
+	return formulaScope{}, false
 }
 
 func rigFormulaScope(cfg *config.City, cityPath string, rig config.Rig) formulaScope {
@@ -1193,12 +1227,13 @@ func rigFormulaScope(cfg *config.City, cityPath string, rig config.Rig) formulaS
 }
 
 // rigFormulaVarsForScope returns rig-scoped formula var defaults for the
-// active scope (honoring --rig, explicit --city, GC_RIG env, and cwd — same
-// priority as resolveFormulaScope). Returns an empty map when no rig context
-// is active so callers can treat the result as read-only annotations without
-// nil checks. No stderr warning here for a discarded GC_RIG: this is always
-// called alongside resolveFormulaScope (see newFormulaShowCmd), which
-// already warns once for the same condition.
+// active scope (honoring --rig, explicit --city, GC_RIG env,
+// GC_BEADS_SCOPE_ROOT env, and cwd — the same priority as
+// resolveFormulaScope). Returns an empty map when no rig context is active so
+// callers can treat the result as read-only annotations without nil checks. No
+// stderr warning appears here for a discarded ambient scope: this is always
+// called alongside resolveFormulaScope (see newFormulaShowCmd), which already
+// warns once for the same condition.
 func rigFormulaVarsForScope(cfg *config.City, cityPath string) map[string]string {
 	if cfg == nil {
 		return map[string]string{}
@@ -1218,6 +1253,15 @@ func rigFormulaVarsForScope(cfg *config.City, cityPath string) map[string]string
 		if rig, ok := rigByName(cfg, gcRig); ok && strings.TrimSpace(rig.Path) != "" {
 			return cloneStringMap(rig.FormulaVars)
 		}
+	}
+	if scope, ok := formulaScopeFromAgentScopeRoot(cfg, cityPath); ok {
+		if scope.rig == "" {
+			return map[string]string{}
+		}
+		if rig, ok := rigByName(cfg, scope.rig); ok {
+			return cloneStringMap(rig.FormulaVars)
+		}
+		return map[string]string{}
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		if rig, ok, rerr := resolveRigForDir(cfg, cityPath, cwd); rerr == nil && ok {
