@@ -1227,14 +1227,14 @@ func (cr *CityRuntime) tick(
 			"protected": len(report.Protected),
 			"dry_run":   !reapEnabled,
 		})
-		// Agent-home worktree cleanup performs real removals, so it runs only
-		// when real reaping is enabled — never under dry-run.
-		if reapEnabled {
-			phaseStart = time.Now()
-			agentHomesReset := cleanupClosedBeadAgentHomeWorktrees(cr.cityPath, cr.cfg, cr.rigBeadStores(), cr.stderr)
-			recordPhase(TraceSiteControllerTickPhase, "cleanup_agent_home_worktrees", phaseStart, map[string]any{"reset": agentHomesReset})
-		}
 	}
+	// Stale agent-home markers fence unsafe assignment, rather than merely
+	// protecting disk reclamation. Run their evidence-based recovery every
+	// tick so a resolved marker cannot permanently disable a pool slot when
+	// optional closed-bead worktree reaping is off.
+	phaseStart = time.Now()
+	agentHomesReset := cleanupClosedBeadAgentHomeWorktrees(cr.cityPath, cr.cfg, cr.rigBeadStores(), cr.stderr)
+	recordPhase(TraceSiteControllerTickPhase, "cleanup_agent_home_worktrees", phaseStart, map[string]any{"reset": agentHomesReset})
 	if ctx.Err() != nil {
 		return
 	}

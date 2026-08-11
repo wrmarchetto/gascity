@@ -81,6 +81,7 @@ bd-backup-state
 bd-backup-freshness
 worktree-disk-size
 nested-worktree-prune
+worktree-stale
 custom-types:city
 hold-label-conventions:city
 worktrees
