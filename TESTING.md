@@ -549,13 +549,13 @@ Codecov flags.
 
 For broad local runs, prefer the repo's sharded wrappers over raw `go test`
 commands. They use the same buckets as CI, run under a scrubbed environment,
-and split single-package bottlenecks such as `cmd/gc` across multiple
-processes.
+and split single-package bottlenecks such as `cmd/gc` and
+`internal/productmetrics` across multiple processes.
 
 Use these as the default entry points:
 
 ```bash
-# Fast unit baseline, with cmd/gc split into shards.
+# Fast unit baseline, with cmd/gc and internal/productmetrics split into shards.
 make test-fast-parallel
 
 # Full process-backed cmd/gc suite, sharded.
@@ -580,8 +580,15 @@ wins:
 LOCAL_TEST_JOBS=48 CMD_GC_PROCESS_TOTAL=12 make test-local-full-parallel
 ```
 
-Both `go test` jobs in `make test-fast-parallel` — the `unit-core` package sweep
-and the `cmd/gc` shards — share one 20m per-package budget. A package's wall
+`PRODUCTMETRICS_TOTAL` is the same knob for the `internal/productmetrics`
+shards, defaulting to 6. Lower it on a host with little I/O concurrency to
+spend: those shards are bound by fsync latency rather than CPU, so they are
+cheap to run in parallel and expensive to run in sequence — see
+[why that package is sharded](#why-internalproductmetrics-is-sharded) below.
+
+Every `go test` job in `make test-fast-parallel` — the `unit-core` package
+sweep, the `cmd/gc` shards, and the `internal/productmetrics` shards — shares
+one 20m per-package budget. A package's wall
 time under the fan-out is well above its runtime in isolation, so with Go's
 built-in 10m default (which the unit sweep alone used to inherit) contention
 panicked six packages with `test timed out after 10m0s` while they were still
@@ -594,6 +601,36 @@ inherits Go's 10m. Raise it on a slow or heavily shared host:
 ```bash
 GO_TEST_TIMEOUT=30m make test-fast-parallel
 ```
+
+#### Why `internal/productmetrics` is sharded
+
+Because it was, on its own, 887s of the 995s unit sweep — 89% of the sweep and
+5.6x the next slowest package. The scoped push gate below cannot help there:
+roughly half of real pushes touch a package low enough in the import graph
+that the closure fans out to nearly everything, so those pushes swept it in
+full anyway (ci-qst5).
+
+**The cost is fsync latency, not CPU and not fixed sleeps.** The package's
+storage layer fsyncs after every create, rename, and unlink, and its 459 tests
+drive those paths against a real disk. Three measurements, ext4 on nvme:
+
+| Measurement                                       | Result                    |
+| ------------------------------------------------- | ------------------------- |
+| `strace -c -w` of the single slowest test          | 5046 fsync calls, 38.1s   |
+| whole package, fixtures on ext4 `/tmp` (unchanged) | 254s                      |
+| whole package, fixtures on tmpfs (probe only)      | 8s                        |
+
+That distinction is what licensed sharding at all: waiting on a disk overlaps
+across processes, so six shards land the long pole at 115s (individual shards
+74–115s), just under the 158s `storebinding/sqlite` the sweep waits on anyway.
+A package whose cost had been a fixed sleep would have slept six times over and
+reported success, which is why the syscall evidence came before the split.
+
+The tmpfs row is a diagnostic probe, not a proposal. Running these fixtures on
+tmpfs permanently would be a 32x win and would stop testing the storage layer
+against the filesystem semantics it exists to get right — `RENAME_EXCHANGE`
+support, the unsupported-exchange fallbacks, real directory-sync ordering. The
+fixture root stays the trusted `/tmp` ancestor `inspectStorageTestHome` picks.
 
 For one package, shard top-level Go tests directly:
 
@@ -987,7 +1024,14 @@ using the same graph engine (`scripts/goaffected.py`) the CI lint gate
 selects with — one implementation, so the two cannot drift the way ci-c000's
 Go/shell copies did. The hook exports the result as
 `GC_SCOPED_TEST_PACKAGES`; `test-local-parallel` honors it in `fast` mode
-only, and skips the `cmd/gc` shards when `./cmd/gc` is not in the set.
+only, and skips the `cmd/gc` shards when `./cmd/gc` is not in the set, and
+the `internal/productmetrics` shards when that package is not in it either.
+
+That `internal/productmetrics` row is what the wide-push half of the problem
+looked like, and it is the reason the package now runs as six shards of its
+own rather than inside the sweep — the scope selector was never going to
+reach it. See [why that package is sharded](#why-internalproductmetrics-is-sharded)
+for the fsync measurement behind the split and the post-split numbers.
 
 **Everything about this is built to fail toward a slow push, never a skipped
 test**, because a gate that stops running a package it should have run looks
