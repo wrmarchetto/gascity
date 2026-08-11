@@ -2299,24 +2299,31 @@ func doMailMarkReadJSON(mp mail.Provider, rec events.Recorder, args []string, js
 		fmt.Fprintln(stderr, "gc mail mark-read: missing message ID") //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	id := args[0]
-	if err := mp.MarkRead(id); err != nil {
-		telemetry.RecordMailOp(context.Background(), "mark_read", err)
-		fmt.Fprintf(stderr, "gc mail mark-read: %v\n", err) //nolint:errcheck // best-effort stderr
-		return 1
+	exit := 0
+	marked := 0
+	for _, id := range args {
+		if err := mp.MarkRead(id); err != nil {
+			telemetry.RecordMailOp(context.Background(), "mark_read", err)
+			fmt.Fprintf(stderr, "gc mail mark-read %s: %v\n", id, err) //nolint:errcheck // best-effort stderr
+			exit = 1
+			continue
+		}
+		marked++
+		telemetry.RecordMailOp(context.Background(), "mark_read", nil)
+		rec.Record(events.Event{
+			Type:    events.MailMarkedRead,
+			Actor:   eventActor(),
+			Subject: id,
+			Payload: mailEventPayload(nil),
+		})
+		if !jsonOut {
+			fmt.Fprintf(stdout, "Marked %s as read\n", id) //nolint:errcheck // best-effort stdout
+		}
 	}
-	telemetry.RecordMailOp(context.Background(), "mark_read", nil)
-	rec.Record(events.Event{
-		Type:    events.MailMarkedRead,
-		Actor:   eventActor(),
-		Subject: id,
-		Payload: mailEventPayload(nil),
-	})
-	if jsonOut {
-		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail mark-read", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.mark-read", Action: "mark-read", ID: id, IDs: []string{id}, Count: intRef(1)})
+	if jsonOut && exit == 0 {
+		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail mark-read", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.mark-read", Action: "mark-read", ID: args[0], IDs: args, Count: intRef(marked)})
 	}
-	fmt.Fprintf(stdout, "Marked %s as read\n", id) //nolint:errcheck // best-effort stdout
-	return 0
+	return exit
 }
 
 // cmdMailMarkUnread marks a message as unread.

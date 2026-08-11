@@ -2332,6 +2332,81 @@ func TestMailMarkReadSuccess(t *testing.T) {
 	}
 }
 
+func TestMailMarkReadMultiMarksEveryMessageIncludingAlreadyRead(t *testing.T) {
+	store := beads.NewMemStore()
+	mp := beadmail.New(store)
+	for i := 0; i < 3; i++ {
+		if _, err := mp.Send("human", "mayor", "", "batch me"); err != nil {
+			t.Fatalf("Send %d: %v", i, err)
+		}
+	}
+	if err := mp.MarkRead("gc-2"); err != nil {
+		t.Fatalf("pre-mark gc-2 read: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rec := &memRecorder{}
+	code := doMailMarkRead(mp, rec, []string{"gc-1", "gc-2", "gc-3"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("doMailMarkRead = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty", got)
+	}
+	for _, id := range []string{"gc-1", "gc-2", "gc-3"} {
+		if !strings.Contains(stdout.String(), "Marked "+id+" as read") {
+			t.Errorf("stdout missing mark-read confirmation for %q:\n%s", id, stdout.String())
+		}
+	}
+	if got := len(rec.events); got != 3 {
+		t.Errorf("recorded events = %d, want 3", got)
+	}
+	inbox, err := mp.Inbox("mayor")
+	if err != nil {
+		t.Fatalf("Inbox: %v", err)
+	}
+	if got := len(inbox); got != 0 {
+		t.Errorf("Inbox after multi mark-read = %d, want 0", got)
+	}
+}
+
+func TestMailMarkReadMultiContinuesAfterPerMessageFailure(t *testing.T) {
+	mp := mail.NewFake()
+	first, err := mp.Send("human", "mayor", "", "first")
+	if err != nil {
+		t.Fatalf("Send first: %v", err)
+	}
+	second, err := mp.Send("human", "mayor", "", "second")
+	if err != nil {
+		t.Fatalf("Send second: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rec := &memRecorder{}
+	code := doMailMarkRead(mp, rec, []string{first.ID, "ghost", second.ID}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("doMailMarkRead = %d, want 1; stderr: %s", code, stderr.String())
+	}
+	for _, id := range []string{first.ID, second.ID} {
+		if !strings.Contains(stdout.String(), "Marked "+id+" as read") {
+			t.Errorf("stdout missing mark-read confirmation for %q:\n%s", id, stdout.String())
+		}
+	}
+	if got := stderr.String(); !strings.Contains(got, "gc mail mark-read ghost") {
+		t.Errorf("stderr = %q, want per-ID error for ghost", got)
+	}
+	if got := len(rec.events); got != 2 {
+		t.Errorf("recorded events = %d, want 2", got)
+	}
+	inbox, err := mp.Inbox("mayor")
+	if err != nil {
+		t.Fatalf("Inbox: %v", err)
+	}
+	if got := len(inbox); got != 0 {
+		t.Errorf("Inbox after partial multi mark-read = %d, want 0", got)
+	}
+}
+
 func TestMailMarkUnreadSuccess(t *testing.T) {
 	store := beads.NewMemStore()
 	mp := beadmail.New(store)
