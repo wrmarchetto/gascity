@@ -4,27 +4,28 @@ package main
 // provider SCRIPT spawned for itself must reach TestMain's reaper registry.
 //
 // Scope is the adoption seam in runProviderOpWithEnvContext and the
-// confirmation it gates on. The tests substitute adoptionPIDIsDoltSQLServer
-// rather than dressing a shell up in dolt's argv, so this file spawns no
-// process at all: test/test-resources.toml ratchets test subprocess call
-// sites DOWN, and a fixture process would have spent that budget to prove
-// less than the direct test of the real confirmation below.
+// confirmation it gates on. Most tests here substitute
+// adoptionPIDIsDoltSQLServer rather than dressing a shell up in dolt's argv,
+// so they spawn no process at all: test/test-resources.toml ratchets test
+// subprocess call sites DOWN, and a fixture process would have spent that
+// budget to prove less than a direct test of the real confirmation.
 //
-// NOT covered here, deliberately: the accepting direction of the real
-// confirmation, end to end against a server the real gc-beads-bd script
-// spawned. That test exists and passes -- see the commit body -- but it needs
-// a skipSlowCmdGCTest gate, and the same ledger pins cmd/gc slow-process
-// markers at a baseline that cannot grow. It lands with the sanctioned
-// baseline ratchet under its own bead. The reaper's identity guard, PID-reuse
-// protection and process-group termination are pinned in
-// dolt_start_managed_test.go.
+// TestProviderOpAdoptsRealScriptSpawnedDolt is the deliberate exception. No
+// substituted seam can show that the confirmation reads an actual
+// `dolt sql-server` argv, so that one test starts a real server through the
+// real script. It is kept out of the fast loop by skipSlowCmdGCTest, and it
+// is what the slow_process_gate ledger row's 58 -> 59 ratchet accounts for.
+// The reaper's identity guard, PID-reuse protection and process-group
+// termination are pinned in dolt_start_managed_test.go.
 //
 // Run: go test ./cmd/gc/ -run 'TestProviderOp|TestPIDIsDoltSQLServer'
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -189,5 +190,101 @@ func TestPIDIsDoltSQLServerRefusesALiveNonDoltProcess(t *testing.T) {
 	}
 	if pidIsDoltSQLServer(0) || pidIsDoltSQLServer(-1) {
 		t.Fatalf("pidIsDoltSQLServer accepted a non-positive pid")
+	}
+}
+
+// TestProviderOpAdoptsRealScriptSpawnedDolt is the end-to-end form of the
+// ci-9r6x regression, and the only test in the package that exercises the
+// spawn route the bug was actually about: the real gc-beads-bd script, a real
+// dolt binary, and the production environment projection. The stubbed tests
+// above substitute adoptionPIDIsDoltSQLServer, so they pin the wiring but
+// never see an actual `dolt sql-server` argv -- which is the input the
+// confirmation has to read correctly for any of that wiring to matter.
+//
+// It is also the only test that runs the real confirmation in its ACCEPTING
+// direction. TestPIDIsDoltSQLServerRefusesALiveNonDoltProcess covers the
+// refusal against this test binary; a confirmation hardwired to false would
+// satisfy that one and leave the reaper permanently blind.
+//
+// This call site is the cmd/gc+untagged slow_process_gate occupant that the
+// 58 -> 59 ledger ratchet accounts for across census.go, test-resources.toml
+// and TESTING.md. Deleting the gate as redundant fails the ledger gate.
+func TestProviderOpAdoptsRealScriptSpawnedDolt(t *testing.T) {
+	skipSlowCmdGCTest(t, "starts a real managed dolt through the real gc-beads-bd script; run make test-cmd-gc-process for full coverage")
+	doltPath, err := exec.LookPath("dolt")
+	if err != nil {
+		t.Skip("dolt not installed")
+	}
+
+	withManagedDoltTestMode(t, true)
+	clearManagedDoltTestProcessRegistry(t)
+	t.Cleanup(func() { clearManagedDoltTestProcessRegistry(t) })
+
+	cityPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte("[workspace]\nname = \"demo\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	materializeBuiltinPacksForTest(t, cityPath)
+	script := gcBeadsBdScriptPath(cityPath)
+
+	// dolt init runs `git`-style identity checks against HOME, so a host
+	// whose real HOME has no committer identity would fail the store setup
+	// for a reason unrelated to adoption. Point both at a temp identity
+	// instead of skipping on the host's git config.
+	homeDir := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(homeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitConfig := filepath.Join(homeDir, ".gitconfig")
+	if err := os.WriteFile(gitConfig, []byte("[user]\n\tname = Test User\n\temail = test@example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	providerEnv, err := providerLifecycleProcessEnvWithError(cityPath, "exec:"+script)
+	if err != nil {
+		t.Fatalf("providerLifecycleProcessEnvWithError: %v", err)
+	}
+	// Later entries win (os/exec dedups keeping the last), so appending
+	// overrides what the projection inherited without disturbing the dolt
+	// paths it computed. Rebuilding the slice by hand would drop those.
+	providerEnv = append(providerEnv,
+		"HOME="+homeDir,
+		"GIT_CONFIG_GLOBAL="+gitConfig,
+		"PATH="+strings.Join([]string{filepath.Dir(doltPath), os.Getenv("PATH")}, string(os.PathListSeparator)),
+	)
+	// The whole point of this test is the route the script takes when it
+	// CANNOT delegate to `gc dolt-state start-managed`. If GC_BIN ever
+	// reaches a test binary, the script delegates, the server is spawned by
+	// a separate gc process, and this test would keep passing while covering
+	// nothing. Fail loudly rather than silently changing what is under test.
+	if got := runtimeEnvEntriesToMap(providerEnv)["GC_BIN"]; got != "" {
+		t.Fatalf("GC_BIN = %q in a test binary, want empty; the script would delegate to the Go starter and this test would no longer cover the shell spawn route", got)
+	}
+	// Registered before the start so a start that spawns a server and then
+	// fails its ready probe still gets stopped. Cleanups run LIFO, so this
+	// stop precedes the registry clear above -- clearing first would strand
+	// the server with neither the reaper nor this op holding it.
+	t.Cleanup(func() {
+		_ = runProviderOpWithEnv(script, providerEnv, "stop")
+	})
+
+	if err := runProviderOpWithEnv(script, providerEnv, "start"); err != nil {
+		t.Fatalf("runProviderOpWithEnv(start) = %v, want nil", err)
+	}
+
+	pidFile := runtimeEnvEntriesToMap(providerEnv)["GC_DOLT_PID_FILE"]
+	pid := managedDoltPIDFromProviderPIDFile(pidFile)
+	if pid <= 0 {
+		t.Fatalf("provider recorded no usable PID at %s", pidFile)
+	}
+	if !pidIsDoltSQLServer(pid) {
+		t.Fatalf("pidIsDoltSQLServer(%d) = false for the server the provider just started; the confirmation cannot see a real managed dolt", pid)
+	}
+
+	if _, ok := registeredManagedDoltTestProcess(pid); !ok {
+		t.Fatalf("real dolt sql-server pid %d spawned by the provider script is not registered with the test reaper (ci-9r6x)", pid)
 	}
 }
