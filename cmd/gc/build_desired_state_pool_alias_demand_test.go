@@ -163,6 +163,34 @@ func TestPoolAliasDemandExclusionsMatchTheShellPredicate(t *testing.T) {
 	}
 }
 
+// TestRoutedPoolDemandSkipsDispatchHoldLabels pins the ci-wv1o6 failure
+// mode: the default in-process scale check counted a held, unassigned routed
+// bead even though the worker's route-scoped query excludes it. That mismatch
+// woke a session which could never claim the bead, drained it, then repeated on
+// the next reconcile tick.
+//
+// Keep this beside the pool-alias exclusions because the two demand routes are
+// alternatives in defaultScaleCheckCountsAndDemand and must apply the same
+// dispatch-hold predicate.
+func TestRoutedPoolDemandSkipsDispatchHoldLabels(t *testing.T) {
+	for _, hold := range beadmeta.DispatchHoldLabels {
+		t.Run(hold, func(t *testing.T) {
+			result := poolAliasDemandResult(t, poolAliasDemandCity(), beads.Bead{
+				ID:     "held-routed-work",
+				Status: "open",
+				Type:   "task",
+				Labels: []string{hold},
+				Metadata: map[string]string{
+					beadmeta.RoutedToMetadataKey: "toolsmith",
+				},
+			})
+			if got := result.ScaleCheckCounts["toolsmith"]; got != 0 {
+				t.Errorf("demand = %d, want 0 — held routed work must not spawn a session that cannot claim it", got)
+			}
+		})
+	}
+}
+
 // TestPoolAliasDemandSkipsSuspendedAgent pins the outcome that a suspended agent
 // is never woken by this tier -- which is what the suspension means.
 //

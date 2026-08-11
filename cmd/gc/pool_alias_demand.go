@@ -95,10 +95,8 @@ func poolAliasDemandEligible(cfg *config.City, b beads.Bead, assignee string) bo
 	if beads.IsReadyExcludedType(b.Type) || beads.IsMoleculeType(b.Type) || b.Type == controlReadyExcludeType {
 		return false
 	}
-	for _, label := range beadmeta.DispatchHoldLabels {
-		if beadLabelsContain(b.Labels, label) {
-			return false
-		}
+	if hasDispatchHoldLabel(b.Labels) {
+		return false
 	}
 	// A configured named session's identity is its OWN wake signal: namedWorkReady
 	// matches Assignee=<identity> and spawns the holder directly. Counting the same
@@ -107,4 +105,16 @@ func poolAliasDemandEligible(cfg *config.City, b beads.Bead, assignee string) bo
 	// ever runs for a target the reconciler picked as a pool -- so the guard has to
 	// live on this side.
 	return !isConfiguredNamedSessionIdentity(cfg, assignee)
+}
+
+// hasDispatchHoldLabel reports whether labels park a bead outside of pool
+// demand. It is shared by both default demand routes so the controller never
+// counts work its corresponding worker query deliberately excludes.
+func hasDispatchHoldLabel(labels []string) bool {
+	for _, label := range beadmeta.DispatchHoldLabels {
+		if beadLabelsContain(labels, label) {
+			return true
+		}
+	}
+	return false
 }
