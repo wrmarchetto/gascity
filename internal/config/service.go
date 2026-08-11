@@ -15,6 +15,8 @@ var (
 )
 
 // Service declares a workspace-owned HTTP service mounted under /svc/{name}.
+// Requests to the service root redirect to a trailing slash so relative asset
+// URLs resolve within the service mount.
 type Service struct {
 	// Name is the unique service identifier within a workspace.
 	Name string `toml:"name" jsonschema:"required"`

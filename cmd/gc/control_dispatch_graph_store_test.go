@@ -35,7 +35,7 @@ func newControlBead(t *testing.T, store beads.Store, rootID string) beads.Bead {
 		Title: "check 1",
 		Type:  "task",
 		Metadata: map[string]string{
-			beadmeta.KindMetadataKey:          "check",
+			beadmeta.KindMetadataKey:          beadmeta.KindDrain,
 			beadmeta.RootBeadIDMetadataKey:    rootID,
 			beadmeta.RootStoreRefMetadataKey:  "city:test-city",
 			beadmeta.StepIDMetadataKey:        "implement",

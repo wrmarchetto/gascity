@@ -189,32 +189,11 @@ func controlReadyRoutes(parsed parsedControlReadyQuery) []string {
 // ready is expected to already be in canonical ready order (CachedReady/
 // SortBeadsReadyOrder), matching bd's own default (no --sort) ready order.
 //
-// The mail exclusion is the Go half of ci-bhvf, and it is the half that
-// matters: a message bead carries its recipient in `assignee`, so it arrives
-// here in the identical shape a control bead assigned to the dispatcher has,
-// and beadsToHookBeads drops Type on the way out -- nothing downstream can
-// tell them apart. drainWorkflowServeWork hands it to ProcessControl, whose
-// switch has no case for it and answers `unsupported control bead kind ""`.
-//
-// What follows is the part worth knowing, because it is not the loud failure
-// it looks like: runControlDispatcherWithStoreAndConfig classifies that as a
-// hard control failure and QUARANTINES the bead -- closed, labeled
-// gc:control-quarantined, stamped gc.outcome=fail and gc.failure_class=hard --
-// then prints one stderr line and returns nil, which the drain loop counts as
-// a processed cycle. So a message reaching here is destroyed unread and
-// recorded as a controller failure, with the dispatcher reporting success.
-// That is strictly worse than the worker path's version of this asymmetry,
-// which only cost a wasted spawn.
-//
-// Measured bound, bd 1.1.1 on 2026-08-10: mail cannot reach here today. The
-// cache arm filters through beads.IsReadyCandidate, whose readyExcludeTypes
-// already holds "message"; every Store.Ready applies the same predicate; and
-// `bd ready --include-ephemeral` returned 0 of the 5 open ephemeral message
-// beads then in the city store. So this is latent, for the same reason
-// bdReadyPoolAliasDemandShell's copy is: the guard has to already be here if
-// any one of those three facts changes, and this is the last layer that can
-// hold it. TestControlReadyCachePathLeansOnReadyExcludedMessageType fails if
-// the first of them does.
+// The dispatcher can execute only beadmeta.ControlKinds. Filtering here is
+// essential because beadsToHookBeads drops Type before ProcessControl sees the
+// bead; otherwise a normal work bead accidentally assigned to this identity is
+// quarantined as a failed control bead. The same predicate applies to the
+// route tier below.
 func filterReadyByAssignee(ready []beads.Bead, assignee string, limit int) []beads.Bead {
 	var out []beads.Bead
 	for _, b := range ready {
@@ -222,6 +201,11 @@ func filterReadyByAssignee(ready []beads.Bead, assignee string, limit int) []bea
 			continue
 		}
 		if beadmail.IsMessageBead(b) {
+			continue
+		}
+		kind := strings.TrimSpace(b.Metadata[beadmeta.KindMetadataKey])
+		if !beadmeta.IsControlKind(kind) {
+			log.Printf("control-ready: skipping non-control bead %s kind=%q assigned to %s", b.ID, kind, assignee)
 			continue
 		}
 		out = append(out, b)
@@ -253,6 +237,11 @@ func filterReadyByRoute(ready []beads.Bead, metadataKey, route string) []beads.B
 			continue
 		}
 		if b.Metadata[metadataKey] != route {
+			continue
+		}
+		kind := strings.TrimSpace(b.Metadata[beadmeta.KindMetadataKey])
+		if !beadmeta.IsControlKind(kind) {
+			log.Printf("control-ready: skipping non-control bead %s kind=%q routed to %s", b.ID, kind, route)
 			continue
 		}
 		held := false
