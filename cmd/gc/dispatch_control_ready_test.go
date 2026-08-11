@@ -110,7 +110,7 @@ func TestControlReadyRoutesFiltersEmptyAliases(t *testing.T) {
 func TestFilterReadyByAssigneeExcludesEpicAndOtherAssignees(t *testing.T) {
 	ready := []beads.Bead{
 		{ID: "ga-epic-leak", Assignee: "cand", Type: "epic"},
-		{ID: "ga-ready", Assignee: "cand", Type: "task"},
+		{ID: "ga-ready", Assignee: "cand", Type: "task", Metadata: map[string]string{beadmeta.KindMetadataKey: beadmeta.KindDrain}},
 		{ID: "ga-other", Assignee: "someone-else", Type: "task"},
 	}
 	got := filterReadyByAssignee(ready, "cand", workflowServeScanLimit)
@@ -119,10 +119,46 @@ func TestFilterReadyByAssigneeExcludesEpicAndOtherAssignees(t *testing.T) {
 	}
 }
 
+// TestControlReadyFiltersAdmitOnlyDispatcherKinds pins the readiness boundary
+// before beadsToHookBeads drops the bead type and ProcessControl can no longer
+// distinguish ordinary work from a control step. A normal bead assigned or
+// routed to the dispatcher must remain untouched rather than being
+// quarantined as an unsupported control bead.
+func TestControlReadyFiltersAdmitOnlyDispatcherKinds(t *testing.T) {
+	const (
+		assignee = "gascity--control-dispatcher"
+		route    = "gascity/control-dispatcher"
+	)
+	ready := []beads.Bead{
+		{ID: "ga-assigned-no-kind", Assignee: assignee, Type: "bug"},
+		{ID: "ga-assigned-unknown-kind", Assignee: assignee, Type: "task", Metadata: map[string]string{beadmeta.KindMetadataKey: "ordinary-work"}},
+		{ID: "ga-routed-no-kind", Type: "bug", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: route}},
+		{ID: "ga-routed-unknown-kind", Type: "task", Metadata: map[string]string{beadmeta.RoutedToMetadataKey: route, beadmeta.KindMetadataKey: "ordinary-work"}},
+	}
+	wantAssigned := make([]string, 0, len(beadmeta.ControlKinds))
+	wantRoutedTo := make([]beads.Bead, 0, len(beadmeta.ControlKinds))
+	for _, kind := range beadmeta.ControlKinds {
+		ready = append(ready,
+			beads.Bead{ID: "ga-assigned-" + kind, Assignee: assignee, Type: "task", Metadata: map[string]string{beadmeta.KindMetadataKey: kind}},
+			beads.Bead{ID: "ga-routed-" + kind, Type: "task", Metadata: map[string]string{beadmeta.RoutedToMetadataKey: route, beadmeta.KindMetadataKey: kind}},
+		)
+		wantAssigned = append(wantAssigned, "ga-assigned-"+kind)
+		wantRoutedTo = append(wantRoutedTo, beads.Bead{ID: "ga-routed-" + kind})
+	}
+
+	if got := beadIDs(filterReadyByAssignee(ready, assignee, workflowServeScanLimit)); !stringSlicesEqual(got, wantAssigned) {
+		t.Fatalf("filterReadyByAssignee ids = %v, want every and only ControlKinds %v", got, wantAssigned)
+	}
+	beads.SortBeads(wantRoutedTo, beads.SortCreatedAsc)
+	if got, want := beadIDs(filterReadyByRoute(ready, beadmeta.RoutedToMetadataKey, route)), beadIDs(wantRoutedTo); !stringSlicesEqual(got, want) {
+		t.Fatalf("filterReadyByRoute ids = %v, want every and only ControlKinds %v", got, want)
+	}
+}
+
 func TestFilterReadyByAssigneeRespectsLimit(t *testing.T) {
 	ready := make([]beads.Bead, 0, 5)
 	for i := 0; i < 5; i++ {
-		ready = append(ready, beads.Bead{ID: strings.Repeat("z", i+1), Assignee: "cand", Type: "task"})
+		ready = append(ready, beads.Bead{ID: strings.Repeat("z", i+1), Assignee: "cand", Type: "task", Metadata: map[string]string{beadmeta.KindMetadataKey: beadmeta.KindDrain}})
 	}
 	got := filterReadyByAssignee(ready, "cand", 2)
 	if len(got) != 2 {
@@ -135,8 +171,8 @@ func TestFilterReadyByRouteRequiresUnassignedAndSortsOldestFirst(t *testing.T) {
 	older := time.Unix(100, 0)
 	ready := []beads.Bead{
 		{ID: "ga-assigned-routed", CreatedAt: older, Assignee: "someone", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "core/control-dispatcher"}},
-		{ID: "ga-newer", CreatedAt: newer, Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "core/control-dispatcher"}},
-		{ID: "ga-older", CreatedAt: older, Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "core/control-dispatcher"}},
+		{ID: "ga-newer", CreatedAt: newer, Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "core/control-dispatcher", beadmeta.KindMetadataKey: beadmeta.KindDrain}},
+		{ID: "ga-older", CreatedAt: older, Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "core/control-dispatcher", beadmeta.KindMetadataKey: beadmeta.KindDrain}},
 		{ID: "ga-epic-routed", CreatedAt: older, Type: "epic", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "core/control-dispatcher"}},
 		{ID: "ga-other-route", CreatedAt: older, Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "other"}},
 	}
@@ -213,15 +249,15 @@ func TestEvaluateControlReadyMatchesShellQueryPriority(t *testing.T) {
 		"GC_ALIAS=gascity/control-dispatcher",
 	}
 	ready := []beads.Bead{
-		{ID: "ga-z-assigned", Assignee: "gascity--control-dispatcher"},
-		{ID: "ga-dup", Assignee: "gascity--control-dispatcher", Metadata: map[string]string{"source": "assigned"}},
-		{ID: "ga-a-routed", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "gascity/control-dispatcher"}},
-		{ID: "ga-route-dup", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "gascity/control-dispatcher", "source": "run-target"}},
-		{ID: "ga-route-dup-2", Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "gascity/control-dispatcher"}},
+		{ID: "ga-z-assigned", Assignee: "gascity--control-dispatcher", Metadata: map[string]string{beadmeta.KindMetadataKey: beadmeta.KindDrain}},
+		{ID: "ga-dup", Assignee: "gascity--control-dispatcher", Metadata: map[string]string{beadmeta.KindMetadataKey: beadmeta.KindDrain, "source": "assigned"}},
+		{ID: "ga-a-routed", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "gascity/control-dispatcher", beadmeta.KindMetadataKey: beadmeta.KindDrain}},
+		{ID: "ga-route-dup", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "gascity/control-dispatcher", beadmeta.KindMetadataKey: beadmeta.KindDrain, "source": "run-target"}},
+		{ID: "ga-route-dup-2", Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "gascity/control-dispatcher", beadmeta.KindMetadataKey: beadmeta.KindDrain}},
 	}
 	// ga-route-dup also appears as a routed_to match with different content;
 	// the run_target occurrence (checked first) must win.
-	ready = append(ready, beads.Bead{ID: "ga-route-dup", Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "gascity/control-dispatcher", "source": "routed-to"}})
+	ready = append(ready, beads.Bead{ID: "ga-route-dup", Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "gascity/control-dispatcher", beadmeta.KindMetadataKey: beadmeta.KindDrain, "source": "routed-to"}})
 
 	got := evaluateControlReady(ready, parsed, envList)
 	wantIDs := []string{"ga-z-assigned", "ga-dup", "ga-a-routed", "ga-route-dup", "ga-route-dup-2"}
@@ -247,8 +283,8 @@ func TestEvaluateControlReadyExcludesEpicAndInstantiating(t *testing.T) {
 	}
 	ready := []beads.Bead{
 		{ID: "ga-epic-leak", Assignee: "gascity--control-dispatcher", Type: "epic"},
-		{ID: "ga-ready", Assignee: "gascity--control-dispatcher", Type: "task"},
-		{ID: "ga-instantiating-routed", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "gascity/control-dispatcher", beadmeta.InstantiatingMetadataKey: "true"}},
+		{ID: "ga-ready", Assignee: "gascity--control-dispatcher", Type: "task", Metadata: map[string]string{beadmeta.KindMetadataKey: beadmeta.KindDrain}},
+		{ID: "ga-instantiating-routed", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "gascity/control-dispatcher", beadmeta.InstantiatingMetadataKey: "true", beadmeta.KindMetadataKey: beadmeta.KindDrain}},
 		{ID: "ga-routed", Metadata: map[string]string{beadmeta.RunTargetMetadataKey: "gascity/control-dispatcher", "gc.kind": "scope-check"}},
 	}
 
@@ -320,7 +356,7 @@ func TestTryControlReadyFromCacheOrFallbackAnswersFromCacheWithZeroSubprocessCal
 	noBDOnPathForTest(t)
 
 	target := "gascity/control-dispatcher"
-	ready, err := store.Create(beads.Bead{Assignee: target, Type: "task"})
+	ready, err := store.Create(beads.Bead{Assignee: target, Type: "task", Metadata: map[string]string{beadmeta.KindMetadataKey: beadmeta.KindDrain}})
 	if err != nil {
 		t.Fatalf("create ready bead: %v", err)
 	}
@@ -328,7 +364,7 @@ func TestTryControlReadyFromCacheOrFallbackAnswersFromCacheWithZeroSubprocessCal
 	if err != nil {
 		t.Fatalf("create epic bead: %v", err)
 	}
-	routed, err := store.Create(beads.Bead{Metadata: map[string]string{beadmeta.RoutedToMetadataKey: target}})
+	routed, err := store.Create(beads.Bead{Metadata: map[string]string{beadmeta.RoutedToMetadataKey: target, beadmeta.KindMetadataKey: beadmeta.KindDrain}})
 	if err != nil {
 		t.Fatalf("create routed bead: %v", err)
 	}
@@ -390,7 +426,7 @@ case "$1" in
 esac
 case "$*" in
   "--readonly --sandbox ready --json --exclude-type=epic --limit=%d")
-    printf '[{"id":"ga-fallback-ready","assignee":"%s"}]'
+    printf '[{"id":"ga-fallback-ready","assignee":"%s","metadata":{"gc.kind":"drain"}}]'
     ;;
   *)
     printf '[]'
