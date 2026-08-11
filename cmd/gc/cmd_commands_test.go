@@ -66,6 +66,26 @@ func TestAddDiscoveredCommandsToRoot_BuildsBindingScopedNestedTree(t *testing.T)
 	}
 }
 
+func TestAddDiscoveredCommandsToRoot_BuildsCityLocalNestedTree(t *testing.T) {
+	root := &cobra.Command{Use: "gc"}
+	entries := []config.DiscoveredCommand{
+		{Command: []string{"diagnostics", "logs"}, Description: "Show logs"},
+		{Command: []string{"diagnostics", "status"}, Description: "Show status"},
+	}
+
+	addDiscoveredCommandsToRoot(root, entries, "/city", "testcity", os.Stdout, os.Stderr, true)
+
+	diagnostics := findSubcommand(root, "diagnostics")
+	if diagnostics == nil {
+		t.Fatal("missing city-local diagnostics namespace")
+	}
+	for _, name := range []string{"logs", "status"} {
+		if findSubcommand(diagnostics, name) == nil {
+			t.Fatalf("missing city-local diagnostics %s command", name)
+		}
+	}
+}
+
 func TestRunDiscoveredCommand_UsesPackContext(t *testing.T) {
 	dir := t.TempDir()
 	packDir := filepath.Join(dir, "pack")
