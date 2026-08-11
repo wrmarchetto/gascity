@@ -17,6 +17,7 @@ import (
 	sessionauto "github.com/gastownhall/gascity/internal/runtime/auto"
 	"github.com/gastownhall/gascity/internal/sessionlog"
 	"github.com/gastownhall/gascity/internal/testutil"
+	"github.com/google/uuid"
 )
 
 func immediateStaleKeyDetectionWaiter(context.Context, string) error { return nil }
@@ -4387,6 +4388,48 @@ func TestTranscriptPathPrefersSessionKey(t *testing.T) {
 	}
 	if path != keyPath {
 		t.Errorf("TranscriptPath = %q, want %q", path, keyPath)
+	}
+}
+
+func TestTranscriptPathDoesNotFallBackWhenSessionKeyMisses(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManagerWithOptions(store, sp)
+
+	workDir := t.TempDir()
+	info, err := mgr.CreateSession(context.Background(), CreateOptions{
+		Template: "helper",
+		Command:  "claude",
+		WorkDir:  workDir,
+		Provider: "claude",
+		Resume: ProviderResume{
+			ResumeFlag:    "--resume",
+			ResumeStyle:   "flag",
+			SessionIDFlag: "--session-id",
+		},
+		Hints:     runtime.Config{},
+		ExtraMeta: map[string]string{"session_origin": "manual"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	searchBase := t.TempDir()
+	slugDir := filepath.Join(searchBase, sessionlog.ProjectSlug(workDir))
+	if err := os.MkdirAll(slugDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	foreignPath := filepath.Join(slugDir, uuid.NewString()+".jsonl")
+	if err := os.WriteFile(foreignPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(foreign): %v", err)
+	}
+
+	path, err := mgr.TranscriptPath(info.ID, []string{searchBase})
+	if err != nil {
+		t.Fatalf("TranscriptPath: %v", err)
+	}
+	if path != "" {
+		t.Errorf("TranscriptPath = %q, want empty after keyed transcript miss", path)
 	}
 }
 
