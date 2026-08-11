@@ -12,6 +12,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/doctor"
 	"github.com/gastownhall/gascity/internal/events"
+	"github.com/gastownhall/gascity/internal/orders"
 )
 
 func TestBuildDoctorChecksOrderFiringCurrentUsesOrderRunHistory(t *testing.T) {
@@ -47,7 +48,7 @@ schedule = "0 */4 * * *"
 	if _, err := store.Create(beads.Bead{
 		Title:  "manual run mol-dog-stale-db",
 		Type:   "molecule",
-		Labels: []string{"order-run:mol-dog-stale-db"},
+		Labels: []string{"order-run:mol-dog-stale-db", "exec"},
 	}); err != nil {
 		t.Fatalf("create recent order-run bead: %v", err)
 	}
@@ -65,6 +66,13 @@ schedule = "0 */4 * * *"
 
 	cfg := &config.City{FormulaLayers: config.FormulaLayers{City: []string{filepath.Join(cityDir, "formulas")}}}
 	var stderr bytes.Buffer
+	history, err := doctorOrderFiringCurrentHistoryFunc(cityDir, cfg, &stderr)(orders.Order{Name: "mol-dog-stale-db"})
+	if err != nil {
+		t.Fatalf("doctor order history: %v", err)
+	}
+	if len(history) != 1 || history[0].Outcome != orders.RunOutcomeExec {
+		t.Fatalf("doctor order history = %#v, want the persisted successful execution", history)
+	}
 	var check doctor.Check
 	for _, candidate := range buildDoctorChecks(cityDir, cfg, nil, buildDoctorChecksOpts{Stderr: &stderr}) {
 		if candidate.Name() == "order-firing-current" {
