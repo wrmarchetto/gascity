@@ -687,9 +687,14 @@ func (cs *controllerState) applyBeadEventToStores(evt events.Event) {
 	}
 	cs.mu.RUnlock()
 
+	// Resolved through beads.CacheApplierFor, never asserted concretely: every
+	// store here arrives policy-wrapped (wrapWithCachingStore re-wraps on the
+	// way out), so a `store.(*beads.CachingStore)` assertion matches nothing
+	// the controller actually builds and silently reduces every cache in the
+	// process to reconcile-only (ci-1p6a).
 	for _, store := range stores {
-		if cached, ok := store.(*beads.CachingStore); ok {
-			cached.ApplyEvent(evt.Type, evt.Payload)
+		if applier, ok := beads.CacheApplierFor(store); ok {
+			applier.ApplyEvent(evt.Type, evt.Payload)
 		}
 	}
 	if evt.Actor != "cache-reconcile" {

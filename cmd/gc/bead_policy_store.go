@@ -56,6 +56,9 @@ var (
 
 	_ beads.LivenessHandleProvider = (*beadPolicyStore)(nil)
 	_ beads.LivenessHandleProvider = (*beadPolicyGraphStore)(nil)
+
+	_ beads.CacheApplierHandleProvider = (*beadPolicyStore)(nil)
+	_ beads.CacheApplierHandleProvider = (*beadPolicyGraphStore)(nil)
 )
 
 // LivenessHandle forwards the wrapped store's cache-liveness capability — the
@@ -77,6 +80,25 @@ var (
 // inherits the forward through its embedded *beadPolicyStore.
 func (s *beadPolicyStore) LivenessHandle() (beads.LivenessReporter, bool) {
 	return beads.LivenessFor(s.Store)
+}
+
+// CacheApplierHandle forwards the wrapped store's cache-apply capability, the
+// same delegation LivenessHandle performs and for the same reason. The policy
+// layer shapes creation and reads; it has no cache of its own, so absorbing a
+// bus event here would mean either dropping it or reimplementing the cache's
+// conflict and ownership rules a second time.
+//
+// Left unforwarded, the controller's bead-event fan-out
+// (applyBeadEventToStores) reached no cache at all: every store it iterates is
+// policy-wrapped, so its `*beads.CachingStore` assertion matched nothing and
+// each cache converged only at reconcile cadence while the event bus carried
+// the writes past it. Pinned by
+// TestControllerBeadEventsReachCachesThroughProductionStoreWrappers and
+// TestBeadPolicyStoreReportsNoCacheApplierForUncachedBacking;
+// beadPolicyGraphStore inherits the forward through its embedded
+// *beadPolicyStore.
+func (s *beadPolicyStore) CacheApplierHandle() (beads.CacheApplier, bool) {
+	return beads.CacheApplierFor(s.Store)
 }
 
 func wrapStoreWithBeadPolicies(store beads.Store, cfg *config.City) beads.Store {
