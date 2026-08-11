@@ -986,6 +986,9 @@ func buildPreparedStartWithWorkDirResolver(
 	} else if wd := candidate.info.WorkDir; wd != "" {
 		agentCfg.WorkDir = resolveWorkDirAgainstCity(cityPath, wd)
 	}
+	if err := validateWorkDirForSessionAssignment(agentCfg.WorkDir); err != nil {
+		return nil, candidate.info, err
+	}
 	// The task work_dir override above can replace agentCfg.WorkDir after
 	// template resolution already rendered PreStart commands (materialize-
 	// skills, MCP projection) against the pre-override directory. Retarget

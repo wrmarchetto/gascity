@@ -5557,6 +5557,25 @@ func resolveWorkDirAgainstCity(cityPath, workDir string) string {
 	return filepath.Join(cityPath, workDir)
 }
 
+// validateWorkDirForSessionAssignment refuses a directory explicitly retained
+// by the worktree-prune path. The marker is a durable handoff boundary: its
+// contents identify work that must be adjudicated, never silently reused by a
+// replacement session. Marker read failures also fail closed so an unreadable
+// marker cannot turn into an unsafe assignment.
+func validateWorkDirForSessionAssignment(workDir string) error {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return nil
+	}
+	marker := filepath.Join(workDir, worktreeStaleFileName)
+	if _, err := os.Lstat(marker); err == nil {
+		return fmt.Errorf("worktree %q carries %s; refusing session assignment", workDir, marker)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking stale worktree marker for %q: %w", workDir, err)
+	}
+	return nil
+}
+
 // resolveTaskWorkDir checks the agent's assigned task beads for a work_dir
 // metadata field. If a task bead has work_dir set and the directory exists
 // on disk, that path is returned. This lets the reconciler start the agent
