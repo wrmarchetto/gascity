@@ -153,6 +153,12 @@ needs = ["implement"]
 description = """
 Inspect the change and run verification commands.
 
+Audit comments changed in this diff: inspect only comments added or modified
+in `origin/{{base_branch}}...HEAD`. Confirm that each still documents a
+current decision, tradeoff, invariant, or rejected alternative; rewrite or
+remove comments made stale by the change. Do not re-review settled comments
+outside this diff.
+
 ```bash
 git diff origin/{{base_branch}}...HEAD
 {{typecheck_command}}

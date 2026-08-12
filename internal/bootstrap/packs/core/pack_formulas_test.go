@@ -179,6 +179,24 @@ func TestPolecatSelfReviewDefersToPreflightDedupeProtocol(t *testing.T) {
 	}
 }
 
+// TestCoreSelfReviewAuditsChangedComments keeps comment correctness in the
+// agent's own review loop. A formatter or test suite cannot tell whether a
+// comment still explains the code after a change, so the prompt must call for
+// that judgment against the changed diff rather than the whole file.
+func TestCoreSelfReviewAuditsChangedComments(t *testing.T) {
+	for _, file := range []string{"mol-polecat-base.toml", "mol-scoped-work.toml"} {
+		t.Run(file, func(t *testing.T) {
+			step := formulaStep(t, readFormula(t, file), "self-review")
+			if !strings.Contains(step, "Audit comments changed in this diff") {
+				t.Fatal("self-review must require an audit of comments changed in the diff")
+			}
+			if !strings.Contains(step, "origin/{{base_branch}}...HEAD") {
+				t.Fatal("self-review must scope its comment audit to origin/{{base_branch}}...HEAD")
+			}
+		})
+	}
+}
+
 // TestCoreShippedAssetsAvoidNonexistentBDListSearchFlag guards the failure mode
 // that made the sibling fix a no-op: `gc bd list` has no `--search` flag, so a
 // dedupe lookup written against it exits 1 and returns nothing, which reads as
