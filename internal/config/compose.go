@@ -346,6 +346,16 @@ func LoadWithIncludesOptions(fs fsys.FS, path string, opts LoadOptions, extraInc
 		root.Agents = append(root.Agents, packDiscoveredAgents...)
 		root.Agents = append(root.Agents, cityAgents...)
 	} // end pack.toml merge
+	if !packExists {
+		// A city without a definition-layer pack exposes its conventional
+		// commands directly. A root pack owns the same directory but gives
+		// its commands that pack's binding instead.
+		cityCommands, err := DiscoverPackCommands(fs, cityRoot, "")
+		if err != nil {
+			return nil, nil, fmt.Errorf("city commands: %w", err)
+		}
+		root.PackCommands = appendDiscoveredCommands(root.PackCommands, cityCommands...)
+	}
 
 	// V2 guidance: when pack.toml exists, city.toml imports should move
 	// to pack.toml (imports are definition, city.toml is deployment).
