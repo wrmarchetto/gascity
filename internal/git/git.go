@@ -319,8 +319,19 @@ func (g *Git) HasUnreachableCommitsResult() (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
-// HasStashes reports whether the repository has stashed work.
+// HasStashes reports whether the REPOSITORY has stashed work.
 // If the probe fails, it returns true to fail closed.
+//
+// Repository, not worktree, and the distinction is the whole warning: refs/stash
+// is a single repo-wide ref, so every linked worktree gets an identical answer no
+// matter which one g points at. Do NOT use this to decide anything about one
+// worktree. Three destructive-cleanup gates did, and one agent's stash then
+// protected — and, via the .worktree-stale marker, disabled — every sibling slot
+// in the repo (bead ci-auomj).
+//
+// Nor is worktree removal a reason to consult it at all: `git worktree remove`
+// deletes the checkout and that worktree's admin dir, never refs, so stashed work
+// survives it intact. Same reasoning as HasUnreachableCommitsResult below.
 func (g *Git) HasStashes() bool {
 	has, err := g.HasStashesResult()
 	if err != nil {
