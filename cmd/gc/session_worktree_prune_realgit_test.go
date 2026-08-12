@@ -35,9 +35,13 @@ import (
 
 // realGitPruneFixture wires a city whose rig is a real clone of a real bare
 // origin, with two real detached worktrees under .gc/worktrees — the shape the
-// pool actually provisions. The origin exists so HEAD is reachable from a
-// remote-tracking ref: without it the unpushed-commits gate fires first and
-// would mask whatever the stash gate does.
+// pool actually provisions.
+//
+// The origin was originally here because the commit gate read push state, so
+// without a remote-tracking ref that gate fired first and masked the stash
+// gate. Since bead ci-hh8aa the gate reads reachability instead and refs/heads
+// alone would satisfy it, so the origin is now fixture fidelity rather than a
+// precondition — keep it, and do not read a failure here as a missing remote.
 type realGitPruneFixture struct {
 	cityPath  string
 	rigRoot   string
@@ -63,8 +67,7 @@ func newRealGitPruneFixture(t *testing.T) *realGitPruneFixture {
 	runGitInTest(t, rigRoot, "add", "tracked.txt")
 	runGitInTest(t, rigRoot, "commit", "-m", "base")
 	// Push rather than clone: the bare origin starts empty, so a clone has no
-	// branch to check out. The push is what creates refs/remotes/origin/main,
-	// which is the ref the unpushed-commits gate reads.
+	// branch to check out. The push is what creates refs/remotes/origin/main.
 	runGitInTest(t, rigRoot, "remote", "add", "origin", origin)
 	runGitInTest(t, rigRoot, "push", "-u", "origin", "main")
 

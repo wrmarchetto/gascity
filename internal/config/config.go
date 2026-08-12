@@ -2660,9 +2660,13 @@ type DaemonConfig struct {
 	// AutoPruneWorkerDir controls whether the reconciler removes a
 	// pool-managed session's worker_dir (agent worktree) after the session
 	// bead is closed. Removal is gated on: path lives under the city's
-	// .gc/worktrees/ tree, clean working tree, no unpushed commits.
-	// Stashed work is deliberately NOT a gate: refs/stash is repo-wide, so
-	// one agent's stash blocked every sibling slot, and a stash survives the
+	// .gc/worktrees/ tree, clean working tree, no commits that removing the
+	// worktree would orphan.
+	// Push state is deliberately NOT the commit gate: `git worktree remove`
+	// leaves refs/heads alone, so every slot that committed before its branch
+	// landed was retained and marked out of service (bead ci-hh8aa).
+	// Stashed work is deliberately NOT a gate either: refs/stash is repo-wide,
+	// so one agent's stash blocked every sibling slot, and a stash survives the
 	// removal anyway (bead ci-auomj).
 	// Nil (unset) defaults to true so pool worktrees do not
 	// accumulate without bound across pool recycles. Set to false to
@@ -2725,7 +2729,7 @@ func (d *DaemonConfig) AutoReapClosedBeadWorktreesMinAge() time.Duration {
 // pool-managed session's worker_dir after the session bead is closed. The
 // default is true: pool worktrees are transient by design and accumulate
 // without bound otherwise. Removal is still gated on per-worktree safety
-// probes (clean tree, no unpushed commits).
+// probes (clean tree, no commits the removal would orphan).
 func (d *DaemonConfig) AutoPruneWorkerDirEnabled() bool {
 	if d.AutoPruneWorkerDir == nil {
 		return true
