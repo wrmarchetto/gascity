@@ -2331,7 +2331,9 @@ type DoctorConfig struct {
 	// the operator runs `gc doctor --fix`. Actual removal still
 	// requires --fix; this flag does not auto-prune. Safety is
 	// enforced by mechanical checks (no uncommitted changes, no
-	// unpushed commits, no stashes) — never by role identity.
+	// unpushed commits) — never by role identity. Stashes are
+	// deliberately not among them: refs/stash is repo-wide, and a
+	// stash survives worktree removal (bead ci-auomj).
 	NestedWorktreePrune bool `toml:"nested_worktree_prune,omitempty" jsonschema:"default=false"`
 
 	// ExternalAssignees lists assignee names that are deliberately not
@@ -2600,8 +2602,8 @@ type DaemonConfig struct {
 	// AutoReapClosedBeadWorktrees controls whether the reconciler patrol
 	// automatically removes per-bead git worktrees once their associated
 	// work bead reaches closed status. Only worktrees with a clean working
-	// tree, no stashes, and no commits that removal would orphan — commits
-	// reachable from no branch, tag, or remote-tracking ref — are removed;
+	// tree and no commits that removal would orphan — commits reachable
+	// from no branch, tag, or remote-tracking ref — are removed;
 	// push state is deliberately not the test, since `git worktree remove`
 	// deletes the checkout and not refs/heads. Unsafe worktrees are logged
 	// as warnings and left in place for operator review. Session
@@ -2658,8 +2660,11 @@ type DaemonConfig struct {
 	// AutoPruneWorkerDir controls whether the reconciler removes a
 	// pool-managed session's worker_dir (agent worktree) after the session
 	// bead is closed. Removal is gated on: path lives under the city's
-	// .gc/worktrees/ tree, clean working tree, no unpushed commits, no
-	// stashed work. Nil (unset) defaults to true so pool worktrees do not
+	// .gc/worktrees/ tree, clean working tree, no unpushed commits.
+	// Stashed work is deliberately NOT a gate: refs/stash is repo-wide, so
+	// one agent's stash blocked every sibling slot, and a stash survives the
+	// removal anyway (bead ci-auomj).
+	// Nil (unset) defaults to true so pool worktrees do not
 	// accumulate without bound across pool recycles. Set to false to
 	// retain worktrees for post-session diagnostics.
 	AutoPruneWorkerDir *bool `toml:"auto_prune_worker_dir,omitempty" jsonschema:"default=true"`
@@ -2720,7 +2725,7 @@ func (d *DaemonConfig) AutoReapClosedBeadWorktreesMinAge() time.Duration {
 // pool-managed session's worker_dir after the session bead is closed. The
 // default is true: pool worktrees are transient by design and accumulate
 // without bound otherwise. Removal is still gated on per-worktree safety
-// probes (clean tree, no unpushed commits, no stashes).
+// probes (clean tree, no unpushed commits).
 func (d *DaemonConfig) AutoPruneWorkerDirEnabled() bool {
 	if d.AutoPruneWorkerDir == nil {
 		return true
