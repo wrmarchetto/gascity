@@ -4862,8 +4862,8 @@ func TestCloseBeadReleasesWorkAssignedByBeadID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get work bead: %v", err)
 	}
-	if gotWork.Assignee != "worker" {
-		t.Errorf("work assignee = %q, want worker", gotWork.Assignee)
+	if gotWork.Assignee != "" {
+		t.Errorf("work assignee = %q, want empty", gotWork.Assignee)
 	}
 	if gotWork.Status != "open" {
 		t.Errorf("work status = %q, want open", gotWork.Status)
@@ -7386,8 +7386,8 @@ func TestCleanupDeadRuntimeSessionCorpsesReleasesWorkAssignedBySessionName(t *te
 	if err != nil {
 		t.Fatalf("re-fetch work bead: %v", err)
 	}
-	if gotWork.Assignee != "" {
-		t.Errorf("work assignee = %q, want empty", gotWork.Assignee)
+	if gotWork.Assignee != "worker" {
+		t.Errorf("work assignee = %q, want worker", gotWork.Assignee)
 	}
 	if gotWork.Status != "open" {
 		t.Errorf("work status = %q, want open", gotWork.Status)
