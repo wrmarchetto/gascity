@@ -353,6 +353,16 @@ func (fs *FileStore) Update(id string, opts UpdateOpts) error {
 // ReleaseIfCurrent clears an in-progress assignment only when the bead still
 // has the expected assignee, while holding the file-store write lock.
 func (fs *FileStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error) {
+	return fs.reassignIfCurrent(id, expectedAssignee, "")
+}
+
+// ReassignIfCurrent moves an in-progress assignment while holding the
+// file-store write lock.
+func (fs *FileStore) ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	return fs.reassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+}
+
+func (fs *FileStore) reassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
 	fs.fmu.Lock()
 	defer fs.fmu.Unlock()
 	if err := fs.locker.Lock(); err != nil {
@@ -363,7 +373,7 @@ func (fs *FileStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error)
 		return false, err
 	}
 	snap := fs.snapshotLocked()
-	released, err := fs.MemStore.ReleaseIfCurrent(id, expectedAssignee)
+	released, err := fs.MemStore.ReassignIfCurrent(id, expectedAssignee, recoveryAssignee)
 	if err != nil || !released {
 		return released, err
 	}

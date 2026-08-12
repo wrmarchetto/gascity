@@ -153,6 +153,16 @@ type ConditionalAssignmentReleaser interface {
 	ReleaseIfCurrent(id, expectedAssignee string) (bool, error)
 }
 
+// ConditionalAssignmentReassigner is implemented by stores that can return an
+// in-progress assignment to a recovery assignee only while its current owner
+// still matches the caller's snapshot.
+//
+// Unlike a release followed by a separate assignment, a successful reassign
+// never exposes a routed bead without an assignee between writes.
+type ConditionalAssignmentReassigner interface {
+	ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error)
+}
+
 // ConditionalWriter is implemented by stores that can apply a write only when
 // the caller's snapshot of the bead is still current. It is an optional store
 // capability, discovered like ConditionalAssignmentReleaser: type-assert on the

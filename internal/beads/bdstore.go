@@ -1192,14 +1192,24 @@ func (s *BdStore) Update(id string, opts UpdateOpts) error {
 // ErrConditionalReleaseUnsupported as "take a conditional recheck fallback"
 // (see cmd/gc releasePoolAssignmentIfCurrent), so no caller changes are needed.
 func (s *BdStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error) {
-	query := "UPDATE issues SET status = 'open', assignee = '', updated_at = CURRENT_TIMESTAMP" +
+	return s.reassignIfCurrent(id, expectedAssignee, "")
+}
+
+// ReassignIfCurrent moves an in-progress assignment only when it is still held
+// by expectedAssignee.
+func (s *BdStore) ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	return s.reassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+}
+
+func (s *BdStore) reassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	query := "UPDATE issues SET status = 'open', assignee = " + bdSQLStringLiteral(recoveryAssignee) + ", updated_at = CURRENT_TIMESTAMP" +
 		" WHERE id = " + bdSQLStringLiteral(id) +
 		" AND status = 'in_progress'" +
 		" AND assignee = " + bdSQLStringLiteral(expectedAssignee)
 	out, err := s.runBDTransientWriteOutput("sql", "--json", query)
 	if err != nil {
 		if isBdSQLUnsupportedInEmbeddedMode(err) {
-			return s.releaseIfCurrentViaEmbeddedDoltSQL(id, expectedAssignee)
+			return s.releaseIfCurrentViaEmbeddedDoltSQL(id, expectedAssignee, recoveryAssignee)
 		}
 		return false, fmt.Errorf("bd release-if-current: %w", err)
 	}
@@ -1212,7 +1222,7 @@ func (s *BdStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error) {
 	return result.RowsAffected > 0, nil
 }
 
-func (s *BdStore) releaseIfCurrentViaEmbeddedDoltSQL(id, expectedAssignee string) (bool, error) {
+func (s *BdStore) releaseIfCurrentViaEmbeddedDoltSQL(id, expectedAssignee, recoveryAssignee string) (bool, error) {
 	doltDir, ok, err := s.embeddedDoltDir()
 	if err != nil {
 		return false, fmt.Errorf("bd release-if-current embedded fallback: %w", err)
@@ -1220,7 +1230,7 @@ func (s *BdStore) releaseIfCurrentViaEmbeddedDoltSQL(id, expectedAssignee string
 	if !ok {
 		return false, fmt.Errorf("bd release-if-current embedded fallback: %w", ErrConditionalReleaseUnsupported)
 	}
-	query := "UPDATE issues SET status = 'open', assignee = '', updated_at = CURRENT_TIMESTAMP" +
+	query := "UPDATE issues SET status = 'open', assignee = " + bdSQLStringLiteral(recoveryAssignee) + ", updated_at = CURRENT_TIMESTAMP" +
 		" WHERE id = " + bdSQLStringLiteral(id) +
 		" AND status = 'in_progress'" +
 		" AND assignee = " + bdSQLStringLiteral(expectedAssignee) +
