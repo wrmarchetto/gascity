@@ -16,13 +16,21 @@ import (
 // probe; WorktreeRemoveErr controls the destructive call, and removed
 // records the (path, force) of every WorktreeRemove invocation so tests
 // can assert which directory the removal targeted.
+//
+// The fields model ANSWERS, not questions, which bounds what this stub can
+// pin. It cannot see the difference between "unpushed" and "unreachable", so
+// no test built on it distinguishes the two gates and every one of them stayed
+// green while the prune path asked the wrong one (bead ci-hh8aa). What belongs
+// here is gate ORDER and marker plumbing; which git question the gate asks is
+// pinned only against real git, in
+// session_worktree_prune_reachability_realgit_test.go.
 type fakeGitProbe struct {
 	isRepo           bool
 	currentBranch    string
 	currentBranchErr error
 	hasUncommitted   bool
-	hasUnpushed      bool
-	unpushedErr      error
+	hasUnreachable   bool
+	unreachableErr   error
 	worktreeRemove   func(path string, force bool) error
 	removedPath      string
 	removedForce     bool
@@ -34,8 +42,8 @@ func (f *fakeGitProbe) CurrentBranch() (string, error) {
 	return f.currentBranch, f.currentBranchErr
 }
 func (f *fakeGitProbe) HasUncommittedWork() bool { return f.hasUncommitted }
-func (f *fakeGitProbe) HasUnpushedCommitsResult() (bool, error) {
-	return f.hasUnpushed, f.unpushedErr
+func (f *fakeGitProbe) HasUnreachableCommitsResult() (bool, error) {
+	return f.hasUnreachable, f.unreachableErr
 }
 
 func (f *fakeGitProbe) WorktreeRemove(path string, force bool) error {
@@ -282,30 +290,30 @@ func TestPruneAgentHomeWorktreeIfSafe_HasUncommitted(t *testing.T) {
 	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-abc123", "uncommitted-work")
 }
 
-func TestPruneAgentHomeWorktreeIfSafe_HasUnpushed(t *testing.T) {
+func TestPruneAgentHomeWorktreeIfSafe_HasUnreachableCommits(t *testing.T) {
 	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasUnpushed: true, currentBranch: "builder/ga-def456"})
+	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasUnreachable: true, currentBranch: "builder/ga-def456"})
 
 	var stderr bytes.Buffer
 	if pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr) {
-		t.Fatal("prune returned true with unpushed commits")
+		t.Fatal("prune returned true with commits no ref reaches")
 	}
-	if !strings.Contains(stderr.String(), "unpushed commits") {
-		t.Errorf("expected unpushed-reason log; got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "no branch, tag, or remote ref reaches") {
+		t.Errorf("expected unreachable-reason log; got %q", stderr.String())
 	}
-	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-def456", "unpushed-commits")
+	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-def456", "unreachable-commits")
 }
 
-func TestPruneAgentHomeWorktreeIfSafe_UnpushedProbeError(t *testing.T) {
+func TestPruneAgentHomeWorktreeIfSafe_UnreachableProbeError(t *testing.T) {
 	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, unpushedErr: errors.New("boom")})
+	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, unreachableErr: errors.New("boom")})
 
 	var stderr bytes.Buffer
 	if pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr) {
-		t.Fatal("prune returned true after unpushed probe error")
+		t.Fatal("prune returned true after unreachable-commit probe error")
 	}
-	if !strings.Contains(stderr.String(), "unpushed probe failed") {
-		t.Errorf("expected unpushed-error log; got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "unreachable-commit probe failed") {
+		t.Errorf("expected probe-error log; got %q", stderr.String())
 	}
 	assertNoWorktreeStaleMarker(t, fx.workerDir)
 }

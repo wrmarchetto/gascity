@@ -1403,7 +1403,7 @@
         },
         "auto_prune_worker_dir": {
           "type": "boolean",
-          "description": "AutoPruneWorkerDir controls whether the reconciler removes a\npool-managed session's worker_dir (agent worktree) after the session\nbead is closed. Removal is gated on: path lives under the city's\n.gc/worktrees/ tree, clean working tree, no unpushed commits.\nStashed work is deliberately NOT a gate: refs/stash is repo-wide, so\none agent's stash blocked every sibling slot, and a stash survives the\nremoval anyway (bead ci-auomj).\nNil (unset) defaults to true so pool worktrees do not\naccumulate without bound across pool recycles. Set to false to\nretain worktrees for post-session diagnostics.",
+          "description": "AutoPruneWorkerDir controls whether the reconciler removes a\npool-managed session's worker_dir (agent worktree) after the session\nbead is closed. Removal is gated on: path lives under the city's\n.gc/worktrees/ tree, clean working tree, no commits that removing the\nworktree would orphan.\nPush state is deliberately NOT the commit gate: `git worktree remove`\nleaves refs/heads alone, so every slot that committed before its branch\nlanded was retained and marked out of service (bead ci-hh8aa).\nStashed work is deliberately NOT a gate either: refs/stash is repo-wide,\nso one agent's stash blocked every sibling slot, and a stash survives the\nremoval anyway (bead ci-auomj).\nNil (unset) defaults to true so pool worktrees do not\naccumulate without bound across pool recycles. Set to false to\nretain worktrees for post-session diagnostics.",
           "default": true
         }
       },

@@ -37,11 +37,28 @@ import (
 //     dirty, and the next teardown re-marks the slot as uncommitted-work
 //     whatever the original reason. A gate that wins nothing cannot justify a
 //     latch that costs a slot.
+//
+// HasUnpushedCommitsResult is ABSENT for the same reason, one step weaker. Push
+// state is not what this path destroys: `git worktree remove` deletes the
+// checkout, never refs/heads, so commits a local branch still reaches survive
+// it. Asking `git log HEAD --not --remotes` therefore latched a marker onto
+// every slot that had committed before its branch landed -- the normal teardown
+// of this pool, not an edge case. Measured 2026-08-12: toolsmith-1 marked
+// reason=unpushed-commits with unpushed=1 unreachable=0, nothing at risk, slot
+// out of service (bead ci-hh8aa). HasUnreachableCommitsResult asks what the
+// removal actually orphans; internal/git states the same distinction from the
+// probe's side, and cmd/gc/bead_worktree_reaper.go was migrated onto it first
+// (1baf214eb).
+//
+// internal/doctor's NestedWorktreePruneCheck still gates on push state and is
+// NOT wrong to: it removes only nested worktrees it can reproduce with
+// `git worktree add <path> origin/<branch>`, so a remote ref is its recovery
+// path rather than a proxy for safety.
 type gitProbe interface {
 	IsRepo() bool
 	CurrentBranch() (string, error)
 	HasUncommittedWork() bool
-	HasUnpushedCommitsResult() (bool, error)
+	HasUnreachableCommitsResult() (bool, error)
 	WorktreeRemove(path string, force bool) error
 }
 
@@ -65,9 +82,13 @@ func writeWorktreeStaleMarker(gp gitProbe, workerDir, reason string, stderr io.W
 }
 
 // pruneAgentHomeWorktreeIfSafe removes the worktree at the closed session's
-// worker_dir, after applying the same safety gates as doctor's
-// NestedWorktreePruneCheck. Returns true when the removal actually
-// happened.
+// worker_dir, after applying the safety gates listed below. Returns true when
+// the removal actually happened.
+//
+// The gate set is deliberately NOT doctor's NestedWorktreePruneCheck set, which
+// this comment claimed until bead ci-hh8aa: the commit gate here is
+// reachability, not push state. See the gitProbe doc comment for why the two
+// callers legitimately differ.
 //
 // The decision is mechanical, never role-coupled: any pool-managed agent
 // worktree that lives under the city's .gc/worktrees/ tree, is a git
@@ -80,7 +101,8 @@ func writeWorktreeStaleMarker(gp gitProbe, workerDir, reason string, stderr io.W
 //   - the session bead has no worker_dir metadata
 //   - the worker_dir does not live under cityPath/.gc/worktrees/
 //   - the worker_dir is missing on disk or has no .git pointer
-//   - the worktree has uncommitted changes or unpushed commits
+//   - the worktree has uncommitted changes, or commits no branch, tag, or
+//     remote-tracking ref reaches
 //   - the rig that owns the session cannot be resolved to a filesystem path
 //
 // Removal failures are logged but never surfaced — an orphaned worktree
@@ -117,14 +139,14 @@ func pruneAgentHomeWorktreeIfSafe(session beads.Bead, cityPath string, cfg *conf
 		writeWorktreeStaleMarker(gp, workerDir, "uncommitted-work", stderr)
 		return false
 	}
-	hasUnpushed, err := gp.HasUnpushedCommitsResult()
+	hasUnreachable, err := gp.HasUnreachableCommitsResult()
 	if err != nil {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unpushed probe failed: %v\n", workerDir, err) //nolint:errcheck
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unreachable-commit probe failed: %v\n", workerDir, err) //nolint:errcheck
 		return false
 	}
-	if hasUnpushed {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has unpushed commits\n", workerDir) //nolint:errcheck
-		writeWorktreeStaleMarker(gp, workerDir, "unpushed-commits", stderr)
+	if hasUnreachable {
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has commits no branch, tag, or remote ref reaches; removing it would orphan them\n", workerDir) //nolint:errcheck
+		writeWorktreeStaleMarker(gp, workerDir, "unreachable-commits", stderr)
 		return false
 	}
 
@@ -184,14 +206,14 @@ func pruneAgentHomeWorktreeIfSafeInfo(info sessionpkg.Info, cityPath string, cfg
 		writeWorktreeStaleMarker(gp, workerDir, "uncommitted-work", stderr)
 		return
 	}
-	hasUnpushed, err := gp.HasUnpushedCommitsResult()
+	hasUnreachable, err := gp.HasUnreachableCommitsResult()
 	if err != nil {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unpushed probe failed: %v\n", workerDir, err) //nolint:errcheck
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unreachable-commit probe failed: %v\n", workerDir, err) //nolint:errcheck
 		return
 	}
-	if hasUnpushed {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has unpushed commits\n", workerDir) //nolint:errcheck
-		writeWorktreeStaleMarker(gp, workerDir, "unpushed-commits", stderr)
+	if hasUnreachable {
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has commits no branch, tag, or remote ref reaches; removing it would orphan them\n", workerDir) //nolint:errcheck
+		writeWorktreeStaleMarker(gp, workerDir, "unreachable-commits", stderr)
 		return
 	}
 
