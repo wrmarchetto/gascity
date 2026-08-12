@@ -155,3 +155,48 @@ func TestReleaseWorkFromClosedSessionBeadStillReleasesLiveWorkThroughCache(t *te
 		t.Fatalf("work bead Assignee = %q, want cleared (stderr: %s)", got.Assignee, stderr.String())
 	}
 }
+
+// TestReleaseWorkFromClosedSessionBeadReassignsRoutedWorkThroughCache proves
+// the production cache wrapper delegates the conditional reassign to its
+// backing store. The session-close path normally sees this wrapper, not a raw
+// store.
+func TestReleaseWorkFromClosedSessionBeadReassignsRoutedWorkThroughCache(t *testing.T) {
+	backing := beads.NewMemStore()
+	sessionBead, err := backing.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker-1",
+			"state":        "active",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create session bead: %v", err)
+	}
+	work, err := backing.Create(beads.Bead{
+		Title:    "routed work",
+		Assignee: sessionBead.ID,
+		Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "worker"},
+	})
+	if err != nil {
+		t.Fatalf("create work bead: %v", err)
+	}
+	inProgress := "in_progress"
+	if err := backing.Update(work.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+		t.Fatalf("mark work in_progress: %v", err)
+	}
+	cache := primedCloseCascadeCache(t, backing)
+
+	var stderr bytes.Buffer
+	releaseWorkFromClosedSessionBead(cache, sessionBead, &stderr)
+
+	got, err := backing.Get(work.ID)
+	if err != nil {
+		t.Fatalf("get work bead from backing: %v", err)
+	}
+	if got.Status != "open" || got.Assignee != "worker" {
+		t.Fatalf("work = status %q assignee %q, want open/worker (stderr: %s)", got.Status, got.Assignee, stderr.String())
+	}
+	assertNoUnassignedRoutedBeads(t, backing)
+}

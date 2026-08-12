@@ -4766,8 +4766,8 @@ func TestCloseBeadReleasesWorkAssignedBySessionName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get work bead: %v", err)
 	}
-	if gotWork.Assignee != "" {
-		t.Errorf("work assignee = %q, want empty", gotWork.Assignee)
+	if gotWork.Assignee != "worker" {
+		t.Errorf("work assignee = %q, want worker", gotWork.Assignee)
 	}
 	if gotWork.Status != "open" {
 		t.Errorf("work status = %q, want open", gotWork.Status)
@@ -4815,8 +4815,8 @@ func TestCloseBeadClearsSessionAffinityOnRelease(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get work bead: %v", err)
 	}
-	if gotWork.Assignee != "" || gotWork.Status != "open" {
-		t.Fatalf("work = assignee %q status %q, want unassigned/open", gotWork.Assignee, gotWork.Status)
+	if gotWork.Assignee != "worker" || gotWork.Status != "open" {
+		t.Fatalf("work = assignee %q status %q, want worker/open", gotWork.Assignee, gotWork.Status)
 	}
 	if got := strings.TrimSpace(gotWork.Metadata["gc.session_affinity"]); got != "" {
 		t.Errorf("gc.session_affinity = %q, want cleared after closed-session release", got)
@@ -4862,8 +4862,8 @@ func TestCloseBeadReleasesWorkAssignedByBeadID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get work bead: %v", err)
 	}
-	if gotWork.Assignee != "" {
-		t.Errorf("work assignee = %q, want empty", gotWork.Assignee)
+	if gotWork.Assignee != "worker" {
+		t.Errorf("work assignee = %q, want worker", gotWork.Assignee)
 	}
 	if gotWork.Status != "open" {
 		t.Errorf("work status = %q, want open", gotWork.Status)

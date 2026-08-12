@@ -244,6 +244,16 @@ func (m *MemStore) Update(id string, opts UpdateOpts) error {
 // ReleaseIfCurrent clears an in-progress assignment only when the bead still
 // has the expected assignee.
 func (m *MemStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error) {
+	return m.reassignIfCurrent(id, expectedAssignee, "")
+}
+
+// ReassignIfCurrent moves an in-progress assignment only when it is still held
+// by expectedAssignee.
+func (m *MemStore) ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	return m.reassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+}
+
+func (m *MemStore) reassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.beads {
@@ -254,10 +264,10 @@ func (m *MemStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error) {
 			return false, nil
 		}
 		m.beads[i].Status = "open"
-		m.beads[i].Assignee = ""
+		m.beads[i].Assignee = recoveryAssignee
 		m.beads[i].UpdatedAt = time.Now()
 		m.beads[i].Revision++
-		m.beads[i].ClaimFence++ // clearing an owner is an ownership transition
+		m.beads[i].ClaimFence++ // changing an owner is an ownership transition
 		return true, nil
 	}
 	return false, nil
