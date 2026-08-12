@@ -1233,7 +1233,7 @@ func (cr *CityRuntime) tick(
 	// tick so a resolved marker cannot permanently disable a pool slot when
 	// optional closed-bead worktree reaping is off.
 	phaseStart = time.Now()
-	agentHomesReset := cleanupClosedBeadAgentHomeWorktrees(cr.cityPath, cr.cfg, cr.rigBeadStores(), cr.stderr)
+	agentHomesReset := cleanupClosedBeadAgentHomeWorktrees(cr.cityPath, cr.cfg, cr.cityBeadStore(), cr.rigBeadStores(), cr.stderr)
 	recordPhase(TraceSiteControllerTickPhase, "cleanup_agent_home_worktrees", phaseStart, map[string]any{"reset": agentHomesReset})
 	if ctx.Err() != nil {
 		return

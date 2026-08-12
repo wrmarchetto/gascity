@@ -133,7 +133,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_SkipsWithoutMarker(t *testing.T) {
 		return fakeGit
 	}
 
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, nil)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
 	if cleaned != 0 {
 		t.Errorf("cleaned = %d, want 0 when no marker present", cleaned)
 	}
@@ -166,7 +166,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_SkipsNonSessionHomes(t *testing.T) 
 		return &fakeAgentWorktreeGit{isRepo: true, currentBranch: "builder/ga-abc123"}
 	}
 
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, nil)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
 	if cleaned != 0 {
 		t.Errorf("cleaned = %d, want 0: per-bead worktrees must be skipped", cleaned)
 	}
@@ -193,7 +193,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_CaseA_DetachedHeadRemovesMarker(t *
 	}
 
 	var stderr bytes.Buffer
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, &stderr)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, &stderr)
 
 	if cleaned != 1 {
 		t.Errorf("cleaned = %d, want 1 when detached HEAD and marker present", cleaned)
@@ -228,7 +228,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_CaseB_ClosedBeadResetsAndRemovesMar
 	}
 
 	var stderr bytes.Buffer
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, &stderr)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, &stderr)
 
 	if cleaned != 1 {
 		t.Errorf("cleaned = %d, want 1 when bead closed", cleaned)
@@ -238,6 +238,45 @@ func TestCleanupClosedBeadAgentHomeWorktrees_CaseB_ClosedBeadResetsAndRemovesMar
 	}
 	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
 		t.Error("stale marker not removed after reset for closed bead")
+	}
+}
+
+// TestCleanupClosedBeadAgentHomeWorktrees_TrackedCityBeadBranchResets verifies
+// that a marker brought back by an old city-bead branch is resolved by detaching
+// the slot to main. The branch's bead lives in the city store, not the rig
+// store whose directory contains the agent-home worktree.
+func TestCleanupClosedBeadAgentHomeWorktrees_TrackedCityBeadBranchResets(t *testing.T) {
+	cityPath, builderWTPath, _ := setupAgentHomeWorktreeCleanupTest(t)
+	cfg := agentHomeConfig()
+	cfg.Workspace.Prefix = "ci"
+	cityStore := beads.NewMemStoreFrom(1, []beads.Bead{{ID: "ci-1p6a", Status: "closed"}}, nil)
+	rigStore := beads.NewMemStore()
+
+	stalePath := filepath.Join(builderWTPath, worktreeStaleFileName)
+	if err := os.WriteFile(stalePath, []byte("branch=fix/ci-1p6a-cache-applyevent-through-wrappers\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write tracked-branch stale marker: %v", err)
+	}
+
+	var fake *fakeAgentWorktreeGit
+	orig := newAgentWorktreeGitProbe
+	defer func() { newAgentWorktreeGitProbe = orig }()
+	newAgentWorktreeGitProbe = func(_ string) agentWorktreeGitProbe {
+		fake = &fakeAgentWorktreeGit{
+			isRepo:        true,
+			currentBranch: "fix/ci-1p6a-cache-applyevent-through-wrappers",
+		}
+		return fake
+	}
+
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, cityStore, map[string]beads.Store{"ga-rig": rigStore}, nil)
+	if cleaned != 1 {
+		t.Fatalf("cleaned = %d, want 1 for a resolved tracked city-bead branch", cleaned)
+	}
+	if fake.checkoutDetachRef != "origin/main" {
+		t.Errorf("CheckoutDetach(%q), want %q", fake.checkoutDetachRef, "origin/main")
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Errorf("stale marker remains after detaching old branch: %v", err)
 	}
 }
 
@@ -259,7 +298,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_CaseB_OpenBeadSkips(t *testing.T) {
 		return &fakeAgentWorktreeGit{isRepo: true, currentBranch: "builder/ga-abc123"}
 	}
 
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, nil)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
 	if cleaned != 0 {
 		t.Errorf("cleaned = %d, want 0 for open bead", cleaned)
 	}
@@ -293,7 +332,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_CaseB_UncommittedWorkSkips(t *testi
 	}
 
 	var stderr bytes.Buffer
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, &stderr)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, &stderr)
 
 	if cleaned != 0 {
 		t.Errorf("cleaned = %d, want 0 when uncommitted work present", cleaned)
@@ -311,7 +350,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_CaseB_UncommittedWorkSkips(t *testi
 
 // TestCleanupClosedBeadAgentHomeWorktrees_NilConfig returns 0 gracefully.
 func TestCleanupClosedBeadAgentHomeWorktrees_NilConfig(t *testing.T) {
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(t.TempDir(), nil, map[string]beads.Store{}, nil)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(t.TempDir(), nil, nil, map[string]beads.Store{}, nil)
 	if cleaned != 0 {
 		t.Errorf("cleaned = %d, want 0 for nil config", cleaned)
 	}
@@ -320,7 +359,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_NilConfig(t *testing.T) {
 // TestCleanupClosedBeadAgentHomeWorktrees_EmptyStores returns 0 gracefully.
 func TestCleanupClosedBeadAgentHomeWorktrees_EmptyStores(t *testing.T) {
 	cfg := agentHomeConfig()
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(t.TempDir(), cfg, nil, nil)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(t.TempDir(), cfg, nil, nil, nil)
 	if cleaned != 0 {
 		t.Errorf("cleaned = %d, want 0 for empty stores", cleaned)
 	}
@@ -364,7 +403,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_DefaultBranch(t *testing.T) {
 				return fake
 			}
 
-			cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, nil)
+			cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
 			if cleaned != 1 {
 				t.Errorf("cleaned = %d, want 1", cleaned)
 			}
@@ -406,7 +445,7 @@ func TestCleanupClosedBeadAgentHomeWorktrees_DetachesToMainNotCurrentBranch(t *t
 		return fake
 	}
 
-	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, map[string]beads.Store{"ga-rig": store}, nil)
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
 	if cleaned != 1 {
 		t.Errorf("cleaned = %d, want 1", cleaned)
 	}

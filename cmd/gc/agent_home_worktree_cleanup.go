@@ -46,6 +46,7 @@ var newAgentWorktreeGitProbe = func(workDir string) agentWorktreeGitProbe {
 func cleanupClosedBeadAgentHomeWorktrees(
 	cityPath string,
 	cfg *config.City,
+	cityStore beads.Store,
 	rigBeadStores map[string]beads.Store,
 	stderr io.Writer,
 ) int {
@@ -66,10 +67,7 @@ func cleanupClosedBeadAgentHomeWorktrees(
 	wtRoot := filepath.Join(cityPath, ".gc", "worktrees")
 	cleaned := 0
 
-	for rigName, store := range rigBeadStores {
-		if store == nil {
-			continue
-		}
+	for rigName := range rigBeadStores {
 		rigWorktreeDir := filepath.Join(wtRoot, rigName)
 		entries, err := os.ReadDir(rigWorktreeDir)
 		if err != nil {
@@ -118,7 +116,13 @@ func cleanupClosedBeadAgentHomeWorktrees(
 			if beadID == "" {
 				continue
 			}
-			bead, err := store.Get(beadID)
+			// Named agent-home worktrees are allocated for city work, so their
+			// branch bead belongs to the city's store even though the worktree
+			// itself lives below a rig directory.
+			if cityStore == nil {
+				continue
+			}
+			bead, err := cityStore.Get(beadID)
 			if err != nil || bead.Status != "closed" {
 				continue
 			}
