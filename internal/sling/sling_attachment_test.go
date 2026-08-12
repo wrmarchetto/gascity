@@ -2,10 +2,12 @@ package sling
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/config"
 )
 
 func TestRoutedStateWarnings(t *testing.T) {
@@ -67,5 +69,27 @@ func TestRoutedStateWarnings(t *testing.T) {
 				t.Fatalf("routedStateWarnings() = %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestCheckBeadStateExplainsPoolSlotAssignmentWillBePreserved(t *testing.T) {
+	maxSessions := 3
+	pool := config.Agent{Name: "workers", MaxActiveSessions: &maxSessions}
+	store := beads.NewMemStoreFrom(0, []beads.Bead{{
+		ID:       "GC-42",
+		Status:   "open",
+		Assignee: "workers-1",
+	}}, nil)
+
+	result := CheckBeadStateWithOptions(store, "GC-42", pool, SlingDeps{
+		Cfg: &config.City{Agents: []config.Agent{pool}},
+	}, BeadCheckOptions{})
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings = %#v, want one preservation explanation", result.Warnings)
+	}
+	for _, want := range []string{"workers-1", "preserve", "workers"} {
+		if !strings.Contains(result.Warnings[0], want) {
+			t.Fatalf("warning = %q, want %q", result.Warnings[0], want)
+		}
 	}
 }

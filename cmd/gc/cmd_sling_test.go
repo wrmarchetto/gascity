@@ -18,7 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/beads/beadstest"
 	"github.com/gastownhall/gascity/internal/config"
 	convoycore "github.com/gastownhall/gascity/internal/convoy"
 	"github.com/gastownhall/gascity/internal/fsys"
@@ -737,6 +739,67 @@ func TestCliBeadRouterAllowsSameStoreRoute(t *testing.T) {
 	}
 	if bead.Metadata["gc.routed_to"] != "alpha/polecat" {
 		t.Errorf("gc.routed_to = %q, want alpha/polecat", bead.Metadata["gc.routed_to"])
+	}
+}
+
+// TestCliBeadRouterPreservesPoolSlotAssignmentAtomically proves that routing
+// work already offered to a concrete pool slot keeps the claimable assignment
+// while adding the pool's shared route. A metadata-only write can leave
+// provider-backed stores with routed-but-unassigned work, which produces pool
+// demand that no slot can claim.
+func TestCliBeadRouterPreservesPoolSlotAssignmentAtomically(t *testing.T) {
+	store := beadstest.NewRecordingStore(beads.NewMemStore())
+	bead, err := store.Create(beads.Bead{
+		ID:       "GC-42",
+		Title:    "route assigned work",
+		Type:     "task",
+		Status:   "open",
+		Assignee: "workers-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Reset()
+
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:              "workers",
+			MinActiveSessions: intPtr(0),
+			MaxActiveSessions: intPtr(3),
+		}},
+	}
+	router := cliBeadRouter{deps: &slingDeps{Cfg: cfg, Store: store}}
+	if err := router.Route(context.Background(), sling.RouteRequest{
+		BeadID: bead.ID,
+		Target: "workers",
+	}); err != nil {
+		t.Fatalf("Route: %v", err)
+	}
+
+	got, err := store.Get(bead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Assignee != "workers-1" {
+		t.Fatalf("Assignee = %q, want pool slot workers-1", got.Assignee)
+	}
+	if got.Metadata[beadmeta.RoutedToMetadataKey] != "workers" {
+		t.Fatalf("gc.routed_to = %q, want workers", got.Metadata[beadmeta.RoutedToMetadataKey])
+	}
+
+	updates := store.CallsForOp("Update")
+	if len(updates) != 1 {
+		t.Fatalf("Update calls = %d, want 1 (routing and slot preservation must be one write)", len(updates))
+	}
+	if updates[0].Opts.Assignee != nil {
+		t.Fatalf("Update assignee = %v, want omitted so the store preserves the current pool slot", updates[0].Opts.Assignee)
+	}
+	if updates[0].Opts.Metadata[beadmeta.RoutedToMetadataKey] != "workers" {
+		t.Fatalf("Update gc.routed_to = %q, want workers", updates[0].Opts.Metadata[beadmeta.RoutedToMetadataKey])
+	}
+	if got := store.CallsForOp("SetMetadata"); len(got) != 0 {
+		t.Fatalf("SetMetadata calls = %d, want 0 (route must be coupled to the assignee update)", len(got))
 	}
 }
 
