@@ -932,3 +932,75 @@ func TestUntrustedRemoteGitConfigArgs(t *testing.T) {
 		}
 	}
 }
+
+// --- HasUncommittedWorkExcluding ---
+//
+// The exclusion has to cover both states a gc-written bookkeeping file can be
+// in. Untracked is the normal one; TRACKED is what bead ci-2uh5p was, when a
+// marker got committed onto a branch and every worktree that checked that
+// branch out inherited it.
+
+func TestHasUncommittedWorkExcluding_UntrackedExcludedPathIsNotWork(t *testing.T) {
+	repo := initTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".worktree-stale"), []byte("branch=HEAD\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := New(repo)
+	// State the premise: the unfiltered probe must see it, or the exclusion
+	// below is being credited for a repo that was clean anyway.
+	if !g.HasUncommittedWork() {
+		t.Fatal("HasUncommittedWork() = false with an untracked file present; fixture is wrong")
+	}
+	if g.HasUncommittedWorkExcluding(".worktree-stale") {
+		t.Error("HasUncommittedWorkExcluding() = true when the only change is the excluded path")
+	}
+}
+
+func TestHasUncommittedWorkExcluding_TrackedModifiedExcludedPathIsNotWork(t *testing.T) {
+	repo := initTestRepo(t)
+	marker := filepath.Join(repo, ".worktree-stale")
+	if err := os.WriteFile(marker, []byte("branch=HEAD\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", ".worktree-stale")
+	runGit(t, repo, "commit", "-m", "marker committed by mistake")
+	if err := os.WriteFile(marker, []byte("branch=HEAD\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g := New(repo)
+	if !g.HasUncommittedWork() {
+		t.Fatal("HasUncommittedWork() = false with a modified tracked file; fixture is wrong")
+	}
+	if g.HasUncommittedWorkExcluding(".worktree-stale") {
+		t.Error("HasUncommittedWorkExcluding() = true for a modified TRACKED excluded path; the exclusion must cover both states")
+	}
+}
+
+func TestHasUncommittedWorkExcluding_OtherChangesStillCount(t *testing.T) {
+	repo := initTestRepo(t)
+	if err := os.WriteFile(filepath.Join(repo, ".worktree-stale"), []byte("branch=HEAD\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "agent-wip.txt"), []byte("real work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !New(repo).HasUncommittedWorkExcluding(".worktree-stale") {
+		t.Error("HasUncommittedWorkExcluding() = false while real work sits beside the excluded path")
+	}
+}
+
+// TestHasUncommittedWorkExcluding_NoPathsMatchesPlainProbe pins the degenerate
+// call, because ":(exclude)" with no positive pathspec left would change the
+// meaning of the query rather than widen it.
+func TestHasUncommittedWorkExcluding_NoPathsMatchesPlainProbe(t *testing.T) {
+	repo := initTestRepo(t)
+	if New(repo).HasUncommittedWorkExcluding() {
+		t.Error("HasUncommittedWorkExcluding() = true for a clean repo with no exclusions")
+	}
+	if err := os.WriteFile(filepath.Join(repo, "dirty.txt"), []byte("wip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !New(repo).HasUncommittedWorkExcluding() {
+		t.Error("HasUncommittedWorkExcluding() = false for a dirty repo with no exclusions")
+	}
+}

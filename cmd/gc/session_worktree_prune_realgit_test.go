@@ -209,6 +209,81 @@ func TestRealGitPruneStillProtectsRealUncommittedWork(t *testing.T) {
 	assertWorktreeStaleMarker(t, fx.worktreeB, "HEAD", "uncommitted-work")
 }
 
+// TestRealGitPruneDoesNotCountItsOwnStaleMarkerAsWork pins the prune half of the
+// .worktree-stale latch: a slot that was falsely marked once must still be
+// reclaimable on the next teardown.
+//
+// The marker is untracked and lives inside the very worktree it describes, so an
+// unfiltered `git status --porcelain` reports it. The uncommitted-work gate runs
+// FIRST, so before the fix the marker WAS the uncommitted work: one false marker
+// of any cause became permanent, and every re-mark overwrote reason= with
+// uncommitted-work, so a bricked slot could not even tell you what had marked it
+// (bead ci-ciu63).
+//
+// Real git rather than fakeGitProbe is load-bearing here, not a preference. The
+// fake answers hasUncommitted from a bool that no file on disk can move, so the
+// same test written against it passes identically before and after the fix.
+func TestRealGitPruneDoesNotCountItsOwnStaleMarkerAsWork(t *testing.T) {
+	fx := newRealGitPruneFixture(t)
+	realGitWriteFile(t, filepath.Join(fx.worktreeB, worktreeStaleFileName), "branch=HEAD\nreason=unreachable-commits\n")
+
+	// State the premise with the unfiltered probe rather than assuming it: if the
+	// marker did not make the worktree read as dirty, a passing prune below would
+	// prove nothing about the latch.
+	if !git.New(fx.worktreeB).HasUncommittedWork() {
+		t.Fatal("the marker alone no longer makes the worktree dirty; the fixture no longer reproduces the latch")
+	}
+
+	var stderr bytes.Buffer
+	pruned := pruneAgentHomeWorktreeIfSafe(fx.sessionBeadFor(fx.worktreeB), fx.cityPath, fx.cfg, &stderr)
+	if !pruned {
+		t.Errorf("prune returned false for a worktree whose only dirt is gc's own marker; stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(fx.worktreeB); !os.IsNotExist(err) {
+		t.Errorf("worktree B still on disk after prune (stat err = %v)", err)
+	}
+}
+
+// TestRealGitPruneInfoDoesNotCountItsOwnStaleMarkerAsWork is the session.Info
+// form. Both forms carry independent copies of the same gate sequence, so a fix
+// applied to one only is invisible from the other's tests.
+func TestRealGitPruneInfoDoesNotCountItsOwnStaleMarkerAsWork(t *testing.T) {
+	fx := newRealGitPruneFixture(t)
+	realGitWriteFile(t, filepath.Join(fx.worktreeB, worktreeStaleFileName), "branch=HEAD\nreason=unreachable-commits\n")
+
+	var stderr bytes.Buffer
+	pruneAgentHomeWorktreeIfSafeInfo(fx.sessionInfoFor(fx.worktreeB), fx.cityPath, fx.cfg, &stderr)
+
+	if _, err := os.Stat(fx.worktreeB); !os.IsNotExist(err) {
+		t.Errorf("worktree B still on disk after prune (stat err = %v); stderr = %q", err, stderr.String())
+	}
+}
+
+// TestRealGitPruneKeepsTheRealReasonWhenReMarking pins the provenance half of
+// the same defect, which the test above cannot see because a successful prune
+// leaves no marker to read.
+//
+// A slot that is legitimately held back -- here by a commit no ref reaches -- and
+// that already carries a marker must be re-marked with the reason that actually
+// held it back. Before the fix the pre-existing marker tripped the uncommitted
+// gate first, so every re-mark read uncommitted-work whatever the truth was, and
+// the marker overwrote its own provenance on each pass.
+func TestRealGitPruneKeepsTheRealReasonWhenReMarking(t *testing.T) {
+	fx := newRealGitPruneFixture(t)
+	// A commit on detached HEAD: no branch, tag, or remote ref reaches it, which
+	// is exactly what the removal would orphan.
+	realGitWriteFile(t, filepath.Join(fx.worktreeB, "tracked.txt"), "committed but unreachable\n")
+	runGitInTest(t, fx.worktreeB, "add", "tracked.txt")
+	runGitInTest(t, fx.worktreeB, "commit", "-m", "orphan-to-be")
+	realGitWriteFile(t, filepath.Join(fx.worktreeB, worktreeStaleFileName), "branch=HEAD\nreason=unreachable-commits\n")
+
+	var stderr bytes.Buffer
+	if pruneAgentHomeWorktreeIfSafe(fx.sessionBeadFor(fx.worktreeB), fx.cityPath, fx.cfg, &stderr) {
+		t.Fatal("prune returned true for a worktree holding commits no ref reaches")
+	}
+	assertWorktreeStaleMarker(t, fx.worktreeB, "HEAD", "unreachable-commits")
+}
+
 // TestRealGitStashSurvivesWorktreeRemoval records the experiment that justifies
 // removing the gate rather than narrowing it, so the reasoning is reproducible
 // and not merely asserted in a commit message.

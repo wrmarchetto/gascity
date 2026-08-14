@@ -18,14 +18,17 @@ var errFakeResolver = errors.New("fake resolver failure")
 
 // fakeAgentWorktreeGit is a configurable fake for the agentWorktreeGitProbe interface.
 type fakeAgentWorktreeGit struct {
-	isRepo            bool
-	currentBranch     string
-	currentBranchErr  error
-	hasUncommitted    bool
-	checkoutDetachErr error
-	checkoutDetachRef string
-	defaultBranch     string
-	defaultBranchErr  error
+	isRepo           bool
+	currentBranch    string
+	currentBranchErr error
+	hasUncommitted   bool
+	// uncommittedExclusions records the paths the last
+	// HasUncommittedWorkExcluding call was asked to ignore.
+	uncommittedExclusions []string
+	checkoutDetachErr     error
+	checkoutDetachRef     string
+	defaultBranch         string
+	defaultBranchErr      error
 }
 
 func (f *fakeAgentWorktreeGit) IsRepo() bool { return f.isRepo }
@@ -34,7 +37,14 @@ func (f *fakeAgentWorktreeGit) CurrentBranch() (string, error) {
 	return f.currentBranch, f.currentBranchErr
 }
 
-func (f *fakeAgentWorktreeGit) HasUncommittedWork() bool { return f.hasUncommitted }
+// HasUncommittedWorkExcluding records the exclusions and answers from a bool.
+// It cannot model the marker-as-its-own-dirt defect -- see
+// agent_home_worktree_cleanup_realgit_test.go, which pins that against real
+// git -- but it does catch a caller that stops passing the marker name.
+func (f *fakeAgentWorktreeGit) HasUncommittedWorkExcluding(paths ...string) bool {
+	f.uncommittedExclusions = append([]string(nil), paths...)
+	return f.hasUncommitted
+}
 
 func (f *fakeAgentWorktreeGit) CheckoutDetach(ref string) error {
 	f.checkoutDetachRef = ref
@@ -454,5 +464,187 @@ func TestCleanupClosedBeadAgentHomeWorktrees_DetachesToMainNotCurrentBranch(t *t
 	}
 	if fake.checkoutDetachRef == "origin/builder/ga-abc123" {
 		t.Error("reset detached to the closed bead branch; must reset to origin/main")
+	}
+}
+
+// --- pool-slot home scope ---
+//
+// A numbered pool slot is a runtime-only identity: deepCopyAgent
+// (cmd/gc/pool.go) builds it during reconcile and never appends it to
+// cfg.Agents. The scan below used to exact-match cfg.Agents names, so every
+// slot home was out of scope and NOTHING in the city ever cleared a marker
+// from one -- a slot marked once stayed marked for the life of the city, which
+// is what turned each false-marker bug into a permanently lost slot rather
+// than a transient one (bead ci-ciu63).
+
+// newPoolSlotHome creates a worktree home directory named dirName under a rig,
+// carrying a marker, and returns the city path and marker path.
+func newPoolSlotHome(t *testing.T, dirName string) (cityPath, stalePath string) {
+	t.Helper()
+	cityPath = t.TempDir()
+	home := filepath.Join(cityPath, ".gc", "worktrees", "ga-rig", dirName)
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", home, err)
+	}
+	stalePath = filepath.Join(home, worktreeStaleFileName)
+	if err := os.WriteFile(stalePath, []byte("branch=HEAD\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
+	return cityPath, stalePath
+}
+
+// stubDetachedAgentWorktreeGit points the probe factory at a detached-HEAD fake
+// for the duration of the test, so every case below exercises Case A.
+func stubDetachedAgentWorktreeGit(t *testing.T) {
+	t.Helper()
+	orig := newAgentWorktreeGitProbe
+	t.Cleanup(func() { newAgentWorktreeGitProbe = orig })
+	newAgentWorktreeGitProbe = func(_ string) agentWorktreeGitProbe {
+		return &fakeAgentWorktreeGit{isRepo: true, currentBranch: "HEAD"}
+	}
+}
+
+// TestCleanupClosedBeadAgentHomeWorktrees_ClearsFalseMarkerInNumberedPoolSlot is
+// the regression this scope widening exists for: Case A is an unconditional
+// remove, so a false branch=HEAD marker in "builder-2" should have been cleared
+// on the controller's first pass. It never was, because "builder-2" is not a
+// name in cfg.Agents. Measured against the live city on 2026-08-12: toolsmith-3
+// carried branch=HEAD since 08:09 with the supervisor up and events flowing.
+func TestCleanupClosedBeadAgentHomeWorktrees_ClearsFalseMarkerInNumberedPoolSlot(t *testing.T) {
+	cityPath, stalePath := newPoolSlotHome(t, "builder-2")
+	stubDetachedAgentWorktreeGit(t)
+	store := beads.NewMemStore()
+
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, agentHomeConfig(), store, map[string]beads.Store{"ga-rig": store}, nil)
+	if cleaned != 1 {
+		t.Errorf("cleaned = %d, want 1 for a numbered pool slot of a configured agent", cleaned)
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Error("false marker not removed from numbered pool slot home")
+	}
+}
+
+// TestCleanupClosedBeadAgentHomeWorktrees_ClearsFalseMarkerInNamepoolSlot covers
+// the other slot-naming shape. A themed namepool name REPLACES the base name
+// rather than suffixing it (poolInstanceName, cmd/gc/build_desired_state.go), so
+// "furiosa" shares no prefix with "polecat" and a suffix pattern alone would
+// leave every namepool city with the original bug.
+func TestCleanupClosedBeadAgentHomeWorktrees_ClearsFalseMarkerInNamepoolSlot(t *testing.T) {
+	cityPath, stalePath := newPoolSlotHome(t, "furiosa")
+	stubDetachedAgentWorktreeGit(t)
+	store := beads.NewMemStore()
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test", Prefix: "ga"},
+		Agents: []config.Agent{{
+			Name:          "polecat",
+			Dir:           "ga-rig",
+			NamepoolNames: []string{"furiosa", "nux"},
+		}},
+	}
+
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
+	if cleaned != 1 {
+		t.Errorf("cleaned = %d, want 1 for a namepool slot of a configured agent", cleaned)
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Error("false marker not removed from namepool slot home")
+	}
+}
+
+// TestCleanupClosedBeadAgentHomeWorktrees_SkipsUnrelatedNumericDir bounds the
+// widening. "unrelated-2" matches the numeric slot shape but names no
+// configured agent, so it must stay out of scope: the pass may only touch
+// directories it can attribute to an agent, and a scan that removed markers
+// from anything ending in a number would be a different bug with the same
+// symptom.
+func TestCleanupClosedBeadAgentHomeWorktrees_SkipsUnrelatedNumericDir(t *testing.T) {
+	cityPath, stalePath := newPoolSlotHome(t, "unrelated-2")
+	stubDetachedAgentWorktreeGit(t)
+	store := beads.NewMemStore()
+
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, agentHomeConfig(), store, map[string]beads.Store{"ga-rig": store}, nil)
+	if cleaned != 0 {
+		t.Errorf("cleaned = %d, want 0 for a directory naming no configured agent", cleaned)
+	}
+	if _, err := os.Stat(stalePath); err != nil {
+		t.Error("marker removed from a directory naming no configured agent")
+	}
+}
+
+// TestCleanupClosedBeadAgentHomeWorktrees_SkipsSlotOfNonExpandingAgent keeps the
+// widening tied to the mechanism that creates slot homes. A named-session agent
+// (max_active_sessions=1, no pool controls) never gets a "-N" identity
+// synthesized for it -- SupportsExpandedSessionIdentities is false -- so
+// "builder-2" beside such an agent is some other directory, not its slot.
+func TestCleanupClosedBeadAgentHomeWorktrees_SkipsSlotOfNonExpandingAgent(t *testing.T) {
+	cityPath, stalePath := newPoolSlotHome(t, "builder-2")
+	stubDetachedAgentWorktreeGit(t)
+	store := beads.NewMemStore()
+	one := 1
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test", Prefix: "ga"},
+		Agents:    []config.Agent{{Name: "builder", Dir: "ga-rig", MaxActiveSessions: &one}},
+	}
+
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
+	if cleaned != 0 {
+		t.Errorf("cleaned = %d, want 0: a named-session agent has no numbered slot homes", cleaned)
+	}
+	if _, err := os.Stat(stalePath); err != nil {
+		t.Error("marker removed from a directory that cannot be a slot home")
+	}
+}
+
+// TestCleanupClosedBeadAgentHomeWorktrees_SkipsBeadIDShapedDir pins the
+// collision the numeric pattern would otherwise open. "ga-123456" is a legal
+// bead ID and also matches "<agent>-<digits>" for an agent named "ga", so the
+// per-bead worktrees this pass must never touch would become candidates. Those
+// belong to the reaper, which applies liveness and orphan-commit gates this
+// pass does not have.
+func TestCleanupClosedBeadAgentHomeWorktrees_SkipsBeadIDShapedDir(t *testing.T) {
+	cityPath, stalePath := newPoolSlotHome(t, "ga-123456")
+	stubDetachedAgentWorktreeGit(t)
+	store := beads.NewMemStore()
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test", Prefix: "ga"},
+		Agents:    []config.Agent{{Name: "ga", Dir: "ga-rig"}},
+	}
+
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
+	if cleaned != 0 {
+		t.Errorf("cleaned = %d, want 0: a bead-ID-shaped directory is the reaper's, not this pass's", cleaned)
+	}
+	if _, err := os.Stat(stalePath); err != nil {
+		t.Error("marker removed from a per-bead worktree")
+	}
+}
+
+// TestCleanupClosedBeadAgentHomeWorktrees_ExcludesItsOwnMarkerFromTheGate is the
+// fast-suite plumbing pin for Case B's uncommitted gate. The behavior it guards
+// -- Case B firing on a worktree whose only dirt is the marker that put it in
+// scope -- is pinned against real git in
+// agent_home_worktree_cleanup_realgit_test.go; this catches a refactor that
+// drops the exclusion argument without needing a real worktree.
+func TestCleanupClosedBeadAgentHomeWorktrees_ExcludesItsOwnMarkerFromTheGate(t *testing.T) {
+	cityPath, builderWTPath, _ := setupAgentHomeWorktreeCleanupTest(t)
+	cfg := agentHomeConfig()
+	store := beads.NewMemStoreFrom(1, []beads.Bead{{ID: "ga-abc123", Status: "closed"}}, nil)
+	stalePath := filepath.Join(builderWTPath, worktreeStaleFileName)
+	if err := os.WriteFile(stalePath, []byte("branch=builder/ga-abc123\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
+
+	var fake *fakeAgentWorktreeGit
+	orig := newAgentWorktreeGitProbe
+	defer func() { newAgentWorktreeGitProbe = orig }()
+	newAgentWorktreeGitProbe = func(_ string) agentWorktreeGitProbe {
+		fake = &fakeAgentWorktreeGit{isRepo: true, currentBranch: "builder/ga-abc123", defaultBranch: "main"}
+		return fake
+	}
+
+	cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, store, map[string]beads.Store{"ga-rig": store}, nil)
+
+	if len(fake.uncommittedExclusions) != 1 || fake.uncommittedExclusions[0] != worktreeStaleFileName {
+		t.Errorf("uncommitted probe exclusions = %v, want exactly [%q]", fake.uncommittedExclusions, worktreeStaleFileName)
 	}
 }
