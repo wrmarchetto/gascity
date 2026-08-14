@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: scripts/with-go-tmp <command> [args...]" >&2
+  exit 2
+fi
+
+# Go leaves per-build go-build*/go-link* directories behind when its parent is
+# interrupted. Keep those children below one gate-owned directory on disk, not
+# the shared /var/tmp root, so the cleanup trap can remove every remnant.
+gotmpdir_val="$(mktemp -d -p /var/tmp gc-gotmp.XXXXXX)"
+child_pid=""
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  rm -rf "$gotmpdir_val"
+  exit "$status"
+}
+
+terminate() {
+  local signal=$1 status=$2
+  if [[ -n "$child_pid" ]]; then
+    kill -s "$signal" "$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+  fi
+  exit "$status"
+}
+
+trap cleanup EXIT
+trap 'terminate INT 130' INT
+trap 'terminate TERM 143' TERM
+
+GOTMPDIR="$gotmpdir_val" "$@" &
+child_pid=$!
+if wait "$child_pid"; then
+  exit 0
+fi
+exit $?

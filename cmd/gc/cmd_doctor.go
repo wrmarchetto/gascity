@@ -352,6 +352,10 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	// (gc -> bd.real -> dolt) that operators routinely misread as CPU saturation.
 	// Advisory + read-only (/proc/stat); no config needed.
 	register(newForkRateCheck())
+	// Host-root capacity must be checked independently of cityPath: Go's shared
+	// build cache and compiler temporary directories can exhaust / even when the
+	// city lives on another filesystem.
+	register(doctor.NewHostDiskSpaceCheck())
 	if cfgErr == nil && doctorWorkspaceHasPostgresScope(cityPath, cfg) {
 		register(doctorchecks.NewPostgresAuthCheck(cityPath, cfg))
 	}

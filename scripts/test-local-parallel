@@ -55,7 +55,23 @@ if ! push_gate_acquire_slot "$gate_slot_dir" gate_fd "$gate_label"; then
   echo "push-gate: giving up after the wait bound; rerun once a slot frees, or set GC_PUSH_GATE_NO_CAP=1 to bypass this cap for one invocation" >&2
   exit 75
 fi
-trap 'push_gate_release_slot "$gate_fd"' EXIT
+
+# Go removes its own go-build*/go-link* children after a clean exit, but an
+# interrupted gate can never reach that cleanup. Give this invocation one
+# private parent on disk and remove it from the EXIT trap, so an interrupted
+# fan-out leaves at most a single, safely-owned directory rather than loose
+# compiler/linker directories in the host-wide GOTMPDIR.
+gotmpdir_val="$(mktemp -d -p /var/tmp gc-gotmp.XXXXXX)"
+cleanup() {
+  local status=$?
+  trap - EXIT
+  push_gate_release_slot "$gate_fd"
+  rm -rf "$gotmpdir_val"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # GC_DOLT_PORT / BEADS_DOLT_SERVER_PORT point bd at the live shared city Dolt
 # server. They must never reach `go test`, or every bd-forking test writes to
@@ -156,7 +172,6 @@ fi
 gopath_val="$(go env GOPATH)"
 gocache_val="$(go env GOCACHE)"
 gomodcache_val="$(go env GOMODCACHE)"
-gotmpdir_val="$(go env GOTMPDIR)"
 goroot_val="$(go env GOROOT)"
 
 jobspecs=()

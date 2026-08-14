@@ -443,7 +443,7 @@ test-ci-policy:
 ## cache input hashes over local working files.
 ## Wrapped in $(TEST_ENV) — see comment above for why.
 test: test-fsys-darwin-compile
-	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GC_FAST_UNIT=1 scripts/go-test-observable test -- -p=4 -count=1 -timeout 15m ./...
+	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GC_FAST_UNIT=1 scripts/with-go-tmp scripts/go-test-observable test -- -p=4 -count=1 -timeout 15m ./...
 
 # MAC_UNIT_PKGS excludes cmd/gc from the Mac unit sweep; cmd/gc runs
 # sharded via the mac-cmd-gc-process CI matrix job instead.
@@ -478,9 +478,9 @@ test-fast-parallel:
 ## test-fsys-darwin-compile: cross-compile internal/fsys for macOS so
 ## unix.Stat_t field-type regressions fail in the default fast test path.
 test-fsys-darwin-compile:
-	@tmp=$$(mktemp -d); \
+	@tmp=$$(mktemp -d -p /var/tmp); \
 	trap 'rm -rf "$$tmp"' EXIT; \
-	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GOOS=darwin GOARCH=arm64 go test -c -o "$$tmp/fsys.test" ./internal/fsys
+	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GOOS=darwin GOARCH=arm64 scripts/with-go-tmp go test -c -o "$$tmp/fsys.test" ./internal/fsys
 
 ## test-pack-registry-live: run the opt-in gascity-packs registry canary
 test-pack-registry-live:
