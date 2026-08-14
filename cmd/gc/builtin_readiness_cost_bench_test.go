@@ -19,12 +19,16 @@ func newReadinessCostCity(b *testing.B) string {
 }
 
 // BenchmarkBuiltinReadinessPass measures EnsureBuiltinRuntimeAssets on its
-// warm memo-hit path: the readiness revalidation that reads every file of
-// every cached builtin pack before a config load parses anything.
+// warm memo-hit path: the readiness revalidation a config load runs before it
+// parses anything.
 //
-// Read this against BenchmarkCityConfigParseOnly. The readiness pass, not the
-// parse, is what a config load costs — which is why skipping a redundant load
-// is worth anything, and why the pass itself must still run once per process.
+// Read this against BenchmarkCityConfigParseOnly. Since the whole-tree cache
+// validation became once-per-process (builtin_cache_validation.go) this is a
+// bench of the marker reads and the prune scan that remain, not of the file
+// walk — the walk it was written to measure appears only in the first
+// iteration, which b.N amortizes away. It is kept as the regression signal
+// for that: a number that climbs back toward the pre-memo cost means the
+// per-process memo stopped taking effect.
 func BenchmarkBuiltinReadinessPass(b *testing.B) {
 	b.Setenv("GC_HOME", b.TempDir())
 	cityPath := newReadinessCostCity(b)
