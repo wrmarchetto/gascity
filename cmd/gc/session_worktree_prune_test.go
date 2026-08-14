@@ -29,19 +29,32 @@ type fakeGitProbe struct {
 	currentBranch    string
 	currentBranchErr error
 	hasUncommitted   bool
-	hasUnreachable   bool
-	unreachableErr   error
-	worktreeRemove   func(path string, force bool) error
-	removedPath      string
-	removedForce     bool
-	removeInvoked    bool
+	// uncommittedExclusions records the paths the last
+	// HasUncommittedWorkExcluding call was asked to ignore.
+	uncommittedExclusions []string
+	hasUnreachable        bool
+	unreachableErr        error
+	worktreeRemove        func(path string, force bool) error
+	removedPath           string
+	removedForce          bool
+	removeInvoked         bool
 }
 
 func (f *fakeGitProbe) IsRepo() bool { return f.isRepo }
 func (f *fakeGitProbe) CurrentBranch() (string, error) {
 	return f.currentBranch, f.currentBranchErr
 }
-func (f *fakeGitProbe) HasUncommittedWork() bool { return f.hasUncommitted }
+
+// HasUncommittedWorkExcluding answers from a bool no file on disk can move, so
+// it cannot model the marker-as-its-own-dirt defect at all -- that is pinned
+// against real git in session_worktree_prune_realgit_test.go. What it does pin
+// is the plumbing: the exclusions are recorded so a caller that drops the
+// marker name is caught here rather than only there.
+func (f *fakeGitProbe) HasUncommittedWorkExcluding(paths ...string) bool {
+	f.uncommittedExclusions = append([]string(nil), paths...)
+	return f.hasUncommitted
+}
+
 func (f *fakeGitProbe) HasUnreachableCommitsResult() (bool, error) {
 	return f.hasUnreachable, f.unreachableErr
 }
@@ -430,5 +443,27 @@ func TestLookupRigRootForSession(t *testing.T) {
 				t.Errorf("lookupRigRootForSession(%q) = %q, want %q", c.template, got, c.want)
 			}
 		})
+	}
+}
+
+// TestPruneExcludesItsOwnMarkerFromTheUncommittedProbe pins the plumbing half of
+// the marker fix: the gate must ask git to ignore .worktree-stale.
+//
+// The behavior itself -- that a worktree whose only dirt is the marker is still
+// prunable -- is pinned against real git in
+// session_worktree_prune_realgit_test.go, because this stub answers from a bool
+// no file can move. This test exists so a refactor that quietly drops the
+// exclusion argument fails in the fast suite too, instead of only in the
+// real-git one.
+func TestPruneExcludesItsOwnMarkerFromTheUncommittedProbe(t *testing.T) {
+	fx := newPruneFixture(t)
+	probe := &fakeGitProbe{isRepo: true, hasUncommitted: true, currentBranch: "HEAD"}
+	fx.setProbe(fx.workerDir, probe)
+
+	var stderr bytes.Buffer
+	pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr)
+
+	if len(probe.uncommittedExclusions) != 1 || probe.uncommittedExclusions[0] != worktreeStaleFileName {
+		t.Errorf("uncommitted probe exclusions = %v, want exactly [%q]", probe.uncommittedExclusions, worktreeStaleFileName)
 	}
 }

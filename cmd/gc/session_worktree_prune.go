@@ -54,10 +54,19 @@ import (
 // NOT wrong to: it removes only nested worktrees it can reproduce with
 // `git worktree add <path> origin/<branch>`, so a remote ref is its recovery
 // path rather than a proxy for safety.
+//
+// HasUncommittedWork is absent in favor of HasUncommittedWorkExcluding for a
+// third instance of the same shape: the marker this path writes is untracked
+// and lands in the worktree it describes, so the plain probe answered "dirty"
+// on gc's own bookkeeping file. That made every false marker permanent and
+// overwrote reason= with uncommitted-work on each pass, which is why the reason
+// on a bricked slot could not be trusted when diagnosing (bead ci-ciu63). Do
+// not narrow the exclusion to "only when the marker is untracked" -- the tracked
+// variant is what bead ci-2uh5p was.
 type gitProbe interface {
 	IsRepo() bool
 	CurrentBranch() (string, error)
-	HasUncommittedWork() bool
+	HasUncommittedWorkExcluding(paths ...string) bool
 	HasUnreachableCommitsResult() (bool, error)
 	WorktreeRemove(path string, force bool) error
 }
@@ -134,7 +143,9 @@ func pruneAgentHomeWorktreeIfSafe(session beads.Bead, cityPath string, cfg *conf
 	if !gp.IsRepo() {
 		return false
 	}
-	if gp.HasUncommittedWork() {
+	// The marker this path may be about to write is excluded from the probe:
+	// see the gitProbe doc comment.
+	if gp.HasUncommittedWorkExcluding(worktreeStaleFileName) {
 		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has uncommitted changes\n", workerDir) //nolint:errcheck
 		writeWorktreeStaleMarker(gp, workerDir, "uncommitted-work", stderr)
 		return false
@@ -201,7 +212,9 @@ func pruneAgentHomeWorktreeIfSafeInfo(info sessionpkg.Info, cityPath string, cfg
 	if !gp.IsRepo() {
 		return
 	}
-	if gp.HasUncommittedWork() {
+	// The marker this path may be about to write is excluded from the probe:
+	// see the gitProbe doc comment.
+	if gp.HasUncommittedWorkExcluding(worktreeStaleFileName) {
 		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has uncommitted changes\n", workerDir) //nolint:errcheck
 		writeWorktreeStaleMarker(gp, workerDir, "uncommitted-work", stderr)
 		return

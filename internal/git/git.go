@@ -265,6 +265,44 @@ func (g *Git) HasUncommittedWork() bool {
 	return strings.TrimSpace(out) != ""
 }
 
+// HasUncommittedWorkExcluding is HasUncommittedWork with the named
+// worktree-relative paths subtracted from the question, for a caller that wrote
+// a bookkeeping file into the worktree itself and must not read its own file
+// back as the user's work.
+//
+// It exists for gc's .worktree-stale marker, which is untracked and lives in
+// the worktree it describes. An unfiltered probe reports the marker, so the
+// teardown path that writes it re-marked the slot reason=uncommitted-work on
+// the next pass whatever the original reason had been: one false marker became
+// permanent and erased its own provenance, and the recovery pass that clears
+// markers was gated on the same probe and so could never clear one
+// (gascity bead ci-ciu63).
+//
+// Having each rig .gitignore the marker was the alternative and was rejected:
+// gc writes this file into worktrees of repositories it does not own, so that
+// fix silently stops working at the first rig that has not adopted the rule,
+// and a tracked-marker variant has already bitten once (bead ci-2uh5p). The
+// pathspec form covers a tracked marker too, which a caller-side filter of the
+// untracked list would not.
+//
+// Fails closed exactly like HasUncommittedWork: a failed probe reports dirty.
+func (g *Git) HasUncommittedWorkExcluding(paths ...string) bool {
+	if len(paths) == 0 {
+		return g.HasUncommittedWork()
+	}
+	// ":(exclude)" is subtractive and needs a positive pathspec to subtract
+	// from; "." is the worktree root because every invocation runs with -C.
+	args := []string{"status", "--porcelain", "--", "."}
+	for _, p := range paths {
+		args = append(args, ":(exclude)"+p)
+	}
+	out, err := g.run(args...)
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(out) != ""
+}
+
 // HasUnpushedCommits reports whether HEAD has commits not reachable from
 // any remote tracking branch. Used as a safety check before removing a
 // worktree — unpushed commits represent completed work that would be lost.
