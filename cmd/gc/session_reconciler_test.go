@@ -6696,6 +6696,59 @@ func TestReconcileSessionBeads_SuspendedSessionDrained(t *testing.T) {
 	}
 }
 
+// TestReconcileSessionBeads_SuspendedAgentLeavesRunningSessionAlone proves the
+// agent-suspend contract: suspension prevents replacement, but does not
+// interrupt a session that is already processing assigned work.
+func TestReconcileSessionBeads_SuspendedAgentLeavesRunningSessionAlone(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker", Suspended: true}}}
+	const (
+		sessionName = "worker-ci-claim"
+		claimOwner  = "worker-1"
+	)
+	if err := env.sp.Start(context.Background(), sessionName, runtime.Config{}); err != nil {
+		t.Fatalf("start %s: %v", sessionName, err)
+	}
+	session := env.createSessionBead(sessionName, "worker")
+	env.setSessionMetadata(&session, map[string]string{
+		"agent_name":   claimOwner,
+		"alias":        claimOwner,
+		"pool_managed": "true",
+		"pool_slot":    "1",
+	})
+	env.markSessionActive(&session)
+
+	work, err := env.store.Create(beads.Bead{
+		Title:    "in-progress work",
+		Type:     "task",
+		Status:   "in_progress",
+		Assignee: claimOwner,
+	})
+	if err != nil {
+		t.Fatalf("create assigned work: %v", err)
+	}
+	inProgress := "in_progress"
+	if err := env.store.Update(work.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+		t.Fatalf("mark assigned work in progress: %v", err)
+	}
+
+	env.reconcile([]beads.Bead{session})
+
+	if !env.sp.IsRunning(sessionName) {
+		t.Fatal("suspended agent's existing session was stopped")
+	}
+	if ds := env.dt.get(session.ID); ds != nil {
+		t.Fatalf("suspended agent's existing session started a drain: %+v", ds)
+	}
+	got, err := env.store.Get(work.ID)
+	if err != nil {
+		t.Fatalf("get assigned work: %v", err)
+	}
+	if got.Status != "in_progress" || got.Assignee != claimOwner {
+		t.Fatalf("assigned work = status %q assignee %q, want in_progress assigned to %s", got.Status, got.Assignee, claimOwner)
+	}
+}
+
 func TestReconcileSessionBeads_SuspendedNotRunningClosed(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
