@@ -149,6 +149,71 @@ whose cost is entirely a function of dentry and page-cache residency,
 which is the first thing a burst of concurrent process creation
 degrades. It is also the only substantial thing `gc prime` does.
 
+### Why it repeats, and why exactly 56
+
+The repeats are not pack resolution. They are
+`builtinpacks.ValidateSyntheticRepo`
+(`internal/builtinpacks/registry.go:332`), a cache-integrity check that
+`filepath.WalkDir`s the whole cache tree and then `os.ReadFile` +
+`bytes.Equal`s every file in every layout's manifest
+(`registry.go:487-507`). It runs FIVE times per `loadCityConfig`, and
+`gc prime` loads city config six times, for 30 whole-tree walks.
+
+The multiplier is `(loadCityConfig calls) x (|requiredBuiltinSources| +
+|lockedBundledCanonicalImports|)`. Both readiness predicates call the
+full validation --
+`requiredBuiltinSourcesUsable` at `cmd/gc/embed_builtin_packs.go:263`
+and `lockedBundledImportsUsable` at `:117`.
+
+The 4:1 skew between cache hashes is a subpath fold: `RepoCacheKey`
+runs `NormalizeRemoteSource`, which strips the subpath
+(`internal/config/pack_include.go:539-559`), so
+`gascity.git//internal/bootstrap/packs/core` and
+`gascity.git//examples/bd` resolve to the SAME cache directory. Four
+walks of it per config load, one of the public `gascity` pack.
+
+The per-file counts then fall out of layout nesting: `All()` declares
+`bd` at `examples/bd` and `dolt` at `examples/bd/dolt`
+(`registry.go:67-68`), so everything under `examples/bd/dolt/` is in
+two manifests and is read twice per walk.
+
+- 24 walks x 2 manifests = 48, + 8 config-loader reads = **56**
+- the same 48, + 27 config-loader reads for `pack.toml` = **75**
+- a file in exactly one layout = **24**, the walk count cleanly
+
+**A memo exists and its guard costs what it guards.**
+`builtinRuntimeReadyCache` (`embed_builtin_packs.go:27`) is a real
+per-city memo, but its hit condition at line 67 is
+`state.ready && requiredBuiltinSourcesUsable(...) &&
+lockedBundledImportsUsable(...)`. Both predicates perform the full
+validation, so the memo skips the REPAIR and never the WALK. A cheap
+variant already exists and is not used on this path --
+`ValidateSyntheticRepoFast` (`registry.go:285`), whose own docstring
+says it is there so "callers on the hot pack-resolution path use it to
+gate cache hits cheaply". The readiness guard predates it (`d71b469e5`)
+and was never switched.
+
+Do not read that as a one-line fix. Full validation is what rejects
+content drift and tampering in the shared machine-wide pack cache, so
+weakening the guard is a decision about WHEN full validation is owed,
+not a substitution. Tracked separately.
+
+**It fires before subcommand dispatch, on every invocation.**
+`registerPackCommands` (`cmd/gc/cmd_pack_commands.go:60`) runs during
+root-command construction, so the cost is paid before `gc` knows which
+command it is running. That is why the count is invariant to agent
+scope: it has nothing to do with bead queries at all.
+
+| command                | openat | under cache/repos | bytes read |
+| ---------------------- | ------ | ----------------- | ---------- |
+| `gc version`           |  9,739 |             8,764 |    47.2 MB |
+| `gc prime toolsmith-2` | 27,361 |            25,429 |   101.3 MB |
+
+`gc version` prints one word, reads 47 MB to do it, and still returns
+in 0.10s on a warm cache -- which is the whole reason this went
+unnoticed. The `openat` totals vary by a few counts run to run in
+unrelated opens; the `cache/repos` figure is stable.
+
 ## What a claim costs the host
 
 Pid slots consumed per invocation, measured by the `mark()` method
@@ -251,9 +316,20 @@ fork-intensive and syscall-intensive things running here.
   measured warm only, for the same reason: the cold-cache measurement
   needs a cache drop, which requires root and penalizes the whole
   fleet.
-- **Why 56 and 75.** The multiplier on the re-walk is measured, not
-  explained. What produces exactly that many repeats is a question for
-  the config loader, tracked separately.
+- **The stack attribution behind "~85-90% of cache reads are the
+  validation walk".** That share comes from a PARTIAL `strace -k`
+  sample (5,516 of 27,361 openats; the full-run capture ran ~30x
+  slower). The walk COUNT does not rest on that sample -- 30 walks
+  falls out independently of it, from the marker-read timeline in the
+  complete plain trace, and the arithmetic closes to within one read.
+  The percentage does rest on it.
+- **The identity of all six `loadCityConfig` calls in `gc prime`.**
+  Six is counted from `city.toml` opens. Two are accounted for in root
+  construction (`resolveCity` -> `rigFromCwdDir`, which keeps only the
+  rig name, then `registerPackCommands` -> `quietLoadCityConfig`, which
+  keeps only `cfg.PackCommands`; neither reuses the other's result).
+  The other four are assumed to be ordinary redundant loads and were
+  NOT traced to their call sites.
 - **strace timings as absolute values.** strace adds roughly 100us per
   syscall, which on a 220k-syscall command is not a perturbation, it
   is most of the traced run. Every traced number here is used for
@@ -265,6 +341,17 @@ fork-intensive and syscall-intensive things running here.
 - `cmd/gc/cmd_hook_claim.go` -- claim protocol, including
   `hookClaimExistingAssignment` (the re-run idempotence relied on by
   the harness-side mitigation)
-- `internal/config/implicit.go`, `internal/config/revision.go` --
-  pack cache root and convention discovery
+- `internal/builtinpacks/registry.go` -- `ValidateSyntheticRepo`,
+  `ValidateSyntheticRepoFast`, `syntheticPackLayouts`
+- `cmd/gc/embed_builtin_packs.go` -- the readiness memo and the two
+  predicates that defeat it
+- `internal/config/pack_include.go` -- `NormalizeRemoteSource` subpath
+  folding, which is why two sources share one cache directory
 - journalctl on `dbz1`, 2026-08-12 11:00-16:00, `debian-sa1` cron pids
+
+Cheapest reproduction of the walk, sub-second, from any city with a
+canonically-pinned bundled source in `packs.lock`:
+
+```bash
+strace -f -c -e trace=openat gc version
+```
