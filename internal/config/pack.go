@@ -8,10 +8,12 @@ import (
 	iofs "io/fs"
 	"log"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/gastownhall/gascity/internal/builtinpacks"
@@ -2883,18 +2885,24 @@ func PackContentHash(fs fsys.FS, topoDir string) string {
 // connection churn was eliminated (gastownhall/gascity#1978 follow-up).
 //
 // The cache keys the content hash by absolute pack dir plus a cheap stat
-// fingerprint (per-file size+mtime, no content reads). An unchanged tree is
-// content-hashed once and reused — both for repeats within a single tick and
-// across ticks. Invalidation follows standard build-cache semantics: any file
-// add/remove, size change, or mtime bump (every normal edit and git checkout)
-// changes the fingerprint and forces a re-hash. The only blind spot is an edit
-// that preserves both size and mtime, which pack tooling does not do.
+// fingerprint (per-file size, mtime, and filesystem change time, no content
+// reads). An unchanged tree is content-hashed once and reused — both for
+// repeats within a single tick and across ticks. Filesystems that do not expose
+// a change time are not cached: size and mtime alone cannot reliably identify
+// a content rewrite.
 var packContentHashCache sync.Map // absDir(string) -> packContentHashEntry
 
 type packContentHashEntry struct {
 	fingerprint uint64
 	hash        string
 }
+
+// packContentHashCacheMinimumAge keeps freshly written files out of the cache.
+// Some filesystems report successive same-size writes with the same mtime and
+// change time while they occur in one timestamp tick. Re-hashing those files
+// until that tick has passed makes config reloads correct without sacrificing
+// the steady-state cache for stable pack trees.
+const packContentHashCacheMinimumAge = time.Second
 
 // ResetPackContentHashCache clears the memoized pack content hashes. Tests that
 // mutate a pack tree in place under a path a previous test already hashed call
@@ -2922,16 +2930,31 @@ func PackContentHashRecursive(fs fsys.FS, topoDir string) string {
 
 	// Cheap stat fingerprint (no content reads) gates the full content hash.
 	fp := fnv.New64a()
+	cacheable := true
 	for _, relPath := range paths {
 		fmt.Fprintf(fp, "%s\x00", relPath) //nolint:errcheck // hash.Write never errors
-		if info, statErr := fs.Stat(filepath.Join(topoDir, relPath)); statErr == nil {
-			fmt.Fprintf(fp, "%d\x00%d\x00", info.Size(), info.ModTime().UnixNano()) //nolint:errcheck
+		info, statErr := fs.Stat(filepath.Join(topoDir, relPath))
+		if statErr != nil {
+			cacheable = false
+			continue
 		}
+		if time.Since(info.ModTime()) < packContentHashCacheMinimumAge {
+			cacheable = false
+			continue
+		}
+		changeSec, changeNsec, ok := packFileChangeTime(info)
+		if !ok {
+			cacheable = false
+			continue
+		}
+		fmt.Fprintf(fp, "%d\x00%d\x00%d\x00%d\x00", info.Size(), info.ModTime().UnixNano(), changeSec, changeNsec) //nolint:errcheck
 	}
 	fpSum := fp.Sum64()
-	if v, ok := packContentHashCache.Load(absDir); ok {
-		if entry := v.(packContentHashEntry); entry.fingerprint == fpSum {
-			return entry.hash
+	if cacheable {
+		if v, ok := packContentHashCache.Load(absDir); ok {
+			if entry := v.(packContentHashEntry); entry.fingerprint == fpSum {
+				return entry.hash
+			}
 		}
 	}
 
@@ -2947,8 +2970,44 @@ func PackContentHashRecursive(fs fsys.FS, topoDir string) string {
 		h.Write([]byte{0})       //nolint:errcheck // hash.Write never errors
 	}
 	result := fmt.Sprintf("%x", h.Sum(nil))
-	packContentHashCache.Store(absDir, packContentHashEntry{fingerprint: fpSum, hash: result})
+	if cacheable {
+		packContentHashCache.Store(absDir, packContentHashEntry{fingerprint: fpSum, hash: result})
+	} else {
+		packContentHashCache.Delete(absDir)
+	}
 	return result
+}
+
+// packFileChangeTime returns the filesystem metadata timestamp that changes
+// when a file's contents or metadata change. Go exposes this OS-specific value
+// through FileInfo.Sys; use reflection so the portable fsys.FS interface stays
+// free of platform-specific syscall types.
+func packFileChangeTime(info iofs.FileInfo) (int64, int64, bool) {
+	if info == nil || info.Sys() == nil {
+		return 0, 0, false
+	}
+	v := reflect.ValueOf(info.Sys())
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return 0, 0, false
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	for _, fieldName := range []string{"Ctim", "Ctimespec"} {
+		changeTime := v.FieldByName(fieldName)
+		if changeTime.Kind() != reflect.Struct {
+			continue
+		}
+		sec := changeTime.FieldByName("Sec")
+		nsec := changeTime.FieldByName("Nsec")
+		if sec.Kind() == reflect.Int64 && nsec.Kind() == reflect.Int64 {
+			return sec.Int(), nsec.Int(), true
+		}
+	}
+	return 0, 0, false
 }
 
 // collectFiles recursively collects file paths relative to base.
