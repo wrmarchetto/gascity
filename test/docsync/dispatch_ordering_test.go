@@ -1,23 +1,29 @@
-// test/docsync/dispatch_ordering_test.go pins the one dispatch claim an
+// test/docsync/dispatch_ordering_test.go pins the two dispatch claims an
 // operator acts on and cannot check from any CLI surface: routed pool work is
-// claimed oldest-first, ahead of priority.
+// claimed oldest-first ahead of priority, and every ready bead on the queue is
+// a candidate rather than only the head of a window.
 //
-// The suite exists because that policy is invisible from outside. `bd ready`
-// renders its rows priority-sorted, so an operator who raises a bead to P1 and
-// watches it sit cannot tell a deliberate FIFO queue from a broken one. That
-// is ci-q2vx: three lower-priority beads were claimed ahead of a ready P1 and
-// the conclusion drawn, out loud, was that dispatch was broken. Prose alone did
-// not hold the policy -- the same paragraph had already drifted to `--limit=1`
+// The suite exists because both are invisible from outside, and they present
+// the same symptom. `bd ready` renders its rows priority-sorted, so an operator
+// who raises a bead to P1 and watches it sit cannot tell a deliberate FIFO
+// queue from a broken sort -- nor either of those from a bead that `bd` never
+// returned to the claim at all. That is ci-q2vx: three lower-priority beads
+// were claimed ahead of a ready P1 and the conclusion drawn, out loud, was that
+// dispatch was broken. It turned out to be both -- a documented FIFO queue AND
+// a 20-row candidate window hiding the P1 at row 21, fixed as ci-rzq2. Prose
+// alone held neither: the same paragraph had already drifted to `--limit=1`
 // while the code emitted `--limit=20`, so nothing here was trustworthy enough
 // to settle the question.
 //
-// Scope is the ordering claim only, in both directions. Whether the rest of the
-// predicate stays shared with the reconciler's count form belongs to
-// TestPoolDemandPredicateSharedWithWorkQuery in internal/config; the generated
-// operator-facing copy of the tier list is held by
-// scripts/check-generated-docs-drift.sh.
+// Scope is those two claims, in both directions. That the tiers' output then
+// reaches the claim untruncated is behavioral and belongs to
+// TestPoolTierCandidateWindowReachesTheQueueTail in internal/config, which
+// executes the generated shell; whether the rest of the predicate stays shared
+// with the reconciler's count form belongs to
+// TestPoolDemandPredicateSharedWithWorkQuery; the generated operator-facing
+// copy of the tier list is held by scripts/check-generated-docs-drift.sh.
 //
-// Run: go test ./test/docsync/ -run RoutedQueueOrdering
+// Run: go test ./test/docsync/ -run 'RoutedQueueOrdering|CandidateWindow'
 package docsync
 
 import (
@@ -111,6 +117,69 @@ func TestRoutedQueueOrderingPolicyMatchesEmittedWorkQuery(t *testing.T) {
 		t.Errorf("engdocs/architecture/dispatch.md no longer shows the %q flag the pool tiers emit.\n"+
 			"A reader cannot confirm the policy against the code without it.",
 			routedQueueOrderingFlag)
+	}
+}
+
+// candidateWindowFlag is the unbounded row window the pool tiers ask bd for.
+// Paired with routedQueueOrderingFlag it is the whole of the queue's contract:
+// the sort decides which ready bead is taken first, and this decides nothing,
+// deliberately.
+const candidateWindowFlag = "--limit 0"
+
+// candidateWindowPolicyPhrase is the load-bearing clause of the dispatch doc's
+// window paragraph. As with the ordering phrase, a short match survives
+// rewording and fails only if the claim itself is retracted.
+const candidateWindowPolicyPhrase = "no candidate ceiling"
+
+func TestPoolTierCandidateWindowMatchesEmittedWorkQuery(t *testing.T) {
+	// The failure this guards is not a swap but a re-bounding: someone reads a
+	// `--limit 0` on a pool tier as an oversight, caps it to keep the read
+	// narrow, and every ready bead past the cap silently stops being claimable
+	// while the doc still promises otherwise. Nothing an operator can run
+	// distinguishes that from an idle queue.
+	docPath := filepath.Join(repoRoot(), "engdocs", "architecture", "dispatch.md")
+	raw, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatalf("reading dispatch architecture doc: %v", err)
+	}
+	doc := strings.Join(strings.Fields(string(raw)), " ")
+
+	agent := config.Agent{Name: "worker", Dir: "hello-world"}
+	query := agent.EffectiveWorkQuery()
+
+	// Both tiers named in the doc's window paragraph are checked, for the same
+	// reason orderedPoolTiers holds two: the pool-alias tier inherited its flags
+	// by copying its sibling, so a re-bounding of one alone would be invisible
+	// from the other's symptoms.
+	for _, tier := range orderedPoolTiers {
+		invocation, ok := bdInvocationContaining(query, tier.marker)
+		if !ok {
+			t.Errorf("work_query has no %s tier matching %q; this test can no longer see the tier it guards.\n"+
+				"If the tier was renamed or restructured, update orderedPoolTiers.\nemitted query: %s",
+				tier.name, tier.marker, query)
+			continue
+		}
+		if !strings.Contains(invocation, candidateWindowFlag) {
+			t.Errorf("the %s tier does not emit %q; it is bounding what is a claim candidate.\n"+
+				"Ready work past the window is not returned by bd at all, so no Go-side reordering can\n"+
+				"reach it and it becomes claimable only as the head drains -- ci-rzq2, measured at 41 ready\n"+
+				"rows with a P1 at row 21. If a ceiling is genuinely needed, say in the commit body what\n"+
+				"makes the hidden tail acceptable and rewrite the window paragraph in\n"+
+				"engdocs/architecture/dispatch.md in the same commit.\ntier invocation: %s",
+				tier.name, candidateWindowFlag, invocation)
+		}
+	}
+
+	if !strings.Contains(doc, candidateWindowPolicyPhrase) {
+		t.Errorf("engdocs/architecture/dispatch.md no longer states %q.\n"+
+			"The pool tiers still emit %q, so deleting the claim leaves a reader with no way to tell an\n"+
+			"unbounded queue from the 20-row window that preceded it.",
+			candidateWindowPolicyPhrase, candidateWindowFlag)
+	}
+	if !strings.Contains(doc, candidateWindowFlag) {
+		t.Errorf("engdocs/architecture/dispatch.md no longer shows the %q flag the pool tiers emit.\n"+
+			"A reader cannot confirm the claim against the code without it.",
+			candidateWindowFlag)
 	}
 }
 
