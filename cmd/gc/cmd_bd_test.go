@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/beads/contract"
 	"github.com/gastownhall/gascity/internal/config"
@@ -3274,6 +3275,44 @@ func TestDoBdReleaseIfCurrentUpdatesOnlyMatchingAssignment(t *testing.T) {
 	}
 }
 
+func TestDoBdReleaseIfCurrentReassignsRoutedWorkToItsPool(t *testing.T) {
+	cityDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"demo\"\n\n[beads]\nprovider = \"file\"\n"), 0o644); err != nil {
+		t.Fatalf("write city.toml: %v", err)
+	}
+	store, err := openStoreAtForCity(cityDir, cityDir)
+	if err != nil {
+		t.Fatalf("openStoreAtForCity: %v", err)
+	}
+	created, err := store.Create(beads.Bead{
+		Title:    "routed work",
+		Assignee: "session-1",
+		Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "worker-pool"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Update(created.ID, beads.UpdateOpts{Status: strPtr("in_progress")}); err != nil {
+		t.Fatalf("Update status: %v", err)
+	}
+
+	target := execStoreTarget{ScopeRoot: cityDir, ScopeKind: "city", Prefix: "gc"}
+	var stdout, stderr bytes.Buffer
+	if got := doBdReleaseIfCurrent(cityDir, nil, target, created.ID, "session-1", &stdout, &stderr); got != 0 {
+		t.Fatalf("doBdReleaseIfCurrent = %d, want 0; stderr=%q", got, stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "released" {
+		t.Fatalf("release output = %q, want released", stdout.String())
+	}
+	got, err := store.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get after release: %v", err)
+	}
+	if got.Status != "open" || got.Assignee != "worker-pool" {
+		t.Fatalf("released routed bead = %+v, want open and assigned to pool", got)
+	}
+}
+
 func TestDoBdReleaseIfCurrentWorksForBdStoreFallback(t *testing.T) {
 	clearInheritedBeadsEnv(t)
 	origCityFlag := cityFlag
@@ -3312,6 +3351,10 @@ prefix = "fe"
 	fakeBin := t.TempDir()
 	sqlLog := filepath.Join(fakeBin, "sql.log")
 	fakeBD := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"show\" ] && [ \"$2\" = \"--json\" ] && [ \"$3\" = \"fe-abc\" ]; then\n" +
+		"  printf '[{\"id\":\"fe-abc\",\"title\":\"work\",\"status\":\"in_progress\",\"assignee\":\"worker-1\"}]\\n'\n" +
+		"  exit 0\n" +
+		"fi\n" +
 		"if [ \"$1\" = \"sql\" ] && [ \"$2\" = \"--json\" ]; then\n" +
 		"  printf '%s\\n' \"$3\" > " + strconv.Quote(sqlLog) + "\n" +
 		"  printf '{\"rows_affected\":1,\"schema_version\":1}\\n'\n" +

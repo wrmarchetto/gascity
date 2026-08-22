@@ -725,7 +725,35 @@ func doBdReleaseIfCurrent(cityPath string, cfg *config.City, target execStoreTar
 		fmt.Fprintf(stderr, "gc bd release-if-current: %v for %T\n", beads.ErrConditionalReleaseUnsupported, store) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	released, err := releaser.ReleaseIfCurrent(id, expectedAssignee)
+	// A voluntary release returns routed work to the pool that owns it. Clearing
+	// the assignee while preserving gc.routed_to leaves the bead visible to
+	// controller demand but unreachable by the pool's claim query.
+	recoveryAssignee := ""
+	item, getErr := store.Get(id)
+	if getErr != nil && !errors.Is(getErr, beads.ErrNotFound) {
+		if errors.Is(getErr, beads.ErrBDSilentFallback) {
+			fmt.Fprintf(stderr, "gc bd release-if-current: %v\n", getErr) //nolint:errcheck // best-effort stderr
+			fmt.Fprintln(stderr, bdSilentFallbackUserMessage)             //nolint:errcheck // best-effort stderr
+			return bdSilentFallbackExitCode
+		}
+		fmt.Fprintf(stderr, "gc bd release-if-current: reading %s: %v\n", id, getErr) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	if getErr == nil {
+		recoveryAssignee = strings.TrimSpace(item.Metadata[beadmeta.RoutedToMetadataKey])
+	}
+
+	var released bool
+	if recoveryAssignee != "" {
+		reassigner, ok := store.(beads.ConditionalAssignmentReassigner)
+		if !ok {
+			fmt.Fprintf(stderr, "gc bd release-if-current: conditional assignment reassign unsupported for %T\n", store) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		released, err = reassigner.ReassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+	} else {
+		released, err = releaser.ReleaseIfCurrent(id, expectedAssignee)
+	}
 	if err != nil {
 		if errors.Is(err, beads.ErrBDSilentFallback) {
 			fmt.Fprintf(stderr, "gc bd release-if-current: %v\n", err) //nolint:errcheck // best-effort stderr
