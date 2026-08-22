@@ -166,6 +166,120 @@ func TestExtractBdDirectoryFlag(t *testing.T) {
 	}
 }
 
+func TestRejectCrossRigBdUpdateAssignee(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test", Prefix: "city"},
+		Rigs: []config.Rig{
+			{Name: "other", Prefix: "other"},
+		},
+		Agents: []config.Agent{
+			{Name: "worker", Dir: "other"},
+			{Name: "city-worker"},
+		},
+	}
+
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{
+			name: "rejects city bead assigned to rig agent",
+			args: []string{"update", "city-abc", "--assignee", "other/worker"},
+			want: true,
+		},
+		{
+			name: "allows city bead assigned to city agent",
+			args: []string{"update", "city-abc", "--assignee=city-worker"},
+			want: false,
+		},
+		{
+			name: "allows matching rig assignment",
+			args: []string{"update", "other-abc", "-a", "other/worker"},
+			want: false,
+		},
+		{
+			name: "skips global flag values before update",
+			args: []string{"--actor", "operator", "update", "city-abc", "--assignee", "other/worker"},
+			want: true,
+		},
+		{
+			name: "does not read another flag value as an assignee",
+			args: []string{"update", "city-abc", "--metadata", "--assignee=other/worker"},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var stderr bytes.Buffer
+			got := rejectCrossRigBdUpdateAssignee(cfg, tt.args, &stderr)
+			if got != tt.want {
+				t.Fatalf("rejectCrossRigBdUpdateAssignee(%v) = %v, want %v; stderr=%q", tt.args, got, tt.want, stderr.String())
+			}
+			if tt.want && !strings.Contains(stderr.String(), "cross-rig routing") {
+				t.Fatalf("stderr = %q, want cross-rig diagnostic", stderr.String())
+			}
+		})
+	}
+}
+
+func TestDoBdRefusesCrossRigAssigneeUpdate(t *testing.T) {
+	disableManagedDoltRecoveryForTest(t)
+
+	origCityFlag, origRigFlag := cityFlag, rigFlag
+	t.Cleanup(func() {
+		cityFlag = origCityFlag
+		rigFlag = origRigFlag
+	})
+	cityFlag, rigFlag = "", ""
+
+	cityDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityDir, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(`[workspace]
+name = "demo"
+prefix = "city"
+
+[[rigs]]
+name = "other"
+path = "other"
+prefix = "other"
+
+[[agent]]
+name = "worker"
+dir = "other"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityDir, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "bd-ran")
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(`#!/bin/sh
+touch "$GC_BD_CAPTURE"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GC_BD_CAPTURE", capture)
+	t.Setenv("GC_CITY_PATH", cityDir)
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"--city", cityDir, "update", "city-abc", "--assignee", "other/worker"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("doBd(update) = %d, want 1; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `cross-rig routing — bead city-abc (prefix "city") → agent other/worker (rig prefix "other")`) {
+		t.Fatalf("stderr = %q, want cross-rig diagnostic", stderr.String())
+	}
+	if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bd subprocess ran despite rejected assignment: stat capture = %v", err)
+	}
+}
+
 func TestResolveBdScopeTarget(t *testing.T) {
 	// Isolate cwd from any ambient `.beads/redirect` in the working tree
 	// (e.g. when `make test` runs from a polecat/crew worktree, the worktree's
