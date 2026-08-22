@@ -624,7 +624,12 @@ func TestWorktreeDiskSizeCheck_AllMeasurementsFailedReturnsWarning(t *testing.T)
 // fakeGitWorktree implements gitWorktree for tests. Behaves like the
 // shared admin dir of a multi-worktree repo: list returns the same
 // entries regardless of which path is used to construct it. Per-path
-// "uncommitted/unpushed/stashed" flags drive classifyNested.
+// "uncommitted/unpushed" flags drive classifyNested.
+//
+// There is deliberately no per-path stash flag. Modeling stashes per path is
+// what let a repo-wide probe look correct for as long as it did: refs/stash is
+// one ref shared by every worktree, so no real probe can answer differently per
+// path the way such a field implies (bead ci-auomj).
 var _ gitWorktree = (*fakeGitWorktree)(nil)
 
 type fakeGitWorktree struct {
@@ -634,8 +639,6 @@ type fakeGitWorktree struct {
 	uncommitted map[string]bool
 	unpushed    map[string]bool
 	unpushedErr map[string]error
-	stashed     map[string]bool
-	stashedErr  map[string]error
 	removeCalls *[]string // path argument of each WorktreeRemove call
 	removeFrom  *[]string // currentPath (cwd-equivalent) at each remove call
 	removeErr   map[string]error
@@ -656,13 +659,6 @@ func (f *fakeGitWorktree) HasUnpushedCommitsResult() (bool, error) {
 		return false, err
 	}
 	return f.unpushed[f.currentPath], nil
-}
-
-func (f *fakeGitWorktree) HasStashesResult() (bool, error) {
-	if err := f.stashedErr[f.currentPath]; err != nil {
-		return false, err
-	}
-	return f.stashed[f.currentPath], nil
 }
 
 func (f *fakeGitWorktree) WorktreeRemove(path string, _ bool) error {
@@ -749,7 +745,6 @@ func TestNestedWorktreePruneCheck_ClassifiesSafeAndUnsafe(t *testing.T) {
 	safe := pathutil.NormalizePathForCompare(filepath.Join(home, "worktrees", "task-clean"))
 	dirty := pathutil.NormalizePathForCompare(filepath.Join(home, "worktrees", "task-dirty"))
 	unpushed := pathutil.NormalizePathForCompare(filepath.Join(home, "worktrees", "task-unpushed"))
-	stashed := pathutil.NormalizePathForCompare(filepath.Join(home, "worktrees", "task-stashed"))
 	if err := os.MkdirAll(safe, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -757,9 +752,6 @@ func TestNestedWorktreePruneCheck_ClassifiesSafeAndUnsafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(unpushed, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(stashed, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -773,11 +765,9 @@ func TestNestedWorktreePruneCheck_ClassifiesSafeAndUnsafe(t *testing.T) {
 					{Path: safe, Branch: "task-clean"},
 					{Path: dirty, Branch: "task-dirty"},
 					{Path: unpushed, Branch: "task-unpushed"},
-					{Path: stashed, Branch: "task-stashed"},
 				},
 				uncommitted: map[string]bool{dirty: true},
 				unpushed:    map[string]bool{unpushed: true},
-				stashed:     map[string]bool{stashed: true},
 				removeCalls: &removes,
 				currentPath: path,
 			}
@@ -799,8 +789,8 @@ func TestNestedWorktreePruneCheck_ClassifiesSafeAndUnsafe(t *testing.T) {
 	if safeCount != 1 {
 		t.Errorf("safeCount = %d, want 1", safeCount)
 	}
-	if unsafeCount != 3 {
-		t.Errorf("unsafeCount = %d, want 3", unsafeCount)
+	if unsafeCount != 2 {
+		t.Errorf("unsafeCount = %d, want 2", unsafeCount)
 	}
 
 	for _, f := range c.findings {
@@ -1057,11 +1047,8 @@ func TestNestedWorktreePruneCheck_ProbeErrorsAreUnsafe(t *testing.T) {
 	dir := t.TempDir()
 	home := makeAgentHome(t, dir, "agent-1")
 	unpushedErr := pathutil.NormalizePathForCompare(filepath.Join(home, "worktrees", "unpushed-error"))
-	stashErr := pathutil.NormalizePathForCompare(filepath.Join(home, "worktrees", "stash-error"))
-	for _, p := range []string{unpushedErr, stashErr} {
-		if err := os.MkdirAll(p, 0o755); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(unpushedErr, 0o755); err != nil {
+		t.Fatal(err)
 	}
 
 	var removes []string
@@ -1072,10 +1059,8 @@ func TestNestedWorktreePruneCheck_ProbeErrorsAreUnsafe(t *testing.T) {
 				listResp: []git.Worktree{
 					{Path: home, Branch: "h"},
 					{Path: unpushedErr, Branch: "unpushed-error"},
-					{Path: stashErr, Branch: "stash-error"},
 				},
 				unpushedErr: map[string]error{unpushedErr: errors.New("log failed")},
-				stashedErr:  map[string]error{stashErr: errors.New("stash failed")},
 				removeCalls: &removes,
 				currentPath: path,
 			}
@@ -1085,8 +1070,8 @@ func TestNestedWorktreePruneCheck_ProbeErrorsAreUnsafe(t *testing.T) {
 	if r.Status != StatusWarning {
 		t.Fatalf("status = %d, want Warning because probe errors are inspection failures; msg=%s details=%v", r.Status, r.Message, r.Details)
 	}
-	if len(c.findings) != 2 {
-		t.Fatalf("findings = %d, want 2", len(c.findings))
+	if len(c.findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(c.findings))
 	}
 	for _, f := range c.findings {
 		if f.safeToRm {
@@ -1256,8 +1241,8 @@ func TestNestedWorktreePruneCheck_FixUsesParentForGitContext(t *testing.T) {
 }
 
 // TestNestedWorktreePruneCheck_BrokenRepoGate pins the IsRepo gate that
-// defends against fail-open semantics in HasUnpushedCommits / HasStashes
-// (which return false on git error). A candidate whose admin dir is
+// defends against fail-open semantics in HasUnpushedCommits (which
+// returns false on git error). A candidate whose admin dir is
 // corrupt must not be classified as safe to remove.
 func TestNestedWorktreePruneCheck_BrokenRepoGate(t *testing.T) {
 	dir := t.TempDir()

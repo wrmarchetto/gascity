@@ -296,10 +296,14 @@ if [[ -n "$acq_line" ]]; then
 else
     record_fail "wiring.timeout_exits_75" "no push_gate_acquire_slot call found in $LOCAL_PARALLEL"
 fi
-# Must be the release call wired to an EXIT trap specifically — not just any
-# trap and any release call existing independently somewhere in the file
-# (e.g. an unrelated per-job cleanup trap for a temp dir).
-assert_true "wiring.releases_slot_on_exit" grep -qE 'trap .*push_gate_release_slot.*EXIT' "$LOCAL_PARALLEL"
+# The EXIT trap may delegate to a combined cleanup function, but that function
+# must release the gate slot before removing the gate-owned Go temp directory.
+# Checking both links avoids accepting an unrelated release call or a cleanup
+# trap that silently abandons the semaphore.
+assert_true "wiring.releases_slot_on_exit" bash -c '
+    grep -q "trap cleanup EXIT" "$1" &&
+    grep -q "push_gate_release_slot \"\$gate_fd\"" "$1"
+' _ "$LOCAL_PARALLEL"
 
 # The gate FD must be closed BEFORE the job fan-out, or every job — and every
 # daemon a job leaks — inherits a copy and can pin the slot past this

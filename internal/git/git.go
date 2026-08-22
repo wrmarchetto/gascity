@@ -265,6 +265,44 @@ func (g *Git) HasUncommittedWork() bool {
 	return strings.TrimSpace(out) != ""
 }
 
+// HasUncommittedWorkExcluding is HasUncommittedWork with the named
+// worktree-relative paths subtracted from the question, for a caller that wrote
+// a bookkeeping file into the worktree itself and must not read its own file
+// back as the user's work.
+//
+// It exists for gc's .worktree-stale marker, which is untracked and lives in
+// the worktree it describes. An unfiltered probe reports the marker, so the
+// teardown path that writes it re-marked the slot reason=uncommitted-work on
+// the next pass whatever the original reason had been: one false marker became
+// permanent and erased its own provenance, and the recovery pass that clears
+// markers was gated on the same probe and so could never clear one
+// (gascity bead ci-ciu63).
+//
+// Having each rig .gitignore the marker was the alternative and was rejected:
+// gc writes this file into worktrees of repositories it does not own, so that
+// fix silently stops working at the first rig that has not adopted the rule,
+// and a tracked-marker variant has already bitten once (bead ci-2uh5p). The
+// pathspec form covers a tracked marker too, which a caller-side filter of the
+// untracked list would not.
+//
+// Fails closed exactly like HasUncommittedWork: a failed probe reports dirty.
+func (g *Git) HasUncommittedWorkExcluding(paths ...string) bool {
+	if len(paths) == 0 {
+		return g.HasUncommittedWork()
+	}
+	// ":(exclude)" is subtractive and needs a positive pathspec to subtract
+	// from; "." is the worktree root because every invocation runs with -C.
+	args := []string{"status", "--porcelain", "--", "."}
+	for _, p := range paths {
+		args = append(args, ":(exclude)"+p)
+	}
+	out, err := g.run(args...)
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(out) != ""
+}
+
 // HasUnpushedCommits reports whether HEAD has commits not reachable from
 // any remote tracking branch. Used as a safety check before removing a
 // worktree — unpushed commits represent completed work that would be lost.
@@ -319,8 +357,19 @@ func (g *Git) HasUnreachableCommitsResult() (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
-// HasStashes reports whether the repository has stashed work.
+// HasStashes reports whether the REPOSITORY has stashed work.
 // If the probe fails, it returns true to fail closed.
+//
+// Repository, not worktree, and the distinction is the whole warning: refs/stash
+// is a single repo-wide ref, so every linked worktree gets an identical answer no
+// matter which one g points at. Do NOT use this to decide anything about one
+// worktree. Three destructive-cleanup gates did, and one agent's stash then
+// protected — and, via the .worktree-stale marker, disabled — every sibling slot
+// in the repo (bead ci-auomj).
+//
+// Nor is worktree removal a reason to consult it at all: `git worktree remove`
+// deletes the checkout and that worktree's admin dir, never refs, so stashed work
+// survives it intact. Same reasoning as HasUnreachableCommitsResult below.
 func (g *Git) HasStashes() bool {
 	has, err := g.HasStashesResult()
 	if err != nil {

@@ -41,12 +41,12 @@ func TestHookPoolClaimSwapsBeforeItLeasesAndReloadsCanonically(t *testing.T) {
 			}
 			calls = append(calls, append([]string(nil), args...))
 			switch {
-			case reflect.DeepEqual(args, []string{"update", "work-1", "--if-assignee", "crew", "--assignee", "crew-2", "--json"}):
-				return []byte(`[{"id":"work-1","status":"open","assignee":"crew-2"}]`), nil
+			case reflect.DeepEqual(args, []string{"update", "work-1", "--if-assignee", "crew", "--assignee", "crew-2", "--set-metadata", "gc.routed_to=crew", "--json"}):
+				return []byte(`[{"id":"work-1","status":"open","assignee":"crew-2","metadata":{"gc.routed_to":"crew"}}]`), nil
 			case reflect.DeepEqual(args, []string{"update", "work-1", "--claim", "--json"}):
 				return []byte(`[{"id":"work-1","status":"in_progress","assignee":"crew-2"}]`), nil
 			case reflect.DeepEqual(args, []string{"show", "--json", "work-1"}):
-				return []byte(`[{"id":"work-1","status":"in_progress","assignee":"crew-2","metadata":{"gc.root_bead_id":"root-1","gc.continuation_group":"review"}}]`), nil
+				return []byte(`[{"id":"work-1","status":"in_progress","assignee":"crew-2","metadata":{"gc.routed_to":"crew","gc.root_bead_id":"root-1","gc.continuation_group":"review"}}]`), nil
 			default:
 				t.Fatalf("unexpected bd args: %#v", args)
 				return nil, nil
@@ -64,6 +64,9 @@ func TestHookPoolClaimSwapsBeforeItLeasesAndReloadsCanonically(t *testing.T) {
 	if claimed.Metadata["gc.root_bead_id"] != "root-1" || claimed.Metadata["gc.continuation_group"] != "review" {
 		t.Fatalf("claimed metadata = %#v, want canonical root and continuation group", claimed.Metadata)
 	}
+	if got := claimed.Metadata["gc.routed_to"]; got != "crew" {
+		t.Fatalf("claimed gc.routed_to = %q, want the original pool alias crew", got)
+	}
 	if len(calls) < 2 || !strings.Contains(strings.Join(calls[0], " "), "--if-assignee") {
 		t.Fatalf("bd calls = %#v, want the guarded swap first", calls)
 	}
@@ -79,7 +82,7 @@ func TestHookPoolClaimDoesNotLeaseAfterALostSwap(t *testing.T) {
 	hookClaimCommandRunnerWithEnvContext = func(_ context.Context, _ map[string]string) beads.CommandRunner {
 		return func(_ string, name string, args ...string) ([]byte, error) {
 			switch {
-			case reflect.DeepEqual(args, []string{"update", "work-1", "--if-assignee", "crew", "--assignee", "crew-2", "--json"}):
+			case reflect.DeepEqual(args, []string{"update", "work-1", "--if-assignee", "crew", "--assignee", "crew-2", "--set-metadata", "gc.routed_to=crew", "--json"}):
 				return []byte(`assignee mismatch: work-1 is held by "crew-3", expected "crew"`), errors.New("exit status 13")
 			case reflect.DeepEqual(args, []string{"show", "--json", "work-1"}):
 				return []byte(`[{"id":"work-1","status":"in_progress","assignee":"crew-3"}]`), nil

@@ -2340,12 +2340,9 @@ func TestCompactScriptQuarantinesMixedRowGainAndSameCountHashDriftBeforeFullGC(t
 	}
 }
 
-func TestCompactScriptQuarantinesMixedSignalsDespiteWriterRace(t *testing.T) {
+func TestCompactScriptDefersMixedRowGainAndSameCountUpdateDuringWriterRace(t *testing.T) {
 	fixture := newCompactScriptFixture(t)
 	out, err := fixture.run(t, "writer_race_with_mixed_same_count_hash_drift", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
-	if err == nil {
-		t.Fatalf("compact succeeded despite proven writer plus same-count hash drift:\n%s", out)
-	}
 	if !strings.Contains(out, "writer race detected") {
 		t.Fatalf("output missing proven writer evidence:\n%s", out)
 	}
@@ -2353,22 +2350,7 @@ func TestCompactScriptQuarantinesMixedSignalsDespiteWriterRace(t *testing.T) {
 		!strings.Contains(out, "table=notes value hash changed after flatten without row-count increase") {
 		t.Fatalf("output missing mixed integrity signals:\n%s", out)
 	}
-	logData, err := os.ReadFile(fixture.doltLog)
-	if err != nil {
-		t.Fatalf("read dolt log: %v", err)
-	}
-	log := string(logData)
-	if strings.Contains(log, "DOLT_GC") {
-		t.Fatalf("mixed hard integrity signals must block full GC despite writer race:\n%s", log)
-	}
-	quarantine := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-quarantine", "beads")
-	if _, err := os.Stat(quarantine); err != nil {
-		t.Fatalf("mixed hard integrity signals should write quarantine marker: %v", err)
-	}
-	pendingGC := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-pending-gc", "beads")
-	if _, err := os.Stat(pendingGC); !os.IsNotExist(err) {
-		t.Fatalf("mixed hard integrity signals must not write pending-GC marker; stat=%v", err)
-	}
+	assertCompactWriterRaceDeferred(t, fixture, out, err)
 }
 
 // assertCompactWriterRaceDeferred encodes the shared expectations for a proven
@@ -5425,17 +5407,17 @@ exit 1
 }
 
 // A concurrent DELETE proven via HEAD movement produces a row-count decrease
-// plus table-value-hash change. The new verify_counts_saw_decrease_hash_drift
-// flag ensures these are NOT classified as same-count hash drift, so the
-// writer-race defer path fires: exit 0, no quarantine, pending-GC marker written.
+// plus table-value-hash change. The generic proven-writer defer path covers
+// this alongside concurrent inserts and updates: exit 0, no quarantine,
+// pending-GC marker written.
 func TestCompactScriptDefersWhenWriterDeletesRows(t *testing.T) {
 	fixture := newCompactScriptFixture(t)
 	out, err := fixture.run(t, "row_count_decreases_with_writer_race", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
 	if err != nil {
 		t.Fatalf("concurrent-DELETE defer must exit 0 (skip, not failure): %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "row-count decrease is concurrent-writer DELETE, not corruption") {
-		t.Fatalf("output missing concurrent-DELETE defer message:\n%s", out)
+	if !strings.Contains(out, "row/value drift is concurrent-writer data, not corruption") {
+		t.Fatalf("output missing concurrent-writer defer message:\n%s", out)
 	}
 	if !strings.Contains(out, "deferring, will retry next run") {
 		t.Fatalf("output missing defer confirmation:\n%s", out)

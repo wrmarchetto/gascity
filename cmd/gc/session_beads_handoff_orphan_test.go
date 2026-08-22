@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
@@ -117,9 +118,10 @@ func TestReleaseWorkFromClosedSessionBeadRestoresRunTargetForWorkflowKind(t *tes
 	}
 }
 
-// Work that still carries a route must be left untouched — only truly unrouted
-// orphans get a restored route. Guards against clobbering an in-flight route.
-func TestReleaseWorkFromClosedSessionBeadLeavesExistingRouteUntouched(t *testing.T) {
+// Work that still carries a pool route must return to that pool when its
+// session dies. A routed but unassigned bead counts as demand but cannot be
+// claimed by the worker query, which causes a spawn-and-retire loop.
+func TestReleaseWorkFromClosedSessionBeadReassignsExistingRoute(t *testing.T) {
 	store := beads.NewMemStore()
 
 	sessionBead, err := store.Create(beads.Bead{
@@ -152,11 +154,25 @@ func TestReleaseWorkFromClosedSessionBeadLeavesExistingRouteUntouched(t *testing
 	if err != nil {
 		t.Fatalf("get work bead: %v", err)
 	}
-	if got.Assignee != "" {
-		t.Fatalf("assignee = %q, want empty", got.Assignee)
+	if got.Assignee != "gascity/other-pool" {
+		t.Fatalf("assignee = %q, want gascity/other-pool", got.Assignee)
 	}
 	if got.Metadata[beadmeta.RoutedToMetadataKey] != "gascity/other-pool" {
-		t.Fatalf("gc.routed_to = %q, want unchanged gascity/other-pool", got.Metadata[beadmeta.RoutedToMetadataKey])
+		t.Fatalf("gc.routed_to = %q, want gascity/other-pool", got.Metadata[beadmeta.RoutedToMetadataKey])
+	}
+	assertNoUnassignedRoutedBeads(t, store)
+}
+
+func assertNoUnassignedRoutedBeads(t *testing.T, store beads.Store) {
+	t.Helper()
+	open, err := store.ListOpen("open")
+	if err != nil {
+		t.Fatalf("list open beads: %v", err)
+	}
+	for _, bead := range open {
+		if strings.TrimSpace(bead.Metadata[beadmeta.RoutedToMetadataKey]) != "" && strings.TrimSpace(bead.Assignee) == "" {
+			t.Fatalf("bead %s is routed to %q but unassigned", bead.ID, bead.Metadata[beadmeta.RoutedToMetadataKey])
+		}
 	}
 }
 

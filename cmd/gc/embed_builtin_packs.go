@@ -119,8 +119,11 @@ func builtinRuntimeReadied(cityPath string) bool {
 //
 // When this process has already completed a readiness pass for the city, the
 // supplied config came from that same pass and re-running it would repeat the
-// cache walk the reuse exists to avoid — the walk, not the parse, is what a
-// config load costs. Any other config gets a full pass.
+// pass's marker reads and the retired-tree prune scan for no new information.
+// Any other config gets a full pass. The whole-tree cache walk this early
+// return was originally written to avoid is now memoized per process anyway
+// (builtin_cache_validation.go), so what is left to skip here is smaller than
+// the comment above it used to claim.
 //
 // Scoped to short-lived invocations: unlike EnsureBuiltinRuntimeAssets, the
 // early return skips the per-call requiredBuiltinSourcesUsable /
@@ -243,7 +246,7 @@ func ensureRequiredBuiltinSourcesCached(cityPath string) error {
 		if err != nil {
 			return fmt.Errorf("resolving cache path for bundled %s pack: %w", name, err)
 		}
-		if builtinpacks.ValidateSyntheticRepo(cachePath, commit) == nil {
+		if validateSyntheticRepoForReadiness(cachePath, commit) == nil {
 			continue
 		}
 		if _, err := packman.EnsureRepoInCache(cityPath, source, commit); err != nil {
@@ -260,7 +263,7 @@ func requiredBuiltinSourcesUsable(cityPath string) bool {
 		if err != nil {
 			return false
 		}
-		if builtinpacks.ValidateSyntheticRepo(cachePath, commit) != nil {
+		if validateSyntheticRepoForReadiness(cachePath, commit) != nil {
 			return false
 		}
 	}

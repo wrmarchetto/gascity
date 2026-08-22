@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -105,6 +106,52 @@ func TestHandleServicesListAndGet(t *testing.T) {
 	}
 	if got.ServiceName != "review-intake" {
 		t.Errorf("ServiceName = %q, want review-intake", got.ServiceName)
+	}
+}
+
+func TestServiceProxyRedirectsServiceRootToTrailingSlash(t *testing.T) {
+	state := newFakeState(t)
+	state.services = &fakeServiceRegistry{
+		items: []workspacesvc.Status{{
+			ServiceName: "chat",
+			PublishMode: "direct",
+		}},
+		serve: func(w http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path != "/svc/chat/app.mjs" {
+				t.Errorf("path = %q, want /svc/chat/app.mjs", r.URL.Path)
+			}
+			w.Header().Set("Content-Type", "text/javascript")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("export {}"))
+			return true
+		},
+	}
+	h := newTestCityHandler(t, state)
+
+	pageReq := httptest.NewRequest(http.MethodGet, cityURL(state, "/svc/chat"), nil)
+	pageRec := httptest.NewRecorder()
+	h.ServeHTTP(pageRec, pageReq)
+
+	if pageRec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want %d", pageRec.Code, http.StatusMovedPermanently)
+	}
+	if got, want := pageRec.Header().Get("Location"), "chat/"; got != want {
+		t.Fatalf("Location = %q, want %q", got, want)
+	}
+	redirectURL := pageReq.URL.ResolveReference(&url.URL{Path: pageRec.Header().Get("Location")})
+	if got, want := redirectURL.Path, cityURL(state, "/svc/chat/"); got != want {
+		t.Fatalf("redirect path = %q, want %q", got, want)
+	}
+	assetURL := redirectURL.ResolveReference(&url.URL{Path: "app.mjs"})
+	assetReq := httptest.NewRequest(http.MethodGet, assetURL.String(), nil)
+	assetRec := httptest.NewRecorder()
+	h.ServeHTTP(assetRec, assetReq)
+
+	if assetRec.Code != http.StatusOK {
+		t.Fatalf("asset status = %d, want %d", assetRec.Code, http.StatusOK)
+	}
+	if got, want := assetRec.Header().Get("Content-Type"), "text/javascript"; got != want {
+		t.Errorf("asset Content-Type = %q, want %q", got, want)
 	}
 }
 

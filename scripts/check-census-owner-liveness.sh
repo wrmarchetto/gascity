@@ -12,6 +12,12 @@
 # dangling owner_bead -- deduped against existing open alerts so a
 # persistent condition doesn't spam a fresh bead on every cron tick.
 #
+# An owner_bead minted under another tracker's id prefix is reported by the
+# check as "foreign owner_bead=", not "dangling owner_bead=", so it never
+# reaches the alert path below. That wording is the contract between the two
+# and is pinned from the Go side by
+# TestCensusOwnerLivenessCheckReportsForeignOwnerBeadWithoutWarning.
+#
 # Detection only: this script never repairs the ledger or the bead store.
 # Intended trigger: a cron order running every few hours (see the close-out
 # notes on ga-kr3glv.1 for the order.toml to deploy).
@@ -61,7 +67,7 @@ dangling_lines=$(printf '%s' "$doctor_json" | jq -r '
 ')
 
 if [ -z "$dangling_lines" ]; then
-    echo "check-census-owner-liveness: status=warning but no dangling owner_bead findings (skip-only warning); nothing to alert on"
+    echo "check-census-owner-liveness: status=warning but no dangling owner_bead findings (skips and/or foreign-namespace owners only); nothing to alert on"
     exit 0
 fi
 

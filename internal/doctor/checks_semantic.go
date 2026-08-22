@@ -372,19 +372,26 @@ type nestedWorktreeFinding struct {
 // gitWorktree is the slice of internal/git.Git used by NestedWorktreePruneCheck.
 // Defined as an interface so tests can inject a fake without standing up real
 // repositories.
+//
+// HasStashesResult is deliberately ABSENT and must not be added back: refs/stash
+// is a single repo-wide ref, so `git stash list` reports one worktree's stash
+// from every other worktree of the repo. As a per-candidate gate it protected
+// every nested worktree in a repo as soon as any one of them stashed (bead
+// ci-auomj). Narrowing it to the stash's recorded branch or parent commit is
+// possible and is still not worth doing, because the gate protects nothing: a
+// stash survives `git worktree remove`, which removes only the checkout.
 type gitWorktree interface {
 	IsRepo() bool
 	WorktreeList() ([]git.Worktree, error)
 	HasUncommittedWork() bool
 	HasUnpushedCommitsResult() (bool, error)
-	HasStashesResult() (bool, error)
 	WorktreeRemove(path string, force bool) error
 }
 
 // NestedWorktreePruneCheck identifies nested git worktrees inside agent
-// home worktrees that are safely reclaimable: no uncommitted changes,
-// no unpushed commits, no stashed work. These reproduce from the remote
-// via `git worktree add path origin/<branch>`, so removing the local
+// home worktrees that are safely reclaimable: no uncommitted changes and
+// no unpushed commits. These reproduce from the remote via
+// `git worktree add path origin/<branch>`, so removing the local
 // directory is non-destructive.
 //
 // The rule is mechanical, never role-coupled: any nested worktree whose
@@ -572,7 +579,7 @@ func (c *NestedWorktreePruneCheck) Run(ctx *CheckContext) *CheckResult {
 	details = append(details, safe...)
 	details = append(details, unsafe...)
 	r.Details = details
-	r.FixHint = "run `gc doctor --fix` to remove safely-prunable nested worktrees (mechanical: only those with clean work tree, no unpushed commits, no stashes)"
+	r.FixHint = "run `gc doctor --fix` to remove safely-prunable nested worktrees (mechanical: only those with a clean work tree and no unpushed commits)"
 	return r
 }
 
@@ -584,7 +591,7 @@ func (c *NestedWorktreePruneCheck) CanFix() bool { return true }
 // broken worktree does not strand the rest — operators run --fix to
 // reclaim disk, and partial success is more useful than zero progress.
 // Returns the joined errors of all failed removals, or nil on full
-// success. Worktrees marked unsafe (uncommitted / unpushed / stashed)
+// success. Worktrees marked unsafe (uncommitted / unpushed)
 // are never touched.
 func (c *NestedWorktreePruneCheck) Fix(_ *CheckContext) error {
 	var errs []error
@@ -616,9 +623,13 @@ func (c *NestedWorktreePruneCheck) Fix(_ *CheckContext) error {
 // classifyNested runs the safety gates on a candidate nested worktree
 // and returns a finding describing whether it is safe to remove and,
 // if not, the first reason it was rejected. Order of checks matches
-// the user's manual recovery procedure: probe git, then status, log,
-// stash. Any probe error rejects the candidate with a visible reason:
+// the user's manual recovery procedure: probe git, then status, log.
+// Any probe error rejects the candidate with a visible reason:
 // "can't tell" is not safe enough for a destructive fix.
+//
+// That last rule is why the stash probe was removed rather than made
+// lenient on error: a repo-wide probe is not a "can't tell" about this
+// candidate, it is a confident answer to a different question.
 func classifyNested(newGit func(string) gitWorktree, path, parent, branch string) nestedWorktreeFinding {
 	f := nestedWorktreeFinding{path: path, parent: parent, branch: branch}
 	gw := newGit(path)
@@ -638,16 +649,6 @@ func classifyNested(newGit func(string) gitWorktree, path, parent, branch string
 	}
 	if hasUnpushed {
 		f.reason = "has unpushed commits"
-		return f
-	}
-	hasStashes, err := gw.HasStashesResult()
-	if err != nil {
-		f.reason = fmt.Sprintf("stash probe failed: %v", err)
-		f.probeErr = true
-		return f
-	}
-	if hasStashes {
-		f.reason = "has stashed work"
 		return f
 	}
 	f.safeToRm = true

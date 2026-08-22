@@ -1618,6 +1618,13 @@ func defaultScaleCheckCountsAndDemand(cfg *config.City, targets []defaultScaleCh
 			}
 		}
 		for _, b := range ready {
+			// Route-scoped worker queries exclude dispatch holds. Keeping the
+			// controller's in-process default scale check on that same predicate
+			// prevents a held bead from repeatedly spawning a session that cannot
+			// claim it.
+			if hasDispatchHoldLabel(b.Labels) {
+				continue
+			}
 			// An assignee names either a specific identity or, for the pool-alias
 			// tier, the pool itself. Skipping every assigned bead here left this
 			// in-process reader unable to see a shape poolDemandCountShell counts,

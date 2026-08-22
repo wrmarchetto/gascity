@@ -947,6 +947,13 @@ func reloadWarningsFromError(err error) []string {
 // canonical/compat default tables stay strict-fatal unless --no-strict
 // disables the gate.
 func tryReloadConfig(tomlPath, lockedWorkspaceName, cityRoot string) (*reloadResult, error) {
+	// A reload must observe current pack contents. The recursive content-hash
+	// cache is intentionally process-wide for reconciliation, but filesystem
+	// metadata cannot reliably distinguish every same-size rapid rewrite.
+	// Clearing it here retains memoization within this load while making each
+	// explicit or watched reload content-authoritative.
+	config.ResetPackContentHashCache()
+
 	if err := ensureLegacyNamedPacksCached(cityRoot); err != nil {
 		return nil, fmt.Errorf("fetching packs: %w", err)
 	}

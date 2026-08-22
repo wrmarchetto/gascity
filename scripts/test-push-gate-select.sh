@@ -266,7 +266,8 @@ manifest_entries() {
     sed -e 's/#.*//' -e 's/[[:space:]]*$//' "$MANIFEST" | grep -v '^$'
 }
 
-# repo_root_marker_packages: recomputes the manifest's answer from the tree.
+# source_tree_scanner_packages: recomputes the manifest's conservative answer
+# from the tree.
 # Reads git-tracked files rather than walking the filesystem so build output,
 # vendored trees and a dirty worktree cannot change the answer -- the same
 # reasoning internal/api/apierr_guard_test.go records.
@@ -276,9 +277,9 @@ manifest_entries() {
 # every tracked source file from census.go, a non-test file its _test.go
 # merely calls, so a test-files-only scan drops the single most repo-wide
 # package in the tree.
-repo_root_marker_packages() {
+source_tree_scanner_packages() {
     git -C "$REPO_ROOT" ls-files -z -- '*.go' \
-        | xargs -0 grep -lEi 'repo_?root|ls-files|show-toplevel' \
+        | xargs -0 grep -lEi 'repo_?root|ls-files|show-toplevel|ls-tree|go\.mod|runtime\.Caller|filepath\.Walk(Dir)?' \
         | xargs -n1 dirname \
         | sort -u \
         | sed 's|^|./|'
@@ -290,7 +291,33 @@ repo_root_marker_packages() {
 # a rename has to come back through this file and that prose together.
 MANIFEST_SCAN_ANCHOR="./internal/testpolicy/resourcecensus"
 
-test_manifest_names_every_repo_wide_scanner() {
+# These anchors exercise the root-discovery forms that are easy to miss when
+# the scan is reduced to just git-oriented names: a generator derived from its
+# source file, a package-local tree walk, a module-root ascent, and git's tree
+# listing. They guard the scanner rule itself; the manifest comparison below
+# guards the resulting package set.
+KNOWN_ROOT_FORM_SCANNERS=(
+    "./cmd/gen-command-census"
+    "./examples"
+    "./internal/docgen"
+    "./internal/logutil"
+    "./internal/storebinding"
+)
+
+test_manifest_scanner_covers_known_root_forms() {
+    local name="the always-run scanner recognizes every known repository-root form"
+    local scanned scanner
+    scanned="$(source_tree_scanner_packages)"
+    for scanner in "${KNOWN_ROOT_FORM_SCANNERS[@]}"; do
+        if ! printf '%s\n' "$scanned" | grep -qxF "$scanner"; then
+            record_fail "$name" "the scan missed $scanner"
+            return
+        fi
+    done
+    record_pass "$name"
+}
+
+test_manifest_names_every_selected_source_tree_scanner() {
     # comm reports only what the scan found and the manifest lacks, so a scan
     # that finds NOTHING reports nothing missing and this case passes while
     # guarding nothing -- which would quietly retire the "membership is
@@ -300,11 +327,11 @@ test_manifest_names_every_repo_wide_scanner() {
     # suite still green at 10 passed / 0 failed. The two guards below are
     # what refuse that, and they fail toward "this file is broken" rather
     # than toward a clean manifest.
-    local name="the always-run manifest names every repo-wide scanner"
+    local name="the always-run manifest names every selected source-tree scanner"
     local scanned missing
-    scanned="$(repo_root_marker_packages)"
+    scanned="$(source_tree_scanner_packages)"
     if [ -z "$scanned" ]; then
-        record_fail "$name" "the scan found no repo-wide scanners at all; the pipeline in this file is broken, not the manifest"
+        record_fail "$name" "the scan found no source-tree scanner candidates at all; the pipeline in this file is broken, not the manifest"
         return
     fi
     if ! printf '%s\n' "$scanned" | grep -qxF "$MANIFEST_SCAN_ANCHOR"; then
@@ -313,7 +340,18 @@ test_manifest_names_every_repo_wide_scanner() {
     fi
     missing="$(comm -23 <(printf '%s\n' "$scanned") <(manifest_entries | sort))"
     if [ -n "$missing" ]; then
-        record_fail "$name" "packages read the repository root but are absent from the manifest: $(echo $missing)"
+        record_fail "$name" "packages match the source-tree scanner rule but are absent from the manifest: $(echo $missing)"
+        return
+    fi
+    record_pass "$name"
+}
+
+test_manifest_regenerates_byte_for_byte() {
+    local name="the always-run manifest regenerates byte-for-byte from the scanner"
+    local scanned
+    scanned="$(source_tree_scanner_packages)"
+    if ! diff -u <(printf '%s\n' "$scanned") <(manifest_entries) >/dev/null; then
+        record_fail "$name" "the scanner output differs from the manifest; regenerate it with the header command"
         return
     fi
     record_pass "$name"
@@ -364,7 +402,9 @@ test_selector_receives_the_pre_push_records
 
 echo
 echo "always-run manifest"
-test_manifest_names_every_repo_wide_scanner
+test_manifest_scanner_covers_known_root_forms
+test_manifest_names_every_selected_source_tree_scanner
+test_manifest_regenerates_byte_for_byte
 test_manifest_entries_are_real_packages
 test_manifest_is_sorted_and_unique
 

@@ -1653,4 +1653,5 @@ type BeadCheckResult struct {
 // BeadCheckOptions configures pre-flight bead state checks for a route.
 type BeadCheckOptions struct {
 	NoConvoy bool
+	Reassign bool
 }

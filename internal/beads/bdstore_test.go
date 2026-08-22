@@ -3439,6 +3439,27 @@ func TestBdStoreReleaseIfCurrentUsesGuardedSQL(t *testing.T) {
 	}
 }
 
+func TestBdStoreReassignIfCurrentUsesGuardedSQL(t *testing.T) {
+	var gotArgs []string
+	runner := func(_, _ string, args ...string) ([]byte, error) {
+		gotArgs = append([]string(nil), args...)
+		return []byte(`{"rows_affected":1,"schema_version":1}`), nil
+	}
+	s := beads.NewBdStore("/city", runner)
+
+	reassigned, err := s.ReassignIfCurrent("bd-42", "dead-session", "worker-pool")
+	if err != nil {
+		t.Fatalf("ReassignIfCurrent: %v", err)
+	}
+	if !reassigned {
+		t.Fatal("ReassignIfCurrent = false, want true")
+	}
+	wantQuery := "UPDATE issues SET status = 'open', assignee = 'worker-pool', updated_at = CURRENT_TIMESTAMP WHERE id = 'bd-42' AND status = 'in_progress' AND assignee = 'dead-session'"
+	if len(gotArgs) != 3 || gotArgs[2] != wantQuery {
+		t.Fatalf("SQL args = %q, want query %q", gotArgs, wantQuery)
+	}
+}
+
 func TestBdStoreReleaseIfCurrentSQLLiteralEscapesBackslash(t *testing.T) {
 	var gotArgs []string
 	runner := func(_, _ string, args ...string) ([]byte, error) {

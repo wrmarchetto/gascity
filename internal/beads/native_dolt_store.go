@@ -1004,6 +1004,16 @@ func (s *NativeDoltStore) applyCreateInTx(ctx context.Context, tx beadslib.Trans
 // ReleaseIfCurrent clears an in-progress assignment only when the bead still
 // has the expected assignee inside one native Dolt transaction.
 func (s *NativeDoltStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error) {
+	return s.reassignIfCurrent(id, expectedAssignee, "")
+}
+
+// ReassignIfCurrent moves an in-progress assignment only when it is still held
+// by expectedAssignee inside one native Dolt transaction.
+func (s *NativeDoltStore) ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	return s.reassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+}
+
+func (s *NativeDoltStore) reassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
 	storage, release, err := s.acquireStorage()
 	if err != nil {
 		return false, err
@@ -1026,7 +1036,7 @@ func (s *NativeDoltStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, e
 		}
 		if err := tx.UpdateIssue(ctx, id, map[string]interface{}{
 			"status":   "open",
-			"assignee": "",
+			"assignee": recoveryAssignee,
 		}, s.actor); err != nil {
 			return nativeStoreError(id, err)
 		}

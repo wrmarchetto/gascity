@@ -100,6 +100,35 @@ func TestValidateSkillCollisions(t *testing.T) {
 		}
 	})
 
+	t.Run("same canonical source does not collide", func(t *testing.T) {
+		tmp := t.TempDir()
+		sharedSkills := filepath.Join(tmp, "assets", "bench-skills")
+		writeAgentSkill(t, sharedSkills, "capture")
+
+		aSkills := makeAgentSkillsDir(t, tmp, "a")
+		bSkills := makeAgentSkillsDir(t, tmp, "b")
+		if err := os.Remove(aSkills); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(bSkills); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(sharedSkills, aSkills); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		if err := os.Symlink(sharedSkills, bSkills); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+
+		cfg := &config.City{Agents: []config.Agent{
+			{Name: "a", Provider: "claude", Scope: "city", SkillsDir: aSkills},
+			{Name: "b", Provider: "claude", Scope: "city", SkillsDir: bSkills},
+		}}
+		if got := ValidateSkillCollisions(cfg); got != nil {
+			t.Fatalf("want nil for shared skill source, got %+v", got)
+		}
+	})
+
 	t.Run("different vendors do not collide", func(t *testing.T) {
 		tmp := t.TempDir()
 		aSkills := makeAgentSkillsDir(t, tmp, "a")

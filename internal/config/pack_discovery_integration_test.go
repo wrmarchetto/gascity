@@ -72,6 +72,41 @@ source = "../helper"
 	}
 }
 
+func TestLoadWithIncludes_ComposesCityLocalCommandsWithoutRootPack(t *testing.T) {
+	dir := t.TempDir()
+	cityDir := filepath.Join(dir, "city")
+
+	writeTestFile(t, cityDir, "city.toml", `
+[workspace]
+name = "test"
+`)
+	writeTestFile(t, cityDir, "commands/audit/run.sh", "#!/bin/sh\nexit 0\n")
+	writeTestFile(t, cityDir, "commands/probe/run.sh", "#!/bin/sh\nexit 0\n")
+
+	cfg, _, err := LoadWithIncludes(fsys.OSFS{}, filepath.Join(cityDir, "city.toml"))
+	if err != nil {
+		t.Fatalf("LoadWithIncludes: %v", err)
+	}
+
+	if len(cfg.PackCommands) != 2 {
+		t.Fatalf("got %d PackCommands, want 2", len(cfg.PackCommands))
+	}
+	for _, command := range cfg.PackCommands {
+		if command.BindingName != "" {
+			t.Fatalf("BindingName = %q, want empty for a city-local command", command.BindingName)
+		}
+	}
+	commands := map[string]bool{}
+	for _, command := range cfg.PackCommands {
+		commands[strings.Join(command.Command, " ")] = true
+	}
+	for _, want := range []string{"audit", "probe"} {
+		if !commands[want] {
+			t.Fatalf("missing city-local command %q in %#v", want, commands)
+		}
+	}
+}
+
 func TestLoadWithIncludes_RootPackImportedSharedSkillsCompose(t *testing.T) {
 	dir := t.TempDir()
 	packDir := filepath.Join(dir, "helper")

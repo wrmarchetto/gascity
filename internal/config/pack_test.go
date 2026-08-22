@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/fsys"
 )
@@ -954,6 +955,16 @@ func TestPackContentHashRecursiveCachesUnchangedTree(t *testing.T) {
 	writeFile(t, dir, "pack.toml", `name = "p"`)
 	writeFile(t, dir, "prompts/a.md", "prompt a")
 	writeFile(t, dir, "assets/big.txt", strings.Repeat("x", 4096))
+	stableTime := time.Now().Add(-2 * packContentHashCacheMinimumAge)
+	for _, path := range []string{
+		filepath.Join(dir, "pack.toml"),
+		filepath.Join(dir, "prompts/a.md"),
+		filepath.Join(dir, "assets/big.txt"),
+	} {
+		if err := os.Chtimes(path, stableTime, stableTime); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	cfs := newReadCountingFS()
 	bigPath := filepath.Join(dir, "assets/big.txt")
@@ -982,6 +993,29 @@ func TestPackContentHashRecursiveCachesUnchangedTree(t *testing.T) {
 	}
 	if cfs.ReadCount(bigPath) == beforeChange {
 		t.Fatal("changed tree should be re-read, not served from cache")
+	}
+}
+
+func TestPackContentHashRecursiveInvalidatesSameSizeRewriteWithPreservedModTime(t *testing.T) {
+	ResetPackContentHashCache()
+	t.Cleanup(ResetPackContentHashCache)
+
+	dir := t.TempDir()
+	writeFile(t, dir, "pack.toml", `name = "one"`)
+	path := filepath.Join(dir, "pack.toml")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h1 := PackContentHashRecursive(fsys.OSFS{}, dir)
+	writeFile(t, dir, "pack.toml", `name = "two"`)
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	h2 := PackContentHashRecursive(fsys.OSFS{}, dir)
+	if h2 == h1 {
+		t.Fatal("same-size rewrite with preserved mtime returned the cached hash")
 	}
 }
 

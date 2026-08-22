@@ -77,6 +77,7 @@ func TestCheckWarmupEligibleDefaultsFalse(t *testing.T) {
 		&DurationRangeCheck{},
 		&EventLogSizeCheck{},
 		&EventsLogCheck{},
+		&HostDiskSpaceCheck{},
 		&ImplicitImportCacheCheck{},
 		&NestedWorktreePruneCheck{},
 		&OrphanSessionsCheck{},
