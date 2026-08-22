@@ -739,7 +739,7 @@ func hookClaimWithBdStore(ctx context.Context, dir string, env []string, beadID,
 // work -- the window self-heals rather than stranding the bead.
 func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, beadID, poolAlias, assignee string) (beads.Bead, bool, error) {
 	store := hookClaimBdStoreContext(ctx, dir, env, assignee)
-	current, ok, err := store.ReassignIfAssignee(beadID, poolAlias, assignee)
+	current, ok, err := store.ReassignPoolClaimIfCurrent(beadID, poolAlias, assignee)
 	if err != nil || !ok {
 		return current, ok, err
 	}

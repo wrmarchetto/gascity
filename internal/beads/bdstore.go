@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
 
@@ -1422,7 +1423,33 @@ func (s *BdStore) Claim(id string) (Bead, bool, error) {
 // error: reporting that as a lost race would launder a failed write into
 // "someone else took it", leaving the bead stuck with nothing logged.
 func (s *BdStore) ReassignIfAssignee(id, expected, next string) (Bead, bool, error) {
-	out, err := s.runBDTransientWriteOutput("update", id, "--if-assignee", expected, "--assignee", next, "--json")
+	return s.reassignIfAssignee(id, expected, next, nil)
+}
+
+// ReassignPoolClaimIfCurrent atomically moves work parked on poolAlias to a
+// claiming session while recording the pool route that must receive a later
+// release. A pool-assigned bead starts without gc.routed_to so it contributes
+// to pool demand; the route is written only after this guarded claim wins.
+func (s *BdStore) ReassignPoolClaimIfCurrent(id, poolAlias, assignee string) (Bead, bool, error) {
+	return s.reassignIfAssignee(id, poolAlias, assignee, map[string]string{
+		beadmeta.RoutedToMetadataKey: poolAlias,
+	})
+}
+
+func (s *BdStore) reassignIfAssignee(id, expected, next string, metadata map[string]string) (Bead, bool, error) {
+	args := []string{"update", id, "--if-assignee", expected, "--assignee", next}
+	if len(metadata) > 0 {
+		keys := make([]string, 0, len(metadata))
+		for key := range metadata {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			args = append(args, "--set-metadata", key+"="+metadata[key])
+		}
+	}
+	args = append(args, "--json")
+	out, err := s.runBDTransientWriteOutput(args...)
 	if err == nil {
 		moved, parseErr := parseBDMutationBead("bd reassign", out)
 		if parseErr != nil {
