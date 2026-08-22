@@ -75,6 +75,38 @@ func TestBeadPolicyStorePreservesConditionalAssignmentReleaser(t *testing.T) {
 	}
 }
 
+func TestBeadPolicyStorePreservesConditionalAssignmentReassigner(t *testing.T) {
+	backing := beads.NewMemStore()
+	wrapped := wrapStoreWithBeadPolicies(backing, nil)
+	reassigner, ok := wrapped.(beads.ConditionalAssignmentReassigner)
+	if !ok {
+		t.Fatalf("wrapped store implements ConditionalAssignmentReassigner = false")
+	}
+	bead, err := wrapped.Create(beads.Bead{Title: "work", Assignee: "worker-1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	status := "in_progress"
+	if err := wrapped.Update(bead.ID, beads.UpdateOpts{Status: &status}); err != nil {
+		t.Fatalf("Update status: %v", err)
+	}
+
+	reassigned, err := reassigner.ReassignIfCurrent(bead.ID, "worker-1", "worker-pool")
+	if err != nil {
+		t.Fatalf("ReassignIfCurrent: %v", err)
+	}
+	if !reassigned {
+		t.Fatal("ReassignIfCurrent reassigned = false, want true")
+	}
+	got, err := wrapped.Get(bead.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Status != "open" || got.Assignee != "worker-pool" {
+		t.Fatalf("reassigned bead = %+v, want open and assigned to worker-pool", got)
+	}
+}
+
 func (s *captureGraphStore) ApplyGraphPlan(_ context.Context, plan *beads.GraphApplyPlan) (*beads.GraphApplyResult, error) {
 	next := *plan
 	s.plan = &next

@@ -37,6 +37,7 @@ type beadPolicyGraphStore struct {
 
 var (
 	_ beads.ConditionalAssignmentReleaser    = (*beadPolicyStore)(nil)
+	_ beads.ConditionalAssignmentReassigner  = (*beadPolicyStore)(nil)
 	_ beads.ConditionalWritesResolveTargeter = (*beadPolicyStore)(nil)
 )
 
@@ -268,6 +269,17 @@ func (s *beadPolicyStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, e
 		return false, beads.ErrConditionalReleaseUnsupported
 	}
 	return releaser.ReleaseIfCurrent(id, expectedAssignee)
+}
+
+// ReassignIfCurrent forwards the guarded reassignment capability through the
+// policy wrapper. The wrapper shapes reads and creation but does not own
+// assignment state, so it must preserve the backing store's atomic transition.
+func (s *beadPolicyStore) ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	reassigner, ok := s.Store.(beads.ConditionalAssignmentReassigner)
+	if !ok {
+		return false, beads.ErrConditionalReleaseUnsupported
+	}
+	return reassigner.ReassignIfCurrent(id, expectedAssignee, recoveryAssignee)
 }
 
 func (s *beadPolicyStore) policyForCreate(b beads.Bead) (string, string) {
