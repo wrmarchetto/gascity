@@ -133,6 +133,23 @@ func TestLocalParallelWithholdsTimeoutFromIntegrationJobs(t *testing.T) {
 	}
 }
 
+// TestLocalParallelOwnsGoTempDirCleanup guards ci-24qc9: Go leaves its
+// go-build*/go-link* directories behind when a gate is terminated. The gate
+// must give every fan-out an owned /var/tmp parent and remove that parent from
+// its EXIT trap, rather than sharing the host's unbounded GOTMPDIR.
+func TestLocalParallelOwnsGoTempDirCleanup(t *testing.T) {
+	script := localParallelScript(t)
+	if !strings.Contains(script, `mktemp -d -p /var/tmp gc-gotmp.XXXXXX`) {
+		t.Fatal("parallel runner no longer creates a private /var/tmp GOTMPDIR")
+	}
+	if !strings.Contains(script, `rm -rf "$gotmpdir_val"`) {
+		t.Fatal("parallel runner no longer removes its private GOTMPDIR on exit")
+	}
+	if !strings.Contains(script, `GOTMPDIR="$gotmpdir_val"`) {
+		t.Fatal("parallel runner does not pass its private GOTMPDIR to fan-out jobs")
+	}
+}
+
 // perJobEnvAllowlist captures the variable allowlist the worker shell passes
 // through `env -i` before invoking each jobspec.
 var perJobEnvAllowlist = regexp.MustCompile(`(?s)env -i \\(.*?)bash -lc`)

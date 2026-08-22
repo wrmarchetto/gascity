@@ -123,8 +123,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeAll,
 			Resource:        ResourceSubprocess,
-			BaselineCalls:   605,
-			BaselineFiles:   175,
+			BaselineCalls:   606,
+			BaselineFiles:   176,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -416,6 +416,17 @@ var bootstrapPolicy = Ledger{
 			Invariant:       "the dashboard frontend vitest gate proof is a checked Medium owner",
 			ResourceOwner:   "the one make -n dashboard-check invocation is confined to TestDashboardCheckRunsFrontendVitestSuite, which must read the EXPANDED recipe because a step reached through a prerequisite or a variable is invisible to a Makefile grep",
 			MigrationTarget: "P0.1",
+			Expires:         "2026-10-01",
+		},
+		{
+			PackageDir:      "scripts",
+			PackageName:     "scripts_test",
+			Owner:           "TestWithGoTmpRemovesOwnedDirectoryOnTermination",
+			Resources:       []Resource{ResourceSubprocess},
+			OwnerBead:       "ci-24qc9",
+			Invariant:       "the owned Go temporary-directory cleanup proof is a checked Medium owner",
+			ResourceOwner:   "the one wrapper subprocess is confined to TestWithGoTmpRemovesOwnedDirectoryOnTermination, which must observe a real SIGTERM and verify that the wrapper removes its private GOTMPDIR",
+			MigrationTarget: "P0.4b",
 			Expires:         "2026-10-01",
 		},
 		{
