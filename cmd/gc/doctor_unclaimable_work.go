@@ -44,11 +44,11 @@
 // unassigned bead for hardcoding exactly that. CanFix is false for the same
 // reason.
 //
-// City store only, mirroring backlogDepthCheck and unclaimable-assignee. Work
-// stranded in a rig store is NOT examined: the resolution here is
-// city-config-scoped, and a rig store's ready set needs the reconciler's
-// per-store target fan-out, which needs a live controller context this check
-// does not have.
+// The city store and every active rig store are scanned. A rig's work queue is
+// just as durable as city work, so a city health result that omitted it would
+// report a clean system while work had no pool door. Suspended rigs are skipped
+// to match the other per-rig doctor checks: opening their stores can start
+// orphaned data services.
 //
 // Verified by cmd/gc/doctor_unclaimable_work_test.go; its registration is
 // pinned by TestBuildDoctorChecks_NameSetUnchanged.
@@ -56,6 +56,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -64,6 +65,8 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/doctor"
+	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/suspensionstate"
 )
 
 // unclaimableWorkCheck reports claimable ready work that carries no assignee and
@@ -74,6 +77,17 @@ type unclaimableWorkCheck struct {
 	cfg      *config.City
 	cityPath string
 	newStore func(string) (beads.Store, error)
+}
+
+type unclaimableWorkStore struct {
+	path   string
+	label  string
+	isCity bool
+}
+
+type scopedUnclaimableWorkBead struct {
+	bead  beads.Bead
+	store unclaimableWorkStore
 }
 
 func newUnclaimableWorkCheck(cfg *config.City, cityPath string, newStore func(string) (beads.Store, error)) *unclaimableWorkCheck {
@@ -114,36 +128,56 @@ func (c *unclaimableWorkCheck) Run(_ *doctor.CheckContext) *doctor.CheckResult {
 		res.Message = "unclaimable work unknown: no city bead store configured"
 		return res
 	}
-	store, err := c.newStore(c.cityPath)
-	if err != nil {
-		res.Status = doctor.StatusWarning
-		res.Message = fmt.Sprintf("unclaimable work unknown: opening city bead store: %v", err)
-		return res
+	stores := c.activeStores()
+	var claimable []scopedUnclaimableWorkBead
+	for _, source := range stores {
+		store, err := c.newStore(source.path)
+		if err != nil {
+			res.Status = doctor.StatusWarning
+			res.Message = fmt.Sprintf("unclaimable work unknown: opening %s bead store: %v", source.label, err)
+			return res
+		}
+		open, err := store.ListOpen("open")
+		if err != nil {
+			res.Status = doctor.StatusWarning
+			if source.isCity {
+				res.Message = fmt.Sprintf("unclaimable work unknown: listing open beads: %v", err)
+			} else {
+				res.Message = fmt.Sprintf("unclaimable work unknown: listing open beads from %s: %v", source.label, err)
+			}
+			return res
+		}
+		ready, err := store.Ready()
+		if err != nil {
+			res.Status = doctor.StatusWarning
+			if source.isCity {
+				res.Message = fmt.Sprintf("unclaimable work unknown: listing ready beads: %v", err)
+			} else {
+				res.Message = fmt.Sprintf("unclaimable work unknown: listing ready beads from %s: %v", source.label, err)
+			}
+			return res
+		}
+		readyIDs := make(map[string]bool, len(ready))
+		for _, b := range ready {
+			readyIDs[b.ID] = true
+		}
+		for _, b := range classifyBacklog(open, readyIDs).real {
+			claimable = append(claimable, scopedUnclaimableWorkBead{bead: b, store: source})
+		}
 	}
-	open, err := store.ListOpen("open")
-	if err != nil {
-		res.Status = doctor.StatusWarning
-		res.Message = fmt.Sprintf("unclaimable work unknown: listing open beads: %v", err)
-		return res
-	}
-	ready, err := store.Ready()
-	if err != nil {
-		res.Status = doctor.StatusWarning
-		res.Message = fmt.Sprintf("unclaimable work unknown: listing ready beads: %v", err)
-		return res
-	}
-	readyIDs := make(map[string]bool, len(ready))
-	for _, r := range ready {
-		readyIDs[r.ID] = true
-	}
-	claimable := classifyBacklog(open, readyIDs).real
 	scope := newUnclaimableWorkScope(c.cfg)
 
 	var details, ids []string
-	for _, b := range claimable {
-		if reason := scope.strandedReason(b); reason != "" {
-			details = append(details, fmt.Sprintf("%s %s (%s)", b.ID, strings.TrimSpace(b.Title), reason))
-			ids = append(ids, b.ID)
+	for _, candidate := range claimable {
+		if reason := scope.strandedReason(candidate.bead); reason != "" {
+			detail := fmt.Sprintf("%s %s (%s)", candidate.bead.ID, strings.TrimSpace(candidate.bead.Title), reason)
+			id := candidate.bead.ID
+			if !candidate.store.isCity {
+				detail = fmt.Sprintf("%s: %s", candidate.store.label, detail)
+				id = candidate.store.label + "/" + id
+			}
+			details = append(details, detail)
+			ids = append(ids, id)
 		}
 	}
 	sort.Strings(details)
@@ -151,15 +185,50 @@ func (c *unclaimableWorkCheck) Run(_ *doctor.CheckContext) *doctor.CheckResult {
 
 	if len(details) == 0 {
 		res.Status = doctor.StatusOK
-		res.Message = fmt.Sprintf("every one of %d claimable bead(s) in the city store is addressed", len(claimable))
+		res.Message = fmt.Sprintf("every one of %d claimable bead(s) %s is addressed", len(claimable), unclaimableWorkStoreScope(stores))
 		return res
 	}
 	res.Status = doctor.StatusError
-	res.Message = fmt.Sprintf("%d of %d claimable bead(s) reach no pool door: %s",
-		len(details), len(claimable), summarizeUnclaimableIDs(ids))
+	res.Message = fmt.Sprintf("%d of %d claimable bead(s) %s reach no pool door: %s",
+		len(details), len(claimable), unclaimableWorkStoreScope(stores), summarizeUnclaimableIDs(ids))
 	res.Details = details
 	res.FixHint = unclaimableWorkFixHint
 	return res
+}
+
+// activeStores returns the city store plus registered, non-suspended rig
+// stores. It owns the store-read scope so every Run has one complete answer.
+func (c *unclaimableWorkCheck) activeStores() []unclaimableWorkStore {
+	stores := []unclaimableWorkStore{{path: c.cityPath, label: "city", isCity: true}}
+	if c.cfg == nil {
+		return stores
+	}
+	suspension, _ := loadSuspensionState(fsys.OSFS{}, c.cityPath)
+	seenPaths := map[string]struct{}{filepath.Clean(c.cityPath): {}}
+	for _, rig := range c.cfg.Rigs {
+		path := strings.TrimSpace(rig.Path)
+		if path == "" || suspensionstate.EffectiveRigSuspended(suspension, rig.Name, rig.EffectiveSuspendedOnStart()) {
+			continue
+		}
+		cleanPath := filepath.Clean(path)
+		if _, seen := seenPaths[cleanPath]; seen {
+			continue
+		}
+		seenPaths[cleanPath] = struct{}{}
+		stores = append(stores, unclaimableWorkStore{path: path, label: fmt.Sprintf(`rig %q`, rig.Name)})
+	}
+	return stores
+}
+
+func unclaimableWorkStoreScope(stores []unclaimableWorkStore) string {
+	rigCount := len(stores) - 1
+	if rigCount <= 0 {
+		return "in the city store"
+	}
+	if rigCount == 1 {
+		return "across the city store and 1 rig store"
+	}
+	return fmt.Sprintf("across the city store and %d rig stores", rigCount)
 }
 
 // summarizeUnclaimableIDs renders ids for the one-line summary, naming the
