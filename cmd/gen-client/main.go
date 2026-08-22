@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/api"
+	"github.com/gastownhall/gascity/internal/toolpath"
 )
 
 func main() {
@@ -68,7 +69,11 @@ func run() error {
 
 	// Step 3: invoke oapi-codegen. Output goes to stdout — the caller
 	// redirects it to internal/api/genclient/client_gen.go.
-	cmd := exec.Command("oapi-codegen", "-generate", "types,client,skip-prune", "-package", "genclient", tmp.Name())
+	oapiCodegen, err := toolpath.OAPICodegenPath()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(oapiCodegen, "-generate", "types,client,skip-prune", "-package", "genclient", tmp.Name())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

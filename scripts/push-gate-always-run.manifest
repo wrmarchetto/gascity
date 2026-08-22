@@ -81,6 +81,7 @@
 ./internal/testpolicy/resourcecensus
 ./internal/testpolicy/timingsummary
 ./internal/testutil/providerledger
+./internal/toolpath
 ./internal/worker
 ./internal/worker/workertest
 ./scripts

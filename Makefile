@@ -789,9 +789,9 @@ $(GOLANGCI_LINT):
 ## test (TestGeneratedClientInSync) can regenerate client_gen.go without skipping.
 .PHONY: install-oapi-codegen
 install-oapi-codegen:
-	@if ! command -v oapi-codegen >/dev/null; then \
+	@if [ ! -x "$(BIN_DIR)/oapi-codegen" ]; then \
 		echo "Installing oapi-codegen..." >&2; \
-		go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.6.0; \
+		GOBIN=$(BIN_DIR) go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.6.0; \
 	fi
 
 ## install-buildx: install docker buildx plugin

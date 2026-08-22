@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/api/genclient"
+	"github.com/gastownhall/gascity/internal/toolpath"
 )
 
 // TestGeneratedClientInSync regenerates client_gen.go from the live spec
@@ -21,14 +22,14 @@ import (
 // guard the spec → committed-artifact pipeline so the typed contract
 // can't drift unnoticed.
 func TestGeneratedClientInSync(t *testing.T) {
-	if _, err := exec.LookPath("oapi-codegen"); err != nil {
+	if _, err := toolpath.OAPICodegenPath(); err != nil {
 		// CI installs oapi-codegen via `make spec-ci`, which also runs
 		// regeneration and fails on drift. Only skip when running locally
 		// without the tool — CI has the GC_REQUIRE_OAPI_CODEGEN=1 env set.
 		if os.Getenv("GC_REQUIRE_OAPI_CODEGEN") == "1" {
-			t.Fatalf("oapi-codegen not on PATH; install via `go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.6.0`")
+			t.Fatal(err)
 		}
-		t.Skip("oapi-codegen not on PATH; install via `go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.6.0` (or set GC_REQUIRE_OAPI_CODEGEN=1 in CI to fatal)")
+		t.Skipf("%v (or set GC_REQUIRE_OAPI_CODEGEN=1 in CI to fatal)", err)
 	}
 
 	repoRoot, err := findRepoRoot()
