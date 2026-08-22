@@ -2177,4 +2177,50 @@ func TestTryReloadConfig_IncludesBuiltinPackOrders(t *testing.T) {
 	}
 }
 
+type reloadCacheProbeFS struct {
+	osFS
+	reads int
+}
+
+func (fs *reloadCacheProbeFS) ReadFile(name string) ([]byte, error) {
+	fs.reads++
+	return fs.osFS.ReadFile(name)
+}
+
+func TestTryReloadConfigClearsPackContentHashCache(t *testing.T) {
+	config.ResetPackContentHashCache()
+	t.Cleanup(config.ResetPackContentHashCache)
+
+	packDir := t.TempDir()
+	packPath := filepath.Join(packDir, "pack.toml")
+	if err := os.WriteFile(packPath, []byte("[pack]\nname = \"cached\"\nschema = 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stableTime := time.Now().Add(-2 * time.Second)
+	if err := os.Chtimes(packPath, stableTime, stableTime); err != nil {
+		t.Fatal(err)
+	}
+	probeFS := &reloadCacheProbeFS{}
+	config.PackContentHashRecursive(probeFS, packDir)
+	readsAfterPrime := probeFS.reads
+	config.PackContentHashRecursive(probeFS, packDir)
+	if probeFS.reads != readsAfterPrime {
+		t.Fatal("test setup did not prime the pack content hash cache")
+	}
+
+	cityDir := shortSocketTempDir(t, "gc-reload-cache-clear-")
+	tomlPath := filepath.Join(cityDir, "city.toml")
+	if err := os.WriteFile(tomlPath, []byte("[workspace]\nname = \"test\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tryReloadConfig(tomlPath, "test", cityDir); err != nil {
+		t.Fatalf("tryReloadConfig: %v", err)
+	}
+
+	config.PackContentHashRecursive(probeFS, packDir)
+	if probeFS.reads == readsAfterPrime {
+		t.Fatal("tryReloadConfig retained a process-wide pack content hash cache entry")
+	}
+}
+
 func (osFS) Chmod(name string, mode os.FileMode) error { return os.Chmod(name, mode) }

@@ -18,12 +18,56 @@ import (
 // gitProbe is the slice of internal/git.Git used by the worker-dir
 // auto-prune path. Defined as an interface so tests can inject a fake
 // without standing up real git worktrees.
+//
+// HasStashesResult is deliberately ABSENT and must not be added back, in any
+// scoping. It runs `git stash list`, and refs/stash is a single repo-wide ref:
+// every worktree of a repo gets the same answer, so one stash anywhere made this
+// gate true for every slot, each teardown wrote a stashed-work marker, and the
+// reconciler then refused every spawn into those slots (bead ci-auomj).
+//
+// Narrowing the question — filtering to the stash's recorded branch or parent
+// commit — was available and was rejected, so do not add it back "scoped
+// properly" either. Two reasons, and the second is the load-bearing one:
+//
+//   - There is nothing to protect. A stash lives on refs/stash in the common
+//     dir and survives `git worktree remove` intact, so no version of this gate
+//     prevents a loss. TestRealGitStashSurvivesWorktreeRemoval pins that.
+//   - A wrong answer here is permanent, not transient. The marker this path
+//     writes is untracked and not gitignored, so it makes its own worktree
+//     dirty, and the next teardown re-marks the slot as uncommitted-work
+//     whatever the original reason. A gate that wins nothing cannot justify a
+//     latch that costs a slot.
+//
+// HasUnpushedCommitsResult is ABSENT for the same reason, one step weaker. Push
+// state is not what this path destroys: `git worktree remove` deletes the
+// checkout, never refs/heads, so commits a local branch still reaches survive
+// it. Asking `git log HEAD --not --remotes` therefore latched a marker onto
+// every slot that had committed before its branch landed -- the normal teardown
+// of this pool, not an edge case. Measured 2026-08-12: toolsmith-1 marked
+// reason=unpushed-commits with unpushed=1 unreachable=0, nothing at risk, slot
+// out of service (bead ci-hh8aa). HasUnreachableCommitsResult asks what the
+// removal actually orphans; internal/git states the same distinction from the
+// probe's side, and cmd/gc/bead_worktree_reaper.go was migrated onto it first
+// (1baf214eb).
+//
+// internal/doctor's NestedWorktreePruneCheck still gates on push state and is
+// NOT wrong to: it removes only nested worktrees it can reproduce with
+// `git worktree add <path> origin/<branch>`, so a remote ref is its recovery
+// path rather than a proxy for safety.
+//
+// HasUncommittedWork is absent in favor of HasUncommittedWorkExcluding for a
+// third instance of the same shape: the marker this path writes is untracked
+// and lands in the worktree it describes, so the plain probe answered "dirty"
+// on gc's own bookkeeping file. That made every false marker permanent and
+// overwrote reason= with uncommitted-work on each pass, which is why the reason
+// on a bricked slot could not be trusted when diagnosing (bead ci-ciu63). Do
+// not narrow the exclusion to "only when the marker is untracked" -- the tracked
+// variant is what bead ci-2uh5p was.
 type gitProbe interface {
 	IsRepo() bool
 	CurrentBranch() (string, error)
-	HasUncommittedWork() bool
-	HasUnpushedCommitsResult() (bool, error)
-	HasStashesResult() (bool, error)
+	HasUncommittedWorkExcluding(paths ...string) bool
+	HasUnreachableCommitsResult() (bool, error)
 	WorktreeRemove(path string, force bool) error
 }
 
@@ -47,9 +91,13 @@ func writeWorktreeStaleMarker(gp gitProbe, workerDir, reason string, stderr io.W
 }
 
 // pruneAgentHomeWorktreeIfSafe removes the worktree at the closed session's
-// worker_dir, after applying the same safety gates as doctor's
-// NestedWorktreePruneCheck. Returns true when the removal actually
-// happened.
+// worker_dir, after applying the safety gates listed below. Returns true when
+// the removal actually happened.
+//
+// The gate set is deliberately NOT doctor's NestedWorktreePruneCheck set, which
+// this comment claimed until bead ci-hh8aa: the commit gate here is
+// reachability, not push state. See the gitProbe doc comment for why the two
+// callers legitimately differ.
 //
 // The decision is mechanical, never role-coupled: any pool-managed agent
 // worktree that lives under the city's .gc/worktrees/ tree, is a git
@@ -62,7 +110,8 @@ func writeWorktreeStaleMarker(gp gitProbe, workerDir, reason string, stderr io.W
 //   - the session bead has no worker_dir metadata
 //   - the worker_dir does not live under cityPath/.gc/worktrees/
 //   - the worker_dir is missing on disk or has no .git pointer
-//   - the worktree has uncommitted changes, unpushed commits, or stashes
+//   - the worktree has uncommitted changes, or commits no branch, tag, or
+//     remote-tracking ref reaches
 //   - the rig that owns the session cannot be resolved to a filesystem path
 //
 // Removal failures are logged but never surfaced — an orphaned worktree
@@ -94,31 +143,25 @@ func pruneAgentHomeWorktreeIfSafe(session beads.Bead, cityPath string, cfg *conf
 	if !gp.IsRepo() {
 		return false
 	}
-	if gp.HasUncommittedWork() {
+	// The marker this path may be about to write is excluded from the probe:
+	// see the gitProbe doc comment.
+	if gp.HasUncommittedWorkExcluding(worktreeStaleFileName) {
 		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has uncommitted changes\n", workerDir) //nolint:errcheck
 		writeWorktreeStaleMarker(gp, workerDir, "uncommitted-work", stderr)
 		return false
 	}
-	hasUnpushed, err := gp.HasUnpushedCommitsResult()
+	hasUnreachable, err := gp.HasUnreachableCommitsResult()
 	if err != nil {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unpushed probe failed: %v\n", workerDir, err) //nolint:errcheck
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unreachable-commit probe failed: %v\n", workerDir, err) //nolint:errcheck
 		return false
 	}
-	if hasUnpushed {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has unpushed commits\n", workerDir) //nolint:errcheck
-		writeWorktreeStaleMarker(gp, workerDir, "unpushed-commits", stderr)
+	if hasUnreachable {
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has commits no branch, tag, or remote ref reaches; removing it would orphan them\n", workerDir) //nolint:errcheck
+		writeWorktreeStaleMarker(gp, workerDir, "unreachable-commits", stderr)
 		return false
 	}
-	hasStashes, err := gp.HasStashesResult()
-	if err != nil {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: stash probe failed: %v\n", workerDir, err) //nolint:errcheck
-		return false
-	}
-	if hasStashes {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has stashed work\n", workerDir) //nolint:errcheck
-		writeWorktreeStaleMarker(gp, workerDir, "stashed-work", stderr)
-		return false
-	}
+
+	// No stash gate here, on purpose — see the gitProbe doc comment.
 
 	// Run `git worktree remove` from the rig root rather than from the
 	// worktree being removed: git refuses to remove a worktree whose path
@@ -169,31 +212,25 @@ func pruneAgentHomeWorktreeIfSafeInfo(info sessionpkg.Info, cityPath string, cfg
 	if !gp.IsRepo() {
 		return
 	}
-	if gp.HasUncommittedWork() {
+	// The marker this path may be about to write is excluded from the probe:
+	// see the gitProbe doc comment.
+	if gp.HasUncommittedWorkExcluding(worktreeStaleFileName) {
 		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has uncommitted changes\n", workerDir) //nolint:errcheck
 		writeWorktreeStaleMarker(gp, workerDir, "uncommitted-work", stderr)
 		return
 	}
-	hasUnpushed, err := gp.HasUnpushedCommitsResult()
+	hasUnreachable, err := gp.HasUnreachableCommitsResult()
 	if err != nil {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unpushed probe failed: %v\n", workerDir, err) //nolint:errcheck
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: unreachable-commit probe failed: %v\n", workerDir, err) //nolint:errcheck
 		return
 	}
-	if hasUnpushed {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has unpushed commits\n", workerDir) //nolint:errcheck
-		writeWorktreeStaleMarker(gp, workerDir, "unpushed-commits", stderr)
+	if hasUnreachable {
+		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has commits no branch, tag, or remote ref reaches; removing it would orphan them\n", workerDir) //nolint:errcheck
+		writeWorktreeStaleMarker(gp, workerDir, "unreachable-commits", stderr)
 		return
 	}
-	hasStashes, err := gp.HasStashesResult()
-	if err != nil {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: stash probe failed: %v\n", workerDir, err) //nolint:errcheck
-		return
-	}
-	if hasStashes {
-		fmt.Fprintf(stderr, "session reconciler: not pruning worker_dir %s: has stashed work\n", workerDir) //nolint:errcheck
-		writeWorktreeStaleMarker(gp, workerDir, "stashed-work", stderr)
-		return
-	}
+
+	// No stash gate here, on purpose — see the gitProbe doc comment.
 
 	rigRoot := lookupRigRootForSessionInfo(info, cfg)
 	if rigRoot == "" {

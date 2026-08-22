@@ -479,7 +479,14 @@ func TestEnsureCanonicalConfigFallbackPreservesFlatDoltDisableEventFlushOptOutIn
 	input := strings.Join([]string{
 		"issue-prefix: gc",
 		"dolt:",
-		"  host: 127.0.0.1",
+		// Scaffolding whose only job is to make the dolt block pre-exist, so it
+		// must be a key gc does NOT manage. `host` used to sit here and no
+		// longer can: canonicalization removes a nested dolt.host, since gc
+		// reads that key flat-only while bd resolves either spelling.
+		// dolt.local-only is a real bd key (it is what pins the gascity store
+		// local) and appears on no deletion list, so this fixture now also pins
+		// that unmanaged nested keys survive the deletion.
+		"  local-only: true",
 		"dolt.disable-event-flush: false",
 		": not yaml",
 		"",
@@ -513,7 +520,7 @@ func TestEnsureCanonicalConfigFallbackPreservesFlatDoltDisableEventFlushOptOutIn
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "dolt:\n  host: 127.0.0.1\n  disable-event-flush: false") {
+	if !strings.Contains(text, "dolt:\n  local-only: true\n  disable-event-flush: false") {
 		t.Fatalf("config should insert nested Dolt opt-out into existing block:\n%s", text)
 	}
 	if strings.Contains(text, "dolt.disable-event-flush") {

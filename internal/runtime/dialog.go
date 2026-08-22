@@ -62,8 +62,10 @@ func newStartupDialogConfig(opts []StartupDialogOption) startupDialogConfig {
 	return cfg
 }
 
-// AcceptStartupDialogs dismisses startup dialogs that can block automated
-// sessions. Handles (in order):
+// AcceptStartupDialogs handles startup dialogs that can block automated
+// sessions. It leaves rate-limit screens visible for the reconciler to
+// quarantine rather than guessing at a provider-specific recovery action.
+// Handles (in order):
 //  1. Claude resume selector — requires Down+Enter to resume the full session
 //  2. Codex update dialog ("Update available") — requires Down+Enter to skip
 //  3. Workspace trust dialog (Claude "Quick safety check", Codex "Do you trust the contents of this directory?", pi "Trust project folder?")
@@ -72,6 +74,7 @@ func newStartupDialogConfig(opts []StartupDialogOption) startupDialogConfig {
 //  6. Codex hook review dialog — requires Down+Enter to trust hooks
 //  7. Bypass permissions warning ("Bypass Permissions mode") — requires Down+Enter
 //  8. Claude custom API key confirmation — requires Up+Enter to select "Yes"
+//  9. Provider rate-limit screen — preserved for reconciliation
 //
 // The peek function should return the last N lines of the session's terminal output.
 // The sendKeys function should send bare tmux-style keystrokes (e.g., "Enter", "Down").
@@ -206,7 +209,7 @@ func AcceptStartupDialogsFromStreamWithStatus(
 	if err := ctx.Err(); err != nil {
 		return observed, err
 	}
-	phaseObserved, err = dismissRateLimitDialogFromStream(ctx, timeout, stream, trackingSendKeys)
+	phaseObserved, err = observeRateLimitScreenFromStream(ctx, timeout, stream)
 	if err != nil {
 		return observed, fmt.Errorf("rate limit dialog: %w", err)
 	}
@@ -284,7 +287,7 @@ func AcceptStartupDialogsWithTimeout(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := dismissRateLimitDialog(ctx, timeout, peek, sendKeys); err != nil {
+	if err := observeRateLimitScreen(ctx, timeout, peek); err != nil {
 		return fmt.Errorf("rate limit dialog: %w", err)
 	}
 	return nil
@@ -976,16 +979,15 @@ func containsCustomAPIKeyDialog(content string) bool {
 		strings.Contains(content, "Do you want to use this API key?")
 }
 
-// dismissRateLimitDialog detects rate limit / usage limit dialogs (e.g.,
-// Gemini's "Usage limit reached") and selects "Stop" to let the session
-// exit cleanly. The reconciler then peeks the pane and quarantines provider
-// rate-limit exits with sleep_reason=rate_limit instead of counting them as
-// wake failures.
-func dismissRateLimitDialog(
+// observeRateLimitScreen leaves rate-limit screens visible so the reconciler
+// can quarantine the session from their persistent pane evidence. Providers
+// do not share a safe recovery action: Claude's menu can turn Down+Enter into
+// an upgrade or admin request, and confirming its stop option leaves an idle
+// prompt rather than resuming the session after the reset.
+func observeRateLimitScreen(
 	ctx context.Context,
 	timeout time.Duration,
 	peek func(lines int) (string, error),
-	sendKeys func(keys ...string) error,
 ) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
@@ -999,13 +1001,7 @@ func dismissRateLimitDialog(
 		}
 
 		if ContainsRateLimitDialog(content) {
-			// Select "Stop" (option 2). The menu has "Keep trying" selected
-			// by default, so press Down then Enter.
-			if err := sendKeys("Down"); err != nil {
-				return err
-			}
-			sleep(ctx, bypassDialogConfirmDelay)
-			return sendKeys("Enter")
+			return nil
 		}
 
 		if containsPromptIndicator(content) {
@@ -1017,17 +1013,14 @@ func dismissRateLimitDialog(
 	return nil
 }
 
-func dismissRateLimitDialogFromStream(
+func observeRateLimitScreenFromStream(
 	ctx context.Context,
 	timeout time.Duration,
 	snapshots *replayableSnapshotCursor,
-	sendKeys func(keys ...string) error,
 ) (bool, error) {
-	return acceptDialogFromStream(ctx, timeout, snapshots, sendKeys, streamDialogSpec{
-		match:      ContainsRateLimitDialog,
-		matchKeys:  []string{"Down", "Enter"},
-		matchDelay: bypassDialogConfirmDelay,
-		ready:      containsPromptIndicator,
+	return acceptDialogFromStream(ctx, timeout, snapshots, nil, streamDialogSpec{
+		match: ContainsRateLimitDialog,
+		ready: containsPromptIndicator,
 	})
 }
 
@@ -1270,7 +1263,8 @@ func sendDialogKeys(
 // arbitrary post-crash scrollback.
 func ContainsRateLimitDialog(content string) bool {
 	return strings.Contains(content, "Usage limit reached") ||
-		strings.Contains(content, "You've hit your limit") ||
+		containsClaudeUsageLimit(content) ||
+		containsClaudeRateLimitOptions(content) ||
 		strings.Contains(content, "/rate-limit-options") ||
 		strings.Contains(content, "rate limit") ||
 		strings.Contains(content, "Rate limit")
@@ -1292,7 +1286,8 @@ func ContainsModelSwitchModal(content string) bool {
 // high-confidence provider rate-limit screen evidence.
 func ContainsProviderRateLimitScreen(content string) bool {
 	if strings.Contains(content, "Usage limit reached") ||
-		strings.Contains(content, "You've hit your limit") ||
+		containsClaudeUsageLimit(content) ||
+		containsClaudeRateLimitOptions(content) ||
 		strings.Contains(content, "/rate-limit-options") {
 		return true
 	}
@@ -1302,6 +1297,23 @@ func ContainsProviderRateLimitScreen(content string) bool {
 	return strings.Contains(strings.ToLower(content), "rate limit") &&
 		strings.Contains(content, "Keep trying") &&
 		strings.Contains(content, "Stop")
+}
+
+// containsClaudeUsageLimit recognizes Claude's rendered cap sentence, whose
+// label varies by account (for example, session or weekly) but always ends in
+// "limit" on the same line.
+func containsClaudeUsageLimit(content string) bool {
+	return lineContainsAll(content, "You've hit your ", " limit")
+}
+
+// containsClaudeRateLimitOptions recognizes Claude's cap menu without relying
+// on the usage-limit sentence, which disappears once the menu is open.
+func containsClaudeRateLimitOptions(content string) bool {
+	return linesContainAllWithin(content, 4,
+		"What do you want to do?",
+		"Stop and wait for limit to reset",
+		"Ask your admin for more usage",
+		"Enter to confirm")
 }
 
 // spendLimitModalWindowLines bounds how many consecutive lines the Claude

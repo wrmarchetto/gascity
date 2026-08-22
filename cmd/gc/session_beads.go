@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/agent"
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/clock"
 	"github.com/gastownhall/gascity/internal/config"
@@ -1852,28 +1853,6 @@ func syncSessionBeadsWithSnapshotAndRigStores(
 			}
 		}
 		needsAliasSync := b.Metadata["alias"] != managedAlias
-		// A pool's own name is the agent template's name, and once the pool has
-		// more than one slot it addresses the POOL, not any one session. The
-		// generic rotation rule cannot see that difference: raising
-		// max_active_sessions renames the singleton's session from "toolsmith"
-		// to "toolsmith-1" and files "toolsmith" in that slot's alias_history,
-		// which AssigneeIdentities reads back as a full assignee identity. Every
-		// bead assigned to the pool then resolved to that ONE session bead, so
-		// they collapsed into duplicate resume requests for it and pool demand
-		// stayed pinned at 1 at any cap (ci-ako1). Recomputed every tick rather
-		// than only on the rename, because a bead poisoned before this landed
-		// never takes the rename branch again.
-		poolOwnedAlias := ""
-		if isManagedPool && !isConfiguredNamed {
-			if cfgAgent := findAgentByTemplate(cfg, tp.TemplateName); cfgAgent != nil && !cfgAgent.UsesCanonicalSingletonPoolIdentity() {
-				poolOwnedAlias = cfgAgent.QualifiedName()
-			}
-		}
-		if mutation, pruned := session.PrunedAliasHistoryMetadata(b.Metadata, poolOwnedAlias); pruned {
-			for key, value := range mutation {
-				queueMeta(key, value)
-			}
-		}
 		if b.Metadata["pool_slot"] == "" {
 			queuePoolSlotMeta := queueMeta
 			if needsAliasSync && isManagedPool && isPoolInstance {
@@ -2093,17 +2072,7 @@ func syncSessionBeadsWithSnapshotAndRigStores(
 				} else {
 					clearAliasConflict()
 					if needsAliasSync {
-						aliasMutations := session.UpdatedAliasMetadata(b.Metadata, managedAlias)
-						// The rotation just moved the outgoing alias into
-						// history, so the prune above (which read the stored
-						// metadata) cannot have caught it. This is the cap-raise
-						// tick itself.
-						if mutation, pruned := session.PrunedAliasHistoryMetadata(aliasMutations, poolOwnedAlias); pruned {
-							for key, value := range mutation {
-								aliasMutations[key] = value
-							}
-						}
-						for key, value := range aliasMutations {
+						for key, value := range session.UpdatedAliasMetadata(b.Metadata, managedAlias) {
 							queueMeta(key, value)
 						}
 						queueAliasChangeDriftRebaseline(sessFront, b, tp, queueMeta, stderr)
@@ -3169,13 +3138,14 @@ func releaseWorkBeadFromClosedSession(wa workAssignment, item beads.Bead, sessio
 	if store == nil {
 		return
 	}
+	recoveryAssignee := releasedWorkRecoveryAssignee(item)
 	// Continuation-group beads bypass the CAS fast path for the reason given in
 	// beadHasActiveContinuationGroup: the CAS swaps only status/assignee, so the
 	// group would stay advertised on an open, unassigned bead until the
 	// follow-up metadata write lands, and a concurrent claim can vacuum it (and
 	// its siblings) onto an unrelated session through that window.
 	if !beadHasActiveContinuationGroup(item) {
-		if released, handled := releaseClosedSessionWorkIfCurrent(store, item, sessionBeadID, stderr); handled {
+		if released, handled := releaseClosedSessionWorkIfCurrent(store, item, sessionBeadID, recoveryAssignee, stderr); handled {
 			if released {
 				if err := store.Update(item.ID, beads.UpdateOpts{Metadata: releaseWorkBeadMetadata(item, fallbackRoute)}); err != nil {
 					// Non-fatal: the release itself already landed. Stale
@@ -3192,9 +3162,35 @@ func releaseWorkBeadFromClosedSession(wa workAssignment, item beads.Bead, sessio
 		fmt.Fprintf(stderr, "session beads: skipping release of %s from closing session %s: the store no longer shows it %s/%q (closed or re-claimed since the cached enumeration)\n", item.ID, sessionBeadID, item.Status, item.Assignee) //nolint:errcheck
 		return
 	}
-	if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
+	if err := reassignReleasedWorkBead(store, item, fallbackRoute, recoveryAssignee); err != nil {
 		fmt.Fprintf(stderr, "session beads: releasing work %s from closing session %s: %v\n", item.ID, sessionBeadID, err) //nolint:errcheck
 	}
+}
+
+// releasedWorkRecoveryAssignee returns the carried pool route when the bead has
+// one. Work without gc.routed_to keeps the existing fallback behavior, which
+// records gc.run_target for later route recovery.
+func releasedWorkRecoveryAssignee(item beads.Bead) string {
+	if route := strings.TrimSpace(item.Metadata[beadmeta.RoutedToMetadataKey]); route != "" {
+		return route
+	}
+	return ""
+}
+
+// reassignReleasedWorkBead is the live-recheck fallback for stores that cannot
+// atomically reassign. It keeps the recovered bead assigned whenever a route is
+// known, so the fallback preserves the same final invariant as the CAS path.
+func reassignReleasedWorkBead(store beads.Store, item beads.Bead, fallbackRoute, recoveryAssignee string) error {
+	assignee := recoveryAssignee
+	update := beads.UpdateOpts{
+		Assignee: &assignee,
+		Metadata: releaseWorkBeadMetadata(item, fallbackRoute),
+	}
+	if item.Status == "in_progress" {
+		open := "open"
+		update.Status = &open
+	}
+	return store.Update(item.ID, update)
 }
 
 // releaseClosedSessionWorkIfCurrent attempts the store's atomic conditional
@@ -3204,16 +3200,25 @@ func releaseWorkBeadFromClosedSession(wa workAssignment, item beads.Bead, sessio
 // must take the live-recheck fallback. handled=true with released=false means
 // the store answered authoritatively (the assignment changed) and the
 // release must NOT be retried unconditionally.
-func releaseClosedSessionWorkIfCurrent(store beads.Store, item beads.Bead, sessionBeadID string, stderr io.Writer) (released, handled bool) {
+func releaseClosedSessionWorkIfCurrent(store beads.Store, item beads.Bead, sessionBeadID, recoveryAssignee string, stderr io.Writer) (released, handled bool) {
 	expectedAssignee := strings.TrimSpace(item.Assignee)
 	if item.Status != "in_progress" || expectedAssignee == "" {
 		return false, false
 	}
-	releaser, ok := store.(beads.ConditionalAssignmentReleaser)
-	if !ok {
-		return false, false
+	var err error
+	if recoveryAssignee != "" {
+		reassigner, ok := store.(beads.ConditionalAssignmentReassigner)
+		if !ok {
+			return false, false
+		}
+		released, err = reassigner.ReassignIfCurrent(item.ID, expectedAssignee, recoveryAssignee)
+	} else {
+		releaser, ok := store.(beads.ConditionalAssignmentReleaser)
+		if !ok {
+			return false, false
+		}
+		released, err = releaser.ReleaseIfCurrent(item.ID, expectedAssignee)
 	}
-	released, err := releaser.ReleaseIfCurrent(item.ID, expectedAssignee)
 	if err != nil {
 		if errors.Is(err, beads.ErrConditionalReleaseUnsupported) {
 			return false, false

@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type observableTimingArtifact struct {
@@ -267,6 +269,37 @@ func runObservableCommand(t *testing.T, tmpDir, timingFile, output string, produ
 }
 
 func runObservableCommandWithModuleStatus(t *testing.T, tmpDir, timingFile, output string, productStatus, moduleStatus int) (int, []byte) {
+	return runObservableCommandWithFakeGoBeforeRun(t, tmpDir, timingFile, output, productStatus, moduleStatus, nil)
+}
+
+func TestRunObservableCommandRetriesTextFileBusy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not return text-file-busy for executing an open script")
+	}
+
+	tmpDir := t.TempDir()
+	released := make(chan error, 1)
+	status, output := runObservableCommandWithFakeGoBeforeRun(t, tmpDir, "", "", 0, 0, func(fakeGo string) {
+		hold, err := os.OpenFile(fakeGo, os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatalf("open fake go for writing: %v", err)
+		}
+		go func() {
+			timer := time.NewTimer(50 * time.Millisecond)
+			defer timer.Stop()
+			<-timer.C
+			released <- hold.Close()
+		}()
+	})
+	if err := <-released; err != nil {
+		t.Fatalf("release fake go: %v", err)
+	}
+	if status != 0 {
+		t.Fatalf("observable exit = %d, want product exit 0 after text-file-busy retry:\n%s", status, output)
+	}
+}
+
+func runObservableCommandWithFakeGoBeforeRun(t *testing.T, tmpDir, timingFile, output string, productStatus, moduleStatus int, beforeRun func(fakeGo string)) (int, []byte) {
 	t.Helper()
 	repoRoot := repoRoot(t)
 	fakeBin := filepath.Join(tmpDir, "bin")
@@ -295,9 +328,10 @@ exit 99
 	if err := os.WriteFile(fakeGo, []byte(fakeGoScript), 0o755); err != nil {
 		t.Fatalf("write fake go: %v", err)
 	}
+	if beforeRun != nil {
+		beforeRun(fakeGo)
+	}
 
-	cmd := scriptCommand(repoRoot, "go-test-observable", "cmd-gc-process-1-of-12", "--", "./internal/example")
-	cmd.Dir = repoRoot
 	env := goTestScriptEnv(t, tmpDir)
 	env = replaceScriptEnv(env, "PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	for key, value := range map[string]string{
@@ -318,8 +352,12 @@ exit 99
 	} {
 		env = replaceScriptEnv(env, key, value)
 	}
-	cmd.Env = env
-	out, err := cmd.CombinedOutput()
+	out, err := runCombinedOutputWithTextFileBusyRetry(t, func() *exec.Cmd {
+		cmd := scriptCommand(repoRoot, "go-test-observable", "cmd-gc-process-1-of-12", "--", "./internal/example")
+		cmd.Dir = repoRoot
+		cmd.Env = slices.Clone(env)
+		return cmd
+	})
 	if err == nil {
 		return 0, out
 	}

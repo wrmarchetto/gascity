@@ -1010,7 +1010,7 @@ func (m *Manager) TranscriptPath(id string, searchPaths []string) (string, error
 		// workdir cannot be mapped safely to a single transcript.
 		return "", nil
 	}
-	return workertranscript.DiscoverPath(searchPaths, provider, workDir, ""), nil
+	return workertranscript.DiscoverPath(searchPaths, provider, workDir, b.Metadata["session_key"]), nil
 }
 
 // sameWorkDirSessionBeads returns the session beads that share workDir with the

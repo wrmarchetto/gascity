@@ -1120,6 +1120,16 @@ func (s *SQLiteStore) Update(id string, opts UpdateOpts) error {
 // ReleaseIfCurrent clears an in-progress assignment only when the bead still
 // has the expected assignee.
 func (s *SQLiteStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error) {
+	return s.reassignIfCurrent(id, expectedAssignee, "")
+}
+
+// ReassignIfCurrent moves an in-progress assignment only when it is still held
+// by expectedAssignee.
+func (s *SQLiteStore) ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	return s.reassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+}
+
+func (s *SQLiteStore) reassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
 	if err := s.ensureOpen(); err != nil {
 		return false, err
 	}
@@ -1143,7 +1153,7 @@ func (s *SQLiteStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, error
 		}
 		before := b
 		b.Status = "open"
-		b.Assignee = ""
+		b.Assignee = recoveryAssignee
 		b.UpdatedAt = time.Now()
 		if err := s.upsertBeadTx(ctx, tx, b); err != nil {
 			return err

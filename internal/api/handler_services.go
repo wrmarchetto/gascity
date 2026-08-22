@@ -19,6 +19,26 @@ func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 		problemServiceRouteNotFound.writeTo(w)
 		return
 	}
+	if r.URL.Path == "/svc/"+name {
+		status, ok := reg.Get(name)
+		if !ok {
+			problemServiceRouteNotFound.writeTo(w)
+			return
+		}
+		if !serviceRequestAllowed(w, status, r, s.readOnly) {
+			return
+		}
+		// serveCityRequest strips the city scope before forwarding here. Keep the
+		// Location relative so the browser resolves it against the original URL,
+		// which still includes that scope.
+		location := name + "/"
+		if r.URL.RawQuery != "" {
+			location += "?" + r.URL.RawQuery
+		}
+		w.Header().Set("Location", location)
+		w.WriteHeader(http.StatusMovedPermanently)
+		return
+	}
 	if !reg.AuthorizeAndServeHTTP(name, w, r, func(status workspacesvc.Status) bool {
 		return serviceRequestAllowed(w, status, r, s.readOnly)
 	}) {

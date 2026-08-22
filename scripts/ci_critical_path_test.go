@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -351,36 +352,38 @@ func TestCmdGCProcessTimingEnvCrossesMakeIsolation(t *testing.T) {
 	}
 	timingFile := filepath.Join(timingDir, "cmd gc process.json")
 
-	cmd := makeCommand(
-		"test-cmd-gc-process-shard",
-		"CMD_GC_PROCESS_SHARD=1",
-		"CMD_GC_PROCESS_TOTAL=2",
-		"EXTRA_TEST_ENV="+cmdGCProcessExtraTestEnv,
-	)
-	cmd.Dir = fixture.repoRoot
-	cmd.Env = []string{
-		"PATH=" + fixture.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"HOME=" + fixture.homeDir,
-		"SHELL=/bin/sh",
-		"LANG=C.UTF-8",
-		"TMPDIR=" + fixture.tmpDir,
-		"GC_TEST_NO_SLICE=1",
-		"SYS_USR_CGO_FALLBACK=0",
-		"GO_TEST_TIMING_FILE=" + timingFile,
-		"GO_TEST_TIMING_NAME=cmd-gc-process-1-of-2",
-		"GO_TEST_TIMING_VARIANT=linux default",
-		"GO_TEST_RUNNER_LABEL=blacksmith 32 vcpu",
-		"GO_TEST_RUNNER_CPU_COUNT=99",
-		"GITHUB_SHA=abc123",
-		"GITHUB_WORKFLOW=CI workflow with spaces",
-		"GITHUB_RUN_ID=77",
-		"GITHUB_RUN_ATTEMPT=2",
-		"GITHUB_JOB=cmd gc process",
-		"RUNNER_NAME=runner name with spaces",
-		"RUNNER_OS=Linux",
-		"RUNNER_ARCH=X64",
-	}
-	status, output := runShardCommand(t, cmd)
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		cmd := makeCommand(
+			"test-cmd-gc-process-shard",
+			"CMD_GC_PROCESS_SHARD=1",
+			"CMD_GC_PROCESS_TOTAL=2",
+			"EXTRA_TEST_ENV="+cmdGCProcessExtraTestEnv,
+		)
+		cmd.Dir = fixture.repoRoot
+		cmd.Env = []string{
+			"PATH=" + fixture.binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"HOME=" + fixture.homeDir,
+			"SHELL=/bin/sh",
+			"LANG=C.UTF-8",
+			"TMPDIR=" + fixture.tmpDir,
+			"GC_TEST_NO_SLICE=1",
+			"SYS_USR_CGO_FALLBACK=0",
+			"GO_TEST_TIMING_FILE=" + timingFile,
+			"GO_TEST_TIMING_NAME=cmd-gc-process-1-of-2",
+			"GO_TEST_TIMING_VARIANT=linux default",
+			"GO_TEST_RUNNER_LABEL=blacksmith 32 vcpu",
+			"GO_TEST_RUNNER_CPU_COUNT=99",
+			"GITHUB_SHA=abc123",
+			"GITHUB_WORKFLOW=CI workflow with spaces",
+			"GITHUB_RUN_ID=77",
+			"GITHUB_RUN_ATTEMPT=2",
+			"GITHUB_JOB=cmd gc process",
+			"RUNNER_NAME=runner name with spaces",
+			"RUNNER_OS=Linux",
+			"RUNNER_ARCH=X64",
+		}
+		return cmd
+	})
 	if status == 0 || !strings.Contains(string(output), "Error 23") {
 		t.Fatalf("make status = %d, want product failure 23 to remain authoritative\n%s", status, output)
 	}

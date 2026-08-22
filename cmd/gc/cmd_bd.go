@@ -15,6 +15,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/sling"
 	"github.com/spf13/cobra"
 )
 
@@ -396,6 +397,9 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 		fmt.Fprint(stderr, msg) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if rejectReusableSlotBranchClose(bdArgs, stderr) {
+		return 1
+	}
 
 	cityPath, err := resolveBdCity(cityName)
 	if err != nil {
@@ -417,6 +421,9 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	target, err := resolveBdScopeTarget(cfg, cityPath, rigName, bdArgs, cityName != "", stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc bd: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	if rejectCrossRigBdUpdateAssignee(cfg, bdArgs, stderr) {
 		return 1
 	}
 	if id, expectedAssignee, ok, err := parseBdReleaseIfCurrentArgs(bdArgs); ok || err != nil {
@@ -501,6 +508,9 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	if runWorkRecordCloseGate(bdArgs, target.ScopeRoot, cityPath, cfg, guardStore, guardBeads, stderr) {
 		return 1
 	}
+	if runUpstreamProbeCloseGate(bdArgs, guardStore, guardBeads, stderr) {
+		return 1
+	}
 
 	reapStaleBdExportJSONL(target.ScopeRoot)
 	warnExternalBdOverrideDrift(stderr, cityPath, target)
@@ -575,6 +585,67 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	}
 
 	return 0
+}
+
+// rejectCrossRigBdUpdateAssignee rejects a direct bd assignment that gives a
+// bead to an agent in a different rig. gc sling already enforces this rule;
+// accepting the same assignment through gc bd creates demand the target agent
+// cannot claim and lets the controller respawn it indefinitely.
+func rejectCrossRigBdUpdateAssignee(cfg *config.City, args []string, stderr io.Writer) bool {
+	verb, updateArgs := bdflags.SplitGlobalFlags(args)
+	if verb != "update" {
+		return false
+	}
+	assignee, ok := bdUpdateAssignee(updateArgs)
+	if !ok || strings.TrimSpace(assignee) == "" {
+		return false
+	}
+	agent, ok := resolveAgentIdentity(cfg, assignee, currentRigContext(cfg))
+	if !ok {
+		// Existing validation owns an unknown assignee. This guard only makes
+		// a resolved assignment obey the same store-boundary rule as sling.
+		return false
+	}
+	for _, beadID := range bdflags.Positionals("update", updateArgs) {
+		if routeErr := sling.CrossRigRouteError(beadID, agent, cfg); routeErr != nil {
+			fmt.Fprintf(stderr, "gc bd: %v\n", routeErr) //nolint:errcheck // best-effort stderr
+			return true
+		}
+	}
+	return false
+}
+
+// bdUpdateAssignee returns the final explicit assignee accepted by bd update.
+// It skips every known value-taking flag so values such as a metadata string
+// that happens to begin with "--assignee" cannot be mistaken for a flag.
+func bdUpdateAssignee(args []string) (string, bool) {
+	valueFlags := bdflags.ValueFlags("update")
+	var assignee string
+	found := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		switch {
+		case arg == "--assignee" || arg == "-a":
+			if i+1 < len(args) {
+				assignee, found = args[i+1], true
+				i++
+			}
+			continue
+		case strings.HasPrefix(arg, "--assignee="):
+			assignee, found = strings.TrimPrefix(arg, "--assignee="), true
+			continue
+		case strings.HasPrefix(arg, "-a="):
+			assignee, found = strings.TrimPrefix(arg, "-a="), true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && !strings.Contains(arg, "=") && valueFlags[arg] && i+1 < len(args) {
+			i++
+		}
+	}
+	return assignee, found
 }
 
 // parseBdReleaseIfCurrentArgs recognizes gc's own `release-if-current
@@ -719,7 +790,35 @@ func doBdReleaseIfCurrent(cityPath string, cfg *config.City, target execStoreTar
 		fmt.Fprintf(stderr, "gc bd release-if-current: %v for %T\n", beads.ErrConditionalReleaseUnsupported, store) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	released, err := releaser.ReleaseIfCurrent(id, expectedAssignee)
+	// A voluntary release returns routed work to the pool that owns it. Clearing
+	// the assignee while preserving gc.routed_to leaves the bead visible to
+	// controller demand but unreachable by the pool's claim query.
+	recoveryAssignee := ""
+	item, getErr := store.Get(id)
+	if getErr != nil && !errors.Is(getErr, beads.ErrNotFound) {
+		if errors.Is(getErr, beads.ErrBDSilentFallback) {
+			fmt.Fprintf(stderr, "gc bd release-if-current: %v\n", getErr) //nolint:errcheck // best-effort stderr
+			fmt.Fprintln(stderr, bdSilentFallbackUserMessage)             //nolint:errcheck // best-effort stderr
+			return bdSilentFallbackExitCode
+		}
+		fmt.Fprintf(stderr, "gc bd release-if-current: reading %s: %v\n", id, getErr) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	if getErr == nil {
+		recoveryAssignee = strings.TrimSpace(item.Metadata[beadmeta.RoutedToMetadataKey])
+	}
+
+	var released bool
+	if recoveryAssignee != "" {
+		reassigner, ok := store.(beads.ConditionalAssignmentReassigner)
+		if !ok {
+			fmt.Fprintf(stderr, "gc bd release-if-current: conditional assignment reassign unsupported for %T\n", store) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		released, err = reassigner.ReassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+	} else {
+		released, err = releaser.ReleaseIfCurrent(id, expectedAssignee)
+	}
 	if err != nil {
 		if errors.Is(err, beads.ErrBDSilentFallback) {
 			fmt.Fprintf(stderr, "gc bd release-if-current: %v\n", err) //nolint:errcheck // best-effort stderr

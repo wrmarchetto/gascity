@@ -973,6 +973,15 @@ func pendingCreateSessionStillLeasedInfo(i sessionpkg.Info, cfg *config.City, cl
 	return false
 }
 
+// sessionAgentSuspendedInfo reports whether an open session belongs to an
+// explicitly suspended configured agent. A suspended agent retains an already
+// running session until that session exits, but never causes a new one to
+// start.
+func sessionAgentSuspendedInfo(info sessionpkg.Info, cfg *config.City) bool {
+	agent := findAgentByTemplate(cfg, normalizedSessionTemplateInfo(info, cfg))
+	return agent != nil && agent.Suspended
+}
+
 // pendingCreateStartInFlightInfo reports whether a pending-create start is still
 // within its in-flight lease window.
 func pendingCreateStartInFlightInfo(i sessionpkg.Info, clk clock.Clock, startupTimeout time.Duration) bool {
@@ -1715,6 +1724,19 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 				// by bead ID). alive is unknown on this path; probe target is left
 				// empty because this path probes by ID, not name (no name to skew).
 				shadowTick.captureRuntime(id, "workerSessionTargetRunningWithConfig", "", triFromBool(providerAlive), convergeTriUnknown)
+			}
+			// Suspending an agent blocks future starts but deliberately does not
+			// interrupt a session that was already running. Let it keep its claim
+			// and continue until it exits; a later tick then follows the ordinary
+			// not-desired close path without replacing it.
+			if providerAlive && sessionAgentSuspendedInfo(info, cfg) {
+				if trace != nil {
+					template := normalizedSessionTemplateInfo(info, cfg)
+					trace.RecordDecision(TraceSiteReconcilerOrphaned, TraceReasonCode("suspended"), TraceOutcomeKeptOpen, template, name, traceRecordPayload{
+						"provider_alive": providerAlive,
+					})
+				}
+				continue
 			}
 			// Run this before configured named-session preservation. A stale
 			// state=creating bead with an expired pending-create lease would
@@ -5555,6 +5577,25 @@ func resolveWorkDirAgainstCity(cityPath, workDir string) string {
 		return workDir
 	}
 	return filepath.Join(cityPath, workDir)
+}
+
+// validateWorkDirForSessionAssignment refuses a directory explicitly retained
+// by the worktree-prune path. The marker is a durable handoff boundary: its
+// contents identify work that must be adjudicated, never silently reused by a
+// replacement session. Marker read failures also fail closed so an unreadable
+// marker cannot turn into an unsafe assignment.
+func validateWorkDirForSessionAssignment(workDir string) error {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return nil
+	}
+	marker := filepath.Join(workDir, worktreeStaleFileName)
+	if _, err := os.Lstat(marker); err == nil {
+		return fmt.Errorf("worktree %q carries %s; refusing session assignment", workDir, marker)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking stale worktree marker for %q: %w", workDir, err)
+	}
+	return nil
 }
 
 // resolveTaskWorkDir checks the agent's assigned task beads for a work_dir

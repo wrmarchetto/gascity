@@ -992,10 +992,17 @@ func TestPruneRetiredSystemPacksKeepsTreeWhenManifestUnreadable(t *testing.T) {
 
 // TestEnsureBuiltinRuntimeAssetsRehydratesCorruptedCache pins the
 // self-healing contract that replaced per-city materialization refresh:
-// stale or corrupted bundled-source cache content is detected on the next
-// EnsureBuiltinRuntimeAssets call — even after the per-city ready cache
+// stale or corrupted bundled-source cache content is detected by the next
+// PROCESS to run a readiness pass — even after the per-city ready cache
 // reported success, because the ready fast path revalidates via
 // requiredBuiltinSourcesUsable — and rehydrated from the embedded packs.
+//
+// The window is a process and no longer a call. Whole-tree revalidation is
+// memoized per (cache dir, commit) per process (builtin_cache_validation.go),
+// so this test drops that memo to stand in for a fresh process, then asserts
+// the OPPOSITE for a repeat pass inside one process. Both halves are the
+// contract: the repair still fires automatically for a CLI invocation, and
+// the boundary it now stops at is visible rather than incidental.
 func TestEnsureBuiltinRuntimeAssetsRehydratesCorruptedCache(t *testing.T) {
 	clearGCEnv(t) // isolated GC_HOME so the corruption never touches the shared test cache
 	city := t.TempDir()
@@ -1003,10 +1010,24 @@ func TestEnsureBuiltinRuntimeAssetsRehydratesCorruptedCache(t *testing.T) {
 	materializeBuiltinPacksForTest(t, city)
 
 	target := bundledGcBeadsBdScriptForTest(t)
-	if err := os.WriteFile(target, []byte("#!/bin/sh\necho corrupted\n"), 0o755); err != nil {
+	corrupt := []byte("#!/bin/sh\necho corrupted\n")
+	if err := os.WriteFile(target, corrupt, 0o755); err != nil {
 		t.Fatalf("corrupting cached script: %v", err)
 	}
 
+	// Same process, cache already validated: the memo answers and the
+	// corruption survives. Asserted so the cost/coverage trade is pinned,
+	// not merely described in a comment.
+	if err := EnsureBuiltinRuntimeAssets(city, io.Discard); err != nil {
+		t.Fatalf("EnsureBuiltinRuntimeAssets on the memoized path: %v", err)
+	}
+	if got, err := os.ReadFile(target); err != nil {
+		t.Fatalf("ReadFile(script after memoized pass): %v", err)
+	} else if string(got) != string(corrupt) {
+		t.Errorf("memoized readiness pass re-read cache content; the per-process validation memo is not in effect")
+	}
+
+	resetSyntheticRepoValidationMemoForTest() // stands in for the next gc process
 	if err := EnsureBuiltinRuntimeAssets(city, io.Discard); err != nil {
 		t.Fatalf("EnsureBuiltinRuntimeAssets after corruption: %v", err)
 	}

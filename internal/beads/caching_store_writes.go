@@ -140,6 +140,21 @@ func (c *CachingStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, erro
 		return false, ErrConditionalReleaseUnsupported
 	}
 	released, err := releaser.ReleaseIfCurrent(id, expectedAssignee)
+	return c.finishConditionalAssignmentChange(id, released, err, "")
+}
+
+// ReassignIfCurrent moves an in-progress assignment through the backing store
+// and refreshes the cache only when the conditional reassign succeeds.
+func (c *CachingStore) ReassignIfCurrent(id, expectedAssignee, recoveryAssignee string) (bool, error) {
+	reassigner, ok := c.backing.(ConditionalAssignmentReassigner)
+	if !ok {
+		return false, ErrConditionalReleaseUnsupported
+	}
+	released, err := reassigner.ReassignIfCurrent(id, expectedAssignee, recoveryAssignee)
+	return c.finishConditionalAssignmentChange(id, released, err, recoveryAssignee)
+}
+
+func (c *CachingStore) finishConditionalAssignmentChange(id string, released bool, err error, recoveryAssignee string) (bool, error) {
 	if err != nil || !released {
 		return released, err
 	}
@@ -159,7 +174,7 @@ func (c *CachingStore) ReleaseIfCurrent(id, expectedAssignee string) (bool, erro
 		notify = true
 	} else if b, ok := c.beads[id]; ok {
 		b.Status = "open"
-		b.Assignee = ""
+		b.Assignee = recoveryAssignee
 		b.UpdatedAt = time.Now()
 		c.absorbFreshLocked(id, b, time.Now(), absorbOpts{
 			depsMode:   depsKeepCached,

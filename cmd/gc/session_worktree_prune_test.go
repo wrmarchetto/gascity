@@ -16,30 +16,49 @@ import (
 // probe; WorktreeRemoveErr controls the destructive call, and removed
 // records the (path, force) of every WorktreeRemove invocation so tests
 // can assert which directory the removal targeted.
+//
+// The fields model ANSWERS, not questions, which bounds what this stub can
+// pin. It cannot see the difference between "unpushed" and "unreachable", so
+// no test built on it distinguishes the two gates and every one of them stayed
+// green while the prune path asked the wrong one (bead ci-hh8aa). What belongs
+// here is gate ORDER and marker plumbing; which git question the gate asks is
+// pinned only against real git, in
+// session_worktree_prune_reachability_realgit_test.go.
 type fakeGitProbe struct {
 	isRepo           bool
 	currentBranch    string
 	currentBranchErr error
 	hasUncommitted   bool
-	hasUnpushed      bool
-	unpushedErr      error
-	hasStashes       bool
-	stashesErr       error
-	worktreeRemove   func(path string, force bool) error
-	removedPath      string
-	removedForce     bool
-	removeInvoked    bool
+	// uncommittedExclusions records the paths the last
+	// HasUncommittedWorkExcluding call was asked to ignore.
+	uncommittedExclusions []string
+	hasUnreachable        bool
+	unreachableErr        error
+	worktreeRemove        func(path string, force bool) error
+	removedPath           string
+	removedForce          bool
+	removeInvoked         bool
 }
 
 func (f *fakeGitProbe) IsRepo() bool { return f.isRepo }
 func (f *fakeGitProbe) CurrentBranch() (string, error) {
 	return f.currentBranch, f.currentBranchErr
 }
-func (f *fakeGitProbe) HasUncommittedWork() bool { return f.hasUncommitted }
-func (f *fakeGitProbe) HasUnpushedCommitsResult() (bool, error) {
-	return f.hasUnpushed, f.unpushedErr
+
+// HasUncommittedWorkExcluding answers from a bool no file on disk can move, so
+// it cannot model the marker-as-its-own-dirt defect at all -- that is pinned
+// against real git in session_worktree_prune_realgit_test.go. What it does pin
+// is the plumbing: the exclusions are recorded so a caller that drops the
+// marker name is caught here rather than only there.
+func (f *fakeGitProbe) HasUncommittedWorkExcluding(paths ...string) bool {
+	f.uncommittedExclusions = append([]string(nil), paths...)
+	return f.hasUncommitted
 }
-func (f *fakeGitProbe) HasStashesResult() (bool, error) { return f.hasStashes, f.stashesErr }
+
+func (f *fakeGitProbe) HasUnreachableCommitsResult() (bool, error) {
+	return f.hasUnreachable, f.unreachableErr
+}
+
 func (f *fakeGitProbe) WorktreeRemove(path string, force bool) error {
 	f.removeInvoked = true
 	f.removedPath = path
@@ -284,58 +303,30 @@ func TestPruneAgentHomeWorktreeIfSafe_HasUncommitted(t *testing.T) {
 	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-abc123", "uncommitted-work")
 }
 
-func TestPruneAgentHomeWorktreeIfSafe_HasUnpushed(t *testing.T) {
+func TestPruneAgentHomeWorktreeIfSafe_HasUnreachableCommits(t *testing.T) {
 	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasUnpushed: true, currentBranch: "builder/ga-def456"})
+	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasUnreachable: true, currentBranch: "builder/ga-def456"})
 
 	var stderr bytes.Buffer
 	if pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr) {
-		t.Fatal("prune returned true with unpushed commits")
+		t.Fatal("prune returned true with commits no ref reaches")
 	}
-	if !strings.Contains(stderr.String(), "unpushed commits") {
-		t.Errorf("expected unpushed-reason log; got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "no branch, tag, or remote ref reaches") {
+		t.Errorf("expected unreachable-reason log; got %q", stderr.String())
 	}
-	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-def456", "unpushed-commits")
+	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-def456", "unreachable-commits")
 }
 
-func TestPruneAgentHomeWorktreeIfSafe_UnpushedProbeError(t *testing.T) {
+func TestPruneAgentHomeWorktreeIfSafe_UnreachableProbeError(t *testing.T) {
 	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, unpushedErr: errors.New("boom")})
+	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, unreachableErr: errors.New("boom")})
 
 	var stderr bytes.Buffer
 	if pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr) {
-		t.Fatal("prune returned true after unpushed probe error")
+		t.Fatal("prune returned true after unreachable-commit probe error")
 	}
-	if !strings.Contains(stderr.String(), "unpushed probe failed") {
-		t.Errorf("expected unpushed-error log; got %q", stderr.String())
-	}
-	assertNoWorktreeStaleMarker(t, fx.workerDir)
-}
-
-func TestPruneAgentHomeWorktreeIfSafe_HasStashes(t *testing.T) {
-	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasStashes: true, currentBranch: "builder/ga-ghi789"})
-
-	var stderr bytes.Buffer
-	if pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr) {
-		t.Fatal("prune returned true with stashes")
-	}
-	if !strings.Contains(stderr.String(), "stashed work") {
-		t.Errorf("expected stashes-reason log; got %q", stderr.String())
-	}
-	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-ghi789", "stashed-work")
-}
-
-func TestPruneAgentHomeWorktreeIfSafe_StashProbeError(t *testing.T) {
-	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, stashesErr: errors.New("boom")})
-
-	var stderr bytes.Buffer
-	if pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr) {
-		t.Fatal("prune returned true after stash probe error")
-	}
-	if !strings.Contains(stderr.String(), "stash probe failed") {
-		t.Errorf("expected stash-error log; got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "unreachable-commit probe failed") {
+		t.Errorf("expected probe-error log; got %q", stderr.String())
 	}
 	assertNoWorktreeStaleMarker(t, fx.workerDir)
 }
@@ -452,5 +443,27 @@ func TestLookupRigRootForSession(t *testing.T) {
 				t.Errorf("lookupRigRootForSession(%q) = %q, want %q", c.template, got, c.want)
 			}
 		})
+	}
+}
+
+// TestPruneExcludesItsOwnMarkerFromTheUncommittedProbe pins the plumbing half of
+// the marker fix: the gate must ask git to ignore .worktree-stale.
+//
+// The behavior itself -- that a worktree whose only dirt is the marker is still
+// prunable -- is pinned against real git in
+// session_worktree_prune_realgit_test.go, because this stub answers from a bool
+// no file can move. This test exists so a refactor that quietly drops the
+// exclusion argument fails in the fast suite too, instead of only in the
+// real-git one.
+func TestPruneExcludesItsOwnMarkerFromTheUncommittedProbe(t *testing.T) {
+	fx := newPruneFixture(t)
+	probe := &fakeGitProbe{isRepo: true, hasUncommitted: true, currentBranch: "HEAD"}
+	fx.setProbe(fx.workerDir, probe)
+
+	var stderr bytes.Buffer
+	pruneAgentHomeWorktreeIfSafe(fx.sessionBead(), fx.cityPath, fx.cfg, &stderr)
+
+	if len(probe.uncommittedExclusions) != 1 || probe.uncommittedExclusions[0] != worktreeStaleFileName {
+		t.Errorf("uncommitted probe exclusions = %v, want exactly [%q]", probe.uncommittedExclusions, worktreeStaleFileName)
 	}
 }

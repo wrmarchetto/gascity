@@ -242,6 +242,16 @@ Rules:
 - no current user-facing targeting command relies on historical alias
   lookup
 
+#### Pool-name history is demand-only special case
+
+When a singleton pool expands, its original template name moves into the
+first slot's `alias_history`. That name is pool-owned for demand: open work
+addressed to it must not bind to that slot and collapse the pool to one resume
+request. It remains ownership evidence for `in_progress` work the slot claimed
+before expansion, so orphan release does not reopen live work. The consumer
+split lives in `poolOwnedHistoricalAlias` and is covered by
+`pool_desired_state_pool_alias_history_test.go`.
+
 ### Config Namespace
 
 Factory targeting resolves only by agent-config identity in strict

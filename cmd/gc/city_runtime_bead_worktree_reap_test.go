@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -65,6 +66,39 @@ func TestCityRuntimeTick_SkipsClosedBeadWorktreeReapWhenDisabled(t *testing.T) {
 	}
 	if s := stderr.String(); strings.Contains(s, "reapClosedBeadWorktrees") {
 		t.Errorf("stderr = %q, want no reaper output when disabled", s)
+	}
+}
+
+// TestCityRuntimeTick_ClearsResolvedAgentHomeStaleMarkerWhenReapDisabled
+// verifies that the stale-marker recovery path is independent of optional
+// closed-bead worktree reaping. A resolved marker must not leave its pool slot
+// permanently unable to start merely because disk-reclamation is disabled.
+func TestCityRuntimeTick_ClearsResolvedAgentHomeStaleMarkerWhenReapDisabled(t *testing.T) {
+	cityPath, rigRoot := initReapRig(t)
+	slotPath := filepath.Join(cityPath, ".gc", "worktrees", reapTestRigName, "builder")
+	if err := os.MkdirAll(slotPath, 0o755); err != nil {
+		t.Fatalf("create agent-home worktree: %v", err)
+	}
+	stalePath := filepath.Join(slotPath, worktreeStaleFileName)
+	if err := os.WriteFile(stalePath, []byte("branch=HEAD\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
+
+	originalProbe := newAgentWorktreeGitProbe
+	t.Cleanup(func() { newAgentWorktreeGitProbe = originalProbe })
+	newAgentWorktreeGitProbe = func(string) agentWorktreeGitProbe {
+		return &fakeAgentWorktreeGit{isRepo: true, currentBranch: "HEAD"}
+	}
+
+	store := beads.NewMemStore()
+	cfg := reapTestConfig(rigRoot)
+	cfg.Agents = []config.Agent{{Name: "builder", Dir: reapTestRigName}}
+	disabled := false
+	cfg.Daemon = config.DaemonConfig{AutoReapClosedBeadWorktrees: &disabled}
+
+	runReapTick(t, newReapTickRuntime(cityPath, cfg, store, io.Discard))
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Fatalf("resolved stale marker still exists (stat err=%v)", err)
 	}
 }
 

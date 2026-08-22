@@ -149,50 +149,26 @@ func TestPruneAgentHomeWorktreeIfSafeInfo_HasUncommitted(t *testing.T) {
 	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-abc123", "uncommitted-work")
 }
 
-func TestPruneAgentHomeWorktreeIfSafeInfo_HasUnpushed(t *testing.T) {
+func TestPruneAgentHomeWorktreeIfSafeInfo_HasUnreachableCommits(t *testing.T) {
 	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasUnpushed: true, currentBranch: "builder/ga-def456"})
+	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasUnreachable: true, currentBranch: "builder/ga-def456"})
 
 	var stderr bytes.Buffer
 	pruneAgentHomeWorktreeIfSafeInfo(fx.sessionInfo(), fx.cityPath, fx.cfg, &stderr)
-	if !strings.Contains(stderr.String(), "unpushed commits") {
-		t.Errorf("expected unpushed-reason log; got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "no branch, tag, or remote ref reaches") {
+		t.Errorf("expected unreachable-reason log; got %q", stderr.String())
 	}
-	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-def456", "unpushed-commits")
+	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-def456", "unreachable-commits")
 }
 
-func TestPruneAgentHomeWorktreeIfSafeInfo_UnpushedProbeError(t *testing.T) {
+func TestPruneAgentHomeWorktreeIfSafeInfo_UnreachableProbeError(t *testing.T) {
 	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, unpushedErr: errors.New("boom")})
+	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, unreachableErr: errors.New("boom")})
 
 	var stderr bytes.Buffer
 	pruneAgentHomeWorktreeIfSafeInfo(fx.sessionInfo(), fx.cityPath, fx.cfg, &stderr)
-	if !strings.Contains(stderr.String(), "unpushed probe failed") {
-		t.Errorf("expected unpushed-error log; got %q", stderr.String())
-	}
-	assertNoWorktreeStaleMarker(t, fx.workerDir)
-}
-
-func TestPruneAgentHomeWorktreeIfSafeInfo_HasStashes(t *testing.T) {
-	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, hasStashes: true, currentBranch: "builder/ga-ghi789"})
-
-	var stderr bytes.Buffer
-	pruneAgentHomeWorktreeIfSafeInfo(fx.sessionInfo(), fx.cityPath, fx.cfg, &stderr)
-	if !strings.Contains(stderr.String(), "stashed work") {
-		t.Errorf("expected stashes-reason log; got %q", stderr.String())
-	}
-	assertWorktreeStaleMarker(t, fx.workerDir, "builder/ga-ghi789", "stashed-work")
-}
-
-func TestPruneAgentHomeWorktreeIfSafeInfo_StashProbeError(t *testing.T) {
-	fx := newPruneFixture(t)
-	fx.setProbe(fx.workerDir, &fakeGitProbe{isRepo: true, stashesErr: errors.New("boom")})
-
-	var stderr bytes.Buffer
-	pruneAgentHomeWorktreeIfSafeInfo(fx.sessionInfo(), fx.cityPath, fx.cfg, &stderr)
-	if !strings.Contains(stderr.String(), "stash probe failed") {
-		t.Errorf("expected stash-error log; got %q", stderr.String())
+	if !strings.Contains(stderr.String(), "unreachable-commit probe failed") {
+		t.Errorf("expected probe-error log; got %q", stderr.String())
 	}
 	assertNoWorktreeStaleMarker(t, fx.workerDir)
 }
