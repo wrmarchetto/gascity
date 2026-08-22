@@ -73,6 +73,108 @@ func TestUnclaimableWorkReportsWorkThatNamesNoRoute(t *testing.T) {
 	assertUnclaimable(t, got, "W-1")
 }
 
+// TestUnclaimableWorkScansActiveRigStores pins the city-wide health boundary:
+// ready work can be created in a rig's own bead store, so reading only the
+// city store makes an unhealthy rig queue indistinguishable from an empty one.
+func TestUnclaimableWorkScansActiveRigStores(t *testing.T) {
+	cfg := poolAgentCfg(4)
+	cfg.Agents[0].Dir = "rig-a"
+	cfg.Rigs = []config.Rig{{Name: "rig-a", Path: "/rig-a"}}
+
+	cityStore := beads.NewMemStore()
+	rigStore := beads.NewMemStoreFrom(0, []beads.Bead{{
+		ID:     "R-1",
+		Title:  "forgotten rig route",
+		Type:   "bug",
+		Status: "open",
+	}}, nil)
+	check := newUnclaimableWorkCheck(cfg, "/city", func(path string) (beads.Store, error) {
+		switch path {
+		case "/city":
+			return cityStore, nil
+		case "/rig-a":
+			return rigStore, nil
+		default:
+			return nil, fmt.Errorf("unexpected store path %q", path)
+		}
+	})
+
+	res := check.Run(&doctor.CheckContext{})
+	if res.Status != doctor.StatusError {
+		t.Fatalf("Status = %v, want StatusError; message %q", res.Status, res.Message)
+	}
+	if len(res.Details) != 1 || !strings.Contains(res.Details[0], `rig "rig-a": R-1`) {
+		t.Fatalf("Details = %q, want rig-qualified R-1 finding", res.Details)
+	}
+	if !strings.Contains(res.Message, "across the city store and 1 rig store") {
+		t.Fatalf("Message = %q, want aggregate store scope", res.Message)
+	}
+}
+
+func TestUnclaimableWorkIgnoresAddressedRigStoreWork(t *testing.T) {
+	cfg := poolAgentCfg(4)
+	cfg.Agents[0].Dir = "rig-a"
+	cfg.Rigs = []config.Rig{{Name: "rig-a", Path: "/rig-a"}}
+
+	cityStore := beads.NewMemStore()
+	rigStore := beads.NewMemStoreFrom(0, []beads.Bead{{
+		ID:       "R-1",
+		Title:    "routed rig work",
+		Type:     "bug",
+		Status:   "open",
+		Metadata: map[string]string{"gc.routed_to": "rig-a/toolsmith"},
+	}}, nil)
+	check := newUnclaimableWorkCheck(cfg, "/city", func(path string) (beads.Store, error) {
+		if path == "/city" {
+			return cityStore, nil
+		}
+		return rigStore, nil
+	})
+
+	res := check.Run(&doctor.CheckContext{})
+	if res.Status != doctor.StatusOK {
+		t.Fatalf("Status = %v, want StatusOK; message %q", res.Status, res.Message)
+	}
+}
+
+func TestUnclaimableWorkWarnsWhenActiveRigStoreIsUnreadable(t *testing.T) {
+	cfg := poolAgentCfg(4)
+	cfg.Agents[0].Dir = "rig-a"
+	cfg.Rigs = []config.Rig{{Name: "rig-a", Path: "/rig-a"}}
+
+	check := newUnclaimableWorkCheck(cfg, "/city", func(path string) (beads.Store, error) {
+		if path == "/city" {
+			return beads.NewMemStore(), nil
+		}
+		return nil, fmt.Errorf("dolt unreachable")
+	})
+
+	res := check.Run(&doctor.CheckContext{})
+	if res.Status != doctor.StatusWarning {
+		t.Fatalf("Status = %v, want StatusWarning; message %q", res.Status, res.Message)
+	}
+	if !strings.Contains(res.Message, `opening rig "rig-a" bead store: dolt unreachable`) {
+		t.Fatalf("Message = %q, want rig-store failure", res.Message)
+	}
+}
+
+func TestUnclaimableWorkSkipsSuspendedRigStores(t *testing.T) {
+	cfg := poolAgentCfg(4)
+	cfg.Rigs = []config.Rig{{Name: "rig-a", Path: "/rig-a", SuspendedOnStart: true}}
+
+	check := newUnclaimableWorkCheck(cfg, "/city", func(path string) (beads.Store, error) {
+		if path != "/city" {
+			return nil, fmt.Errorf("suspended rig store %q must not be opened", path)
+		}
+		return beads.NewMemStore(), nil
+	})
+
+	res := check.Run(&doctor.CheckContext{})
+	if res.Status != doctor.StatusOK {
+		t.Fatalf("Status = %v, want StatusOK; message %q", res.Status, res.Message)
+	}
+}
+
 // TestUnclaimableWorkPassesRoutedWork pins the routed admission tier: a bead
 // carrying gc.routed_to for a configured agent is pool-door demand, so the
 // reconciler spawns for it and it must not be reported.
