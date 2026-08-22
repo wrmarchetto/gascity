@@ -504,6 +504,9 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	if runWorkRecordCloseGate(bdArgs, target.ScopeRoot, cityPath, cfg, guardStore, guardBeads, stderr) {
 		return 1
 	}
+	if runUpstreamProbeCloseGate(bdArgs, guardStore, guardBeads, stderr) {
+		return 1
+	}
 
 	reapStaleBdExportJSONL(target.ScopeRoot)
 	warnExternalBdOverrideDrift(stderr, cityPath, target)

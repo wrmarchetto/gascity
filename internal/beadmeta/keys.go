@@ -205,12 +205,16 @@ const (
 	InfraMigratedFromMetadataKey   = "gc.infra_migrated_from"
 	TriggerBeadStoreRefMetadataKey = "gc.trigger_bead_store_ref"
 	TruncatedMetadataKey           = "gc.truncated"
-	WorkBranchMetadataKey          = "gc.work_branch"
-	WorkCommitMetadataKey          = "gc.work_commit"
-	WorkDirMetadataKey             = "gc.work_dir"
-	WorkOutcomeMetadataKey         = "gc.work_outcome"
-	WorkVerificationMetadataKey    = "gc.work_verification"
-	WorkflowIDMetadataKey          = "gc.workflow_id"
+	// UpstreamProbeMetadataKey records the regression command a fork patch
+	// must fail without its production changes, so a later audit can test
+	// whether upstream has made that patch redundant.
+	UpstreamProbeMetadataKey    = "gc.upstream_probe"
+	WorkBranchMetadataKey       = "gc.work_branch"
+	WorkCommitMetadataKey       = "gc.work_commit"
+	WorkDirMetadataKey          = "gc.work_dir"
+	WorkOutcomeMetadataKey      = "gc.work_outcome"
+	WorkVerificationMetadataKey = "gc.work_verification"
+	WorkflowIDMetadataKey       = "gc.workflow_id"
 )
 
 // Work-record metadata keys (ADR-0009). These bind a work bead to its claim
@@ -446,6 +450,7 @@ var KnownMetadataKeys = []string{
 	InfraMigratedFromMetadataKey,
 	TriggerBeadStoreRefMetadataKey,
 	TruncatedMetadataKey,
+	UpstreamProbeMetadataKey,
 	WorkBranchMetadataKey,
 	WorkCommitMetadataKey,
 	WorkDirMetadataKey,
