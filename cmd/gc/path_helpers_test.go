@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -88,6 +89,12 @@ func clearInheritedBeadsEnv(t *testing.T) {
 // (discoverDoltProcesses returns nil there). The test-config allowlist keeps
 // unrelated city/runtime dolt servers out of the diff so background activity
 // does not false-positive the cleanup check.
+//
+// This one stays scoped by path and is NOT given the ownership scope that
+// ci-u3i2 added to TestMain's guard (snapshotGuardedDoltProcesses). The
+// ownership marker names the test BINARY, not the test, so under -parallel
+// every test would see every sibling's servers and blame them on itself.
+// TestMain can use it because there is exactly one of TestMain.
 func requireNoLeakedDoltAfterForPaths(t *testing.T, paths ...string) {
 	t.Helper()
 	requireNoLeakedDoltAfterWithFilterAndKiller(t, discoverDoltProcesses, func(configPath string) bool {
@@ -115,12 +122,14 @@ func newDoltLeakGuardedTestingM(m *testing.M, tempRoot string, cleanupPaths ...s
 }
 
 func (g *doltLeakGuardedTestingM) Run() int {
-	return g.runWith(g.m.Run, discoverDoltProcesses, g.sweepStaleCmdGCTestDoltProcesses, sweepOrphanDoltStoreDirs, reapManagedDoltTestProcesses, reapDoltLeakProcesses)
+	return g.runWith(g.m.Run, discoverDoltProcesses, managedDoltProcessOwnedByThisTestBinary, handedOffManagedDoltProcess, g.sweepStaleCmdGCTestDoltProcesses, sweepOrphanDoltStoreDirs, reapManagedDoltTestProcesses, reapDoltLeakProcesses)
 }
 
 func (g *doltLeakGuardedTestingM) runWith(
 	runTests func() int,
 	enumerate func() ([]DoltProcInfo, error),
+	ownedBy func(int) bool,
+	handedOff func(int) bool,
 	sweepStale func(string) bool,
 	sweepOrphanDirs func(),
 	reapRegistered func(),
@@ -131,7 +140,7 @@ func (g *doltLeakGuardedTestingM) runWith(
 	stopSignalHandler := g.installSignalHandler()
 	defer stopSignalHandler()
 
-	initial, initialErr := snapshotDoltProcessesForConfigRoot(enumerate, g.tempRoot)
+	initial, initialErr := snapshotGuardedDoltProcesses(enumerate, g.tempRoot, ownedBy)
 	if initialErr != nil {
 		fmt.Fprintf(os.Stderr, "cmd/gc test dolt leak guard: initial scan failed: %v\n", initialErr) //nolint:errcheck
 	}
@@ -140,12 +149,12 @@ func (g *doltLeakGuardedTestingM) runWith(
 
 	guardFailed := initialErr != nil
 	if initialErr == nil {
-		final, finalErr := snapshotDoltProcessesForConfigRoot(enumerate, g.tempRoot)
+		final, finalErr := snapshotGuardedDoltProcesses(enumerate, g.tempRoot, ownedBy)
 		if finalErr != nil {
 			fmt.Fprintf(os.Stderr, "cmd/gc test dolt leak guard: final scan failed: %v\n", finalErr) //nolint:errcheck
 			guardFailed = true
-		} else if leaked := diffDoltProcessSnapshots(initial, final); len(leaked) > 0 {
-			fmt.Fprintf(os.Stderr, "cmd/gc test dolt leak guard: leaked %d dolt sql-server process(es) under %s\n", len(leaked), g.tempRoot) //nolint:errcheck
+		} else if leaked := dropHandedOffDoltProcesses(diffDoltProcessSnapshots(initial, final), handedOff); len(leaked) > 0 {
+			fmt.Fprintf(os.Stderr, "cmd/gc test dolt leak guard: %d managed-dolt process(es) outlived the package (--config under %s, or environment naming this test binary in %s); stop the server from the test's own cleanup -- shutdownBeadsProvider, stopManagedDoltProcess, or cleanupManagedDoltTestCity\n", len(leaked), g.tempRoot, managedDoltTestParentPIDEnv) //nolint:errcheck
 			writeDoltLeakReport(os.Stderr, leaked)
 			reapLeaks(leaked)
 			guardFailed = true
@@ -159,6 +168,66 @@ func (g *doltLeakGuardedTestingM) runWith(
 		return 1
 	}
 	return code
+}
+
+// Managed dolt servers this binary started and is deliberately leaving
+// running for its PARENT process to inspect and stop. A helper binary that
+// hands a live server up the process tree is the one case where "a server
+// outlived the package" is the fixture working rather than a leak:
+// TestManagedDoltScopeWatchdogHelper exists to exit while its server keeps
+// running, and its caller reads the PID out of the state file afterward.
+//
+// Declared per-PID by the test that started the server, deliberately. The
+// alternative a future editor will reach for -- an env switch disarming the
+// guard for the helper invocation -- is read before any test runs, so it also
+// excuses every server that helper leaks by ACCIDENT, which is the whole of
+// what the guard was built to report.
+//
+// Only the assertion honors this. reapDoltProcessesUnderRoot, which runs on
+// SIGINT/SIGTERM, still reaps a handed-off server: the parent waiting to clean
+// it up is dying too, and a signaled run must leave nothing behind.
+var (
+	handedOffManagedDoltMu   sync.Mutex
+	handedOffManagedDoltPIDs = map[int]bool{}
+)
+
+// handOffManagedDoltToParentProcess declares pid as deliberately outliving
+// this process. Call it from the test that started the server, at the point
+// the handoff happens.
+func handOffManagedDoltToParentProcess(pid int) {
+	if pid <= 0 {
+		return
+	}
+	handedOffManagedDoltMu.Lock()
+	defer handedOffManagedDoltMu.Unlock()
+	handedOffManagedDoltPIDs[pid] = true
+}
+
+func handedOffManagedDoltProcess(pid int) bool {
+	handedOffManagedDoltMu.Lock()
+	defer handedOffManagedDoltMu.Unlock()
+	return handedOffManagedDoltPIDs[pid]
+}
+
+// dropHandedOffDoltProcesses removes declared handoffs from a leak set.
+//
+// It filters the DIFF rather than the snapshot so a handed-off PID still
+// appears in both scans. Filtering the snapshot would put the PID in neither,
+// which is the same input the diff sees for a server that was never there --
+// and that equivalence is what would let a handoff declared for the wrong PID
+// pass silently.
+func dropHandedOffDoltProcesses(leaked []DoltProcInfo, handedOff func(int) bool) []DoltProcInfo {
+	if handedOff == nil {
+		return leaked
+	}
+	kept := make([]DoltProcInfo, 0, len(leaked))
+	for _, proc := range leaked {
+		if handedOff(proc.PID) {
+			continue
+		}
+		kept = append(kept, proc)
+	}
+	return kept
 }
 
 func (g *doltLeakGuardedTestingM) installSignalHandler() func() {
@@ -194,7 +263,7 @@ func (g *doltLeakGuardedTestingM) cleanupTemporaryPaths() {
 }
 
 func (g *doltLeakGuardedTestingM) reapDoltProcessesUnderRoot(label string) bool {
-	procs, err := snapshotDoltProcessesForConfigRoot(discoverDoltProcesses, g.tempRoot)
+	procs, err := snapshotGuardedDoltProcesses(discoverDoltProcesses, g.tempRoot, managedDoltProcessOwnedByThisTestBinary)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/gc test dolt leak guard: %s scan failed: %v\n", label, err) //nolint:errcheck
 		return true
@@ -216,7 +285,27 @@ func (g *doltLeakGuardedTestingM) reapDoltProcessesUnderRoot(label string) bool 
 }
 
 func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcesses(label string) bool {
-	procs, err := discoverDoltProcesses()
+	return g.sweepStaleCmdGCTestDoltProcessesWith(label, discoverDoltProcesses, orphanedManagedDoltFromDeadTestBinary, reapDoltLeakProcesses)
+}
+
+// sweepStaleCmdGCTestDoltProcessesWith is the injectable form. The enumerator,
+// the orphan rule and the reaper are parameters so the wiring between the
+// sweep and its staleness predicates can be pinned without spawning a server
+// or signaling anything.
+//
+// Two independent staleness arms, and neither subsumes the other. The path arm
+// reads a dead test binary's PID out of its own temp-root directory name and
+// so covers every server started under one; the tag arm covers a server whose
+// config landed somewhere else entirely, which is the class that produced the
+// 7h50m orphan in ci-9r6x. Both are pinned in
+// dolt_leak_ownership_scan_test.go.
+func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcessesWith(
+	label string,
+	enumerate func() ([]DoltProcInfo, error),
+	orphanedByDeadTestBinary func(int) bool,
+	reap func([]DoltProcInfo),
+) bool {
+	procs, err := enumerate()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cmd/gc test dolt leak guard: %s stale scan failed: %v\n", label, err) //nolint:errcheck
 		return true
@@ -225,7 +314,8 @@ func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcesses(label string)
 	tempParent := filepath.Dir(filepath.Clean(g.tempRoot))
 	var leaked []DoltProcInfo
 	for _, proc := range procs {
-		if !isStaleCmdGCTestConfigPath(extractConfigPath(proc.Argv), activeRoots, tempParent) {
+		if !isStaleCmdGCTestConfigPath(extractConfigPath(proc.Argv), activeRoots, tempParent) &&
+			!orphanedByDeadTestBinary(proc.PID) {
 			continue
 		}
 		leaked = append(leaked, proc)
@@ -238,7 +328,7 @@ func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcesses(label string)
 	})
 	fmt.Fprintf(os.Stderr, "cmd/gc test dolt leak guard: %s sweep reaping %d stale cmd/gc test dolt sql-server process(es)\n", label, len(leaked)) //nolint:errcheck
 	writeDoltLeakReport(os.Stderr, leaked)
-	reapDoltLeakProcesses(leaked)
+	reap(leaked)
 	return true
 }
 
@@ -308,6 +398,50 @@ func cmdGCTestConfigOwnerPID(configPath string, tempParent string) (int, bool) {
 		return pidFromPrefixedDirName(filepath.Base(root), prefix)
 	}
 	return 0, false
+}
+
+// snapshotGuardedDoltProcesses is the guard's scope: every dolt sql-server
+// this test binary is answerable for. Both inputs are already argv-filtered
+// by enumerate (discoverDoltProcesses), and what widens here is only WHOSE
+// server it is -- two rules, unioned because each reaches what the other
+// cannot.
+//
+// The config-root rule catches a server under the per-run temp root even when
+// nothing marked its environment: one started outside a provider op, or one
+// whose marker was stripped. The ownership rule
+// (managedDoltProcessOwnedByThisTestBinary, dolt_leak_ownership_test.go)
+// catches a server this binary spawned wherever its config landed, which is
+// the hole bead ci-u3i2 recorded and ci-9r6x observed running for 7h50m.
+//
+// Ownership is NOT applied argv-blind. Every descendant of a provider op
+// inherits the marker, including gc-beads-bd.sh's run_with_timeout watchdog
+// sleeps, and a scan that skipped the argv check reported three of those as
+// leaks on a full cmd/gc run; the reasoning is recorded at the head of
+// dolt_leak_ownership_test.go.
+//
+// Nothing here reaches an unmarked server outside the temp root: an
+// operator's own city dolt satisfies neither rule, and everything this
+// function returns is eventually SIGTERMed.
+func snapshotGuardedDoltProcesses(enumerate func() ([]DoltProcInfo, error), root string, ownedBy func(int) bool) (map[int]DoltProcInfo, error) {
+	procs, err := enumerate()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int]DoltProcInfo, len(procs))
+	for _, p := range procs {
+		// Refusing our own PID matters because a test binary launched by an
+		// outer harness inherits the marker, and the reap would then SIGTERM
+		// the process that was about to print the report.
+		if p.PID <= 0 || p.PID == os.Getpid() {
+			continue
+		}
+		underRoot := root != "" && pathutil.PathWithin(root, extractConfigPath(p.Argv))
+		if !underRoot && !ownedBy(p.PID) {
+			continue
+		}
+		out[p.PID] = p
+	}
+	return out, nil
 }
 
 func snapshotDoltProcessesForConfigRoot(enumerate func() ([]DoltProcInfo, error), root string) (map[int]DoltProcInfo, error) {

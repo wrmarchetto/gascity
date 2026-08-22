@@ -34,13 +34,19 @@ package main
 // exec site, runProviderProbe, is deliberately NOT hooked: the script's
 // op_probe only inspects and can never leave a server behind.
 //
-// Known limit: only a REAL dolt binary is adoptable. A test that starts its
-// store with a shell fake named `dolt` (writeFakeDoltSQLServer) is invisible
-// here, because a shebang exec puts the interpreter in argv[0] while
-// looksLikeDoltSQLServer matches on argv[0] being `dolt`. That blindness
-// already applies to discoverDoltProcesses and so to TestMain's leak guard
-// too, so nothing previously covered is lost -- and the leak this backstop
-// exists for is a real server holding a real data dir.
+// The suite's own fake is adoptable too, since ci-u3i2. It was a `#!/bin/sh`
+// script named `dolt` (writeFakeDoltSQLServer, dolt_start_managed_test.go),
+// and a shebang exec puts the INTERPRETER in argv[0] -- so
+// looksLikeDoltSQLServer, which matches on argv[0] being `dolt`, rejected
+// every fake and the confirmation below registered none of them. The fake is
+// now a symlink to the test binary, which preserves the caller's argv[0], so
+// a fake started through a provider op reaches this registry like a real
+// server does.
+//
+// Rejected: widening looksLikeDoltSQLServer to accept a shebang argv. It is
+// production code that `gc dolt-state` reaps against, so that would put an
+// operator's unrelated shell script in range of a SIGKILL to close a
+// test-only blindness.
 //
 // Load-bearing constraint: never register a PID that has not been confirmed to
 // be a live `dolt sql-server`. Everything the registry holds is SIGTERMed at

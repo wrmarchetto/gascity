@@ -585,6 +585,8 @@ func TestDoltLeakGuardedTestingMFinalSnapshotRunsBeforeRegistryReap(t *testing.T
 	code := g.runWith(
 		func() int { return 0 },
 		enumerate,
+		func(int) bool { return false },
+		func(int) bool { return false },
 		func(string) bool { return false },
 		func() {},
 		func() { registeredReaped = true },
@@ -616,6 +618,8 @@ func TestDoltLeakGuardedTestingMRunWithSweepsOrphanDirsAtStartup(t *testing.T) {
 			return 0
 		},
 		func() ([]DoltProcInfo, error) { return nil, nil },
+		func(int) bool { return false },
+		func(int) bool { return false },
 		func(string) bool {
 			order = append(order, "sweepStale")
 			return false

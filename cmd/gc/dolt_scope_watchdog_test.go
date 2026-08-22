@@ -197,6 +197,12 @@ func TestManagedDoltScopeWatchdogHelper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start managed dolt with scope watchdog: %v", err)
 	}
+	// This helper's whole contract is to exit while the server keeps running,
+	// so the caller can watch production supervision with the spawner gone.
+	// Declare that, or TestMain's leak guard reports the fixture working as a
+	// leak: the server is ours by the ownership rule ci-u3i2 added and its
+	// config sits in the CALLER's temp dir, outside this process's root.
+	handOffManagedDoltToParentProcess(started.PID)
 	state := fmt.Sprintf("%d %d\n", started.PID, started.WatchdogPID)
 	if err := os.WriteFile(statePath, []byte(state), 0o644); err != nil {
 		t.Fatalf("write helper state: %v", err)
