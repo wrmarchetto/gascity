@@ -100,6 +100,11 @@ func (c *BdBackupSizeCheck) Run(_ *CheckContext) *CheckResult {
 		if !exists {
 			continue
 		}
+		if bytes == 0 {
+			r.Status = StatusError
+			r.Message = fmt.Sprintf("bd auto-backup directory for %s is empty — no backup has completed", target.Label)
+			return r
+		}
 		existsCount++
 		totalBytes += bytes
 		if bytes > worstBytes {
