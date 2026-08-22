@@ -21,6 +21,9 @@ description: The shortest path for new contributors to get productive in Gas Cit
 - [bd config unset does not remove nested keys](bd-config-unset-nested-key.md)
   before trusting `bd config unset` to have removed anything, and before
   editing key deletion in `internal/beads/contract/`
+- [Where `gc hook --claim` spends its wall clock](hook-claim-latency-decomposition.md)
+  before proposing any claim-latency fix -- a per-subprocess and per-syscall
+  decomposition of one run, plus the strace flags that make it reproducible
 - [Release Gate Criteria Conventions](release-gate-criteria-conventions.md)
   when signing off the "Tests pass" criterion on a `release-gates/*.md`
   deploy gate — it must cite the CI jobs `ci-required` actually gates on

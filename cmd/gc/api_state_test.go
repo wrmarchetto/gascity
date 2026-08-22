@@ -2550,6 +2550,127 @@ func TestControllerStateBeadEventsUseScopePrefixWhenConfiguredPrefixDrifts(t *te
 	}
 }
 
+// productionShapedControllerStore builds a bead store with the wrapper stack the
+// controller actually holds: the store factory policy-wraps unconditionally
+// (main.go openStoreResultAtForCityWithConfig), and the controller then hands
+// that to wrapWithCachingStore, which unwraps, builds the cache, and re-wraps.
+// Both cs.cityBeadStore (api_state.go) and every entry of cs.beadStores
+// (buildStores) are built exactly this way, so neither is ever a bare
+// *beads.CachingStore.
+//
+// It returns the outer store and the cache underneath. The cache is reached by
+// unwrapping rather than by the capability under test, so the assertions built
+// on it are not circular. backgroundRefresh=false keeps the reconciler unarmed:
+// the only thing that can move cache state in these tests is the event under
+// test, never a background reconcile racing it to the same answer.
+func productionShapedControllerStore(t *testing.T, cfg *config.City, backing beads.Store) (beads.Store, *beads.CachingStore) {
+	t.Helper()
+	store := wrapWithCachingStore(t.Context(), wrapStoreWithBeadPolicies(backing, cfg), nil, false)
+	inner, _, wrapped := unwrapBeadPolicyStore(store)
+	if !wrapped {
+		t.Fatalf("controller store %T is not policy-wrapped; the composition under test is gone", store)
+	}
+	cache, ok := inner.(*beads.CachingStore)
+	if !ok {
+		t.Fatalf("policy wrapper holds %T, want *beads.CachingStore", inner)
+	}
+	// Prime to live so a later read is answered from the cache alone. The
+	// backings stay empty for the life of the test, which is what makes the
+	// read below evidence: a bead visible through a live, fully primed cache
+	// over an empty backing can only have arrived via ApplyEvent.
+	if err := cache.Prime(t.Context()); err != nil {
+		t.Fatalf("Prime: %v", err)
+	}
+	return store, cache
+}
+
+func TestControllerBeadEventsReachCachesThroughProductionStoreWrappers(t *testing.T) {
+	// The deliverable of ci-1p6a. Every prior test of this fan-out assigned a
+	// BARE *beads.CachingStore to cityBeadStore, which is a shape the controller
+	// never constructs -- so a concrete `store.(*beads.CachingStore)` assertion
+	// at the fan-out passed here and matched nothing in production, leaving
+	// every cache in the process reconcile-only (60s, 120s once the store
+	// classifies LARGE) with the event bus wired but structurally dead.
+	//
+	// A compile-time assertion would not catch it either: the policy wrapper
+	// satisfies beads.Store no matter what it hides. Only driving the real
+	// composition through the real fan-out and observing the cache change does.
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city", Prefix: "mc"},
+		Rigs:      []config.Rig{{Name: "repo", Path: "rigs/repo", Prefix: "ga"}},
+	}
+	cityStore, cityCache := productionShapedControllerStore(t, cfg, beads.NewMemStore())
+	// A graph-apply-capable backing produces beadPolicyGraphStore rather than
+	// beadPolicyStore, and every real bd/Dolt store is graph-capable -- so the
+	// rig store here is the production wrapper type and the city store above is
+	// the fallback. Covering only one leaves the other's forward untested.
+	rigStore, rigCache := productionShapedControllerStore(t, cfg, &captureGraphStore{Store: beads.NewMemStore()})
+	if got, want := fmt.Sprintf("%T", cityStore), "*main.beadPolicyStore"; got != want {
+		t.Fatalf("city store type = %s, want %s", got, want)
+	}
+	if got, want := fmt.Sprintf("%T", rigStore), "*main.beadPolicyGraphStore"; got != want {
+		t.Fatalf("rig store type = %s, want %s", got, want)
+	}
+
+	cs := &controllerState{
+		cfg:           cfg,
+		cityBeadStore: cityStore,
+		beadStores:    map[string]beads.Store{"repo": rigStore},
+		pokeCh:        make(chan struct{}, 1),
+	}
+
+	for _, tc := range []struct {
+		name  string
+		id    string
+		store beads.Store
+		cache *beads.CachingStore
+		other *beads.CachingStore
+	}{
+		{"city store", "mc-event", cityStore, cityCache, rigCache},
+		{"rig store", "ga-event", rigStore, rigCache, cityCache},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := json.Marshal(beads.Bead{ID: tc.id, Title: "from the bus", Status: "open"})
+			if err != nil {
+				t.Fatalf("marshal bead: %v", err)
+			}
+			cs.applyBeadEventToStores(events.Event{
+				Type:    events.BeadCreated,
+				Actor:   "bd-hook",
+				Subject: tc.id,
+				Payload: payload,
+			})
+
+			// Read back through the store the controller holds, not through the
+			// cache handle: that is the path every API read takes, so it is the
+			// one that has to show the event.
+			got, err := tc.store.Get(tc.id)
+			if err != nil {
+				t.Fatalf("Get(%s) through the controller's store: %v (the cache never absorbed the event; "+
+					"it converges only at reconcile cadence)", tc.id, err)
+			}
+			if got.Title != "from the bus" {
+				t.Fatalf("Get(%s).Title = %q, want the event payload's title", tc.id, got.Title)
+			}
+			// Prefix ownership still has to hold through the wrapper: a fan-out
+			// that reached every cache regardless of prefix would satisfy the
+			// assertion above while cross-contaminating every other store. The
+			// check is on this subtest's id alone, not on the other cache being
+			// empty -- the subtests share the pair of stores, so by the second
+			// one the other cache legitimately holds the first one's bead.
+			if items, err := tc.other.List(beads.ListQuery{AllowScan: true}); err != nil {
+				t.Fatalf("List other cache: %v", err)
+			} else {
+				for _, item := range items {
+					if item.ID == tc.id {
+						t.Fatalf("other cache absorbed %s; the fan-out ignored prefix ownership", tc.id)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestControllerStateBuildStoresUsesScopeLocalFileStores(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
 

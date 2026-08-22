@@ -329,6 +329,145 @@ func TestResolveFormulaScope_GCRIGEnvRoutesWhenCwdOutsideRig(t *testing.T) {
 	}
 }
 
+// TestResolveFormulaScope_AgentScopeRootOverridesCwdRig pins the scope gc
+// stamped on an agent session above the rig implied by its worktree. Without
+// this tier, a city- or rig-scoped agent working from another rig's worktree
+// materializes formula molecules into the worktree rig's store (ci-x1x7).
+func TestResolveFormulaScope_AgentScopeRootOverridesCwdRig(t *testing.T) {
+	cityPath := t.TempDir()
+	rigAPath := filepath.Join(cityPath, "rig-a")
+	rigBPath := filepath.Join(cityPath, "rig-b")
+	for _, path := range []string{rigAPath, rigBPath} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	// Scope-root identity is determined by containment before redirects. This
+	// deliberately hostile redirect proves rig-a cannot be retargeted to rig-b.
+	if err := os.MkdirAll(filepath.Join(rigAPath, ".beads"), 0o755); err != nil {
+		t.Fatalf("mkdir rig-a .beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(rigAPath, ".beads", "redirect"), []byte(filepath.Join(rigBPath, ".beads")+"\n"), 0o644); err != nil {
+		t.Fatalf("write rig-a redirect: %v", err)
+	}
+
+	cfg := &config.City{
+		Rigs: []config.Rig{
+			{Name: "rig-a", Path: rigAPath, FormulaVars: map[string]string{"scope": "rig-a"}},
+			{Name: "rig-b", Path: rigBPath, FormulaVars: map[string]string{"scope": "rig-b"}},
+		},
+		FormulaLayers: config.FormulaLayers{
+			City: []string{"/city/formulas"},
+			Rigs: map[string][]string{
+				"rig-a": {"/city/formulas", "/rigs/rig-a/formulas"},
+				"rig-b": {"/city/formulas", "/rigs/rig-b/formulas"},
+			},
+		},
+	}
+
+	t.Chdir(rigBPath) // cwd would otherwise resolve to rig-b.
+	prevRig := rigFlag
+	t.Cleanup(func() { rigFlag = prevRig })
+	rigFlag = ""
+	prevCity := cityFlag
+	t.Cleanup(func() { cityFlag = prevCity })
+	cityFlag = ""
+	t.Setenv("GC_RIG", "")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", rigAPath)
+
+	scope, err := resolveFormulaScope(cfg, cityPath, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveFormulaScope: %v", err)
+	}
+	if scope.storeRoot != rigAPath {
+		t.Errorf("storeRoot = %q, want %q (agent scope root must win over cwd rig)", scope.storeRoot, rigAPath)
+	}
+	if scope.rig != "rig-a" {
+		t.Errorf("rig = %q, want %q", scope.rig, "rig-a")
+	}
+	wantPaths := []string{"/city/formulas", "/rigs/rig-a/formulas"}
+	if !reflect.DeepEqual(scope.searchPaths, wantPaths) {
+		t.Errorf("searchPaths = %v, want %v", scope.searchPaths, wantPaths)
+	}
+	if got, want := rigFormulaVarsForScope(cfg, cityPath), map[string]string{"scope": "rig-a"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rigFormulaVarsForScope() = %v, want %v", got, want)
+	}
+}
+
+func TestResolveFormulaScope_AgentCityScopeRootOverridesCwdRig(t *testing.T) {
+	cityPath := t.TempDir()
+	rigPath := filepath.Join(cityPath, "rig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatalf("mkdir rig: %v", err)
+	}
+	cfg := &config.City{
+		Rigs:          []config.Rig{{Name: "rig", Path: rigPath, FormulaVars: map[string]string{"scope": "rig"}}},
+		FormulaLayers: config.FormulaLayers{City: []string{"/city/formulas"}},
+	}
+
+	t.Chdir(rigPath)
+	prevRig := rigFlag
+	t.Cleanup(func() { rigFlag = prevRig })
+	rigFlag = ""
+	prevCity := cityFlag
+	t.Cleanup(func() { cityFlag = prevCity })
+	cityFlag = ""
+	t.Setenv("GC_RIG", "")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", cityPath)
+
+	scope, err := resolveFormulaScope(cfg, cityPath, io.Discard)
+	if err != nil {
+		t.Fatalf("resolveFormulaScope: %v", err)
+	}
+	if scope.storeRoot != cityPath {
+		t.Errorf("storeRoot = %q, want %q (city scope root must win over cwd rig)", scope.storeRoot, cityPath)
+	}
+	if scope.rig != "" {
+		t.Errorf("rig = %q, want empty for city scope", scope.rig)
+	}
+	if got, want := rigFormulaVarsForScope(cfg, cityPath), map[string]string{}; !reflect.DeepEqual(got, want) {
+		t.Errorf("rigFormulaVarsForScope() = %v, want %v", got, want)
+	}
+}
+
+func TestResolveFormulaScope_InvalidAgentScopeRootFallsThroughAndWarns(t *testing.T) {
+	cityPath := t.TempDir()
+	rigPath := filepath.Join(cityPath, "rig")
+	strayPath := filepath.Join(cityPath, "stray")
+	foreignPath := filepath.Join(t.TempDir(), "foreign")
+	for _, path := range []string{rigPath, filepath.Join(strayPath, ".beads"), filepath.Join(foreignPath, ".beads")} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(strayPath, ".beads", "redirect"), []byte(filepath.Join(foreignPath, ".beads")+"\n"), 0o644); err != nil {
+		t.Fatalf("write stray redirect: %v", err)
+	}
+
+	cfg := &config.City{Rigs: []config.Rig{{Name: "rig", Path: rigPath}}}
+	t.Chdir(rigPath)
+	prevRig := rigFlag
+	t.Cleanup(func() { rigFlag = prevRig })
+	rigFlag = ""
+	prevCity := cityFlag
+	t.Cleanup(func() { cityFlag = prevCity })
+	cityFlag = ""
+	t.Setenv("GC_RIG", "")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", strayPath)
+
+	var stderr bytes.Buffer
+	scope, err := resolveFormulaScope(cfg, cityPath, &stderr)
+	if err != nil {
+		t.Fatalf("resolveFormulaScope: %v, want invalid scope root discarded", err)
+	}
+	if scope.storeRoot != rigPath {
+		t.Errorf("storeRoot = %q, want %q (fall through to cwd rig)", scope.storeRoot, rigPath)
+	}
+	if warning := stderr.String(); !strings.Contains(warning, "GC_BEADS_SCOPE_ROOT") || !strings.Contains(warning, strayPath) {
+		t.Errorf("warning = %q, want discarded scope root diagnostic", warning)
+	}
+}
+
 // TestResolveFormulaScope_RigFlagOverridesGCRIGEnv verifies --rig still wins
 // over GC_RIG env, matching resolveBdScopeTarget's priority order.
 func TestResolveFormulaScope_RigFlagOverridesGCRIGEnv(t *testing.T) {

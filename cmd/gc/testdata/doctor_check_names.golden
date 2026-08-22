@@ -70,6 +70,7 @@ order-tracking-retention
 session-model
 dolt-server
 fork-rate
+host-disk-space
 dolt-noms-size
 dolt-journal-size
 dolt-config
@@ -81,6 +82,7 @@ bd-backup-state
 bd-backup-freshness
 worktree-disk-size
 nested-worktree-prune
+worktree-stale
 custom-types:city
 hold-label-conventions:city
 worktrees

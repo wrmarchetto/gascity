@@ -57,6 +57,29 @@ func TestReassignIfAssigneeGuardsTheWriteWithTheExpectedHolder(t *testing.T) {
 	}
 }
 
+func TestReassignPoolClaimIfCurrentRecordsThePoolRouteAtomically(t *testing.T) {
+	runner := func(_, name string, args ...string) ([]byte, error) {
+		command := name + " " + strings.Join(args, " ")
+		const want = "bd update bd-42 --if-assignee crew --assignee worker-2 --set-metadata gc.routed_to=crew --json"
+		if command != want {
+			return nil, fmt.Errorf("command = %q, want %q", command, want)
+		}
+		return []byte(`[{"id":"bd-42","status":"open","assignee":"worker-2","metadata":{"gc.routed_to":"crew"}}]`), nil
+	}
+
+	s := beads.NewBdStore("/city", runner)
+	moved, ok, err := s.ReassignPoolClaimIfCurrent("bd-42", "crew", "worker-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatalf("ReassignPoolClaimIfCurrent ok = false, want true; moved=%+v", moved)
+	}
+	if got := moved.Metadata["gc.routed_to"]; got != "crew" {
+		t.Fatalf("moved gc.routed_to = %q, want crew", got)
+	}
+}
+
 func TestReassignIfAssigneeReportsLostRaceWhenTheHolderAlreadyMoved(t *testing.T) {
 	runner := func(_, name string, args ...string) ([]byte, error) {
 		command := name + " " + strings.Join(args, " ")

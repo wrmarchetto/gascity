@@ -101,6 +101,12 @@ reclaiming. Unlike the full `dolt gc --archive-level=1` procedure above,
 the city — though quiescing writers still makes the GC faster and more
 thorough.
 
+When the normal compactor proves that a live writer changed table values during
+its flatten window, it defers full GC and records a pending-GC retry marker
+instead of creating an integrity quarantine. Leave that marker in place: the
+next scheduled run retries after the writer settles. A quarantine marker still
+needs the review and clear procedure below.
+
 ## Compacting a city whose Dolt remote is uncredentialed
 
 Before flattening (and again before pushing) the compactor runs

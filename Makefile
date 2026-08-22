@@ -7,6 +7,12 @@ GOARCH := $(shell go env GOARCH)
 
 BIN_DIR := $(shell go env GOPATH)/bin
 GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
+# golangci-lint stores findings keyed by absolute source paths. A shared cache
+# replays diagnostics from a different (and possibly deleted) worktree, so the
+# local default must be scoped to this checkout. Callers may still supply an
+# explicit cache, including CI's restored workspace cache.
+GOLANGCI_LINT_CACHE ?= $(CURDIR)/.cache/golangci-lint
+export GOLANGCI_LINT_CACHE
 
 BINARY     := gc
 BUILD_DIR  := bin
@@ -437,7 +443,7 @@ test-ci-policy:
 ## cache input hashes over local working files.
 ## Wrapped in $(TEST_ENV) — see comment above for why.
 test: test-fsys-darwin-compile
-	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GC_FAST_UNIT=1 scripts/go-test-observable test -- -p=4 -count=1 -timeout 15m ./...
+	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GC_FAST_UNIT=1 scripts/with-go-tmp scripts/go-test-observable test -- -p=4 -count=1 -timeout 15m ./...
 
 # MAC_UNIT_PKGS excludes cmd/gc from the Mac unit sweep; cmd/gc runs
 # sharded via the mac-cmd-gc-process CI matrix job instead.
@@ -457,16 +463,24 @@ LOCAL_TEST_JOBS ?= $(shell ./scripts/test-local-job-count)
 # override from the environment directly.
 GO_TEST_TIMEOUT ?=
 
-## test-fast-parallel: run the default fast suite with cmd/gc sharded locally
+# Deliberately empty for the same reason as GO_TEST_TIMEOUT above: the shard
+# count's default belongs to scripts/test-local-parallel alone, which picks it
+# against the sweep's next-slowest package (ci-qst5). This assignment exists
+# only so `PRODUCTMETRICS_TOTAL=2 make test-fast-parallel` survives TEST_ENV's
+# env -i on a host with less I/O concurrency to spend.
+PRODUCTMETRICS_TOTAL ?=
+
+## test-fast-parallel: run the default fast suite with cmd/gc and
+## internal/productmetrics sharded locally
 test-fast-parallel:
-	$(TEST_ENV) GC_PUSH_GATE_NO_CAP="$${GC_PUSH_GATE_NO_CAP-}" PUSH_GATE_MAX_CONCURRENT="$${PUSH_GATE_MAX_CONCURRENT-}" PUSH_GATE_MAX_WAIT_SECONDS="$${PUSH_GATE_MAX_WAIT_SECONDS-}" PUSH_GATE_POLL_SECONDS="$${PUSH_GATE_POLL_SECONDS-}" LOCAL_TEST_JOBS=$(LOCAL_TEST_JOBS) CMD_GC_PROCESS_TOTAL=$(CMD_GC_PROCESS_TOTAL) GO_TEST_TIMEOUT=$(GO_TEST_TIMEOUT) ./scripts/test-local-parallel fast
+	$(TEST_ENV) GC_PUSH_GATE_NO_CAP="$${GC_PUSH_GATE_NO_CAP-}" PUSH_GATE_MAX_CONCURRENT="$${PUSH_GATE_MAX_CONCURRENT-}" PUSH_GATE_MAX_WAIT_SECONDS="$${PUSH_GATE_MAX_WAIT_SECONDS-}" PUSH_GATE_POLL_SECONDS="$${PUSH_GATE_POLL_SECONDS-}" LOCAL_TEST_JOBS=$(LOCAL_TEST_JOBS) CMD_GC_PROCESS_TOTAL=$(CMD_GC_PROCESS_TOTAL) PRODUCTMETRICS_TOTAL=$(PRODUCTMETRICS_TOTAL) GO_TEST_TIMEOUT=$(GO_TEST_TIMEOUT) ./scripts/test-local-parallel fast
 
 ## test-fsys-darwin-compile: cross-compile internal/fsys for macOS so
 ## unix.Stat_t field-type regressions fail in the default fast test path.
 test-fsys-darwin-compile:
-	@tmp=$$(mktemp -d); \
+	@tmp=$$(mktemp -d -p /var/tmp); \
 	trap 'rm -rf "$$tmp"' EXIT; \
-	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GOOS=darwin GOARCH=arm64 go test -c -o "$$tmp/fsys.test" ./internal/fsys
+	$(TEST_ENV) GOFLAGS="$(QUALITY_GATE_GOFLAGS)" GOOS=darwin GOARCH=arm64 scripts/with-go-tmp go test -c -o "$$tmp/fsys.test" ./internal/fsys
 
 ## test-pack-registry-live: run the opt-in gascity-packs registry canary
 test-pack-registry-live:

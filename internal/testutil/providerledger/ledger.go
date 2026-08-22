@@ -320,6 +320,21 @@ func provedRuntimeScoped(constructor SymbolRef, file, test, scope string, allowe
 	return claim
 }
 
+// waivedRuntime records a contract gap against one shared expiry rather than a
+// per-waiver date, so the whole remaining set is reviewed in one sitting rather
+// than nine. The cost of that choice is a hard cliff: on the expiry date every
+// waived claim fails at once and the push gate closes for everyone, which is
+// what it is for.
+//
+// Renewed 2026-08-12 (city bead ci-k5ey0) to the 90-day maxWaiverHorizon
+// ceiling. The renewal review found none of the nine retirable: each needs a
+// full internal/runtime/runtimetest.RunProviderTests proof against the
+// production composition, and ValidateProofRefs rejects a proof that can skip,
+// so the herdr and tmux suites do not qualify while they skip on a missing
+// binary or -short, and k8s, ssh, t3bridge and cmd/gc.newHybridProvider have no
+// full-contract suite at all. A shorter renewal was rejected: the gaps are
+// structural, so a 30-day window buys the same answer a month sooner at the
+// cost of another gate outage.
 func waivedRuntime(constructor SymbolRef, reason string) ContractClaim {
 	return ContractClaim{
 		Constructor: constructor,
@@ -327,7 +342,7 @@ func waivedRuntime(constructor SymbolRef, reason string) ContractClaim {
 		Disposition: DispositionWaived,
 		Waiver: &Waiver{
 			Owner:   runtimeContractWaiverOwner,
-			Expires: time.Date(2026, time.August, 12, 0, 0, 0, 0, time.UTC),
+			Expires: time.Date(2026, time.November, 9, 0, 0, 0, 0, time.UTC),
 			Reason:  reason,
 		},
 	}

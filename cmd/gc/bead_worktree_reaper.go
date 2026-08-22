@@ -71,7 +71,7 @@ type reapReport struct {
 //     sit at or beneath the worktree. If the liveness scan is indeterminate
 //     (no /proc), NOTHING is reaped this pass — the reaper cannot prove any
 //     tree is idle (root cause B: closed-bead != end-of-use).
-//  6. Git state: no uncommitted changes, no stashes, and no commits that
+//  6. Git state: no uncommitted changes, and no commits that
 //     removing the worktree would orphan — commits reachable from no branch,
 //     tag, or remote-tracking ref (git.HasUnreachableCommitsResult). The test
 //     is deliberately reachability, not push state: `git worktree remove`
@@ -285,18 +285,27 @@ func reapClosedBeadWorktrees(
 			// Git safety gates, only if not already protected. A probe error
 			// protects the tree: an errored probe proves nothing, and treating
 			// it as a clean answer would fail open.
+			//
+			// Stashes are deliberately NOT a gate here. refs/stash is repo-wide,
+			// so `git stash list` answers identically in every worktree of the
+			// rig, and one agent's stash protected every sibling's tree from
+			// ever being reaped (bead ci-auomj).
+			//
+			// Narrowing it to the stash's recorded branch or parent commit was
+			// possible and was still rejected: the gate has nothing to protect.
+			// A stash lives on refs/stash in the common dir and survives
+			// `git worktree remove` intact, so no scoping of this question
+			// prevents any loss — it only changes how often the answer is
+			// wrong.
 			if reason == "" {
 				wg := git.New(worktreePath)
 				hasUncommitted := wg.HasUncommittedWork()
 				hasUnreachable, unreachableErr := wg.HasUnreachableCommitsResult()
-				hasStashes, stashErr := wg.HasStashesResult()
 				switch {
 				case unreachableErr != nil:
 					reason = fmt.Sprintf("git probe failed (failing closed): %v", unreachableErr)
-				case stashErr != nil:
-					reason = fmt.Sprintf("git probe failed (failing closed): %v", stashErr)
-				case hasUncommitted || hasUnreachable || hasStashes:
-					reason = fmt.Sprintf("unsafe git state: uncommitted=%v unreachable=%v stashes=%v", hasUncommitted, hasUnreachable, hasStashes)
+				case hasUncommitted || hasUnreachable:
+					reason = fmt.Sprintf("unsafe git state: uncommitted=%v unreachable=%v", hasUncommitted, hasUnreachable)
 				}
 			}
 

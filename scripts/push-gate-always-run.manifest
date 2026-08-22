@@ -8,14 +8,16 @@
 # tree. A change to a leaf package can break any of them while sharing no
 # import edge with them, so the closure alone would silently drop them.
 #
-# MEMBERSHIP IS MECHANICAL, NOT CURATED. Every package with a Go file
-# mentioning a repository-root marker -- `repoRoot`-style helper names,
-# `git ls-files`, `rev-parse --show-toplevel` -- must appear here, and
-# scripts/test-push-gate-select.sh fails the build when one does not. That
-# check is the guarantee; this list is only its current answer. Do NOT prune an
-# entry because it looks like it only reads a fixture repo: the marker is
-# deliberately over-broad, because a package listed here costs wall clock
-# while a package missing from here costs a green build that tested nothing.
+# MEMBERSHIP IS MECHANICAL, NOT CURATED. The regeneration rule deliberately
+# over-approximates source-tree inspection: it includes packages mentioning
+# repository-root discovery, git tree reads, module-root ascents, caller-based
+# source roots, or filesystem walks. It is not a claim to recognize every
+# possible spelling of a repository scanner. Instead, extending a scanner must
+# extend the rule and its anchors in scripts/test-push-gate-select.sh. The
+# exact-output test there is the guarantee; this list is only its current
+# answer. Do NOT prune an entry because it looks like it only reads a fixture
+# repo: a listed package costs wall clock while a missing package costs a green
+# build that tested nothing.
 #
 # The scan covers every tracked *.go file, NOT only *_test.go, and that is
 # load-bearing rather than lazy. internal/testpolicy/resourcecensus walks
@@ -28,12 +30,17 @@
 # build-tag judgment enters the rule.
 #
 # Regenerate the current answer with:
-#   git ls-files -z -- '*.go' | xargs -0 grep -lEi 'repo_?root|ls-files|show-toplevel' \
+#   git ls-files -z -- '*.go' | xargs -0 grep -lEi 'repo_?root|ls-files|show-toplevel|ls-tree|go\.mod|runtime\.Caller|filepath\.Walk(Dir)?' \
 #     | xargs -n1 dirname | sort -u | sed 's|^|./|'
 
 ./cmd/gc
+./cmd/gen-command-census
+./cmd/genschema
+./examples
 ./examples/bd/dolt
 ./examples/gastown
+./examples/swarm
+./examples/t3bridge-gastown
 ./internal/agentutil
 ./internal/api
 ./internal/api/genclient
@@ -41,19 +48,47 @@
 ./internal/beadmeta
 ./internal/beads
 ./internal/beads/contract
+./internal/beads/exec
 ./internal/bootstrap
+./internal/buildimage
 ./internal/builtinpacks
+./internal/cityinit
 ./internal/config
+./internal/convergence
+./internal/docgen
+./internal/doctor
+./internal/doltorphan
 ./internal/formula
+./internal/fsys
 ./internal/importsvc
+./internal/logutil
+./internal/materialize
+./internal/migrate
 ./internal/molecule
+./internal/packman
+./internal/packregistry
 ./internal/pgauth
+./internal/productmetrics
+./internal/runtime
+./internal/runtime/k8s
+./internal/runtime/t3bridge
+./internal/runtime/tmux
 ./internal/session
+./internal/sessionlog
+./internal/storebinding
+./internal/storehealth
 ./internal/testenv
 ./internal/testpolicy/resourcecensus
+./internal/testpolicy/timingsummary
 ./internal/testutil/providerledger
+./internal/worker
 ./internal/worker/workertest
 ./scripts
+./scripts/cipolicy
+./test/acceptance
+./test/acceptance/helpers
+./test/acceptance/tutorial_goldens
+./test/acceptance/worker_inference
 ./test/docsync
 ./test/integration
 ./test/packlint

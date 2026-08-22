@@ -121,6 +121,10 @@ func computePoolDesiredStates(
 	// from this map, so missing identities cause live sessions to look
 	// orphaned and let a duplicate spawn for the same bead.
 	assigneeToSessionBeadID := make(map[string]string)
+	// A pool's canonical singleton name can be retained in a slot's history
+	// after a cap raise. It remains ownership evidence only for work that slot
+	// already holds; open work addressed to that name belongs to the pool.
+	poolNameHistoryToSessionBeadID := make(map[string]string)
 	sessionBeadTemplate := make(map[string]string)
 	namedSessionBeadIDs := make(map[string]bool)
 	for _, sb := range sessionInfos {
@@ -134,7 +138,12 @@ func computePoolDesiredStates(
 		if template != "" {
 			sessionBeadTemplate[sb.ID] = template
 		}
+		poolName := poolOwnedHistoricalAlias(cfg, sb)
 		for _, id := range sessionBeadAssigneeIdentitiesInfo(sb) {
+			if id == poolName {
+				poolNameHistoryToSessionBeadID[id] = sb.ID
+				continue
+			}
 			assigneeToSessionBeadID[id] = sb.ID
 		}
 		if isNamedSessionInfo(sb) {
@@ -174,6 +183,9 @@ func computePoolDesiredStates(
 				continue
 			}
 			sessionBeadID := assigneeToSessionBeadID[assignee]
+			if sessionBeadID == "" && wb.Status == "in_progress" {
+				sessionBeadID = poolNameHistoryToSessionBeadID[assignee]
+			}
 			if routedTo == "" && sessionBeadID != "" {
 				routedTo = sessionBeadTemplate[sessionBeadID]
 				if routedTo == "" && len(cfg.Agents) == 1 {
@@ -403,6 +415,31 @@ func canonicalSingletonAliasHeldTemplates(cfg *config.City, sessionInfos []sessi
 		}
 	}
 	return held
+}
+
+// poolOwnedHistoricalAlias returns a pool template's qualified name when that
+// name appears only in a multi-slot session's alias history. The name belongs
+// to the pool's queue, but it remains owner evidence for in-progress work
+// claimed before the cap raise.
+func poolOwnedHistoricalAlias(cfg *config.City, info sessionpkg.Info) string {
+	if cfg == nil || len(info.AliasHistory) == 0 {
+		return ""
+	}
+	template := strings.TrimSpace(normalizedSessionTemplateInfo(info, cfg))
+	agent := findAgentByTemplate(cfg, template)
+	if agent == nil || agent.UsesCanonicalSingletonPoolIdentity() {
+		return ""
+	}
+	canonical := agent.QualifiedName()
+	if canonical == "" || strings.TrimSpace(info.Alias) == canonical || strings.TrimSpace(info.ConfiguredNamedIdentity) == canonical {
+		return ""
+	}
+	for _, prior := range info.AliasHistory {
+		if strings.TrimSpace(prior) == canonical {
+			return canonical
+		}
+	}
+	return ""
 }
 
 func poolInFlightNewRequests(cfg *config.City, sessionInfos []sessionpkg.Info, resumeSessionBeadIDs map[string]struct{}) map[string][]SessionRequest {

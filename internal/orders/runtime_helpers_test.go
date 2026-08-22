@@ -141,3 +141,39 @@ func TestLastRunAcrossReturnsMaxScope(t *testing.T) {
 		t.Fatalf("LastRunAcross() = %s, want %s (max across scopes)", got, lateRun.CreatedAt)
 	}
 }
+
+func TestRecentRunsAcrossMergesNewestHistoryAcrossScopes(t *testing.T) {
+	first := beads.NewMemStore()
+	second := beads.NewMemStore()
+	first.IDPrefix = "first"
+	second.IDPrefix = "second"
+	for _, tc := range []struct {
+		store beads.Store
+	}{
+		{store: first},
+		{store: second},
+		{store: first},
+	} {
+		if _, err := tc.store.Create(beads.Bead{
+			Title:  "order:cleanup",
+			Type:   "task",
+			Labels: []string{"order-run:cleanup", "order-tracking", "exec-failed"},
+		}); err != nil {
+			t.Fatalf("create run: %v", err)
+		}
+	}
+
+	runs, err := RecentRunsAcross([]*Store{
+		NewStore(beads.OrdersStore{Store: first}),
+		NewStore(beads.OrdersStore{Store: second}),
+	}, "cleanup", 2)
+	if err != nil {
+		t.Fatalf("RecentRunsAcross: %v", err)
+	}
+	if got, want := len(runs), 2; got != want {
+		t.Fatalf("run count = %d, want %d: %#v", got, want, runs)
+	}
+	if runs[0].ID != "first-2" || runs[1].ID != "second-1" {
+		t.Fatalf("run IDs = [%s %s], want [first-2 second-1]", runs[0].ID, runs[1].ID)
+	}
+}

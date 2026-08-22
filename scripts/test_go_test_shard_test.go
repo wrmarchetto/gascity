@@ -8,9 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 type goTestShardFixture struct {
@@ -159,9 +161,9 @@ func shardTestCommand(name string, args ...string) *exec.Cmd {
 	return exec.Command(name, args...)
 }
 
-func runShardCommand(t *testing.T, cmd *exec.Cmd) (int, []byte) {
+func runShardCommand(t *testing.T, newCommand func() *exec.Cmd) (int, []byte) {
 	t.Helper()
-	out, err := cmd.CombinedOutput()
+	out, err := runCombinedOutputWithTextFileBusyRetry(t, newCommand)
 	if err == nil {
 		return 0, out
 	}
@@ -170,6 +172,33 @@ func runShardCommand(t *testing.T, cmd *exec.Cmd) (int, []byte) {
 		t.Fatalf("run test-go-test-shard: %v\n%s", err, out)
 	}
 	return exitErr.ExitCode(), out
+}
+
+func TestRunShardCommandRetriesTextFileBusy(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not return text-file-busy for executing an open script")
+	}
+
+	fixture := newGoTestShardFixtureWithExit(t, 0)
+	hold, err := os.OpenFile(filepath.Join(fixture.binDir, "go"), os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open fake go for writing: %v", err)
+	}
+	released := make(chan error, 1)
+	go func() {
+		timer := time.NewTimer(50 * time.Millisecond)
+		defer timer.Stop()
+		<-timer.C
+		released <- hold.Close()
+	}()
+
+	status, output := runShardCommand(t, func() *exec.Cmd { return fixture.command() })
+	if err := <-released; err != nil {
+		t.Fatalf("release fake go: %v", err)
+	}
+	if status != 0 {
+		t.Fatalf("shard exit = %d, want product exit 0 after text-file-busy retry:\n%s", status, output)
+	}
 }
 
 func readFixtureFile(t *testing.T, path string) string {
@@ -328,15 +357,16 @@ func TestGoTestShardWithoutTimingPreservesDirectProductContract(t *testing.T) {
 	t.Parallel()
 
 	fixture := newGoTestShardFixture(t)
-	cmd := fixture.command(
-		"GO_TEST_TIMING_NAME=ignored-control",
-		"GO_TEST_TIMING_VARIANT=ignored-control",
-		"GO_TEST_RUNNER_LABEL=ignored-control",
-		"GITHUB_SHA=ignored-control",
-		"RUNNER_OS=ignored-control",
-		"SHOULD_NOT_LEAK=ignored-control",
-	)
-	status, output := runShardCommand(t, cmd)
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		return fixture.command(
+			"GO_TEST_TIMING_NAME=ignored-control",
+			"GO_TEST_TIMING_VARIANT=ignored-control",
+			"GO_TEST_RUNNER_LABEL=ignored-control",
+			"GITHUB_SHA=ignored-control",
+			"RUNNER_OS=ignored-control",
+			"SHOULD_NOT_LEAK=ignored-control",
+		)
+	})
 	if status != 23 {
 		t.Fatalf("shard exit = %d, want product exit 23\n%s", status, output)
 	}
@@ -379,7 +409,9 @@ func TestGoTestShardManifestSkipsDiscoveryAndPreservesModuloSelection(t *testing
 		"TestDelta",
 		"TestEpsilon",
 	)
-	status, output := runShardCommand(t, fixture.commandForShard("2", "3", "GO_TEST_MANIFEST="+manifest))
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		return fixture.commandForShard("2", "3", "GO_TEST_MANIFEST="+manifest)
+	})
 	if status != 23 {
 		t.Fatalf("manifest shard exit = %d, want product exit 23\n%s", status, output)
 	}
@@ -444,7 +476,9 @@ func TestGoTestShardManifestFailsClosed(t *testing.T) {
 
 			fixture := newGoTestShardFixtureWithExit(t, 0)
 			manifest := tt.manifest(t, fixture)
-			status, output := runShardCommand(t, fixture.command("GO_TEST_MANIFEST="+manifest))
+			status, output := runShardCommand(t, func() *exec.Cmd {
+				return fixture.command("GO_TEST_MANIFEST=" + manifest)
+			})
 			if status == 0 {
 				t.Fatalf("invalid manifest unexpectedly succeeded:\n%s", output)
 			}
@@ -469,7 +503,9 @@ func TestGoTestShardManifestRejectsNULBytesBeforeInvokingGo(t *testing.T) {
 		t.Fatalf("write NUL manifest: %v", err)
 	}
 
-	status, output := runShardCommand(t, fixture.command("GO_TEST_MANIFEST="+manifest))
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		return fixture.command("GO_TEST_MANIFEST=" + manifest)
+	})
 	if status == 0 {
 		t.Fatalf("NUL manifest unexpectedly succeeded:\n%s", output)
 	}
@@ -493,8 +529,9 @@ func TestGoTestShardManifestAcceptsFirstEntryWithBash32Nounset(t *testing.T) {
 		assertManifestDuplicateScanGuardsEmptyArray(t, filepath.Join(fixture.repoRoot, "scripts", "test-go-test-shard"))
 	}
 
-	cmd := fixture.commandForShardWithBash(bashPath, "1", "1", "GO_TEST_MANIFEST="+manifest)
-	status, output := runShardCommand(t, cmd)
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		return fixture.commandForShardWithBash(bashPath, "1", "1", "GO_TEST_MANIFEST="+manifest)
+	})
 	if status != 23 {
 		t.Fatalf("single-entry manifest shard exit = %d, want product exit 23 (bash=%q)\n%s", status, bashPath, output)
 	}
@@ -566,23 +603,24 @@ func TestGoTestShardTimingUsesObservableMetadataWithoutChangingProductStatus(t *
 		t.Fatalf("create timing directory: %v", err)
 	}
 	timingFile := filepath.Join(timingDir, "shard timing.json")
-	cmd := fixture.command(
-		"GO_TEST_TIMING_FILE="+timingFile,
-		"GO_TEST_TIMING_NAME=cmd-gc-process-1-of-2",
-		"GO_TEST_TIMING_VARIANT=linux-default",
-		"GO_TEST_RUNNER_LABEL=blacksmith-32vcpu",
-		"GO_TEST_RUNNER_CPU_COUNT=32",
-		"GITHUB_SHA=abc123",
-		"GITHUB_WORKFLOW=CI",
-		"GITHUB_RUN_ID=77",
-		"GITHUB_RUN_ATTEMPT=2",
-		"GITHUB_JOB=cmd-gc-process",
-		"RUNNER_NAME=runner-9",
-		"RUNNER_OS=Linux",
-		"RUNNER_ARCH=X64",
-		"OBSERVABLE_VARIANT=must-not-leak",
-	)
-	status, output := runShardCommand(t, cmd)
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		return fixture.command(
+			"GO_TEST_TIMING_FILE="+timingFile,
+			"GO_TEST_TIMING_NAME=cmd-gc-process-1-of-2",
+			"GO_TEST_TIMING_VARIANT=linux-default",
+			"GO_TEST_RUNNER_LABEL=blacksmith-32vcpu",
+			"GO_TEST_RUNNER_CPU_COUNT=32",
+			"GITHUB_SHA=abc123",
+			"GITHUB_WORKFLOW=CI",
+			"GITHUB_RUN_ID=77",
+			"GITHUB_RUN_ATTEMPT=2",
+			"GITHUB_JOB=cmd-gc-process",
+			"RUNNER_NAME=runner-9",
+			"RUNNER_OS=Linux",
+			"RUNNER_ARCH=X64",
+			"OBSERVABLE_VARIANT=must-not-leak",
+		)
+	})
 	if status != 23 {
 		t.Fatalf("shard exit = %d, want product exit 23\n%s", status, output)
 	}
@@ -659,7 +697,9 @@ func TestGoTestShardTimingDefaultsMetadataFromSelectedShard(t *testing.T) {
 
 	fixture := newGoTestShardFixture(t)
 	timingFile := filepath.Join(fixture.tmpDir, "timing.json")
-	status, output := runShardCommand(t, fixture.command("GO_TEST_TIMING_FILE="+timingFile))
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		return fixture.command("GO_TEST_TIMING_FILE=" + timingFile)
+	})
 	if status != 23 {
 		t.Fatalf("shard exit = %d, want product exit 23\n%s", status, output)
 	}
@@ -692,10 +732,12 @@ func TestGoTestShardTimingArtifactFailureIsAdvisory(t *testing.T) {
 
 	fixture := newGoTestShardFixture(t)
 	timingFile := filepath.Join(fixture.tmpDir, "missing", "timing.json")
-	status, output := runShardCommand(t, fixture.command(
-		"GO_TEST_TIMING_FILE="+timingFile,
-		"GO_TEST_RUNNER_CPU_COUNT=8",
-	))
+	status, output := runShardCommand(t, func() *exec.Cmd {
+		return fixture.command(
+			"GO_TEST_TIMING_FILE="+timingFile,
+			"GO_TEST_RUNNER_CPU_COUNT=8",
+		)
+	})
 	if status != 23 {
 		t.Fatalf("shard exit = %d, want product exit 23\n%s", status, output)
 	}

@@ -63,6 +63,66 @@ func TestOrderFiringCurrent_Stale_StaysBlocking(t *testing.T) {
 	}
 }
 
+func TestOrderFiringCurrent_ConsecutiveExecutionFailuresStayBlocking(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "cleanup-cooldown", "cooldown", "1h")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "cleanup-cooldown", Ts: now.Add(-10 * time.Minute)},
+	)
+
+	check := NewOrderFiringCurrentCheck(cfg, cityPath)
+	check.clock = func() time.Time { return now }
+	check.history = func(orders.Order) ([]orders.OrderRun, error) {
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-10 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-70 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-130 * time.Minute)},
+		}, nil
+	}
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	if result.Status != StatusError {
+		t.Fatalf("status = %v, want error; msg = %s; details = %v", result.Status, result.Message, result.Details)
+	}
+	if result.Severity != SeverityBlocking {
+		t.Fatalf("Severity = %v, want blocking for repeated execution failures", result.Severity)
+	}
+	if result.Message != "scheduled orders have repeated execution failures" {
+		t.Fatalf("message = %q, want repeated execution failure summary", result.Message)
+	}
+	if details := strings.Join(result.Details, "\n"); !strings.Contains(details, "cleanup-cooldown: 3 consecutive execution failures") {
+		t.Fatalf("details = %v, want consecutive execution failure diagnostic", result.Details)
+	}
+}
+
+func TestOrderFiringCurrent_SuccessResetsConsecutiveExecutionFailures(t *testing.T) {
+	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "cleanup-cooldown", "cooldown", "1h")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "cleanup-cooldown", Ts: now.Add(-10 * time.Minute)},
+	)
+
+	check := NewOrderFiringCurrentCheck(cfg, cityPath)
+	check.clock = func() time.Time { return now }
+	check.history = func(orders.Order) ([]orders.OrderRun, error) {
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExec, CreatedAt: now.Add(-10 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-70 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-130 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-190 * time.Minute)},
+		}, nil
+	}
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	if result.Status != StatusOK {
+		t.Fatalf("status = %v, want OK after a successful execution; msg = %s; details = %v", result.Status, result.Message, result.Details)
+	}
+}
+
 func TestOrderFiringCurrent_MixedAdvisoryAndBlocking_AggregatesBlocking(t *testing.T) {
 	// One advisory (never-fired cron) + one blocking (cooldown stale) →
 	// aggregate severity must be Blocking so the presence of any real

@@ -195,6 +195,24 @@ func doctorOrderFiringCurrentLastRunFunc(cityPath string, cfg *config.City, stde
 	}
 }
 
+func doctorOrderFiringCurrentHistoryFunc(cityPath string, cfg *config.City, stderr io.Writer) doctor.OrderFiringCurrentHistoryFunc {
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	resolveStores := cachedOrderHistoryStoresResolver(cityPath, cfg, stderr)
+	return func(order orders.Order) ([]orders.OrderRun, error) {
+		stores, err := resolveStores(order)
+		if err != nil {
+			return nil, err
+		}
+		return orders.RecentRunsAcross(
+			orderFrontDoorsForTypedStores(stores),
+			order.ScopedName(),
+			doctor.OrderFiringCurrentFailureHistoryLimit,
+		)
+	}
+}
+
 func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts buildDoctorChecksOpts) []doctor.Check {
 	var checks []doctor.Check
 	register := func(c doctor.Check) {
@@ -246,7 +264,12 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 		register(doctor.NewServiceSecretsPermsCheck(cfg, cityPath))
 		register(doctor.NewSkillCollisionCheck(cfg, cityPath))
 		register(doctor.NewSkillDanglingSinkCheck(doctorSkillStaticSinks(cityPath, cfg), materialize.LegacyOwnedRootsFor(cityPath), doctorLiveSessionSinks(cityPath, cfg)))
-		register(doctor.NewOrderFiringCurrentCheck(cfg, cityPath, doctor.WithOrderFiringCurrentLastRunFunc(doctorOrderFiringCurrentLastRunFunc(cityPath, cfg, opts.Stderr))))
+		register(doctor.NewOrderFiringCurrentCheck(
+			cfg,
+			cityPath,
+			doctor.WithOrderFiringCurrentLastRunFunc(doctorOrderFiringCurrentLastRunFunc(cityPath, cfg, opts.Stderr)),
+			doctor.WithOrderFiringCurrentHistoryFunc(doctorOrderFiringCurrentHistoryFunc(cityPath, cfg, opts.Stderr)),
+		))
 		register(newCodexHooksDriftCheck(cityPath, codexHookWorkDirs(cityPath, cfg)))
 		register(doctor.NewRigPackCoverageCheck(cfg, cityPath))
 		register(newPackRuntimesDoctorCheck(cfg))
@@ -329,6 +352,10 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	// (gc -> bd.real -> dolt) that operators routinely misread as CPU saturation.
 	// Advisory + read-only (/proc/stat); no config needed.
 	register(newForkRateCheck())
+	// Host-root capacity must be checked independently of cityPath: Go's shared
+	// build cache and compiler temporary directories can exhaust / even when the
+	// city lives on another filesystem.
+	register(doctor.NewHostDiskSpaceCheck())
 	if cfgErr == nil && doctorWorkspaceHasPostgresScope(cityPath, cfg) {
 		register(doctorchecks.NewPostgresAuthCheck(cityPath, cfg))
 	}
@@ -366,6 +393,7 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	}
 	register(doctor.NewWorktreeDiskSizeCheck(doctorCfg))
 	register(doctor.NewNestedWorktreePruneCheck(doctorCfg))
+	register(newWorktreeStaleCheck(cityPath))
 
 	// Custom types check — city store.
 	register(doctor.NewCustomTypesCheck(cityPath, "city"))

@@ -263,6 +263,12 @@ func claimFirstReadyHookAssignment(candidates []beads.Bead, opts hookClaimOption
 		if err != nil {
 			if ok {
 				fmt.Fprintf(stderr, "gc hook --claim: claimed %s but loading canonical bead failed: %v\n", candidate.ID, err) //nolint:errcheck
+				// The mutation committed; only gc's readback of it did not. The id
+				// came back from the mutation, so it is known and must be reported
+				// even though the canonical bead is not (ci-gyj39).
+				writeHookClaimCommittedIdentity(
+					hookClaimCommittedResult("ready_assignment", candidate.ID, claimed, claimActor),
+					opts.JSON, stdout, stderr)
 			} else {
 				fmt.Fprintf(stderr, "gc hook --claim: promoting ready assignment %s: %v\n", candidate.ID, err) //nolint:errcheck
 			}
@@ -345,6 +351,12 @@ func claimFirstEligibleHookCandidate(candidates []beads.Bead, opts hookClaimOpti
 				// Stop immediately: trying another candidate or draining would strand
 				// the assignment while falsely reporting idle work.
 				fmt.Fprintf(stderr, "gc hook --claim: claimed %s but loading canonical bead failed: %v\n", candidate.ID, err) //nolint:errcheck
+				// Stopping was always right; staying silent was not. The id is known
+				// -- it came back from the mutation -- so the session that now owns
+				// the bead is told which one it is (ci-gyj39).
+				writeHookClaimCommittedIdentity(
+					hookClaimCommittedResult("claimed", candidate.ID, claimed, opts.Assignee),
+					opts.JSON, stdout, stderr)
 				return hookClaimResult{terminal: true, code: 1}
 			}
 			// A single unclaimable candidate (a routed id whose bead was deleted,
@@ -501,18 +513,86 @@ func hookClaimCandidateIsMessage(candidate beads.Bead) bool {
 func writeHookClaimWorkResultForBead(result hookClaimJSONResult, bead beads.Bead, opts hookClaimOptions, ops hookClaimOps, dir string, stdout, stderr io.Writer) int {
 	result.RootBeadID = strings.TrimSpace(bead.Metadata[beadmeta.RootBeadIDMetadataKey])
 	result.ContinuationGroup = strings.TrimSpace(bead.Metadata[beadmeta.ContinuationGroupMetadataKey])
+	// The continuation preassign runs before the report because it supplies a
+	// field OF the report (continuation_assigned), which the graph-worker prompt
+	// reads to know which siblings it already holds. Everything else the claim
+	// owes the store is deliberately deferred until after the write below. On an
+	// ordinary routed bead this step returns immediately without touching the
+	// store, so the common path reports as soon as the claim has committed.
+	code := 0
+	assigned, err := preassignHookContinuationGroup(bead, opts, ops, dir)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc hook --claim: preassigning continuation group for %s: %v\n", bead.ID, err) //nolint:errcheck
+		// continuation_assigned is left empty rather than partial: a resumed
+		// session that believed it held siblings it does not would skip them.
+		code = 1
+	} else {
+		result.ContinuationAssigned = assigned
+	}
+	// The report goes out whatever happened above. The claim committed, so the
+	// bead is assigned and in_progress and has already left every ready query; a
+	// bare nonzero exit would leave the one session that owns it unable to name
+	// it (ci-gyj39).
+	if writeCode := writeHookClaimCommittedIdentity(result, opts.JSON, stdout, stderr); writeCode != 0 {
+		code = writeCode
+	}
+	// Best-effort claim-time bookkeeping, run AFTER the caller has been told what
+	// it holds -- and UNCONDITIONALLY, including when the preassign above failed.
+	// These are what make a committed claim visible to the projections: without
+	// the stamp the bead carries no gc.session_id, so there is no
+	// execution.step_started fact for a step that did start and no run map, and
+	// nothing reclaims an unstamped in_progress bead. Returning early on the
+	// preassign failure skipped all three and left that gap permanent for the
+	// bead. None of them affects the exit code; each reports its own failure on
+	// stderr.
 	durable, stamped := stampHookClaimIdentity(bead, opts, ops, dir, stderr)
 	if stamped && hookClaimLifecycleCandidate(durable, opts) {
 		ops.EmitExecutionStepStarted(durable, dir, opts.Env, opts.Assignee)
 	}
 	publishHookClaimRunMap(bead, opts, ops, stderr)
-	assigned, err := preassignHookContinuationGroup(bead, opts, ops, dir)
-	if err != nil {
-		fmt.Fprintf(stderr, "gc hook --claim: preassigning continuation group for %s: %v\n", bead.ID, err) //nolint:errcheck
-		return 1
+	return code
+}
+
+// hookClaimCommittedResult builds the identity-only work record for a committed
+// claim whose canonical readback failed. It carries no metadata-derived fields --
+// no root_bead_id, no continuation_group, no continuation_assigned -- because the
+// only bead it could read them from is the one that failed to load, and a guessed
+// continuation group would send the caller looking for siblings that may not be
+// its own. The id and the assignee are the two facts the mutation itself
+// returned, so they are the two facts reported.
+func hookClaimCommittedResult(reason, candidateID string, claimed beads.Bead, fallbackAssignee string) hookClaimJSONResult {
+	result := hookClaimJSONResult{
+		SchemaVersion: "1",
+		OK:            true,
+		Command:       hookClaimCommandName,
+		Action:        "work",
+		Reason:        reason,
+		BeadID:        strings.TrimSpace(claimed.ID),
+		Assignee:      strings.TrimSpace(claimed.Assignee),
 	}
-	result.ContinuationAssigned = assigned
-	if opts.JSON {
+	if result.BeadID == "" {
+		result.BeadID = candidateID
+	}
+	if result.Assignee == "" {
+		result.Assignee = fallbackAssignee
+	}
+	return result
+}
+
+// writeHookClaimCommittedIdentity writes the terminal work record for a bead this
+// session now owns, and is the ONLY way that record reaches stdout. Every caller
+// is on a path where the claim mutation has already committed, which is what
+// makes the write obligatory rather than conditional: the store has stopped
+// offering the bead to anyone else, so a caller that returns without it strands
+// the work under a session that cannot name it.
+//
+// Failures after this point are carried by the exit code and stderr, never by
+// withholding the record. The result schema (schemas/hook/result.schema.json)
+// pins ok to const true and forbids unknown properties, so there is no "claimed
+// but degraded" shape to emit -- the honest split is stdout answering "what do I
+// hold" and the exit status answering "did everything else work".
+func writeHookClaimCommittedIdentity(result hookClaimJSONResult, jsonOut bool, stdout, stderr io.Writer) int {
+	if jsonOut {
 		if err := writeCLIJSONLine(stdout, result); err != nil {
 			fmt.Fprintf(stderr, "gc hook --claim: writing JSON: %v\n", err) //nolint:errcheck
 			return 1
@@ -659,7 +739,7 @@ func hookClaimWithBdStore(ctx context.Context, dir string, env []string, beadID,
 // work -- the window self-heals rather than stranding the bead.
 func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, beadID, poolAlias, assignee string) (beads.Bead, bool, error) {
 	store := hookClaimBdStoreContext(ctx, dir, env, assignee)
-	current, ok, err := store.ReassignIfAssignee(beadID, poolAlias, assignee)
+	current, ok, err := store.ReassignPoolClaimIfCurrent(beadID, poolAlias, assignee)
 	if err != nil || !ok {
 		return current, ok, err
 	}

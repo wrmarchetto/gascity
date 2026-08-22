@@ -2284,6 +2284,28 @@ esac
 	}
 }
 
+// TestEffectiveWorkQueryRoutedQueueUsesNativeOldestSortAcrossReadyTiers pins the
+// exact argv the routed tier hands bd, and that both assigned tiers stay on the
+// storage-aware forms beside it.
+//
+// The case arm is a WHOLE-STRING match, not a glob, and that is the assertion:
+// any change to the routed tier's flags or their order makes the arm miss, the
+// fake answer "[]", and the run fail. "Native" is the load-bearing word --
+// ordering is delegated to bd rather than re-done in jq or Go, so the flag list
+// reaching bd verbatim is the whole mechanism.
+//
+// What this does NOT pin, deliberately: which bead a claim then takes off that
+// window. A single-row fake cannot separate oldest-first from priority-first at
+// all, and the negative assertion that used to sit here checked for an id the
+// fake never emitted. That end-to-end outcome lives in
+// cmd/gc/cmd_hook_claim_ordering_test.go (ci-27eo).
+//
+// Documented absence: there is no second routed-tier test here matching the same
+// argv by glob. TestEffectiveWorkQueryRoutedQueueUsesOldestBeforePriority was
+// exactly that, over an identical agent and env, and a glob arm asserts strictly
+// less than the whole-string arm above -- it tolerates the flag reordering this
+// test exists to catch. Restoring it would re-add a test that can only fail when
+// this one already has.
 func TestEffectiveWorkQueryRoutedQueueUsesNativeOldestSortAcrossReadyTiers(t *testing.T) {
 	a := Agent{Name: "worker", Dir: "hello-world"}
 	got := a.EffectiveWorkQuery()
@@ -2309,10 +2331,7 @@ case "$*" in
 esac
 `)
 	if !strings.Contains(out, "older-no-history") {
-		t.Fatalf("EffectiveWorkQuery() did not pick oldest routed work: %q", out)
-	}
-	if strings.Contains(out, "newer-durable") {
-		t.Fatalf("EffectiveWorkQuery() returned more than first oldest routed work: %q", out)
+		t.Fatalf("EffectiveWorkQuery() did not reach the routed tier with the expected argv: %q", out)
 	}
 }
 
@@ -2361,6 +2380,23 @@ esac
 	}
 }
 
+// TestEffectiveWorkQueryRoutedFallbackUsesNativeOldestSort pins that the
+// migration fallback tier (gc.run_target + gc.kind=workflow) is reached when the
+// routed tier is empty, asks bd for the same native oldest sort its siblings do,
+// and that its jq filter passes a row carrying no gc.routed_to.
+//
+// Scope is that tier's argv and filter, which no other test here covers: the
+// tier above it is pinned by
+// TestEffectiveWorkQueryRoutedQueueUsesNativeOldestSortAcrossReadyTiers, and the
+// two pool tiers' claim outcome by cmd/gc/cmd_hook_claim_ordering_test.go. That
+// suite deliberately leaves this tier unscripted -- reaching it there is a
+// refusal, because it means a case lost the tier it meant to exercise -- so the
+// jq filter it depends on stays verified here.
+//
+// What this does NOT pin, deliberately: which bead a claim takes off the tier.
+// The fake returns one row, so oldest-first and priority-first cannot be
+// separated, and the negative assertion that used to sit here named an id
+// ("newer-fallback") the fake never emitted (ci-27eo).
 func TestEffectiveWorkQueryRoutedFallbackUsesNativeOldestSort(t *testing.T) {
 	a := Agent{Name: "worker", Dir: "hello-world"}
 	out := runEffectiveWorkQuery(t, a, map[string]string{
@@ -2380,10 +2416,7 @@ case "$*" in
 esac
 `)
 	if !strings.Contains(out, "older-fallback") {
-		t.Fatalf("EffectiveWorkQuery() did not pick oldest routed fallback work: %q", out)
-	}
-	if strings.Contains(out, "newer-fallback") {
-		t.Fatalf("EffectiveWorkQuery() returned newer high-priority fallback work before oldest: %q", out)
+		t.Fatalf("EffectiveWorkQuery() did not reach the migration fallback tier with the expected argv: %q", out)
 	}
 }
 

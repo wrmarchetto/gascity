@@ -239,6 +239,46 @@ func TestNewRootCmdExposesRootPackCommands(t *testing.T) {
 	}
 }
 
+func TestNewRootCmdExecutesCityLocalCommands(t *testing.T) {
+	dir := t.TempDir()
+	cityDir := filepath.Join(dir, "city")
+	commandDir := filepath.Join(cityDir, "commands", "audit")
+	if err := os.MkdirAll(commandDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commandDir, "run.sh"), []byte("#!/bin/sh\necho city-local-command\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	probeDir := filepath.Join(cityDir, "commands", "probe")
+	if err := os.MkdirAll(probeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(probeDir, "run.sh"), []byte("#!/bin/sh\necho second-city-local-command\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GC_CITY_PATH", cityDir)
+
+	var stdout, stderr bytes.Buffer
+	root := newRootCmd(&stdout, &stderr)
+	if findSubcommand(root, "audit") == nil {
+		t.Fatal("missing city-local audit command")
+	}
+	if findSubcommand(root, "probe") == nil {
+		t.Fatal("missing second city-local probe command")
+	}
+	root.SetArgs([]string{"probe"})
+	if err := root.Execute(); err != nil {
+		t.Fatalf("Execute: %v; stderr: %s", err, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "second-city-local-command") {
+		t.Fatalf("stdout = %q, want second city command output", got)
+	}
+}
+
 func TestLegacyPackCommandHelpFlagUsesBuiltInHelp(t *testing.T) {
 	cityPath, packDir := setupPackCity(t)
 

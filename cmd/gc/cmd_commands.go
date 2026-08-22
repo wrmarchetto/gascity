@@ -104,11 +104,31 @@ func (outcome packCommandOutcome) err() error {
 func addDiscoveredCommandsToRoot(root *cobra.Command, entries []config.DiscoveredCommand, cityPath, cityName string, stdout, stderr io.Writer, warnOnCollision bool) {
 	core := coreCommandNames(root)
 	grouped := make(map[string][]config.DiscoveredCommand)
+	var cityCommands []config.DiscoveredCommand
 	for _, entry := range entries {
 		if entry.BindingName == "" {
+			cityCommands = append(cityCommands, entry)
 			continue
 		}
 		grouped[entry.BindingName] = append(grouped[entry.BindingName], entry)
+	}
+	for _, entry := range sortCommandsForTree(cityCommands) {
+		if len(entry.Command) == 0 {
+			continue
+		}
+		commandName := entry.Command[0]
+		existing := findSubcommand(root, commandName)
+		if core[commandName] || (existing != nil && existing.Annotations[productMetricsClassAnnotation] != packCommandClassificationValue) {
+			if warnOnCollision {
+				fmt.Fprintf(stderr, "gc: city command %q: name shadows an existing command, skipping\n", commandName) //nolint:errcheck
+			}
+			continue
+		}
+		addDiscoveredLeaf(root, entry, cityPath, cityName, stdout, stderr)
+		if existing == nil {
+			group := findSubcommand(root, commandName)
+			configureDiscoveredGroups(group)
+		}
 	}
 
 	bindings := make([]string, 0, len(grouped))
@@ -118,7 +138,7 @@ func addDiscoveredCommandsToRoot(root *cobra.Command, entries []config.Discovere
 	slices.Sort(bindings)
 
 	for _, binding := range bindings {
-		if core[binding] {
+		if core[binding] || findSubcommand(root, binding) != nil {
 			if warnOnCollision {
 				fmt.Fprintf(stderr, "gc: import binding %q: name shadows core command, skipping\n", binding) //nolint:errcheck
 			}

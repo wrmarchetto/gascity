@@ -453,11 +453,14 @@ func CheckBeadStateWithOptions(q BeadQuerier, beadID string, a config.Agent, dep
 
 	target := agentutil.RoutedToIdentity(&a)
 	if strings.TrimSpace(b.Metadata[beadmeta.RoutedToMetadataKey]) == target {
-		if b.Assignee == "" || b.Assignee == target {
+		if b.Assignee == "" || b.Assignee == target || assignedToTargetPool(deps.Cfg, target, b.Assignee) {
 			return resolveConvoyRecovery(q, b, deps, opts, beadID)
 		}
+		if opts.Reassign {
+			return BeadCheckResult{}
+		}
 		return BeadCheckResult{
-			Warnings: []string{fmt.Sprintf("warning: bead %s routed to %q but assigned to %q", beadID, target, b.Assignee)},
+			Warnings: []string{fmt.Sprintf("warning: bead %s is assigned to %q; sling will retain that assignment, so pool %q cannot claim it — rerun with --reassign to hand it to the pool", beadID, b.Assignee, target)},
 		}
 	}
 
@@ -467,6 +470,12 @@ func CheckBeadStateWithOptions(q BeadQuerier, beadID string, a config.Agent, dep
 			return resolveConvoyRecovery(q, b, deps, opts, beadID)
 		}
 		return BeadCheckResult{Warnings: routedStateWarnings(b, beadID)}
+	}
+	if b.Assignee != "" && !opts.Reassign {
+		if assignedToTargetPool(deps.Cfg, target, b.Assignee) {
+			return BeadCheckResult{Warnings: []string{fmt.Sprintf("warning: bead %s is already assigned to pool slot %q; sling will preserve it while adding gc.routed_to=%q so that slot can claim the work", beadID, b.Assignee, target)}}
+		}
+		return BeadCheckResult{Warnings: []string{fmt.Sprintf("warning: bead %s is assigned to %q; sling will retain that assignment, so pool %q cannot claim it — rerun with --reassign to hand it to the pool", beadID, b.Assignee, target)}}
 	}
 
 	if strings.TrimSpace(b.Metadata[beadmeta.RoutedToMetadataKey]) == "" {
@@ -478,6 +487,14 @@ func CheckBeadStateWithOptions(q BeadQuerier, beadID string, a config.Agent, dep
 		}
 	}
 	return BeadCheckResult{Warnings: routedStateWarnings(b, beadID)}
+}
+
+// assignedToTargetPool reports whether assignee is a concrete slot belonging
+// to target's configured pool. NormalizePoolRouteTarget owns the slot syntax
+// and limits, so this check stays aligned with the routing writer.
+func assignedToTargetPool(cfg *config.City, target, assignee string) bool {
+	assignee = strings.TrimSpace(assignee)
+	return assignee != "" && assignee != target && agentutil.NormalizePoolRouteTarget(cfg, assignee) == target
 }
 
 // routedStateWarnings reports human-readable warnings describing any existing
