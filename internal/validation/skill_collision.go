@@ -32,8 +32,8 @@ var supportedSkillVendors = map[string]struct{}{
 // a real path (e.g. the doctor check) can do so when formatting errors.
 const citySentinel = "<city>"
 
-// SkillCollision describes an agent-local skill name provided by two
-// or more agents sharing the same scope root and vendor.
+// SkillCollision describes an agent-local skill name provided from different
+// sources by two or more agents sharing the same scope root and vendor.
 type SkillCollision struct {
 	// ScopeRoot is the scope root the colliding agents materialize
 	// into. For rig-scoped agents this is the rig's configured path
@@ -50,10 +50,13 @@ type SkillCollision struct {
 	AgentNames []string
 }
 
-// ValidateSkillCollisions groups agents by (scope-root, vendor), builds
-// the multi-map agent-local-skill-name → [agent-names], and returns one
-// SkillCollision entry per name with more than one agent. Returns nil
-// when there are no collisions.
+// ValidateSkillCollisions groups agents by (scope-root, vendor), then by skill
+// name and canonical source. A name is unsafe only when agents would point the
+// same sink entry at different sources. Multiple agent directories may
+// intentionally symlink to one shared source, and are safe because every
+// materialization pass converges on the same target. Returns one SkillCollision
+// entry per name with more than one canonical source, or nil when there are no
+// collisions.
 //
 // Scope-root derivation mirrors the spec:
 //   - agent.Scope == "city" → scope root = city sentinel
@@ -79,8 +82,8 @@ func ValidateSkillCollisions(cfg *config.City) []SkillCollision {
 	}
 
 	type bucketKey struct{ scope, vendor string }
-	// buckets: scope+vendor → skillName → set of agent names.
-	buckets := make(map[bucketKey]map[string]map[string]struct{})
+	// buckets: scope+vendor → skillName → canonical source → agent names.
+	buckets := make(map[bucketKey]map[string]map[string]map[string]struct{})
 
 	for i := range cfg.Agents {
 		a := &cfg.Agents[i]
@@ -108,22 +111,27 @@ func ValidateSkillCollisions(cfg *config.City) []SkillCollision {
 			continue
 		}
 
-		names := listAgentLocalSkills(a.SkillsDir)
-		if len(names) == 0 {
+		sources := listAgentLocalSkillSources(a.SkillsDir)
+		if len(sources) == 0 {
 			continue
 		}
 
 		key := bucketKey{scope: scope, vendor: vendor}
 		bucket := buckets[key]
 		if bucket == nil {
-			bucket = make(map[string]map[string]struct{})
+			bucket = make(map[string]map[string]map[string]struct{})
 			buckets[key] = bucket
 		}
-		for _, name := range names {
-			agents := bucket[name]
+		for name, source := range sources {
+			bySource := bucket[name]
+			if bySource == nil {
+				bySource = make(map[string]map[string]struct{})
+				bucket[name] = bySource
+			}
+			agents := bySource[source]
 			if agents == nil {
 				agents = make(map[string]struct{})
-				bucket[name] = agents
+				bySource[source] = agents
 			}
 			agents[a.QualifiedName()] = struct{}{}
 		}
@@ -131,12 +139,18 @@ func ValidateSkillCollisions(cfg *config.City) []SkillCollision {
 
 	var collisions []SkillCollision
 	for key, bucket := range buckets {
-		for skillName, agents := range bucket {
-			if len(agents) < 2 {
+		for skillName, bySource := range bucket {
+			if len(bySource) < 2 {
 				continue
 			}
-			names := make([]string, 0, len(agents))
-			for n := range agents {
+			agentSet := make(map[string]struct{})
+			for _, agents := range bySource {
+				for agent := range agents {
+					agentSet[agent] = struct{}{}
+				}
+			}
+			names := make([]string, 0, len(agentSet))
+			for n := range agentSet {
 				names = append(names, n)
 			}
 			sort.Strings(names)
@@ -194,11 +208,12 @@ func scopeRootFor(a *config.Agent, rigPath map[string]string) string {
 	}
 }
 
-// listAgentLocalSkills returns the sorted list of skill names under the
-// agent's local skills directory. A subdirectory counts as a skill if
-// it contains a SKILL.md file (case-sensitive — matches the vendor
-// convention and every existing caller).
-func listAgentLocalSkills(dir string) []string {
+// listAgentLocalSkillSources returns each skill name and its canonical source
+// directory under the agent's local skills directory. A subdirectory counts as
+// a skill if it contains a SKILL.md file (case-sensitive — matching the vendor
+// convention and every existing caller). EvalSymlinks makes independent
+// agent-local links to one shared source compare equal.
+func listAgentLocalSkillSources(dir string) map[string]string {
 	if dir == "" {
 		return nil
 	}
@@ -206,7 +221,7 @@ func listAgentLocalSkills(dir string) []string {
 	if err != nil {
 		return nil
 	}
-	var names []string
+	sources := make(map[string]string)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -214,8 +229,14 @@ func listAgentLocalSkills(dir string) []string {
 		if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err != nil {
 			continue
 		}
-		names = append(names, e.Name())
+		source := filepath.Join(dir, e.Name())
+		if resolved, err := filepath.EvalSymlinks(source); err == nil {
+			source = resolved
+		}
+		if abs, err := filepath.Abs(source); err == nil {
+			source = abs
+		}
+		sources[e.Name()] = filepath.Clean(source)
 	}
-	sort.Strings(names)
-	return names
+	return sources
 }
