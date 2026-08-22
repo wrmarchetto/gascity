@@ -31,8 +31,11 @@ func TestBdBackupSizeCheck_EmptyBackupDir(t *testing.T) {
 	}
 	c := newTestBdBackupSizeCheck(dir)
 	r := c.Run(&CheckContext{})
-	if r.Status != StatusOK {
-		t.Fatalf("status = %d, want OK; msg = %s", r.Status, r.Message)
+	if r.Status != StatusError {
+		t.Fatalf("status = %d, want Error; msg = %s", r.Status, r.Message)
+	}
+	if !strings.Contains(r.Message, "empty") {
+		t.Errorf("message = %q, want empty-backup diagnosis", r.Message)
 	}
 }
 

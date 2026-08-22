@@ -179,6 +179,21 @@ func TestBdBackupFreshnessCheck(t *testing.T) {
 		}
 	})
 
+	t.Run("empty city backup directory warns that the city has never synced", func(t *testing.T) {
+		city := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(city, ".beads", "backup"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		r := NewBdBackupFreshnessCheckForScopeRoots(city, []string{city}, maxAge, clock).Run(nil)
+		if r.Status != StatusWarning {
+			t.Fatalf("empty city backup: want StatusWarning, got %v (%s)", r.Status, r.Message)
+		}
+		if !strings.Contains(r.Message, "city:") || !strings.Contains(r.Message, "never synced") {
+			t.Fatalf("empty city finding should identify the unsynced city backup, got %q", r.Message)
+		}
+	})
+
 	t.Run("missing timestamp warns", func(t *testing.T) {
 		scope := t.TempDir()
 		dir := filepath.Join(scope, ".beads", "backup")

@@ -79,8 +79,9 @@ func (c *BdBackupFreshnessCheck) Fix(_ *CheckContext) error { return nil }
 
 // Run reads each scope's .beads/backup/backup_state.json and warns on any whose
 // last sync is older than maxAge (or whose timestamp is missing or
-// unparseable). Scopes with no backup_state.json are skipped — "no backup at
-// all" is reported by DoltBackupCheck / BdBackupSizeCheck, not here.
+// unparseable). A missing backup directory is skipped, while an existing
+// backup directory with no state file is reported as a backup that has never
+// synced.
 func (c *BdBackupFreshnessCheck) Run(_ *CheckContext) *CheckResult {
 	r := &CheckResult{Name: c.Name()}
 	now := c.now()
@@ -261,10 +262,16 @@ func scanDoltBackupFreshness(label, beadsDir string, now time.Time, maxAge time.
 // scanLegacyBackupFreshness reads <beadsDir>/backup/backup_state.json for scopes
 // that have not migrated to a Dolt backup destination.
 func scanLegacyBackupFreshness(label, beadsDir string, now time.Time, maxAge time.Duration) (string, bool) {
-	path := filepath.Join(beadsDir, "backup", "backup_state.json")
+	backupDir := filepath.Join(beadsDir, "backup")
+	path := filepath.Join(backupDir, "backup_state.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			if _, statErr := os.Stat(backupDir); statErr == nil {
+				return fmt.Sprintf("%s: embedded-store backup directory exists but has never synced — no backup_state.json", label), true
+			} else if !errors.Is(statErr, fs.ErrNotExist) {
+				return fmt.Sprintf("%s: stat backup directory: %v", label, statErr), true
+			}
 			return "", false
 		}
 		return fmt.Sprintf("%s: read backup_state.json: %v", label, err), true
