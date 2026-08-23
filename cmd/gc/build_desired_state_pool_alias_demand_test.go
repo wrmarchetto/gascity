@@ -86,6 +86,28 @@ func TestPoolAliasDemandWakesColdPool(t *testing.T) {
 	}
 }
 
+// TestPoolAliasDemandSkipsDeferredWork ensures that the pool-alias tier uses
+// the same ready-work boundary as gc hook --claim. A deferred bead may retain
+// a bare pool assignee while waiting for its defer_until time, but that
+// assignee must not create session demand until the bead becomes ready.
+func TestPoolAliasDemandSkipsDeferredWork(t *testing.T) {
+	deferUntil := time.Now().Add(time.Hour)
+	result := poolAliasDemandResult(t, poolAliasDemandCity(), beads.Bead{
+		ID:         "ci-deferred-work",
+		Status:     "open",
+		Type:       "task",
+		Assignee:   "toolsmith",
+		DeferUntil: &deferUntil,
+	})
+
+	if got := result.ScaleCheckCounts["toolsmith"]; got != 0 {
+		t.Errorf("demand = %d, want 0 — deferred pool-alias work must not spawn a session before gc hook can claim it", got)
+	}
+	if len(result.State) != 0 {
+		t.Errorf("desired sessions = %d, want 0 — deferred pool-alias work must not start an empty session", len(result.State))
+	}
+}
+
 // TestPoolAliasDemandLeavesTheAssigneeInPlace pins the half most likely to be
 // "fixed" the wrong way. An earlier attempt at ci-mqqe cleared the assignee and
 // stamped gc.routed_to instead, which does wake the pool -- and silently
