@@ -181,6 +181,15 @@
               "null"
             ]
           },
+          "ClaimRoutes": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "DefaultSlingFormula": {
             "type": [
               "string",
@@ -556,6 +565,7 @@
           "MaxActiveSessions",
           "MinActiveSessions",
           "ScaleCheck",
+          "ClaimRoutes",
           "OptionDefaults"
         ],
         "type": "object"

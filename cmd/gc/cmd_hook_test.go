@@ -10,11 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/dispatch"
 	"github.com/gastownhall/gascity/internal/events"
 )
@@ -40,6 +42,56 @@ func TestNewHookCmdUsesRoutedWorkHelp(t *testing.T) {
 	}
 	if !strings.Contains(cmd.Long, "Finds routed work using the agent's work_query config.") {
 		t.Fatalf("Long = %q, want routed-work description", cmd.Long)
+	}
+}
+
+func TestHookClaimAgentRouteTargetsIncludesConfiguredClaimRoute(t *testing.T) {
+	agent := &config.Agent{
+		Name:        "worker-alt",
+		Dir:         "dart",
+		PoolName:    "dart/worker-alt",
+		ClaimRoutes: []string{"{{.Rig}}/shared", "dart/worker-alt"},
+	}
+
+	claimRoutes := expandHookClaimRoutes(t.TempDir(), "city", agent, []config.Rig{{Name: "dart"}}, io.Discard)
+	got := hookClaimAgentRouteTargets(agent, claimRoutes, []string{"dart/worker-alt"})
+	want := []string{"dart/worker-alt", "dart/shared"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("hookClaimAgentRouteTargets() = %q, want %q", got, want)
+	}
+}
+
+func TestConfiguredClaimRouteClaimsSharedCandidate(t *testing.T) {
+	agent := &config.Agent{
+		Name:        "worker-alt",
+		Dir:         "dart",
+		PoolName:    "dart/worker-alt",
+		ClaimRoutes: []string{"{{.Rig}}/shared"},
+	}
+	claimRoutes := expandHookClaimRoutes(t.TempDir(), "city", agent, []config.Rig{{Name: "dart"}}, io.Discard)
+
+	var claimedID string
+	ops := hookClaimOps{
+		Runner: func(string, string) (string, error) {
+			return `[{"id":"shared-work","status":"open","metadata":{"gc.routed_to":"dart/shared"}}]`, nil
+		},
+		Claim: func(_ context.Context, _ string, _ []string, beadID, assignee string) (beads.Bead, bool, error) {
+			claimedID = beadID
+			return beads.Bead{ID: beadID, Status: "in_progress", Assignee: assignee, Metadata: map[string]string{"gc.routed_to": "dart/shared"}}, true, nil
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	code := doHookClaim("query", ".", hookClaimOptions{
+		Assignee:           "dart/worker-alt-1",
+		IdentityCandidates: []string{"dart/worker-alt-1"},
+		RouteTargets:       hookClaimAgentRouteTargets(agent, claimRoutes, []string{"dart/worker-alt"}),
+		JSON:               true,
+	}, ops, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("doHookClaim() = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if claimedID != "shared-work" {
+		t.Fatalf("claimed ID = %q, want shared-work", claimedID)
 	}
 }
 

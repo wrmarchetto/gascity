@@ -155,6 +155,8 @@ type AgentPatch struct {
 	// unassigned session demand for bead-backed reconciliation. Supports the
 	// same Go template placeholders as Agent.scale_check.
 	ScaleCheck *string `toml:"scale_check,omitempty"`
+	// ClaimRoutes overrides the optional shared queues this agent may claim from.
+	ClaimRoutes *[]string `toml:"claim_routes,omitempty"`
 	// OptionDefaults adds or overrides provider option defaults for this agent.
 	// Keys are option keys, values are choice values. Merges additively
 	// (patch keys win over existing agent keys).
@@ -599,6 +601,9 @@ func applyAgentMutation(a *Agent, p *AgentPatch, sleepSource string) {
 	}
 	if p.ScaleCheck != nil {
 		a.ScaleCheck = *p.ScaleCheck
+	}
+	if p.ClaimRoutes != nil {
+		a.ClaimRoutes = append([]string(nil), (*p.ClaimRoutes)...)
 	}
 	// OptionDefaults: additive merge (patch keys win).
 	if len(p.OptionDefaults) > 0 {

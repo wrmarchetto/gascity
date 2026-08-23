@@ -283,6 +283,7 @@ func deepCopyAgent(src *config.Agent, name, dir string) config.Agent {
 		PoolName:             src.QualifiedName(),
 		Implicit:             src.Implicit,
 		ScaleCheck:           src.ScaleCheck,
+		ClaimRoutes:          append([]string(nil), src.ClaimRoutes...),
 		BindingName:          src.BindingName,
 		PackName:             src.PackName,
 	}

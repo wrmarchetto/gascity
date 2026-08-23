@@ -794,6 +794,8 @@ type AgentOverride struct {
 	// ScaleCheck overrides the shell command whose output reports new
 	// unassigned session demand for bead-backed reconciliation.
 	ScaleCheck *string `toml:"scale_check,omitempty"`
+	// ClaimRoutes overrides the optional shared queues this agent may claim from.
+	ClaimRoutes *[]string `toml:"claim_routes,omitempty"`
 	// OptionDefaults adds or overrides provider option defaults for this agent.
 	// Keys are option keys, values are choice values. Merges additively
 	// (override keys win over existing agent keys).
@@ -3320,6 +3322,11 @@ type Agent struct {
 	// oldest 20 rows of a pool tier are candidates; past that, ready work is
 	// invisible to the claim until the head of the queue drains.
 	WorkQuery string `toml:"work_query,omitempty"`
+	// ClaimRoutes optionally permit this agent to claim new unassigned work
+	// routed to shared queues. They supplement the agent's own qualified pool
+	// route, while assigned-work recovery remains restricted to the session's
+	// own identity. Supports the same Go template placeholders as WorkQuery.
+	ClaimRoutes []string `toml:"claim_routes,omitempty"`
 	// SlingQuery is the command template to route a bead to this session config.
 	// If it contains Go template placeholders, gc expands them using the same
 	// PathContext fields as work_dir (Agent, AgentBase, Rig, RigRoot,
@@ -3544,6 +3551,7 @@ func (a Agent) Clone() Agent {
 	out.Args = append([]string(nil), a.Args...)
 	out.ProcessNames = append([]string(nil), a.ProcessNames...)
 	out.NamepoolNames = append([]string(nil), a.NamepoolNames...)
+	out.ClaimRoutes = append([]string(nil), a.ClaimRoutes...)
 	out.InstallAgentHooks = append([]string(nil), a.InstallAgentHooks...)
 	out.Skills = append([]string(nil), a.Skills...)
 	out.MCP = append([]string(nil), a.MCP...)

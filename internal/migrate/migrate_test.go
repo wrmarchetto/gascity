@@ -1137,6 +1137,7 @@ func TestAgentConfigFromAgentCoversPersistedFields(t *testing.T) {
 		OnDeath:                "echo death",
 		Namepool:               "names.txt",
 		WorkQuery:              "bd ready",
+		ClaimRoutes:            []string{"shared/worker"},
 		SlingQuery:             "bd update {}",
 		IdleTimeout:            "15m",
 		MaxSessionAge:          "5h",
