@@ -290,6 +290,48 @@ func TestReleaseOrphanedPoolAssignments_ReopensMissingPoolAssignee(t *testing.T)
 	}
 }
 
+// A bare pool-template assignee is demand for a cold pool, not a session
+// identity. The reaper must leave it untouched so the demand reader can start
+// a slot to claim it. This regression uses a routed bead because direct
+// assignment may retain an existing gc.routed_to value.
+func TestReleaseOrphanedPoolAssignments_PreservesColdPoolTemplateAssignee(t *testing.T) {
+	store := beads.NewMemStore()
+	work, err := store.Create(beads.Bead{
+		Title:    "cold pool demand",
+		Assignee: "worker",
+		Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "worker"},
+	})
+	if err != nil {
+		t.Fatalf("Create work bead: %v", err)
+	}
+	work, err = store.Get(work.ID)
+	if err != nil {
+		t.Fatalf("Reload work bead: %v", err)
+	}
+
+	released := releaseOrphanedPoolAssignmentsFromBeads(
+		store,
+		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
+		"",
+		nil,
+		[]beads.Bead{work},
+		nil,
+		nil,
+		nil,
+	)
+	if len(released) != 0 {
+		t.Fatalf("released = %v, want none for a cold pool demand expression", released)
+	}
+
+	got, err := store.Get(work.ID)
+	if err != nil {
+		t.Fatalf("Get work bead: %v", err)
+	}
+	if got.Assignee != "worker" {
+		t.Fatalf("assignee = %q, want worker: a cold pool must retain its demand", got.Assignee)
+	}
+}
+
 func TestReleaseOrphanedPoolAssignments_SkipsUnassignedWorkflowRoot(t *testing.T) {
 	store := beads.NewMemStore()
 	root, err := store.Create(beads.Bead{
