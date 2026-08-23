@@ -34,6 +34,8 @@ import (
 
 const maxIdleSleepProbesPerTick = 3
 
+var errStaleWorktreeMarker = errors.New("stale worktree marker")
+
 type wakeTarget struct {
 	// info is the typed session.Info the wake evaluation + start-candidate stage
 	// carries, captured from the coherent post-fold infoByID snapshot at the append
@@ -5591,7 +5593,7 @@ func validateWorkDirForSessionAssignment(workDir string) error {
 	}
 	marker := filepath.Join(workDir, worktreeStaleFileName)
 	if _, err := os.Lstat(marker); err == nil {
-		return fmt.Errorf("worktree %q carries %s; refusing session assignment", workDir, marker)
+		return fmt.Errorf("%w: worktree %q carries %s; refusing session assignment", errStaleWorktreeMarker, workDir, marker)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking stale worktree marker for %q: %w", workDir, err)
 	}

@@ -909,6 +909,71 @@ func TestPrepareStartCandidateForCity_RejectsStaleAssignedTaskWorkDir(t *testing
 	}
 }
 
+func TestExecutePlannedStartsTraced_StaleWorktreeMarkerClosesPendingCreate(t *testing.T) {
+	store := beads.NewMemStore()
+	clk := &clock.Fake{Time: time.Date(2026, 8, 23, 9, 15, 0, 0, time.UTC)}
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=builder/ci-befp7\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale worktree marker: %v", err)
+	}
+	session, err := store.Create(beads.Bead{
+		ID:     "gc-stale-worktree",
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: creatingMeta(map[string]string{
+			"session_name":         "worker",
+			"template":             "worker",
+			"generation":           "1",
+			"continuation_epoch":   "1",
+			"instance_token":       "tok-stale-worktree",
+			"pending_create_claim": "true",
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tp := TemplateParams{Command: "worker", SessionName: "worker", TemplateName: "worker", WorkDir: workDir}
+	var stderr bytes.Buffer
+	woken := executePlannedStartsTraced(
+		context.Background(),
+		[]startCandidate{{info: sessiontest.SeedBead(t, session), tp: tp}},
+		&config.City{Agents: []config.Agent{{Name: "worker"}}},
+		map[string]TemplateParams{"worker": tp},
+		runtime.NewFake(),
+		store,
+		"test-city",
+		"",
+		clk,
+		events.Discard,
+		5*time.Second,
+		ioDiscard{},
+		&stderr,
+		nil,
+	)
+	if woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+
+	updated, err := store.Get(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != "closed" {
+		t.Fatalf("status = %q, want closed so a marked worktree cannot occupy a pool slot", updated.Status)
+	}
+	if got := updated.Metadata["state"]; got != string(sessionpkg.StateFailedCreate) {
+		t.Fatalf("state = %q, want %q", got, sessionpkg.StateFailedCreate)
+	}
+	if got := updated.Metadata["pending_create_claim"]; got != "" {
+		t.Fatalf("pending_create_claim = %q, want cleared", got)
+	}
+	if !strings.Contains(stderr.String(), worktreeStaleFileName) {
+		t.Fatalf("stderr = %q, want stale marker diagnostic", stderr.String())
+	}
+}
+
 func TestPrepareStartCandidateReloadsOverridesBeforeWake(t *testing.T) {
 	store := beads.NewMemStore()
 	session, err := store.Create(beads.Bead{
