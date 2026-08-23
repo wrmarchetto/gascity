@@ -482,10 +482,14 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 				alias,
 				agentForQuery,
 			),
-			RouteTargets: hookClaimRouteTargets(hookClaimPrimaryRouteTarget(&a), resolvedAgentName, strings.TrimSpace(overrides["GC_TEMPLATE"])),
-			Env:          queryEnv,
-			DrainAck:     opts.DrainAck,
-			JSON:         opts.JSON,
+			RouteTargets: hookClaimAgentRouteTargets(
+				&a,
+				expandHookClaimRoutes(cityPath, cityName, &a, cfg.Rigs, stderr),
+				[]string{resolvedAgentName, strings.TrimSpace(overrides["GC_TEMPLATE"])},
+			),
+			Env:      queryEnv,
+			DrainAck: opts.DrainAck,
+			JSON:     opts.JSON,
 		}
 		return claimHookWork(workQuery, workDir, queryEnv, stores, claimOpts, emitQueryFailure, stdout, stderr)
 	}
@@ -702,6 +706,26 @@ func claimHookWorkWithRunner(workQuery, workDir string, queryEnv []string, store
 
 func hookClaimPrimaryRouteTarget(a *config.Agent) string {
 	return agentutil.RoutedToIdentity(a)
+}
+
+// hookClaimAgentRouteTargets returns the routes on which an agent may claim
+// new unassigned work. ClaimRoutes are explicit shared-queue configuration;
+// they supplement, rather than replace, the agent's own pool route.
+func hookClaimAgentRouteTargets(a *config.Agent, claimRoutes, fallbackRoutes []string) []string {
+	routes := []string{hookClaimPrimaryRouteTarget(a)}
+	routes = append(routes, claimRoutes...)
+	routes = append(routes, fallbackRoutes...)
+	return hookClaimRouteTargets(routes...)
+}
+
+// expandHookClaimRoutes resolves template values in an agent's shared claim
+// routes with the same context as its work query.
+func expandHookClaimRoutes(cityPath, cityName string, a *config.Agent, rigs []config.Rig, stderr io.Writer) []string {
+	routes := make([]string, 0, len(a.ClaimRoutes))
+	for _, route := range a.ClaimRoutes {
+		routes = append(routes, expandAgentCommandTemplate(cityPath, cityName, a, rigs, "claim_routes", route, stderr))
+	}
+	return routes
 }
 
 func hookSessionAgentForQuery() string {

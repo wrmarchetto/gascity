@@ -227,6 +227,13 @@
           "type": "string",
           "description": "WorkQuery is the shell command template to find available work for this\nagent. If it contains Go template placeholders, gc expands them using\nthe same PathContext fields as work_dir (Agent, AgentBase, Rig,\nRigRoot, CityRoot, CityName, WorktreesRoot) before probe, hook, and\nprompt-context execution. Used by gc hook and available in prompt\ntemplates as {{.WorkQuery}}.\nIf unset, Gas City uses a three-tier default query:\n  1. in_progress work assigned to this session/alias (crash recovery)\n  2. ready work assigned to this session/alias (pre-assigned work)\n  3. ready unassigned work with gc.routed_to=\u003cqualified-name\u003e\nWhen the controller probes for demand without session context, only the\nrouted_to tier applies. Override to integrate with external task systems.\nOrdering: the pool tiers (routed and pool-alias) claim OLDEST FIRST, not\nhighest priority. That is deliberate -- it keeps newer high-priority work\nfrom jumping a queue that older ready work is already waiting in -- but it\nmeans raising a bead's priority does NOT move it up a pool queue, even\nthough `bd ready` lists rows priority-first. Use assignment to a specific\nsession/alias (tier 2) to sequence one bead ahead of the queue. The tiers\nare tried in order and the first non-empty one wins, so any tier-3 match\nbeats every pool-alias match regardless of either one's priority. Only the\noldest 20 rows of a pool tier are candidates; past that, ready work is\ninvisible to the claim until the head of the queue drains."
         },
+        "claim_routes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "ClaimRoutes optionally permit this agent to claim new unassigned work\nrouted to shared queues. They supplement the agent's own qualified pool\nroute, while assigned-work recovery remains restricted to the session's\nown identity. Supports the same Go template placeholders as WorkQuery."
+        },
         "sling_query": {
           "type": "string",
           "description": "SlingQuery is the command template to route a bead to this session config.\nIf it contains Go template placeholders, gc expands them using the same\nPathContext fields as work_dir (Agent, AgentBase, Rig, RigRoot,\nCityRoot, CityName, WorktreesRoot) before replacing {} with the bead\nID. Used by gc sling to make a bead visible to the target's work_query.\nThe placeholder {} is replaced with the bead ID at runtime.\nDefault for all agents:\n\"bd update {} --set-metadata gc.routed_to=\u003cqualified-name\u003e\".\nRouting is metadata-based; sling stamps the target template and the\nreconciler/scale_check paths decide when sessions are created.\nCustom sling_query and work_query can be overridden independently."
@@ -695,6 +702,13 @@
           "type": "string",
           "description": "ScaleCheck overrides the shell command whose output reports new\nunassigned session demand for bead-backed reconciliation."
         },
+        "claim_routes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "ClaimRoutes overrides the optional shared queues this agent may claim from."
+        },
         "option_defaults": {
           "additionalProperties": {
             "type": "string"
@@ -979,6 +993,13 @@
         "scale_check": {
           "type": "string",
           "description": "ScaleCheck overrides the command template whose output reports new\nunassigned session demand for bead-backed reconciliation. Supports the\nsame Go template placeholders as Agent.scale_check."
+        },
+        "claim_routes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "ClaimRoutes overrides the optional shared queues this agent may claim from."
         },
         "option_defaults": {
           "additionalProperties": {
