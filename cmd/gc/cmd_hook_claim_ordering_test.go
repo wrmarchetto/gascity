@@ -15,8 +15,8 @@
 // establishing ci-q2vx).
 //
 // Scope is the claim outcome for the two pool tiers -- routed (gc.routed_to)
-// and pool-alias (assignee == the pool name) -- plus the window bound that the
-// tier's --limit imposes on what is a candidate. The migration fallback tier
+// and pool-alias (assignee == the pool name) -- plus their unbounded candidate
+// set. The migration fallback tier
 // (gc.run_target + gc.kind=workflow) stays with internal/config, which owns the
 // jq filter it depends on. Whether the ordering policy is still WRITTEN DOWN
 // stays with test/docsync.
@@ -49,21 +49,15 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 )
 
-// routedQueueWindow is the number of rows a pool tier's --limit lets through,
-// and therefore the number of fixture rows that can be claim candidates at all.
-// Both pool tiers emit the same limit today. It is NOT authoritative: the fake bd
-// logs the limit it was actually asked for and assertTierWindow compares the two
-// per tier, so a change to either emitted --limit -- or the two diverging -- fails
-// with an explanation instead of silently making the out-of-window rows reachable
-// and the window assertions vacuous.
-const routedQueueWindow = 20
+// routedQueueCandidateLimit is the unbounded --limit value emitted by both pool
+// tiers. It is not authoritative: the fake bd logs what each tier actually asked
+// for so a bounded query cannot make tail rows unreachable without failing here.
+const routedQueueCandidateLimit = 0
 
-// routedQueueFixtureRows exceeds routedQueueWindow so the fixture holds rows bd
-// never returns. Past the window, ready work of any priority is invisible to the
-// claim until the head of the queue drains (measured at 41 ready rows on one
-// pool alias, ci-q2vx), and re-sorting the returned rows cannot reach what bd
-// never returned.
-const routedQueueFixtureRows = routedQueueWindow + 2
+// routedQueueFixtureRows is deliberately wider than the former twenty-row cap.
+// Its tail proves --sort oldest orders all candidates without deciding which work
+// the claim loop can see.
+const routedQueueFixtureRows = 22
 
 // orderingFixtureTarget is the pool route both tiers are probed with -- the
 // PoolName of the slot the tests build, which is what buildWorkQuery resolves
@@ -97,14 +91,12 @@ type orderingFixtureRow struct {
 // orderings disagree at the head by construction, and
 // assertFixtureDiscriminates refuses the fixture if they ever agree again.
 //
-// The resulting shape, for the default 22 rows and a 20-row window:
+// The resulting shape, for the default 22 rows:
 //
 //	routed-00      oldest, P3   -- the bead FIFO must claim
 //	routed-07      older,  P2
-//	routed-14..19  newer,  P1   -- inside the window, must not jump the queue
-//	routed-20      newer,  P1   -- outside the window
-//	routed-21      newest, P0   -- outside the window, and the head bd would
-//	                              return if --sort oldest were dropped
+//	routed-14..20  newer,  P1   -- must not jump the queue
+//	routed-21      newest, P0   -- bd's head if --sort oldest is dropped
 func routedQueueFixture(count int) []orderingFixtureRow {
 	base := time.Date(2026, 5, 20, 6, 9, 30, 0, time.UTC)
 	rows := make([]orderingFixtureRow, 0, count)
@@ -298,11 +290,10 @@ func (r *orderingRig) refusals() []string {
 	return out
 }
 
-// assertTierWindow fails unless tier asked bd for exactly routedQueueWindow rows.
-// The fixture's out-of-window rows are only out of the window because of that
-// number, so a change to the emitted --limit -- in either pool tier -- must land
-// here rather than quietly turning the window assertions into no-ops.
-func (r *orderingRig) assertTierWindow(tier string) {
+// assertTierCandidateLimit fails unless tier asks bd for an unbounded candidate
+// set. The fake applies the requested limit, so a bounded query would otherwise
+// silently hide tail rows from the assertions that follow.
+func (r *orderingRig) assertTierCandidateLimit(tier string) {
 	r.t.Helper()
 	marker := "served: tier=" + tier + " order=oldest limit="
 	for _, line := range strings.Split(r.log(), "\n") {
@@ -314,14 +305,23 @@ func (r *orderingRig) assertTierWindow(tier string) {
 		if err != nil {
 			r.t.Fatalf("fake bd logged an unparseable %s limit %q: %v", tier, rest, err)
 		}
-		if limit != routedQueueWindow {
-			r.t.Fatalf("%s tier asked bd for --limit=%d, but this fixture is built for a %d-row window; "+
-				"re-derive routedQueueWindow and the out-of-window row indices together, or the window "+
-				"assertions stop testing anything", tier, limit, routedQueueWindow)
+		if limit != routedQueueCandidateLimit {
+			r.t.Fatalf("%s tier asked bd for --limit=%d, want unbounded --limit=%d so every ready row remains a claim candidate",
+				tier, limit, routedQueueCandidateLimit)
 		}
 		return
 	}
 	r.t.Fatalf("fake bd never served the %s tier oldest-first; log:\n%s", tier, r.log())
+}
+
+func (r *orderingRig) assertCandidatesInclude(tier string, rows []orderingFixtureRow) {
+	r.t.Helper()
+	for _, row := range rows {
+		if !strings.Contains(r.lastOutput, row.ID) {
+			r.t.Fatalf("%s candidate %q (P%d) is missing from the unbounded work_query output: %s",
+				tier, row.ID, row.Priority, r.lastOutput)
+		}
+	}
 }
 
 // orderingFakeBdScript is the fake bd. It resolves a tier from the argv, picks
@@ -471,7 +471,7 @@ func TestHookClaimOrderingTakesOldestRoutedBeadAheadOfNewerHigherPriority(t *tes
 	if len(probe.poolClaimed) > 0 {
 		t.Fatalf("pool transfer ran on %v; a routed unassigned bead is taken by the plain claim", probe.poolClaimed)
 	}
-	rig.assertTierWindow("routed")
+	rig.assertTierCandidateLimit("routed")
 }
 
 func TestHookClaimOrderingTakesHighestPriorityOnceTheOldestSortIsDropped(t *testing.T) {
@@ -508,42 +508,18 @@ func TestHookClaimOrderingTakesHighestPriorityOnceTheOldestSortIsDropped(t *test
 	}
 }
 
-func TestHookClaimOrderingNeverSeesRoutedWorkPastTheOldestTwentyRows(t *testing.T) {
-	// The sort and the limit are not independent: together they also bound what
-	// is a CANDIDATE. The newest, highest-priority rows fall outside the window
-	// entirely, so they never reach the claim loop -- which is why re-sorting the
-	// returned rows in Go could not surface them even if someone wanted to.
+func TestHookClaimOrderingSeesEveryRoutedCandidate(t *testing.T) {
+	// Sorting must order candidates, never decide which ready work is visible to
+	// the claim loop. The tail contains newer, higher-priority work so a bounded
+	// query cannot pass by merely returning the FIFO head correctly.
 	rows := routedQueueFixture(routedQueueFixtureRows)
-	oldestFirst := sortedOldestFirst(rows)
-	if len(oldestFirst) <= routedQueueWindow {
-		t.Fatalf("fixture has %d rows, need more than the %d-row window to have anything outside it",
-			len(oldestFirst), routedQueueWindow)
-	}
-	outside := oldestFirst[routedQueueWindow:]
 
 	rig := newOrderingRig(t)
 	rig.serveTier("routed", rows)
 	var probe orderingClaimProbe
 	claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
-	rig.assertTierWindow("routed")
-
-	// Asserted against the raw work_query output, not against the claim: the
-	// point is that these ids are absent from the candidate list, which is a
-	// stronger statement than "they were not the one claimed".
-	for _, row := range outside {
-		if strings.Contains(rig.lastOutput, row.ID) {
-			t.Fatalf("row %q (P%d) is past the oldest %d and must not be a candidate; work_query returned: %s",
-				row.ID, row.Priority, routedQueueWindow, rig.lastOutput)
-		}
-	}
-	// A row just inside the window must be present, or the absence above is
-	// explained by the fixture never having been served rather than by the limit.
-	inside := oldestFirst[routedQueueWindow-1]
-	if !strings.Contains(rig.lastOutput, inside.ID) {
-		t.Fatalf("row %q is the last row inside the %d-row window and is missing from the candidate list; "+
-			"the window bound is not what dropped the rows above.\nwork_query returned: %s",
-			inside.ID, routedQueueWindow, rig.lastOutput)
-	}
+	rig.assertTierCandidateLimit("routed")
+	rig.assertCandidatesInclude("routed", rows)
 }
 
 func TestHookClaimOrderingTakesOldestPoolParkedBeadAheadOfNewerHigherPriority(t *testing.T) {
@@ -578,16 +554,8 @@ func TestHookClaimOrderingTakesOldestPoolParkedBeadAheadOfNewerHigherPriority(t 
 		t.Fatalf("pool transfers = %v, want exactly [%s]; work parked on the pool name is taken by the "+
 			"compare-and-swap transfer, not the plain claim", probe.poolClaimed, oldest.ID)
 	}
-	rig.assertTierWindow("alias")
-	// This tier's window is asserted on the candidate list for the same reason as
-	// the routed one: absence from the candidates is a stronger statement than
-	// "was not the one claimed", and an oldest-first sort would keep the FIFO
-	// assertion above green even if the limit vanished entirely.
-	newest := sortedOldestFirst(rows)[len(rows)-1]
-	if strings.Contains(rig.lastOutput, newest.ID) {
-		t.Fatalf("row %q (P%d) is past the oldest %d on the pool alias and must not be a candidate; "+
-			"work_query returned: %s", newest.ID, newest.Priority, routedQueueWindow, rig.lastOutput)
-	}
+	rig.assertTierCandidateLimit("alias")
+	rig.assertCandidatesInclude("alias", rows)
 }
 
 func TestHookClaimOrderingPrefersRoutedTierOverHigherPriorityPoolAlias(t *testing.T) {
