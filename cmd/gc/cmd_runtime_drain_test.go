@@ -329,6 +329,9 @@ func (f *fakeDrainOps) clearDrain(sessionName string) error {
 	}
 	delete(f.draining, sessionName)
 	delete(f.drainTimes, sessionName)
+	delete(f.acked, sessionName)
+	delete(f.ackOrigins, sessionName)
+	delete(f.ackReasons, sessionName)
 	return nil
 }
 
