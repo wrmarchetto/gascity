@@ -170,6 +170,13 @@ func releaseOrphanedPoolAssignments(
 				continue
 			}
 		} else {
+			// A bare pool template in Assignee is intentional cold-pool demand,
+			// not ownership by a concrete session. Its absence from the open
+			// session snapshot is therefore expected: reaping it would erase the
+			// very demand that must create a pool slot to claim the bead.
+			if agentTemplateIdentitiesEquivalent(cfg, assignee, template) {
+				continue
+			}
 			workStoreRef := ""
 			if storeRefAware {
 				workStoreRef = assignedWorkStoreRefs[i]
