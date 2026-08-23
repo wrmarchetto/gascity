@@ -1142,12 +1142,10 @@ func TestReconcileSessionBeads_PreserveNamedReconcilerAckStopDeferredWhenStoreQu
 	}
 }
 
-// TestReconcileSessionBeads_AgentAckStopProceedsDespiteStoreQueryPartial locks
-// the other half of gc-kkgak: an agent-sourced drain ack (NOT reconciler-owned —
-// an explicit `gc runtime drain-ack` handoff) must still stop promptly even
-// under storeQueryPartial. The agent's intent is explicit, not derived from the
-// degraded store, so the partial-store guard must not swallow it.
-func TestReconcileSessionBeads_AgentAckStopProceedsDespiteStoreQueryPartial(t *testing.T) {
+// TestReconcileSessionBeads_AgentAckDefersDuringStoreQueryPartial ensures an
+// agent acknowledgement cannot terminate a live session while the reconciler
+// has incomplete visibility into its assigned work.
+func TestReconcileSessionBeads_AgentAckDefersDuringStoreQueryPartial(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
 	env.addDesired("worker", "worker", false)
@@ -1178,7 +1176,7 @@ func TestReconcileSessionBeads_AgentAckStopProceedsDespiteStoreQueryPartial(t *t
 		nil,
 		env.dt,
 		nil,
-		true, // storeQueryPartial — must NOT defer an agent-sourced ack
+		true, // storeQueryPartial — must defer every destructive drain action
 		nil,
 		"",
 		nil,
@@ -1194,8 +1192,17 @@ func TestReconcileSessionBeads_AgentAckStopProceedsDespiteStoreQueryPartial(t *t
 	if err != nil {
 		t.Fatalf("Get(%s): %v", session.ID, err)
 	}
-	if got.Metadata["state_reason"] != sessionpkg.DrainAckStopPendingReason {
-		t.Fatalf("agent-sourced drain-ack was deferred under storeQueryPartial (state_reason=%q); handoff acks must stop unconditionally (gc-kkgak)", got.Metadata["state_reason"])
+	if got.Metadata["state"] != "active" {
+		t.Fatalf("state=%q, want active while assigned-work visibility is partial", got.Metadata["state"])
+	}
+	if got.Metadata["state_reason"] == sessionpkg.DrainAckStopPendingReason {
+		t.Fatal("agent-sourced drain-ack set stop pending during partial store query")
+	}
+	if !dops.acked["worker"] {
+		t.Fatal("drain acknowledgement was cleared before a complete store query")
+	}
+	if !env.sp.IsRunning("worker") {
+		t.Fatal("runtime stopped while assigned-work visibility was partial")
 	}
 }
 
@@ -1725,7 +1732,7 @@ func TestConfirmDrainAckRuntimeDeadTokenFenceStopsOnReplacement(t *testing.T) {
 	}
 }
 
-func TestReconcileSessionBeads_DrainAckWithAssignedOpenWorkSleepsInsteadOfDraining(t *testing.T) {
+func TestReconcileSessionBeads_AgentDrainAckWithAssignedOpenWorkStaysActive(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
 		Agents: []config.Agent{{Name: "worker"}},
@@ -1774,30 +1781,28 @@ func TestReconcileSessionBeads_DrainAckWithAssignedOpenWorkSleepsInsteadOfDraini
 	if woken != 0 {
 		t.Fatalf("woken = %d, want 0", woken)
 	}
-	got := env.reconcileStopPendingToTerminal(t, env.sp, session, dops, map[string]bool{"worker": true})
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session after rejecting drain-ack: %v", err)
+	}
 	if got.Status == "closed" {
 		t.Fatalf("session bead closed unexpectedly: metadata=%v", got.Metadata)
 	}
-	if got.Metadata["state"] != "asleep" {
-		t.Fatalf("state = %q, want asleep", got.Metadata["state"])
+	if got.Metadata["state"] != "active" {
+		t.Fatalf("state = %q, want active", got.Metadata["state"])
 	}
-	if got.Metadata["sleep_reason"] != "idle" {
-		t.Fatalf("sleep_reason = %q, want idle", got.Metadata["sleep_reason"])
-	}
-	if got.Metadata["pending_create_claim"] != "" {
-		t.Fatalf("pending_create_claim = %q, want cleared after drain-ack", got.Metadata["pending_create_claim"])
+	if dops.acked["worker"] {
+		t.Fatal("agent drain acknowledgement remained set after assigned-work rejection")
 	}
 }
 
-// TestReconcileSessionBeads_DrainAckMidPhaseEmitsAssignedWorkEvent pins
-// gastownhall/gascity#2293's Shape A contract: when a session drain-acks
-// while still holding the assignee on an in-progress work bead (the cap-hit
-// shape — worker exited mid-task without nulling assignee), the reconciler
-// MUST emit events.SessionDrainAckedWithAssignedWork carrying the session
-// and bead IDs exactly once after the provider stop has completed so pack-side
-// subscribers can apply recovery policy. The SDK reconciler stops at the event;
-// it does not commit, push, or clear assignee.
-func TestReconcileSessionBeads_DrainAckMidPhaseEmitsAssignedWorkEvent(t *testing.T) {
+// TestReconcileSessionBeads_AgentDrainAckMidPhaseStaysAwake pins the close
+// contract at the destructive boundary: an agent cannot terminate its own
+// session while it still holds an in-progress work bead. A Stop hook is only
+// an advisory provider boundary — its one re-entry allowance is necessary to
+// avoid a provider loop — so the reconciler must cancel an invalid self-ack
+// before it queues the runtime stop.
+func TestReconcileSessionBeads_AgentDrainAckMidPhaseStaysAwake(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
 	env.addDesired("worker", "worker", true)
@@ -1849,34 +1854,24 @@ func TestReconcileSessionBeads_DrainAckMidPhaseEmitsAssignedWorkEvent(t *testing
 	if woken != 0 {
 		t.Fatalf("woken = %d, want 0", woken)
 	}
-	gotSession := env.reconcileStopPendingToTerminal(t, env.sp, session, dops, map[string]bool{"worker": true})
+	gotSession, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session after rejecting drain-ack: %v", err)
+	}
 	if gotSession.Status == "closed" {
 		t.Fatalf("session bead closed unexpectedly: metadata=%v", gotSession.Metadata)
 	}
-	if gotSession.Metadata["state"] != "asleep" || gotSession.Metadata["sleep_reason"] != "idle" {
-		t.Fatalf("session state=%q sleep_reason=%q, want asleep/idle after assigned-work drain-ack",
-			gotSession.Metadata["state"], gotSession.Metadata["sleep_reason"])
+	if gotSession.Metadata["state"] != "active" {
+		t.Fatalf("session state=%q, want active after rejecting assigned-work drain-ack",
+			gotSession.Metadata["state"])
 	}
-
-	var matched *events.Event
-	matches := 0
-	for i := range fake.Events {
-		if fake.Events[i].Type == events.SessionDrainAckedWithAssignedWork {
-			matches++
-			matched = &fake.Events[i]
+	if dops.acked["worker"] {
+		t.Fatal("agent drain acknowledgement remained set after assigned-work rejection")
+	}
+	for _, ev := range fake.Events {
+		if ev.Type == events.SessionStopped || ev.Type == events.SessionDrainAckedWithAssignedWork {
+			t.Fatalf("unexpected %s after rejecting assigned-work drain-ack: %+v", ev.Type, ev)
 		}
-	}
-	if matched == nil {
-		t.Fatalf("expected %s event, got %d events of other types", events.SessionDrainAckedWithAssignedWork, len(fake.Events))
-	}
-	if matches != 1 {
-		t.Fatalf("%s events = %d, want exactly 1 across stop-pending lifecycle", events.SessionDrainAckedWithAssignedWork, matches)
-	}
-	if !strings.Contains(string(matched.Payload), session.ID) {
-		t.Errorf("event payload does not reference session ID %q: %s", session.ID, matched.Payload)
-	}
-	if !strings.Contains(string(matched.Payload), stranded.ID) {
-		t.Errorf("event payload does not reference stranded bead ID %q: %s", stranded.ID, matched.Payload)
 	}
 
 	// Verify the SDK did NOT mutate the bead's assignee — recovery policy
@@ -1999,13 +1994,13 @@ func TestReconcileSessionBeads_DrainAckOwnDrainStepClosesWithoutEvent(t *testing
 	}
 }
 
-// TestReconcileSessionBeads_DrainAckStepNamedDrainInOtherFormulaStillBlocksClose
+// TestReconcileSessionBeads_AgentDrainAckStepNamedDrainInOtherFormulaStaysActive
 // guards the narrow-match requirement in isSessionOwnDrainStepBead: a step bead
 // that happens to reuse the literal step id "drain" but whose molecule root was
-// NOT compiled from the mol-do-work formula must still count as assigned work —
-// the exclusion is scoped to mol-do-work's drain step specifically, not to any
-// step named "drain".
-func TestReconcileSessionBeads_DrainAckStepNamedDrainInOtherFormulaStillBlocksClose(t *testing.T) {
+// NOT compiled from the mol-do-work formula must still reject an agent's
+// drain-ack. The exclusion is scoped to mol-do-work's drain step specifically,
+// not to any step named "drain".
+func TestReconcileSessionBeads_AgentDrainAckStepNamedDrainInOtherFormulaStaysActive(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
 	env.addDesired("worker", "worker", true)
@@ -2071,19 +2066,23 @@ func TestReconcileSessionBeads_DrainAckStepNamedDrainInOtherFormulaStillBlocksCl
 	if woken != 0 {
 		t.Fatalf("woken = %d, want 0", woken)
 	}
-	gotSession := env.reconcileStopPendingToTerminal(t, env.sp, session, dops, map[string]bool{"worker": true})
+	gotSession, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session after rejecting drain-ack: %v", err)
+	}
 	if gotSession.Status == "closed" {
 		t.Fatalf("session bead closed unexpectedly: a same-named 'drain' step from an unrelated formula must still block close: metadata=%v", gotSession.Metadata)
 	}
-
-	matches := 0
-	for i := range fake.Events {
-		if fake.Events[i].Type == events.SessionDrainAckedWithAssignedWork {
-			matches++
-		}
+	if gotSession.Metadata["state"] != "active" {
+		t.Fatalf("state = %q, want active after rejecting drain-ack", gotSession.Metadata["state"])
 	}
-	if matches != 1 {
-		t.Fatalf("%s events = %d, want exactly 1 for the genuinely-stranded decoy step", events.SessionDrainAckedWithAssignedWork, matches)
+	if dops.acked["worker"] {
+		t.Fatal("agent drain acknowledgement remained set after rejecting decoy drain step")
+	}
+	for _, ev := range fake.Events {
+		if ev.Type == events.SessionStopped || ev.Type == events.SessionDrainAckedWithAssignedWork {
+			t.Fatalf("unexpected %s after rejecting decoy drain step acknowledgement: %+v", ev.Type, ev)
+		}
 	}
 
 	got, err := env.store.Get(decoyStep.ID)
@@ -3616,13 +3615,11 @@ func TestFinalizeDrainAckStoppedSessionFallsThroughWhenCloseGateRacesWithAssignm
 	}
 }
 
-// TestReconcileSessionBeads_DrainAckLiveStoreErrorFailsClosed guards the
-// drain-ack live-query error path. When sessionHasOpenAssignedWork returns
-// an error, drain-ack treats hasAssignedWork as true (fail-closed) so the
-// session lands in CompleteDrainPatch (asleep+idle) rather than
-// AcknowledgeDrainPatch (drained). This prevents a transient store failure
-// from silently closing a session whose assignment status we cannot verify.
-func TestReconcileSessionBeads_DrainAckLiveStoreErrorFailsClosed(t *testing.T) {
+// TestReconcileSessionBeads_AgentDrainAckLiveStoreErrorStaysActive guards the
+// drain-ack live-query error path. A query error cannot prove the session has
+// no work, so the reconciler must reject a self-ack and leave the runtime
+// active rather than stopping it on an incomplete view.
+func TestReconcileSessionBeads_AgentDrainAckLiveStoreErrorStaysActive(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
 		Agents: []config.Agent{{Name: "worker"}},
@@ -3666,44 +3663,15 @@ func TestReconcileSessionBeads_DrainAckLiveStoreErrorFailsClosed(t *testing.T) {
 		&env.stderr,
 	)
 
-	waitForProviderStopped(t, env.sp, "worker")
-	stopPending, err := env.store.Get(session.ID)
-	if err != nil {
-		t.Fatalf("Get(%s) before fail-closed finalize: %v", session.ID, err)
-	}
-	reconcileSessionBeadsAtPath(
-		context.Background(),
-		"",
-		[]beads.Bead{stopPending},
-		env.desiredState,
-		map[string]bool{"worker": true},
-		env.cfg,
-		env.sp,
-		erroring,
-		dops,
-		nil,
-		nil,
-		nil,
-		env.dt,
-		nil,
-		false,
-		nil,
-		"",
-		nil,
-		env.clk,
-		env.rec,
-		0,
-		0,
-		&env.stdout,
-		&env.stderr,
-	)
 	got, err := env.store.Get(session.ID)
 	if err != nil {
-		t.Fatalf("Get(%s) after fail-closed finalize: %v", session.ID, err)
+		t.Fatalf("Get(%s) after rejecting drain-ack: %v", session.ID, err)
 	}
-	if got.Metadata["state"] != "asleep" || got.Metadata["sleep_reason"] != "idle" {
-		t.Fatalf("state=%q sleep_reason=%q, want asleep/idle — live-query error must fail closed (hasAssignedWork=true) so the session does not enter drained state",
-			got.Metadata["state"], got.Metadata["sleep_reason"])
+	if got.Metadata["state"] != "active" {
+		t.Fatalf("state=%q, want active — live-query error must reject drain-ack before stopping the session", got.Metadata["state"])
+	}
+	if dops.acked["worker"] {
+		t.Fatal("agent drain acknowledgement remained set after live-query failure")
 	}
 }
 

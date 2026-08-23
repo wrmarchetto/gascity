@@ -2337,15 +2337,16 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 						continue
 					}
 					ackReason, reconcilerOwnedAck := reconcilerDrainAckMatchesSessionInfo(infoByID[id], sp, name)
-					// gc-kkgak: a reconciler-owned drain ack is minted from the
-					// desired-state / assigned-work view. During a partial store
-					// query that view is unreliable, so defer the reconciler-owned
-					// cancel/stop decision until the store is healthy — same
-					// rationale as gc-hz0nu's orphan branch. Agent-sourced handoff
-					// acks are not reconciler-owned and fall through to stop
-					// promptly: their intent is explicit, not derived from the store.
-					if reconcilerOwnedAck && storeQueryPartial {
-						fmt.Fprintf(stdout, "Skipping reconciler drain-ack stop for '%s': store query partial (transient failure)\n", name) //nolint:errcheck
+					// A drain acknowledgement terminates a live runtime, so neither
+					// an agent-originated acknowledgement nor a reconciler-originated
+					// one may cross a partial store view. The agent's intent is not a
+					// substitute for establishing that it no longer holds work: a Stop
+					// hook has a deliberate one-reentry allowance to prevent provider
+					// loops, and an agent can otherwise reach drain-ack with its claim
+					// still open. Defer until the store can answer, rather than turning
+					// an observation failure into a destructive stop.
+					if storeQueryPartial {
+						fmt.Fprintf(stdout, "Skipping drain-ack stop for '%s': store query partial (transient failure)\n", name) //nolint:errcheck
 						if trace != nil {
 							trace.RecordDecision(TraceSiteReconcilerDrainAck, TraceReasonStoreQueryPartial, TraceOutcomeDeferred, tp.TemplateName, name, traceRecordPayload{
 								"store_query_partial":  true,
@@ -2354,17 +2355,23 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 						}
 						continue
 					}
-					if reconcilerOwnedAck && assignedWorkDrainReasonCancelable(ackReason) {
-						hasAssignedWork, assignedErr := sessionHasAwakeAssignedWorkForReachableStore(cityPath, cfg, store, rigStores, infoByID[id])
+					if alive {
+						hasAssignedWork, assignedErr := sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, infoByID[id])
 						if assignedErr != nil {
 							fmt.Fprintf(stderr, "session reconciler: checking assigned work for drain-acked %s: %v\n", name, assignedErr) //nolint:errcheck
 							hasAssignedWork = true
 						}
-						if alive && hasAssignedWork &&
-							(cancelSessionDrainForAssignedWorkInfo(infoByID[id], sp, dt) || cancelRecoveredDrainForAssignedWorkInfo(infoByID[id], sp, name)) {
-							_ = dops.clearDrain(name)
+						if hasAssignedWork {
+							canceled := reconcilerOwnedAck &&
+								(cancelSessionDrainForAssignedWorkInfo(infoByID[id], sp, dt) || cancelRecoveredDrainForAssignedWorkInfo(infoByID[id], sp, name))
+							if !canceled {
+								if err := dops.clearDrain(name); err != nil {
+									fmt.Fprintf(stderr, "session reconciler: clearing invalid drain-ack for %s: %v\n", name, err) //nolint:errcheck
+								}
+							}
+							fmt.Fprintf(stdout, "Canceled drain-acked session '%s' (assigned work)\n", name) //nolint:errcheck
 							if trace != nil {
-								trace.RecordDecision(TraceSiteDrainCancel, TraceReasonCode(ackReason), TraceOutcomeCancelAssignedWork, tp.TemplateName, name, nil)
+								trace.RecordDecision(TraceSiteDrainCancel, TraceReasonAssignedWork, TraceOutcomeCancelAssignedWork, tp.TemplateName, name, nil)
 							}
 							continue
 						}
