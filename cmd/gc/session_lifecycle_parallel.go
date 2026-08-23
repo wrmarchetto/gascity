@@ -2818,7 +2818,15 @@ func executePlannedStartsTraced(
 				}
 				item, err := prepareStartCandidateForCity(candidate, cityPath, cityName, cfg, sp, store, clk, stderr, startOpts.workDirResolver)
 				if err != nil {
-					clearPendingStartInFlightLease(candidate.info.ID, sessFront, stderr)
+					if errors.Is(err, errStaleWorktreeMarker) {
+						// preWakeCommit has already persisted the creating state at this
+						// point. A stale-marker refusal is terminal for that incarnation:
+						// leave no open creating bead occupying the slot while the marker
+						// remains for a human to adjudicate.
+						rollbackPendingCreate(candidate.info, sessFront, clk.Now().UTC(), stderr)
+					} else {
+						clearPendingStartInFlightLease(candidate.info.ID, sessFront, stderr)
+					}
 					if release != nil {
 						release()
 					}
