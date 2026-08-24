@@ -461,6 +461,7 @@ func TestStaleCmdGCTestDoltSweepHandsTaggedOrphanToTheReaper(t *testing.T) {
 	swept := g.sweepStaleCmdGCTestDoltProcessesWith(
 		"test",
 		func() ([]DoltProcInfo, error) { return []DoltProcInfo{orphan}, nil },
+		func(int) bool { return false },
 		func(pid int) bool { return pid == 4107 },
 		func(procs []DoltProcInfo) { reaped = append(reaped, procs...) },
 	)
@@ -470,6 +471,31 @@ func TestStaleCmdGCTestDoltSweepHandsTaggedOrphanToTheReaper(t *testing.T) {
 	}
 	if len(reaped) != 1 || reaped[0].PID != 4107 {
 		t.Fatalf("reaped = %#v, want the tagged orphan PID 4107", reaped)
+	}
+}
+
+// TestStaleCmdGCTestDoltSweepSkipsServerTaggedByLiveTestBinary prevents one
+// cmd/gc test binary from reaping a scope-watchdog fixture another still-live
+// test binary intentionally handed off to its caller.
+func TestStaleCmdGCTestDoltSweepSkipsServerTaggedByLiveTestBinary(t *testing.T) {
+	staleRoot := filepath.Join(t.TempDir(), "gct12345-stale")
+	server := doltProc(4108, filepath.Join(staleRoot, "TestCase", "dolt-config.yaml"))
+	g := newDoltLeakGuardedTestingM(nil, filepath.Join(t.TempDir(), "gct67890-current"))
+
+	var reaped []DoltProcInfo
+	swept := g.sweepStaleCmdGCTestDoltProcessesWith(
+		"test",
+		func() ([]DoltProcInfo, error) { return []DoltProcInfo{server}, nil },
+		func(pid int) bool { return pid == server.PID },
+		func(pid int) bool { return pid == server.PID },
+		func(procs []DoltProcInfo) { reaped = append(reaped, procs...) },
+	)
+
+	if swept {
+		t.Fatal("startup sweep reported a server tagged by a live test binary")
+	}
+	if len(reaped) != 0 {
+		t.Fatalf("reaped = %#v, want none", reaped)
 	}
 }
 

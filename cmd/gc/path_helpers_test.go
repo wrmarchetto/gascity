@@ -285,7 +285,7 @@ func (g *doltLeakGuardedTestingM) reapDoltProcessesUnderRoot(label string) bool 
 }
 
 func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcesses(label string) bool {
-	return g.sweepStaleCmdGCTestDoltProcessesWith(label, discoverDoltProcesses, orphanedManagedDoltFromDeadTestBinary, reapDoltLeakProcesses)
+	return g.sweepStaleCmdGCTestDoltProcessesWith(label, discoverDoltProcesses, managedDoltProcessHasLiveTestBinaryParent, orphanedManagedDoltFromDeadTestBinary, reapDoltLeakProcesses)
 }
 
 // sweepStaleCmdGCTestDoltProcessesWith is the injectable form. The enumerator,
@@ -302,6 +302,7 @@ func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcesses(label string)
 func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcessesWith(
 	label string,
 	enumerate func() ([]DoltProcInfo, error),
+	hasLiveTestBinaryParent func(int) bool,
 	orphanedByDeadTestBinary func(int) bool,
 	reap func([]DoltProcInfo),
 ) bool {
@@ -314,6 +315,13 @@ func (g *doltLeakGuardedTestingM) sweepStaleCmdGCTestDoltProcessesWith(
 	tempParent := filepath.Dir(filepath.Clean(g.tempRoot))
 	var leaked []DoltProcInfo
 	for _, proc := range procs {
+		// A helper may intentionally exit after handing its server to a
+		// still-running test binary. The server's tagged parent is a more
+		// direct ownership signal than its temporary config path, which can
+		// otherwise look stale to a concurrently starting test binary.
+		if hasLiveTestBinaryParent(proc.PID) {
+			continue
+		}
 		if !isStaleCmdGCTestConfigPath(extractConfigPath(proc.Argv), activeRoots, tempParent) &&
 			!orphanedByDeadTestBinary(proc.PID) {
 			continue
