@@ -108,6 +108,44 @@ func TestPoolAliasDemandSkipsDeferredWork(t *testing.T) {
 	}
 }
 
+// TestPoolAliasDemandSkipsBlockedAssignedRoutedWork pins the controller path
+// that used to admit an assigned+routed bead only so the orphan reaper could
+// inspect it. That bead must not become a wake-known-identity request unless
+// it is ready: its pool assignee cannot be claimed while an open dependency
+// blocks it.
+func TestPoolAliasDemandSkipsBlockedAssignedRoutedWork(t *testing.T) {
+	store := beads.NewMemStore()
+	blocker, err := store.Create(beads.Bead{ID: "blocker", Status: "open", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create blocker: %v", err)
+	}
+	blocked, err := store.Create(beads.Bead{
+		ID:       "blocked",
+		Status:   "open",
+		Type:     "task",
+		Assignee: "toolsmith",
+		Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "toolsmith"},
+	})
+	if err != nil {
+		t.Fatalf("Create blocked work: %v", err)
+	}
+	if err := store.DepAdd(blocked.ID, blocker.ID, "blocks"); err != nil {
+		t.Fatalf("DepAdd: %v", err)
+	}
+
+	result := buildDesiredStateWithSessionBeads(
+		"test-city", t.TempDir(), time.Now(), poolAliasDemandCity(), &localMockProvider{},
+		store, nil, &sessionBeadSnapshot{}, nil, os.Stderr,
+	)
+
+	if got := result.ScaleCheckCounts["toolsmith"]; got != 0 {
+		t.Errorf("demand = %d, want 0 — blocked work must not create fresh pool demand", got)
+	}
+	if len(result.State) != 0 {
+		t.Errorf("desired sessions = %d, want 0 — blocked work must not wake an unclaimable pool", len(result.State))
+	}
+}
+
 // TestPoolAliasDemandLeavesTheAssigneeInPlace pins the half most likely to be
 // "fixed" the wrong way. An earlier attempt at ci-mqqe cleared the assignee and
 // stamped gc.routed_to instead, which does wake the pool -- and silently

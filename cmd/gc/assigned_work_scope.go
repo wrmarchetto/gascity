@@ -115,6 +115,7 @@ func filterAssignedWorkBeadsForPoolDemand(
 	sessionInfos []sessionpkg.Info,
 	assignedWorkBeads []beads.Bead,
 	assignedWorkStoreRefs []string,
+	readyAssigned map[storeScopedBeadKey]bool,
 ) []beads.Bead {
 	if len(assignedWorkBeads) == 0 || len(assignedWorkStoreRefs) == 0 {
 		return assignedWorkBeads
@@ -141,6 +142,15 @@ func filterAssignedWorkBeadsForPoolDemand(
 	}
 	filtered := make([]beads.Bead, 0, len(assignedWorkBeads))
 	for i, wb := range assignedWorkBeads {
+		// The open-routed collection intentionally includes blocked beads so
+		// the orphan reaper can inspect them. Pool desired-state computation is
+		// a different consumer: it may only wake for open work that the shared
+		// Ready() snapshot proved claimable. Without this gate an assigned and
+		// routed blocked bead becomes a wake-known-identity request, repeatedly
+		// starting a session that cannot claim it.
+		if readyAssigned != nil && wb.Status == "open" && !readyAssigned[storeScopedBeadKey{StoreRef: assignedWorkStoreRefs[i], ID: wb.ID}] {
+			continue
+		}
 		template := routedToOrLegacyWorkflowTarget(wb)
 		if template == "" {
 			if sessionBeadID := assigneeToSessionBeadID[strings.TrimSpace(wb.Assignee)]; sessionBeadID != "" {
