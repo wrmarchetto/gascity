@@ -192,6 +192,10 @@ func TestManagedDoltScopeWatchdogHelper(t *testing.T) {
 		t.Fatalf("open log file: %v", err)
 	}
 	defer logFile.Close() //nolint:errcheck
+	// The helper exits after handing the server to its direct parent. Keep the
+	// managed-Dolt ownership tag on that live parent so concurrent test-binary
+	// startup sweeps cannot mistake the intentional handoff for an orphan.
+	t.Setenv(managedDoltTestParentPIDEnv, strconv.Itoa(os.Getppid()))
 
 	started, err := startManagedDoltSQLServerWithScopeWatchdog("", configPath, logPath, logFile)
 	if err != nil {
@@ -320,6 +324,9 @@ func TestManagedDoltScopeWatchdogServerSurvivesScopePresent(t *testing.T) {
 		cleanupManagedDoltTestPID(t, doltPID)
 		cleanupManagedDoltTestPID(t, watchdogPID)
 	})
+	if !managedDoltProcessHasLiveTestBinaryParent(doltPID) {
+		t.Fatal("scope-watchdog server is not tagged to its live outer test binary")
+	}
 
 	time.Sleep(300 * time.Millisecond)
 	if !pidAlive(doltPID) {
