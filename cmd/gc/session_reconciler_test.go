@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -5498,6 +5499,80 @@ func TestReconcileSessionBeads_SkipsQuarantinedSession(t *testing.T) {
 
 	if woken != 0 {
 		t.Errorf("expected 0 woken (quarantined), got %d", woken)
+	}
+}
+
+func TestReconcileSessionBeads_ClearsStaleWorktreeQuarantineWhenMarkerIsRemoved(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(1)}}}
+	workDir := t.TempDir()
+	env.desiredState["worker"] = TemplateParams{
+		Command:      "test-cmd",
+		SessionName:  "worker",
+		TemplateName: "worker",
+		WorkDir:      workDir,
+	}
+	session := env.createSessionBead("worker", "worker")
+	env.setSessionMetadata(&session, map[string]string{
+		"work_dir":             workDir,
+		poolManagedMetadataKey: boolMetadata(true),
+		"pool_slot":            "1",
+	})
+	marker := filepath.Join(workDir, worktreeStaleFileName)
+	if err := os.WriteFile(marker, []byte("branch=builder/ci-ah4xna\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
+
+	if alert := quarantinePendingCreateForStaleWorktree(env.sessionInfo(session.ID), sessionFrontDoor(env.store), workDir, env.clk.Now(), time.Hour, &env.stderr); alert == nil {
+		t.Fatal("quarantinePendingCreateForStaleWorktree() alert = nil, want initial stale-marker alert")
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("remove stale marker: %v", err)
+	}
+	quarantined, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get quarantined session: %v", err)
+	}
+	quarantinedInfo := env.sessionInfo(session.ID)
+	if got := quarantinedInfo.StateReason; got != staleWorktreeQuarantineReason {
+		t.Fatalf("state_reason = %q, want %q", got, staleWorktreeQuarantineReason)
+	}
+	if got := quarantinedInfo.WorkDir; got != workDir {
+		t.Fatalf("work_dir = %q, want %q", got, workDir)
+	}
+
+	task, err := env.store.Create(beads.Bead{Title: "claimable work", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create task: %v", err)
+	}
+	inProgress := "in_progress"
+	assignee := session.ID
+	if err := env.store.Update(task.ID, beads.UpdateOpts{Status: &inProgress, Assignee: &assignee}); err != nil {
+		t.Fatalf("assign task: %v", err)
+	}
+	task, err = env.store.Get(task.ID)
+	if err != nil {
+		t.Fatalf("Get task: %v", err)
+	}
+	woken := reconcileSessionBeads(
+		context.Background(), []beads.Bead{quarantined}, env.desiredState,
+		configuredSessionNames(env.cfg, "", env.store), env.cfg, env.sp, env.store,
+		nil, []beads.Bead{task}, nil, env.dt, map[string]int{"worker": 1}, false,
+		nil, "", nil, env.clk, env.rec, 0, 0, &env.stdout, &env.stderr,
+		env.startOptions...,
+	)
+	updated, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get updated session: %v", err)
+	}
+	if got := updated.Metadata["quarantined_until"]; got != "" {
+		t.Fatalf("quarantined_until = %q, want cleared when the stale marker is gone", got)
+	}
+	if woken != 1 {
+		t.Fatalf("woken = %d, want 1 after the stale marker is removed; state=%q sleep_reason=%q state_reason=%q stderr=%q", woken, updated.Metadata["state"], updated.Metadata["sleep_reason"], updated.Metadata["state_reason"], env.stderr.String())
+	}
+	if !env.sp.IsRunning("worker") {
+		t.Fatal("worker is not running after the stale marker is removed")
 	}
 }
 

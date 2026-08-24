@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -455,6 +456,34 @@ func healExpiredTimersInfo(info sessionpkg.Info, sessFront *sessionpkg.Store, cl
 				info = info.ApplyPatch(batch)
 			}
 		}
+	}
+	return info
+}
+
+// clearResolvedStaleWorktreeQuarantineInfo releases the specific quarantine
+// created when a session start finds a .worktree-stale marker. Unlike a crash
+// loop, this blocker has a durable condition the reconciler can observe, so it
+// must not wait for the generic restart window after an operator removes the
+// marker. Other quarantine reasons retain their timer-based backoff.
+func clearResolvedStaleWorktreeQuarantineInfo(info sessionpkg.Info, sessFront *sessionpkg.Store) sessionpkg.Info {
+	if info.StateReason != staleWorktreeQuarantineReason || info.QuarantinedUntil == "" {
+		return info
+	}
+	workDir := strings.TrimSpace(info.WorkDir)
+	if workDir == "" {
+		return info
+	}
+	if _, err := os.Lstat(filepath.Join(workDir, worktreeStaleFileName)); !os.IsNotExist(err) {
+		return info
+	}
+	view := sessionpkg.ProjectLifecycle(sessionpkg.LifecycleInputFromInfo(info))
+	batch := sessionpkg.ReactivatePatch(view.ContinuityEligible)
+	batch["sleep_reason"] = ""
+	batch["wake_attempts"] = "0"
+	batch["churn_count"] = "0"
+	batch[worktreeStaleMarkerFingerprintKey] = ""
+	if next, err := sessFront.ApplyPatchInfo(info, batch); err == nil {
+		return next
 	}
 	return info
 }

@@ -41,6 +41,7 @@ const (
 	defaultMaxParallelStopsPerWave    = 3
 	defaultMaxParallelInterrupts      = 16
 	worktreeStaleMarkerFingerprintKey = "worktree_stale_marker_fingerprint"
+	staleWorktreeQuarantineReason     = "worktree-stale"
 )
 
 // staleKeyDetectDelay is how long production waits after starting a session
@@ -2648,10 +2649,11 @@ func quarantinePendingCreateForStaleWorktree(info sessionpkg.Info, sessFront *se
 		}
 	}
 	batch := sessionpkg.QuarantinePatch(now.Add(retryWindow), 1)
-	batch["state_reason"] = "worktree-stale"
+	batch["state_reason"] = staleWorktreeQuarantineReason
 	batch["sleep_reason"] = string(sessionpkg.SleepReasonQuarantine)
 	batch["pending_create_claim"] = ""
 	batch["pending_create_started_at"] = ""
+	batch["work_dir"] = workDir
 	if hasAlert {
 		batch[worktreeStaleMarkerFingerprintKey] = alert.Fingerprint
 	}
