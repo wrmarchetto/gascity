@@ -56,7 +56,7 @@ func evaluateUpstreamProbeCloseGate(bdArgs []string, store beads.Store, preFetch
 				continue
 			}
 		}
-		if !isWorkRecordGatedBead(bead) {
+		if !isUpstreamProbeGatedBead(bead) {
 			continue
 		}
 		projected, err := applyWorkRecordUpdateMetadata(bead, bdArgs)
@@ -69,6 +69,23 @@ func evaluateUpstreamProbeCloseGate(bdArgs []string, store beads.Store, preFetch
 		}
 	}
 	return block
+}
+
+// isUpstreamProbeGatedBead identifies ordinary work records whose source
+// changes may need a fork-retirement probe. Unlike the typed work-record gate,
+// this gate applies to every user work type: a bug or feature can change
+// upstream-owned code just as a task can. Control records are closed by the
+// dispatcher rather than by the worker that performed the code change.
+func isUpstreamProbeGatedBead(bead beads.Bead) bool {
+	if strings.TrimSpace(bead.Metadata[beadmeta.KindMetadataKey]) != "" {
+		return false
+	}
+	switch strings.TrimSpace(bead.Type) {
+	case "convoy", "message", "molecule":
+		return false
+	default:
+		return true
+	}
 }
 
 // upstreamProbeCloseViolation returns an empty string when no upstream-probe
