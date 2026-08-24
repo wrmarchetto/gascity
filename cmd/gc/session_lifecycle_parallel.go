@@ -2588,6 +2588,29 @@ func rollbackPendingCreate(info sessionpkg.Info, sessFront *sessionpkg.Store, no
 	return batch
 }
 
+// quarantinePendingCreateForStaleWorktree retains a refused start as the
+// canonical pool slot during one configured restart window. Closing it would
+// make the desired-state planner mint a replacement on the next patrol, which
+// immediately hits the unchanged safety marker again.
+func quarantinePendingCreateForStaleWorktree(info sessionpkg.Info, sessFront *sessionpkg.Store, now time.Time, retryWindow time.Duration, stderr io.Writer) map[string]string {
+	if strings.TrimSpace(info.ID) == "" || sessFront == nil {
+		return nil
+	}
+	if retryWindow <= 0 {
+		retryWindow = time.Hour
+	}
+	batch := sessionpkg.QuarantinePatch(now.Add(retryWindow), 1)
+	batch["state_reason"] = "worktree-stale"
+	batch["sleep_reason"] = string(sessionpkg.SleepReasonQuarantine)
+	batch["pending_create_claim"] = ""
+	batch["pending_create_started_at"] = ""
+	if _, err := sessFront.ApplyPatchInfo(info, batch); err != nil {
+		fmt.Fprintf(stderr, "session reconciler: quarantining stale-worktree create %s: %v\n", info.ID, err) //nolint:errcheck // best-effort stderr
+		return nil
+	}
+	return batch
+}
+
 // rollbackPendingCreateClearingClaim is rollbackPendingCreate plus the
 // failed-create ClosePatch metadata + claim clears mirrored onto the raw bead
 // when the store-only close succeeds. Returns the full mirrored batch (again with
@@ -2820,10 +2843,14 @@ func executePlannedStartsTraced(
 				if err != nil {
 					if errors.Is(err, errStaleWorktreeMarker) {
 						// preWakeCommit has already persisted the creating state at this
-						// point. A stale-marker refusal is terminal for that incarnation:
-						// leave no open creating bead occupying the slot while the marker
-						// remains for a human to adjudicate.
-						rollbackPendingCreate(candidate.info, sessFront, clk.Now().UTC(), stderr)
+						// point. Keep the canonical slot, but quarantine it for the
+						// configured restart window: closing it would cause the desired
+						// state planner to recreate the same rejected start every patrol.
+						retryWindow := time.Hour
+						if cfg != nil {
+							retryWindow = cfg.Daemon.RestartWindowDuration()
+						}
+						quarantinePendingCreateForStaleWorktree(candidate.info, sessFront, clk.Now().UTC(), retryWindow, stderr)
 					} else {
 						clearPendingStartInFlightLease(candidate.info.ID, sessFront, stderr)
 					}

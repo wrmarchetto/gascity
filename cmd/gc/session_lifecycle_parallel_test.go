@@ -909,7 +909,7 @@ func TestPrepareStartCandidateForCity_RejectsStaleAssignedTaskWorkDir(t *testing
 	}
 }
 
-func TestExecutePlannedStartsTraced_StaleWorktreeMarkerClosesPendingCreate(t *testing.T) {
+func TestExecutePlannedStartsTraced_StaleWorktreeMarkerQuarantinesPendingCreate(t *testing.T) {
 	store := beads.NewMemStore()
 	clk := &clock.Fake{Time: time.Date(2026, 8, 23, 9, 15, 0, 0, time.UTC)}
 	workDir := t.TempDir()
@@ -960,14 +960,20 @@ func TestExecutePlannedStartsTraced_StaleWorktreeMarkerClosesPendingCreate(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Status != "closed" {
-		t.Fatalf("status = %q, want closed so a marked worktree cannot occupy a pool slot", updated.Status)
+	if updated.Status != "open" {
+		t.Fatalf("status = %q, want open so the marked slot remains available for its delayed retry", updated.Status)
 	}
-	if got := updated.Metadata["state"]; got != string(sessionpkg.StateFailedCreate) {
-		t.Fatalf("state = %q, want %q", got, sessionpkg.StateFailedCreate)
+	if got := updated.Metadata["state"]; got != string(sessionpkg.StateQuarantined) {
+		t.Fatalf("state = %q, want %q", got, sessionpkg.StateQuarantined)
 	}
 	if got := updated.Metadata["pending_create_claim"]; got != "" {
 		t.Fatalf("pending_create_claim = %q, want cleared", got)
+	}
+	if got := updated.Metadata["sleep_reason"]; got != string(sessionpkg.SleepReasonQuarantine) {
+		t.Fatalf("sleep_reason = %q, want %q", got, sessionpkg.SleepReasonQuarantine)
+	}
+	if got := updated.Metadata["quarantined_until"]; got != clk.Now().Add(time.Hour).UTC().Format(time.RFC3339) {
+		t.Fatalf("quarantined_until = %q, want one configured restart window after the rejected create", got)
 	}
 	if !strings.Contains(stderr.String(), worktreeStaleFileName) {
 		t.Fatalf("stderr = %q, want stale marker diagnostic", stderr.String())
