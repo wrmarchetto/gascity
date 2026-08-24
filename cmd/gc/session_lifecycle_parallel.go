@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"path/filepath"
 	"runtime/debug"
 	"sort"
@@ -36,8 +38,9 @@ const (
 
 	// Stops and interrupts are teardown paths, so their parallelism is not
 	// derived from the wake budget used for starts.
-	defaultMaxParallelStopsPerWave = 3
-	defaultMaxParallelInterrupts   = 16
+	defaultMaxParallelStopsPerWave    = 3
+	defaultMaxParallelInterrupts      = 16
+	worktreeStaleMarkerFingerprintKey = "worktree_stale_marker_fingerprint"
 )
 
 // staleKeyDetectDelay is how long production waits after starting a session
@@ -313,11 +316,19 @@ type startExecutionOptions struct {
 	// deferred under storeQueryPartial today.
 	deferSessionClosesOnBoot bool
 	readyAssignedFlags       []bool
+	staleWorktreeAlert       func(staleWorktreeAlert)
 }
 
 type startExecutionOption func(*startExecutionOptions)
 
 type taskWorkDirResolver func(startCandidate, *config.City) string
+
+type staleWorktreeAlert struct {
+	WorkDir     string
+	Branch      string
+	Reason      string
+	Fingerprint string
+}
 
 func withAsyncStartExecution() startExecutionOption {
 	return func(opts *startExecutionOptions) {
@@ -411,6 +422,12 @@ func withDeferSessionClosesOnBoot() startExecutionOption {
 func withReadyAssignedFlags(readyAssignedFlags []bool) startExecutionOption {
 	return func(opts *startExecutionOptions) {
 		opts.readyAssignedFlags = readyAssignedFlags
+	}
+}
+
+func withStaleWorktreeAlert(notify func(staleWorktreeAlert)) startExecutionOption {
+	return func(opts *startExecutionOptions) {
+		opts.staleWorktreeAlert = notify
 	}
 }
 
@@ -2592,23 +2609,60 @@ func rollbackPendingCreate(info sessionpkg.Info, sessFront *sessionpkg.Store, no
 // canonical pool slot during one configured restart window. Closing it would
 // make the desired-state planner mint a replacement on the next patrol, which
 // immediately hits the unchanged safety marker again.
-func quarantinePendingCreateForStaleWorktree(info sessionpkg.Info, sessFront *sessionpkg.Store, now time.Time, retryWindow time.Duration, stderr io.Writer) map[string]string {
+func staleWorktreeAlertFromMarker(workDir string) (staleWorktreeAlert, bool) {
+	markerPath := filepath.Join(workDir, worktreeStaleFileName)
+	contents, err := os.ReadFile(markerPath)
+	if err != nil {
+		return staleWorktreeAlert{}, false
+	}
+	alert := staleWorktreeAlert{WorkDir: workDir}
+	for _, line := range strings.Split(string(contents), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		switch strings.TrimSpace(key) {
+		case "branch":
+			alert.Branch = strings.TrimSpace(value)
+		case "reason":
+			alert.Reason = strings.TrimSpace(value)
+		}
+	}
+	fingerprint := sha256.Sum256(contents)
+	alert.Fingerprint = fmt.Sprintf("%x", fingerprint)
+	return alert, true
+}
+
+func quarantinePendingCreateForStaleWorktree(info sessionpkg.Info, sessFront *sessionpkg.Store, workDir string, now time.Time, retryWindow time.Duration, stderr io.Writer) *staleWorktreeAlert {
 	if strings.TrimSpace(info.ID) == "" || sessFront == nil {
 		return nil
 	}
 	if retryWindow <= 0 {
 		retryWindow = time.Hour
 	}
+	alert, hasAlert := staleWorktreeAlertFromMarker(workDir)
+	alerted := false
+	if hasAlert {
+		if previous, err := sessFront.Store().Get(info.ID); err == nil {
+			alerted = previous.Metadata[worktreeStaleMarkerFingerprintKey] == alert.Fingerprint
+		}
+	}
 	batch := sessionpkg.QuarantinePatch(now.Add(retryWindow), 1)
 	batch["state_reason"] = "worktree-stale"
 	batch["sleep_reason"] = string(sessionpkg.SleepReasonQuarantine)
 	batch["pending_create_claim"] = ""
 	batch["pending_create_started_at"] = ""
+	if hasAlert {
+		batch[worktreeStaleMarkerFingerprintKey] = alert.Fingerprint
+	}
 	if _, err := sessFront.ApplyPatchInfo(info, batch); err != nil {
 		fmt.Fprintf(stderr, "session reconciler: quarantining stale-worktree create %s: %v\n", info.ID, err) //nolint:errcheck // best-effort stderr
 		return nil
 	}
-	return batch
+	if hasAlert && !alerted {
+		return &alert
+	}
+	return nil
 }
 
 // rollbackPendingCreateClearingClaim is rollbackPendingCreate plus the
@@ -2850,7 +2904,10 @@ func executePlannedStartsTraced(
 						if cfg != nil {
 							retryWindow = cfg.Daemon.RestartWindowDuration()
 						}
-						quarantinePendingCreateForStaleWorktree(candidate.info, sessFront, clk.Now().UTC(), retryWindow, stderr)
+						alert := quarantinePendingCreateForStaleWorktree(candidate.info, sessFront, candidate.tp.WorkDir, clk.Now().UTC(), retryWindow, stderr)
+						if alert != nil && startOpts.staleWorktreeAlert != nil {
+							startOpts.staleWorktreeAlert(*alert)
+						}
 					} else {
 						clearPendingStartInFlightLease(candidate.info.ID, sessFront, stderr)
 					}

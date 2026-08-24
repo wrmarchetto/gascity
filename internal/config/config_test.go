@@ -3553,6 +3553,7 @@ name = "test"
 
 [daemon]
 patrol_interval = "15s"
+worktree_stale_alert_to = "operator"
 
 [[agent]]
 name = "mayor"
@@ -3563,6 +3564,9 @@ name = "mayor"
 	}
 	if cfg.Daemon.PatrolInterval != "15s" {
 		t.Errorf("Daemon.PatrolInterval = %q, want %q", cfg.Daemon.PatrolInterval, "15s")
+	}
+	if cfg.Daemon.WorktreeStaleAlertTo != "operator" {
+		t.Errorf("Daemon.WorktreeStaleAlertTo = %q, want %q", cfg.Daemon.WorktreeStaleAlertTo, "operator")
 	}
 	got := cfg.Daemon.PatrolIntervalDuration()
 	if got != 15*time.Second {

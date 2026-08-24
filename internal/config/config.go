@@ -2504,6 +2504,10 @@ type DaemonConfig struct {
 	// RestartWindow is the sliding time window for counting restarts.
 	// Duration string (e.g., "30s", "5m", "1h"). Defaults to "1h".
 	RestartWindow string `toml:"restart_window,omitempty" jsonschema:"default=1h"`
+	// WorktreeStaleAlertTo is the configured mailbox that receives one alert
+	// when a stale worktree marker quarantines a session start. Empty disables
+	// these alerts.
+	WorktreeStaleAlertTo string `toml:"worktree_stale_alert_to,omitempty"`
 	// SessionCircuitBreaker enables the named-session respawn circuit breaker.
 	// When enabled, the controller suppresses no-progress named-session respawns
 	// after the configured restart threshold is exceeded.

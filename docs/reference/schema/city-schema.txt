@@ -1321,6 +1321,10 @@
           "description": "RestartWindow is the sliding time window for counting restarts.\nDuration string (e.g., \"30s\", \"5m\", \"1h\"). Defaults to \"1h\".",
           "default": "1h"
         },
+        "worktree_stale_alert_to": {
+          "type": "string",
+          "description": "WorktreeStaleAlertTo is the configured mailbox that receives one alert\nwhen a stale worktree marker quarantines a session start. Empty disables\nthese alerts."
+        },
         "session_circuit_breaker": {
           "type": "boolean",
           "description": "SessionCircuitBreaker enables the named-session respawn circuit breaker.\nWhen enabled, the controller suppresses no-progress named-session respawns\nafter the configured restart threshold is exceeded."

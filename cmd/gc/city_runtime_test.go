@@ -21,6 +21,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/orders"
 	"github.com/gastownhall/gascity/internal/rollout/gate"
 	"github.com/gastownhall/gascity/internal/runtime"
@@ -32,6 +33,33 @@ import (
 type sweepLivenessProvider struct {
 	*runtime.Fake
 	running map[string]bool
+}
+
+func TestSendStaleWorktreeAlertMailsConfiguredRecipient(t *testing.T) {
+	provider := mail.NewFake()
+	alert := staleWorktreeAlert{
+		WorkDir: "/city/.gc/worktrees/rig/worker-1",
+		Branch:  "fix/example",
+		Reason:  "uncommitted-work",
+	}
+
+	sendStaleWorktreeAlert(provider, "city", "operator", alert, io.Discard)
+
+	messages, err := provider.Inbox("operator")
+	if err != nil {
+		t.Fatalf("Inbox: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	if got := messages[0].From; got != "city" {
+		t.Fatalf("message sender = %q, want city", got)
+	}
+	for _, want := range []string{worktreeStaleFileName, alert.WorkDir, alert.Branch, alert.Reason} {
+		if !strings.Contains(messages[0].Body, want) {
+			t.Fatalf("message body = %q, want %q", messages[0].Body, want)
+		}
+	}
 }
 
 func (p *sweepLivenessProvider) IsRunning(string) bool {
