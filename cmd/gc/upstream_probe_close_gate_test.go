@@ -28,6 +28,36 @@ func TestEvaluateUpstreamProbeCloseGateRejectsPresentButWrongProbe(t *testing.T)
 	}
 }
 
+func TestEvaluateUpstreamProbeCloseGateRejectsBugWithoutProbe(t *testing.T) {
+	repoDir := newUpstreamProbeCloseGateRepo(t)
+	store := beads.NewMemStoreFrom(1, []beads.Bead{{
+		ID:   "ci-probe",
+		Type: "bug",
+	}}, nil)
+
+	var stderr strings.Builder
+	if blocked := evaluateUpstreamProbeCloseGate([]string{"close", "ci-probe"}, store, nil, repoDir, &stderr); !blocked {
+		t.Fatalf("bug close without a probe was accepted; stderr=%s", stderr.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "set gc.upstream_probe") {
+		t.Fatalf("refusal does not request the missing probe: %q", got)
+	}
+}
+
+func TestEvaluateUpstreamProbeCloseGateDoesNotGateControlBead(t *testing.T) {
+	repoDir := newUpstreamProbeCloseGateRepo(t)
+	store := beads.NewMemStoreFrom(1, []beads.Bead{{
+		ID:       "ci-probe",
+		Type:     "task",
+		Metadata: map[string]string{"gc.kind": "step"},
+	}}, nil)
+
+	var stderr strings.Builder
+	if blocked := evaluateUpstreamProbeCloseGate([]string{"close", "ci-probe"}, store, nil, repoDir, &stderr); blocked {
+		t.Fatalf("control bead close was blocked: %s", stderr.String())
+	}
+}
+
 func TestEvaluateUpstreamProbeCloseGateAcceptsProbeThatFailsWithoutProductionChange(t *testing.T) {
 	repoDir := newUpstreamProbeCloseGateRepo(t)
 	store := beads.NewMemStoreFrom(1, []beads.Bead{{
