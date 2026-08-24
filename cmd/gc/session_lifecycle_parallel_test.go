@@ -986,6 +986,9 @@ func TestExecutePlannedStartsTraced_StaleWorktreeMarkerQuarantinesPendingCreate(
 	if got := updated.Metadata[worktreeStaleMarkerFingerprintKey]; got == "" {
 		t.Fatal("worktree_stale_marker_fingerprint is empty, want durable marker identity for alert deduplication")
 	}
+	if got := updated.Metadata["work_dir"]; got != workDir {
+		t.Fatalf("work_dir = %q, want the worktree that carried the stale marker", got)
+	}
 	if len(alerts) != 1 {
 		t.Fatalf("stale-worktree alerts = %d, want 1", len(alerts))
 	}

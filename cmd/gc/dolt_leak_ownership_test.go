@@ -101,6 +101,14 @@ func orphanedManagedDoltFromDeadTestBinary(pid int) bool {
 	return managedDoltProcessOrphanedByDeadTestBinary(pid, readProcEnviron, os.Getpid(), pidAlive)
 }
 
+// managedDoltProcessHasLiveTestBinaryParent reports whether a managed-dolt
+// process is still owned by a live test binary, including a sibling binary
+// running concurrently in another cmd/gc test shard.
+func managedDoltProcessHasLiveTestBinaryParent(pid int) bool {
+	parent := managedDoltTestParentPIDOf(pid, readProcEnviron)
+	return parent > 0 && pidAlive(parent)
+}
+
 // managedDoltProcessOwnedBy is the injectable core. Unit tests supply a
 // scripted reader so the matching rule can be pinned without spawning
 // anything; the tests that DO spawn a real child exist to prove
