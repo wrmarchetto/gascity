@@ -909,9 +909,10 @@ func TestPrepareStartCandidateForCity_RejectsStaleAssignedTaskWorkDir(t *testing
 	}
 }
 
-func TestExecutePlannedStartsTraced_StaleWorktreeMarkerClosesPendingCreate(t *testing.T) {
+func TestExecutePlannedStartsTraced_StaleWorktreeMarkerQuarantinesPendingCreate(t *testing.T) {
 	store := beads.NewMemStore()
 	clk := &clock.Fake{Time: time.Date(2026, 8, 23, 9, 15, 0, 0, time.UTC)}
+	retryWindow := 2 * time.Hour
 	workDir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=builder/ci-befp7\nreason=uncommitted-work\n"), 0o644); err != nil {
 		t.Fatalf("write stale worktree marker: %v", err)
@@ -936,10 +937,14 @@ func TestExecutePlannedStartsTraced_StaleWorktreeMarkerClosesPendingCreate(t *te
 
 	tp := TemplateParams{Command: "worker", SessionName: "worker", TemplateName: "worker", WorkDir: workDir}
 	var stderr bytes.Buffer
+	var alerts []staleWorktreeAlert
 	woken := executePlannedStartsTraced(
 		context.Background(),
 		[]startCandidate{{info: sessiontest.SeedBead(t, session), tp: tp}},
-		&config.City{Agents: []config.Agent{{Name: "worker"}}},
+		&config.City{
+			Agents: []config.Agent{{Name: "worker"}},
+			Daemon: config.DaemonConfig{RestartWindow: retryWindow.String()},
+		},
 		map[string]TemplateParams{"worker": tp},
 		runtime.NewFake(),
 		store,
@@ -951,6 +956,9 @@ func TestExecutePlannedStartsTraced_StaleWorktreeMarkerClosesPendingCreate(t *te
 		ioDiscard{},
 		&stderr,
 		nil,
+		withStaleWorktreeAlert(func(alert staleWorktreeAlert) {
+			alerts = append(alerts, alert)
+		}),
 	)
 	if woken != 0 {
 		t.Fatalf("woken = %d, want 0", woken)
@@ -960,14 +968,45 @@ func TestExecutePlannedStartsTraced_StaleWorktreeMarkerClosesPendingCreate(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Status != "closed" {
-		t.Fatalf("status = %q, want closed so a marked worktree cannot occupy a pool slot", updated.Status)
+	if updated.Status != "open" {
+		t.Fatalf("status = %q, want open so the marked slot remains available for its delayed retry", updated.Status)
 	}
-	if got := updated.Metadata["state"]; got != string(sessionpkg.StateFailedCreate) {
-		t.Fatalf("state = %q, want %q", got, sessionpkg.StateFailedCreate)
+	if got := updated.Metadata["state"]; got != string(sessionpkg.StateQuarantined) {
+		t.Fatalf("state = %q, want %q", got, sessionpkg.StateQuarantined)
 	}
 	if got := updated.Metadata["pending_create_claim"]; got != "" {
 		t.Fatalf("pending_create_claim = %q, want cleared", got)
+	}
+	if got := updated.Metadata["sleep_reason"]; got != string(sessionpkg.SleepReasonQuarantine) {
+		t.Fatalf("sleep_reason = %q, want %q", got, sessionpkg.SleepReasonQuarantine)
+	}
+	if got := updated.Metadata["quarantined_until"]; got != clk.Now().Add(retryWindow).UTC().Format(time.RFC3339) {
+		t.Fatalf("quarantined_until = %q, want one configured restart window after the rejected create", got)
+	}
+	if got := updated.Metadata[worktreeStaleMarkerFingerprintKey]; got == "" {
+		t.Fatal("worktree_stale_marker_fingerprint is empty, want durable marker identity for alert deduplication")
+	}
+	if len(alerts) != 1 {
+		t.Fatalf("stale-worktree alerts = %d, want 1", len(alerts))
+	}
+	if got := alerts[0].Branch; got != "builder/ci-befp7" {
+		t.Fatalf("alert branch = %q, want marker branch", got)
+	}
+	if got := alerts[0].Reason; got != "uncommitted-work" {
+		t.Fatalf("alert reason = %q, want marker reason", got)
+	}
+	if duplicate := quarantinePendingCreateForStaleWorktree(sessiontest.SeedBead(t, updated), sessionFrontDoor(store), workDir, clk.Now().UTC(), retryWindow, &stderr); duplicate != nil {
+		t.Fatalf("duplicate stale-worktree alert = %+v, want nil for unchanged marker", duplicate)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=builder/ci-next\nreason=unreachable-commits\n"), 0o644); err != nil {
+		t.Fatalf("rewrite stale worktree marker: %v", err)
+	}
+	updated, err = store.Get(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed := quarantinePendingCreateForStaleWorktree(sessiontest.SeedBead(t, updated), sessionFrontDoor(store), workDir, clk.Now().UTC(), retryWindow, &stderr); changed == nil || changed.Branch != "builder/ci-next" || changed.Reason != "unreachable-commits" {
+		t.Fatalf("changed stale-worktree alert = %+v, want alert for changed marker", changed)
 	}
 	if !strings.Contains(stderr.String(), worktreeStaleFileName) {
 		t.Fatalf("stderr = %q, want stale marker diagnostic", stderr.String())

@@ -25,6 +25,7 @@ import (
 	"github.com/gastownhall/gascity/internal/doctor"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/nudgequeue"
 	"github.com/gastownhall/gascity/internal/orders"
 	"github.com/gastownhall/gascity/internal/runtime"
@@ -162,6 +163,25 @@ type CityRuntime struct {
 	forceStopShutdown        *atomic.Bool
 	logPrefix                string // "gc start" or "gc supervisor"
 	stdout, stderr           io.Writer
+}
+
+func sendStaleWorktreeAlert(provider mail.Provider, sender, recipient string, alert staleWorktreeAlert, stderr io.Writer) {
+	if provider == nil || strings.TrimSpace(recipient) == "" {
+		return
+	}
+	branch := alert.Branch
+	if branch == "" {
+		branch = "(not recorded)"
+	}
+	reason := alert.Reason
+	if reason == "" {
+		reason = "(not recorded)"
+	}
+	subject := fmt.Sprintf("worktree marker blocks session start: %s", alert.WorkDir)
+	body := fmt.Sprintf("A session start was quarantined because its worktree carries %s.\n\nWorktree: %s\nBranch: %s\nReason: %s\n\nThe controller will not retry this slot until its configured restart window expires. Clear or update the marker only after preserving the work it protects.\n", worktreeStaleFileName, alert.WorkDir, branch, reason)
+	if _, err := provider.Send(sender, recipient, subject, body); err != nil {
+		fmt.Fprintf(stderr, "session reconciler: stale-worktree alert mail failed: %v\n", err) //nolint:errcheck // best-effort alert
+	}
 }
 
 const runtimeDemandSnapshotMaxAge = 30 * time.Second
@@ -2474,6 +2494,12 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, result DesiredStat
 		withMaxSessionAgeTracker(cr.mat),
 		withAssignedWorkDeferTracker(cr.adt),
 		withReadyAssignedFlags(readyAssignedFlagsForBeads(result.ReadyAssigned, awakeAssignedWorkBeads, awakeAssignedStoreRefs)),
+	}
+	if recipient := strings.TrimSpace(cr.cfg.Daemon.WorktreeStaleAlertTo); recipient != "" {
+		mailer := newCityMailProvider(cr.storageRoutes, store, cr.cfg, cr.cityPath, cr.rec)
+		reconcileStartOptions = append(reconcileStartOptions, withStaleWorktreeAlert(func(alert staleWorktreeAlert) {
+			sendStaleWorktreeAlert(mailer, cr.cityName, recipient, alert, cr.stderr)
+		}))
 	}
 	if bootReconcile {
 		// #3288: skip the per-session orphan/failed-create session-bead closes on
