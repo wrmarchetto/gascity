@@ -113,6 +113,9 @@ func TestBdStoreCreateFullFlagConformance(t *testing.T) {
 	priority := 1
 	var gotArgs []string
 	runner := func(_, _ string, args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "dep list gc-explicit --json" {
+			return []byte(`[{"id":"bd-dep","title":"dependency","status":"open","issue_type":"task","created_at":"2026-05-01T00:00:00Z","dependency_type":"blocks"},{"id":"bd-check","title":"check","status":"open","issue_type":"task","created_at":"2026-05-01T00:00:00Z","dependency_type":"validates"}]`), nil
+		}
 		gotArgs = append([]string(nil), args...)
 		return []byte(`{
 			"id":"gc-explicit",

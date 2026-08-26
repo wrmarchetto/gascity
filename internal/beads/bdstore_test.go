@@ -167,7 +167,10 @@ func TestBdStoreCreatePassesExplicitID(t *testing.T) {
 func TestBdStoreCreatePassesDeps(t *testing.T) {
 	var gotArgs []string
 	runner := func(_, _ string, args ...string) ([]byte, error) {
-		gotArgs = args
+		gotArgs = append(gotArgs, args...)
+		if strings.Join(args, " ") == "dep list bd-x --json" {
+			return []byte(`[{"id":"bd-1","title":"blocker","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","dependency_type":"blocks"},{"id":"bd-2","title":"validator","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","dependency_type":"validates"}]`), nil
+		}
 		return []byte(`{"id":"bd-x","title":"test","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z"}`), nil
 	}
 	s := beads.NewBdStore("/city", runner)
@@ -181,6 +184,30 @@ func TestBdStoreCreatePassesDeps(t *testing.T) {
 	args := strings.Join(gotArgs, " ")
 	if !strings.Contains(args, "--deps bd-1,validates:bd-2") {
 		t.Errorf("args = %q, want combined deps flag", args)
+	}
+}
+
+func TestBdStoreCreateFailsWhenDependencyWritesAreNotReadBack(t *testing.T) {
+	runner := fakeRunner(map[string]struct {
+		out []byte
+		err error
+	}{
+		`bd create --json test -t task --deps blocks:foreign-1`: {
+			out: []byte(`{"id":"bd-x","title":"test","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z"}`),
+		},
+		`bd dep list bd-x --json`: {out: []byte(`[]`)},
+	})
+	s := beads.NewBdStore("/city", runner)
+
+	_, err := s.Create(beads.Bead{Title: "test", Needs: []string{"blocks:foreign-1"}})
+	if err == nil {
+		t.Fatal("Create() error = nil, want read-back verification failure")
+	}
+	if !strings.Contains(err.Error(), "bd-x") || !strings.Contains(err.Error(), "foreign-1") {
+		t.Errorf("Create() error = %q, want both bead IDs", err)
+	}
+	if !strings.Contains(err.Error(), "bd gate create --blocks bd-x") {
+		t.Errorf("Create() error = %q, want gate workaround", err)
 	}
 }
 
@@ -1840,7 +1867,16 @@ func TestBdStoreDoltliteLifecycleMutationsRetryTransientWrites(t *testing.T) {
 						status = "closed"
 					}
 					return []byte(`[{"id":"bd-1","title":"one","status":"` + status + `","issue_type":"task","created_at":"2025-01-15T10:30:00Z"}]`), nil
-				case "close", "reopen", "delete", "dep":
+				case "dep":
+					if len(unwrapped) > 1 && unwrapped[1] == "list" {
+						return []byte(`[]`), nil
+					}
+					writes = append(writes, append([]string(nil), args...))
+					if len(writes) == 1 {
+						return nil, fmt.Errorf("Error 1213 (40001): serialization failure")
+					}
+					return nil, nil
+				case "close", "reopen", "delete":
 					writes = append(writes, append([]string(nil), args...))
 					if len(writes) == 1 {
 						return nil, fmt.Errorf("Error 1213 (40001): serialization failure")
@@ -2876,7 +2912,10 @@ func TestBdStoreCreateWithParentID(t *testing.T) {
 }
 
 func TestBdStoreCreateDoesNotBackfillUnconfirmedFields(t *testing.T) {
-	runner := func(_, _ string, _ ...string) ([]byte, error) {
+	runner := func(_, _ string, args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "dep list bd-x --json" {
+			return []byte(`[{"id":"bd-2","title":"dependency","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","dependency_type":"blocks"}]`), nil
+		}
 		return []byte(`{"id":"bd-x","title":"test","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","metadata":{"accepted":"true"}}`), nil
 	}
 	s := beads.NewBdStore("/city", runner)
@@ -3838,7 +3877,10 @@ func TestBdStorePassesDir(t *testing.T) {
 func TestBdStoreDepAdd(t *testing.T) {
 	var gotArgs []string
 	runner := func(_, _ string, args ...string) ([]byte, error) {
-		gotArgs = args
+		gotArgs = append(gotArgs, args...)
+		if strings.Join(args, " ") == "dep list bd-42 --json" {
+			return []byte(`[{"id":"bd-41","title":"blocker","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","dependency_type":"blocks"}]`), nil
+		}
 		return nil, nil
 	}
 	s := beads.NewBdStore("/city", runner)
@@ -3847,14 +3889,39 @@ func TestBdStoreDepAdd(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantArgs := "dep add bd-42 bd-41 --type blocks"
-	if strings.Join(gotArgs, " ") != wantArgs {
-		t.Errorf("args = %q, want %q", strings.Join(gotArgs, " "), wantArgs)
+	if strings.Join(gotArgs[:6], " ") != wantArgs {
+		t.Errorf("args = %q, want prefix %q", strings.Join(gotArgs, " "), wantArgs)
+	}
+}
+
+func TestBdStoreDepAddFailsWhenWriteIsNotReadBack(t *testing.T) {
+	runner := fakeRunner(map[string]struct {
+		out []byte
+		err error
+	}{
+		`bd dep add bd-42 foreign-1 --type blocks`: {},
+		`bd dep list bd-42 --json`:                 {out: []byte(`[]`)},
+	})
+	s := beads.NewBdStore("/city", runner)
+
+	err := s.DepAdd("bd-42", "foreign-1", "blocks")
+	if err == nil {
+		t.Fatal("DepAdd() error = nil, want read-back verification failure")
+	}
+	if !strings.Contains(err.Error(), "bd-42") || !strings.Contains(err.Error(), "foreign-1") {
+		t.Errorf("DepAdd() error = %q, want both bead IDs", err)
+	}
+	if !strings.Contains(err.Error(), "bd gate create --blocks bd-42") {
+		t.Errorf("DepAdd() error = %q, want gate workaround", err)
 	}
 }
 
 func TestBdStoreDepAddRetriesTransientDoltConnectionError(t *testing.T) {
 	calls := 0
-	runner := func(_, _ string, _ ...string) ([]byte, error) {
+	runner := func(_, _ string, args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "dep list bd-42 --json" {
+			return []byte(`[{"id":"bd-41","title":"blocker","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","dependency_type":"blocks"}]`), nil
+		}
 		calls++
 		if calls == 1 {
 			return nil, fmt.Errorf("exit status 1: [mysql] read tcp 127.0.0.1:54108->127.0.0.1:4306: i/o timeout: failed to check for dependency cycle: invalid connection")
@@ -3877,7 +3944,10 @@ func TestBdStoreDepAddRetriesTransientDoltConnectionError(t *testing.T) {
 // failures instead of failing permanently on first contention.
 func TestBdStoreDepAddRetriesSqliteBusyError(t *testing.T) {
 	calls := 0
-	runner := func(_, _ string, _ ...string) ([]byte, error) {
+	runner := func(_, _ string, args ...string) ([]byte, error) {
+		if strings.Join(args, " ") == "dep list bd-42 --json" {
+			return []byte(`[{"id":"bd-41","title":"blocker","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","dependency_type":"blocks"}]`), nil
+		}
 		calls++
 		if calls == 1 {
 			return nil, fmt.Errorf("exit status 1: adding dependency: database is locked (5) (SQLITE_BUSY)")
@@ -3912,7 +3982,10 @@ func TestBdStoreDepAddError(t *testing.T) {
 func TestBdStoreDepRemove(t *testing.T) {
 	var gotArgs []string
 	runner := func(_, _ string, args ...string) ([]byte, error) {
-		gotArgs = args
+		gotArgs = append(gotArgs, args...)
+		if strings.Join(args, " ") == "dep list bd-42 --json" {
+			return []byte(`[]`), nil
+		}
 		return nil, nil
 	}
 	s := beads.NewBdStore("/city", runner)
@@ -3921,8 +3994,32 @@ func TestBdStoreDepRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantArgs := "dep remove bd-42 bd-41"
-	if strings.Join(gotArgs, " ") != wantArgs {
-		t.Errorf("args = %q, want %q", strings.Join(gotArgs, " "), wantArgs)
+	if strings.Join(gotArgs[:4], " ") != wantArgs {
+		t.Errorf("args = %q, want prefix %q", strings.Join(gotArgs, " "), wantArgs)
+	}
+}
+
+func TestBdStoreDepRemoveFailsWhenWriteIsNotReadBack(t *testing.T) {
+	runner := fakeRunner(map[string]struct {
+		out []byte
+		err error
+	}{
+		`bd dep remove bd-42 foreign-1`: {},
+		`bd dep list bd-42 --json`: {
+			out: []byte(`[{"id":"foreign-1","title":"blocker","status":"open","issue_type":"task","created_at":"2025-01-15T10:30:00Z","dependency_type":"blocks"}]`),
+		},
+	})
+	s := beads.NewBdStore("/city", runner)
+
+	err := s.DepRemove("bd-42", "foreign-1")
+	if err == nil {
+		t.Fatal("DepRemove() error = nil, want read-back verification failure")
+	}
+	if !strings.Contains(err.Error(), "bd-42") || !strings.Contains(err.Error(), "foreign-1") {
+		t.Errorf("DepRemove() error = %q, want both bead IDs", err)
+	}
+	if !strings.Contains(err.Error(), "bd gate create --blocks bd-42") {
+		t.Errorf("DepRemove() error = %q, want gate workaround", err)
 	}
 }
 
