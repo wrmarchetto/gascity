@@ -68,6 +68,7 @@ unclaimable-assignee
 unclaimable-work
 order-tracking-retention
 session-model
+session-work-staleness
 dolt-server
 fork-rate
 host-disk-space
