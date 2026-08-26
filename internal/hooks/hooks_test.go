@@ -673,6 +673,14 @@ func TestCodexHooksNeedManagedUpgrade(t *testing.T) {
 	}
 }
 
+func TestCodexHooksNeedManagedUpgradeReportsDuplicateManagedSessionStart(t *testing.T) {
+	current := []byte(`{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && GC_MANAGED_SESSION_HOOK=1 GC_HOOK_EVENT_NAME=SessionStart gc --city '/city' prime --hook --hook-format codex"}]},{"matcher":"startup","hooks":[{"type":"command","command":"export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && GC_MANAGED_SESSION_HOOK=1 GC_HOOK_EVENT_NAME=SessionStart gc --city '/city' prime --hook --hook-format codex"}]}],"PreCompact":[{"hooks":[{"type":"command","command":"export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && gc --city '/city' handoff --auto --hook-format codex \"context cycle\""}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && gc --city '/city' hook run --timeout 15s --timeout-exit-code 0 -- nudge drain --inject --hook-format codex"},{"type":"command","command":"export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" && gc --city '/city' hook run --timeout 15s --timeout-exit-code 0 -- mail check --inject --hook-format codex"}]}]}}`)
+
+	if !CodexHooksNeedManagedUpgrade(current, "/city") {
+		t.Fatal("duplicate managed Codex SessionStart hooks were reported current")
+	}
+}
+
 func TestInstallCodexPreservesCustomOnlyHooksByteForByte(t *testing.T) {
 	fs := fsys.NewFake()
 	custom := []byte(`{"hooks":{"UserPromptSubmit":[{"hooks":[{"command":"printf custom-codex-hook","type":"command"}]}]}}`)
