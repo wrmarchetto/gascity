@@ -196,7 +196,18 @@ func computePoolDesiredStates(
 			if sessionBeadID != "" {
 				sessionTemplate := strings.TrimSpace(sessionBeadTemplate[sessionBeadID])
 				if sessionTemplate != "" && routedTo != "" && !agentTemplateIdentitiesEquivalent(cfg, routedTo, sessionTemplate) {
-					continue
+					if !poolTemplateClaimsRoute(cfg, sessionTemplate, routedTo) {
+						// An explicit route is authoritative unless it is one of
+						// the owning template's configured shared claim routes.
+						// Otherwise a session assigned work from another pool could
+						// be resumed under the wrong template.
+						continue
+					}
+					// A concrete live session owns work it claimed from a shared
+					// queue. The route identifies where new work is taken; the
+					// session identity identifies whose in-progress work must
+					// receive a resume request.
+					routedTo = normalizeAgentTemplateIdentity(cfg, sessionTemplate)
 				}
 			}
 			if routedTo != template {
@@ -373,6 +384,28 @@ func computePoolDesiredStates(
 	}
 
 	return applyNestedCaps(cfg, allRequests, aliasHeldTemplates, trace)
+}
+
+// poolTemplateClaimsRoute reports whether route is a configured shared queue
+// for template. A template's own route is intentionally excluded: callers use
+// this only to distinguish shared queue claims from explicit cross-pool routes.
+func poolTemplateClaimsRoute(cfg *config.City, template, route string) bool {
+	if cfg == nil {
+		return false
+	}
+	for i := range cfg.Agents {
+		agent := &cfg.Agents[i]
+		if !agentTemplateIdentitiesEquivalent(cfg, agent.QualifiedName(), template) {
+			continue
+		}
+		for _, claimRoute := range agent.ClaimRoutes {
+			claimRoute = normalizeAgentTemplateIdentity(cfg, agentutil.NormalizePoolRouteTarget(cfg, claimRoute))
+			if claimRoute != "" && agentTemplateIdentitiesEquivalent(cfg, claimRoute, route) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func canonicalSingletonAliasHeldTemplates(cfg *config.City, sessionInfos []sessionpkg.Info) map[string]struct{} {

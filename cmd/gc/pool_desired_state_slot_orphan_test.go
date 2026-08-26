@@ -24,6 +24,66 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 )
 
+// TestComputePoolDesiredStates_SharedRouteClaimResumesConcreteOwner pins the
+// distinction between a queue route and an ownership identity. A pool may
+// claim work from a configured shared route, but after that claim the concrete
+// slot is the only session that must be retained for the in-progress work.
+//
+// The queue route intentionally names a different template. Treating it as
+// the work owner's template drops the owning slot from the resume tier: the
+// shared pool does not own the Codex session, while the Codex pool appears to
+// own no work and gets orphan-drained. That produces an empty replacement slot
+// on the next demand sample.
+func TestComputePoolDesiredStates_SharedRouteClaimResumesConcreteOwner(t *testing.T) {
+	const (
+		codexTemplate = "astoria-sel4/lab.engineer-codex"
+		sharedRoute   = "astoria-sel4/lab.engineer"
+		slotIdentity  = codexTemplate + "-1"
+	)
+
+	cfg := &config.City{
+		Agents: []config.Agent{{
+			Name:              "lab.engineer-codex",
+			Dir:               "astoria-sel4",
+			MaxActiveSessions: intPtr(2),
+			ClaimRoutes:       []string{sharedRoute},
+		}},
+	}
+	work := []beads.Bead{
+		workBead("shared-work", sharedRoute, slotIdentity, "in_progress", 5),
+	}
+	sessions := []beads.Bead{{
+		ID:     "codex-slot-1",
+		Status: "open",
+		Type:   sessionBeadType,
+		Metadata: map[string]string{
+			"template":     codexTemplate,
+			"session_name": "lab-engineer-codex-1",
+			"alias":        slotIdentity,
+			"state":        "active",
+			"pool_slot":    "1",
+		},
+	}}
+
+	result := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads(sessions), map[string]int{codexTemplate: 0})
+	if len(result) != 1 || len(result[0].Requests) != 1 {
+		t.Fatalf("requests = %#v, want one resume request for the concrete owning slot", result)
+	}
+	request := result[0].Requests[0]
+	if request.Template != codexTemplate {
+		t.Errorf("template = %q, want %q", request.Template, codexTemplate)
+	}
+	if request.Tier != "resume" {
+		t.Errorf("tier = %q, want resume", request.Tier)
+	}
+	if request.SessionBeadID != "codex-slot-1" {
+		t.Errorf("SessionBeadID = %q, want codex-slot-1", request.SessionBeadID)
+	}
+	if request.WorkBeadID != "shared-work" {
+		t.Errorf("WorkBeadID = %q, want shared-work", request.WorkBeadID)
+	}
+}
+
 // TestComputePoolDesiredStates_SlotAssignedWorkWakesAfterSessionClose pins the
 // orphan-recovery invariant across the identity form a multi-slot pool writes:
 // in-progress work assigned to a slot identity of a configured pool template
