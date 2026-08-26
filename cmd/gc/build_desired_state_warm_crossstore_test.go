@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -129,6 +130,64 @@ func TestBuildDesiredState_WarmRigPoolSeesCityStoreRoutedDemand(t *testing.T) {
 			"gating the city probe on isCold leaves warm rig pools blind to routed work and "+
 			"pins pool demand at the rig-store count (full ScaleCheckCounts=%v, partial=%v)",
 			got, dsResult.ScaleCheckCounts, dsResult.PoolScaleCheckPartialTemplates)
+	}
+}
+
+// TestBuildDesiredState_CityScopedPoolSeesRigStoreAliasDemand protects the
+// reciprocal half of cross-store demand. A city-scoped pool can claim work in
+// every rig store, so its default demand reader must query those stores too.
+// The prefix-sharing parent asserts that exact pool-alias matching attributes
+// the work only to the named child template.
+func TestBuildDesiredState_CityScopedPoolSeesRigStoreAliasDemand(t *testing.T) {
+	cityPath := t.TempDir()
+	rigPath := filepath.Join(cityPath, "hardware")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		parentTemplate = "reviewer"
+		childTemplate  = "reviewer-codex"
+	)
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "gc"},
+		Rigs:      []config.Rig{{Name: "hardware", Path: rigPath}},
+		Agents: []config.Agent{
+			{Name: parentTemplate, MaxActiveSessions: intPtr(-1)},
+			{
+				Name:              childTemplate,
+				Scope:             "city",
+				MinActiveSessions: intPtr(0),
+				MaxActiveSessions: intPtr(1),
+			},
+		},
+	}
+	cityStore := beads.NewMemStore()
+	rigStore := beads.NewMemStore()
+	rigStores := map[string]beads.Store{"hardware": rigStore}
+
+	for i := 0; i < 6; i++ {
+		if _, err := rigStore.Create(beads.Bead{
+			ID:       "review-" + strconv.Itoa(i),
+			Type:     "task",
+			Status:   "open",
+			Assignee: childTemplate,
+		}); err != nil {
+			t.Fatalf("create rig-store review %d: %v", i, err)
+		}
+	}
+
+	result := buildDesiredStateWithSessionBeads(
+		"gc", cityPath, time.Now().UTC(), cfg, runtime.NewFake(),
+		cityStore, rigStores, nil, nil, io.Discard,
+	)
+
+	if got := result.ScaleCheckCounts[parentTemplate]; got != 0 {
+		t.Fatalf("ScaleCheckCounts[%q] = %d, want 0: work assigned to the child must not be attributed to its prefix-sharing parent (full=%v)",
+			parentTemplate, got, result.ScaleCheckCounts)
+	}
+	if got := result.ScaleCheckCounts[childTemplate]; got != 6 {
+		t.Fatalf("ScaleCheckCounts[%q] = %d, want 6: city-scoped pool demand must include claimable rig-store aliases (full=%v)",
+			childTemplate, got, result.ScaleCheckCounts)
 	}
 }
 

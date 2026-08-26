@@ -643,7 +643,21 @@ func buildDesiredStateWithSessionBeads(
 			// Control dispatchers are deliberately store-scoped: a rig copy cannot
 			// claim a route from the city store. Keep their cold-wake probe on the
 			// owning store instead of applying generic cross-store pool delivery.
-			if !storeScopedControlDispatcher && ownTarget.storeKey != "city" && ownTarget.store != nil && ownTarget.err == nil && ownTarget.store != store {
+			if agentIsCrossStoreEligible(&cfg.Agents[i]) {
+				// A city-scoped pool can claim work in every active rig, so its
+				// default demand must be the union of the city store and those rig
+				// stores. The city target is already present in defaultScaleTargets.
+				for _, source := range activeStores {
+					if source.ref == "city" {
+						continue
+					}
+					defaultScaleTargets = append(defaultScaleTargets, defaultScaleCheckTarget{
+						template: template,
+						store:    source.store,
+						storeKey: "rig:" + source.ref,
+					})
+				}
+			} else if !storeScopedControlDispatcher && ownTarget.storeKey != "city" && ownTarget.store != nil && ownTarget.err == nil && ownTarget.store != store {
 				defaultScaleTargets = append(defaultScaleTargets, defaultScaleCheckTarget{template: template, store: store, storeKey: "city"})
 			}
 			continue
