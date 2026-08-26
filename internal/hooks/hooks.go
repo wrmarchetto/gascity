@@ -706,10 +706,41 @@ func CodexHooksNeedManagedUpgrade(data []byte, cityDir string) bool {
 
 func applyCodexManagedHookUpgrade(root any, desired []byte, cityDir string) bool {
 	changed := upgradeCodexHookValue(root, "", cityDir)
+	if codexHooksHaveDuplicateManagedSessionStart(root, cityDir) {
+		changed = true
+	}
 	if addCodexPreCompactHook(root, desired) {
 		changed = true
 	}
 	return changed
+}
+
+func codexHooksHaveDuplicateManagedSessionStart(root any, cityDir string) bool {
+	doc, ok := root.(map[string]any)
+	if !ok {
+		return false
+	}
+	hooksMap, ok := doc["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	entries, ok := hooksMap["SessionStart"].([]any)
+	if !ok {
+		return false
+	}
+
+	found := false
+	for _, entry := range entries {
+		entryMap, ok := entry.(map[string]any)
+		if !ok || !codexHookEntryHasCommandBody(entryMap, sessionStartCurrentFormBody(cityDir)) {
+			continue
+		}
+		if found {
+			return true
+		}
+		found = true
+	}
+	return false
 }
 
 func codexHookValueHasManagedCommand(v any, event string) bool {
