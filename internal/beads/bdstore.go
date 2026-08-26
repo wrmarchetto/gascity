@@ -1035,6 +1035,9 @@ func (s *BdStore) CreateWithStorage(b Bead, storage StorageClass) (Bead, error) 
 	if effectiveNoHistory {
 		created.NoHistory = true
 	}
+	if err := s.verifyCreatedDependencies(created.ID, b.Needs); err != nil {
+		return Bead{}, fmt.Errorf("bd create: %w", err)
+	}
 	return created, nil
 }
 
@@ -2823,6 +2826,9 @@ func (s *BdStore) DepAdd(issueID, dependsOnID, depType string) error {
 	if err != nil {
 		return fmt.Errorf("adding dep %s→%s: %w", issueID, dependsOnID, err)
 	}
+	if err := s.verifyDependencyPresent(issueID, dependsOnID, depType); err != nil {
+		return fmt.Errorf("adding dep %s→%s: %w", issueID, dependsOnID, err)
+	}
 	return nil
 }
 
@@ -2832,7 +2838,80 @@ func (s *BdStore) DepRemove(issueID, dependsOnID string) error {
 	if err != nil {
 		return fmt.Errorf("removing dep %s→%s: %w", issueID, dependsOnID, err)
 	}
+	if err := s.verifyDependencyAbsent(issueID, dependsOnID); err != nil {
+		return fmt.Errorf("removing dep %s→%s: %w", issueID, dependsOnID, err)
+	}
 	return nil
+}
+
+// verifyCreatedDependencies confirms that every dependency accepted by bd
+// during create is visible in the store's dependency projection. Some bd
+// versions acknowledge cross-store dependencies without persisting them.
+func (s *BdStore) verifyCreatedDependencies(issueID string, needs []string) error {
+	if len(needs) == 0 {
+		return nil
+	}
+	deps, err := s.DepList(issueID, "down")
+	if err != nil {
+		return fmt.Errorf("reading dependency projection for %q: %w", issueID, err)
+	}
+	for _, need := range needs {
+		depType, dependsOnID := parseCreatedDependency(need)
+		if dependencyPresent(deps, dependsOnID, depType) {
+			continue
+		}
+		return s.dependencyWriteNotPersisted(issueID, dependsOnID)
+	}
+	return nil
+}
+
+// verifyDependencyPresent confirms that a successful bd dep add changed the
+// dependency projection before reporting success to the caller.
+func (s *BdStore) verifyDependencyPresent(issueID, dependsOnID, depType string) error {
+	deps, err := s.DepList(issueID, "down")
+	if err != nil {
+		return fmt.Errorf("reading dependency projection for %q: %w", issueID, err)
+	}
+	if dependencyPresent(deps, dependsOnID, depType) {
+		return nil
+	}
+	return s.dependencyWriteNotPersisted(issueID, dependsOnID)
+}
+
+// verifyDependencyAbsent confirms that a successful bd dep remove changed the
+// dependency projection before reporting success to the caller.
+func (s *BdStore) verifyDependencyAbsent(issueID, dependsOnID string) error {
+	deps, err := s.DepList(issueID, "down")
+	if err != nil {
+		return fmt.Errorf("reading dependency projection for %q: %w", issueID, err)
+	}
+	for _, dep := range deps {
+		if dep.DependsOnID == dependsOnID {
+			return s.dependencyWriteNotPersisted(issueID, dependsOnID)
+		}
+	}
+	return nil
+}
+
+func parseCreatedDependency(need string) (depType, dependsOnID string) {
+	depType, dependsOnID, found := strings.Cut(need, ":")
+	if !found {
+		return "blocks", need
+	}
+	return depType, dependsOnID
+}
+
+func dependencyPresent(deps []Dep, dependsOnID, depType string) bool {
+	for _, dep := range deps {
+		if dep.DependsOnID == dependsOnID && dep.Type == depType {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *BdStore) dependencyWriteNotPersisted(issueID, dependsOnID string) error {
+	return fmt.Errorf("dependency write %q → %q did not produce the expected state in bead store %q; bd may silently ignore cross-store dependencies. Create a gate in %q's store (bd gate create --blocks %s --reason=...) to hold it until the external constraint is resolved", issueID, dependsOnID, s.Dir(), issueID, issueID)
 }
 
 // bdDepIssue is the JSON shape returned by bd dep list --json.

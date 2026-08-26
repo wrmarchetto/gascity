@@ -254,6 +254,19 @@ Now `mc-xp7` won't appear in any agent's work query until `mc-a4l` is closed —
 the same mechanism behind formula step ordering, where `needs` declarations
 become `blocks` edges.
 
+<Note>
+  A dependency stays within one bead store. To hold a bead for a condition in a
+  different store, create a gate in the blocked bead's own store instead:
+
+  ```shell
+  bd gate create --blocks mc-xp7 --reason="Waiting for the external constraint"
+  ```
+
+  The gate keeps `mc-xp7` out of ready work until you resolve it with `bd gate
+  resolve`. Confirm any dependency write with `bd dep list mc-xp7` before
+  relying on its ordering.
+</Note>
+
 The dependency types:
 
 | Edge                | Means                                       |
