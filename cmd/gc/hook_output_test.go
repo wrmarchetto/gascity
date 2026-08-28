@@ -121,6 +121,42 @@ func TestWriteProviderHookContextCodexDefaultsSessionStartFromEnv(t *testing.T) 
 	}
 }
 
+// codexPreCompactCommandOutputWire mirrors Codex's PreCompact output wire:
+// only the universal fields are accepted, with unknown fields rejected.
+type codexPreCompactCommandOutputWire struct {
+	Continue       *bool   `json:"continue"`
+	StopReason     *string `json:"stopReason"`
+	SuppressOutput *bool   `json:"suppressOutput"`
+	SystemMessage  *string `json:"systemMessage"`
+}
+
+func TestWriteProviderHookContextCodexPreCompactUniversalOnly(t *testing.T) {
+	var out bytes.Buffer
+	err := writeProviderHookContextForEvent(&out, "codex", "PreCompact", "Handoff: sent auto mail gc-abc12 (restart skipped).\n")
+	if err != nil {
+		t.Fatalf("writeProviderHookContextForEvent: %v", err)
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(out.Bytes()))
+	dec.DisallowUnknownFields()
+	var payload codexPreCompactCommandOutputWire
+	if err := dec.Decode(&payload); err != nil {
+		t.Fatalf("PreCompact output rejected by Codex: %v\n%s", err, out.String())
+	}
+	if payload.SystemMessage == nil {
+		t.Fatalf("systemMessage missing; handoff reference not preserved:\n%s", out.String())
+	}
+	if got, want := *payload.SystemMessage, "Handoff: sent auto mail gc-abc12 (restart skipped)."; got != want {
+		t.Fatalf("systemMessage = %q, want %q", got, want)
+	}
+	if payload.Continue != nil && !*payload.Continue {
+		t.Fatalf("PreCompact output set continue=false, which would block compaction:\n%s", out.String())
+	}
+	if payload.StopReason != nil {
+		t.Fatalf("PreCompact output set stopReason, which pairs with a stop:\n%s", out.String())
+	}
+}
+
 func TestWriteProviderHookContextPlain(t *testing.T) {
 	var out bytes.Buffer
 	err := writeProviderHookContextForEvent(&out, "", "", "<system-reminder>\nhello\n</system-reminder>\n")

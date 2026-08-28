@@ -321,20 +321,19 @@ func TestCmdHandoffAutoHookFormatCodex(t *testing.T) {
 		t.Fatalf("gc handoff --auto --hook-format codex failed: %v; stderr=%s", err, stderr.String())
 	}
 
-	var payload struct {
-		HookSpecificOutput struct {
-			HookEventName     string `json:"hookEventName"`
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
+	var universal struct {
+		Continue       *bool   `json:"continue"`
+		StopReason     *string `json:"stopReason"`
+		SuppressOutput *bool   `json:"suppressOutput"`
+		SystemMessage  string  `json:"systemMessage"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		t.Fatalf("stdout is not Codex hook JSON: %v\n%s", err, stdout.String())
+	dec := json.NewDecoder(bytes.NewReader(stdout.Bytes()))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&universal); err != nil {
+		t.Fatalf("PreCompact output is not valid universal-only Codex JSON: %v\n%s", err, stdout.String())
 	}
-	if got, want := payload.HookSpecificOutput.HookEventName, "PreCompact"; got != want {
-		t.Fatalf("hookEventName = %q, want %q", got, want)
-	}
-	if !strings.Contains(payload.HookSpecificOutput.AdditionalContext, "Handoff: sent auto mail") {
-		t.Fatalf("additionalContext = %q, want handoff confirmation", payload.HookSpecificOutput.AdditionalContext)
+	if !strings.Contains(universal.SystemMessage, "Handoff: sent auto mail") {
+		t.Fatalf("systemMessage = %q, want handoff confirmation", universal.SystemMessage)
 	}
 	store, err := openCityStoreAt(cityDir)
 	if err != nil {
@@ -344,8 +343,8 @@ func TestCmdHandoffAutoHookFormatCodex(t *testing.T) {
 	if len(all) != 1 {
 		t.Fatalf("open beads = %d, want handoff mail", len(all))
 	}
-	if !strings.Contains(payload.HookSpecificOutput.AdditionalContext, all[0].ID) {
-		t.Fatalf("additionalContext = %q, want handoff mail id %s", payload.HookSpecificOutput.AdditionalContext, all[0].ID)
+	if !strings.Contains(universal.SystemMessage, all[0].ID) {
+		t.Fatalf("systemMessage = %q, want handoff mail id %s", universal.SystemMessage, all[0].ID)
 	}
 }
 
