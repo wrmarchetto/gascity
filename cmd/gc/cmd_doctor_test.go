@@ -347,6 +347,20 @@ suspended = true
 	}
 }
 
+func TestBuildDoctorChecksRegistersCityDoltBackupCheck(t *testing.T) {
+	clearInheritedBeadsEnv(t)
+
+	cityDir := t.TempDir()
+	checks := buildDoctorChecks(cityDir, &config.City{}, nil, buildDoctorChecksOpts{
+		ControllerRunning:    true,
+		SkipManagedDoltCheck: true,
+	})
+
+	if doctorCheckIndex(doctorCheckNames(checks), "city:dolt-backup") < 0 {
+		t.Fatalf("city Dolt backup freshness check was not registered; names=%v", doctorCheckNames(checks))
+	}
+}
+
 func TestBuildDoctorChecksSkipsRigDoltChecks(t *testing.T) {
 	clearInheritedBeadsEnv(t)
 

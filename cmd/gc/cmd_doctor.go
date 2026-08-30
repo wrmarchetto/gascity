@@ -24,10 +24,11 @@ import (
 )
 
 var (
-	newDoctorDoltServerCheck    = doctor.NewDoltServerCheck
-	newDoctorRigDoltServerCheck = doctor.NewRigDoltServerCheck
-	newDoctorDoltBackupCheck    = doctor.NewDoltBackupCheck
-	newDoctorDoltLocalOnlyCheck = doctor.NewDoltLocalOnlyRemoteCheck
+	newDoctorDoltServerCheck     = doctor.NewDoltServerCheck
+	newDoctorRigDoltServerCheck  = doctor.NewRigDoltServerCheck
+	newDoctorDoltBackupCheck     = doctor.NewDoltBackupCheck
+	newDoctorCityDoltBackupCheck = doctor.NewCityDoltBackupCheck
+	newDoctorDoltLocalOnlyCheck  = doctor.NewDoltLocalOnlyRemoteCheck
 )
 
 func newDoctorCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -349,6 +350,9 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 		register(&sessionWorkStalenessDoctorCheck{cfg: cfg, cityPath: cityPath, newStore: storeFactory})
 	}
 	register(newDoctorDoltServerCheck(cityPath, opts.SkipCityDoltCheck))
+	if cityUsesBdStoreContract(cityPath) && !opts.SkipCityDoltCheck {
+		register(newDoctorCityDoltBackupCheck(cityPath, managedDoltDataDir))
+	}
 	// Host-level fork-rate watch: surfaces the per-command data-plane fork storm
 	// (gc -> bd.real -> dolt) that operators routinely misread as CPU saturation.
 	// Advisory + read-only (/proc/stat); no config needed.

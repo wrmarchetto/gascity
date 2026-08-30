@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/config"
 )
@@ -119,6 +120,39 @@ func TestDoltBackupCheck_BackupDirExists_OK(t *testing.T) {
 	if r.Status != StatusOK {
 		t.Fatalf("status = %d, want StatusOK (backup dir present); message=%s hint=%s",
 			r.Status, r.Message, r.FixHint)
+	}
+}
+
+func TestDoltBackupCheck_StaleBackupArtifactWarns(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	cityPath := t.TempDir()
+	doltDataDir := filepath.Join(cityPath, ".beads", "dolt")
+	rigPath := filepath.Join(cityPath, "rig")
+	if err := os.MkdirAll(rigPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeRigMetadata(t, rigPath, "testdb")
+	backupDir := filepath.Join(cityPath, ".dolt-backup", "testdb")
+	if err := os.MkdirAll(backupDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(backupDir, "sync.marker")
+	if err := os.WriteFile(artifact, []byte("old backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := now.Add(-48 * time.Hour)
+	if err := os.Chtimes(artifact, stale, stale); err != nil {
+		t.Fatalf("age backup artifact: %v", err)
+	}
+
+	rig := config.Rig{Name: "testrig", Path: rigPath}
+	r := newDoltBackupCheck(cityPath, rig, doltDataDir, "", "", func() time.Time { return now }).Run(&CheckContext{CityPath: cityPath})
+
+	if r.Status != StatusWarning {
+		t.Fatalf("status = %d, want StatusWarning for stale backup artifact; message=%s", r.Status, r.Message)
+	}
+	if !strings.Contains(r.Message, "stale") {
+		t.Fatalf("stale backup warning should say why it failed, got %q", r.Message)
 	}
 }
 
