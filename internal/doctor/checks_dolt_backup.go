@@ -8,52 +8,91 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/beads/contract"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
 )
 
-// DoltBackupCheck verifies that a rig's Dolt database has a backup remote
-// configured. `gc rig add` provisions the rig but does not register a
-// backup. mol-dog-backup auto-configures a local <db>-backup remote on its
-// next run (#3176), so this warning self-heals within one backup interval;
-// it catches the not-yet-covered window up-front in `gc doctor` and stays
-// loud when the backup dog itself is failing.
+// defaultDoltBackupArtifactFreshnessMaxAge allows one missed run of the
+// configured six-hour Dolt backup order before doctor reports an advisory.
+// This mirrors the 12-hour RPO window used by mol-dog-doctor.
+const defaultDoltBackupArtifactFreshnessMaxAge = 12 * time.Hour
+
+// DoltBackupCheck verifies that a managed Dolt scope has a configured backup
+// remote and, when artifacts exist, that its recovery point is current. `gc
+// rig add` provisions a rig but does not register a backup. mol-dog-backup
+// auto-configures a local <db>-backup remote on its next run (#3176), so this
+// warning self-heals within one backup interval; it catches the
+// not-yet-covered window up-front in `gc doctor` and stays loud when the
+// backup dog itself is failing.
 //
 // Two signals satisfy the check; either is sufficient:
 //
-//   - Filesystem: <city>/.dolt-backup/<db>/ exists with backup contents.
-//     mol-dog-backup syncs here, so populated contents are evidence that
-//     a sync has run.
+//   - Filesystem: <city>/.dolt-backup/<db>/ contains a backup artifact
+//     newer than the recovery-point window. mol-dog-backup syncs here, so a
+//     current artifact is evidence that a sync has run recently.
 //   - Repo state: <managed-dolt-data-dir>/<db>/.dolt/repo_state.json
 //     contains a backup entry named <db>-backup. This is the
 //     post-registration, pre-sync state.
 //
-// When both signals are absent the check emits StatusWarning with the
-// exact copy-pasteable invocation needed to register and sync the
-// backup. We deliberately do NOT auto-fix: backup destination is
+// When neither signal is present, or an existing artifact is stale, the check
+// emits StatusWarning. We deliberately do NOT auto-fix: backup destination is
 // operator policy (local fs vs S3 vs B2 etc.) and a one-way door.
 //
 // The check is intended to be registered per non-suspended rig; the
 // caller in cmd_doctor.go skips suspended rigs before constructing this
 // check.
 type DoltBackupCheck struct {
-	cityPath    string
-	rig         config.Rig
-	doltDataDir string
+	cityPath         string
+	rig              config.Rig
+	doltDataDir      string
+	checkName        string
+	scopeDescription string
+	now              func() time.Time
 }
 
 // NewDoltBackupCheck creates a per-rig dolt-backup registration check.
 func NewDoltBackupCheck(cityPath string, rig config.Rig, doltDataDir string) *DoltBackupCheck {
+	return newDoltBackupCheck(cityPath, rig, doltDataDir, "", "", time.Now)
+}
+
+// NewCityDoltBackupCheck creates a Dolt backup freshness check for the city
+// store, which is not represented by a rig configuration entry.
+func NewCityDoltBackupCheck(cityPath, doltDataDir string) *DoltBackupCheck {
+	return newDoltBackupCheck(
+		cityPath,
+		config.Rig{Name: "city", Path: cityPath},
+		doltDataDir,
+		"city:dolt-backup",
+		"city",
+		time.Now,
+	)
+}
+
+func newDoltBackupCheck(cityPath string, rig config.Rig, doltDataDir, checkName, scopeDescription string, now func() time.Time) *DoltBackupCheck {
 	if strings.TrimSpace(doltDataDir) == "" {
 		doltDataDir = filepath.Join(cityPath, ".beads", "dolt")
 	}
-	return &DoltBackupCheck{cityPath: cityPath, rig: rig, doltDataDir: doltDataDir}
+	if now == nil {
+		now = time.Now
+	}
+	return &DoltBackupCheck{
+		cityPath:         cityPath,
+		rig:              rig,
+		doltDataDir:      doltDataDir,
+		checkName:        checkName,
+		scopeDescription: scopeDescription,
+		now:              now,
+	}
 }
 
 // Name returns the check identifier ("rig:<name>:dolt-backup").
 func (c *DoltBackupCheck) Name() string {
+	if c.checkName != "" {
+		return c.checkName
+	}
 	return "rig:" + c.rig.Name + ":dolt-backup"
 }
 
@@ -74,7 +113,7 @@ func (c *DoltBackupCheck) Run(_ *CheckContext) *CheckResult {
 	// local-signal checks so a genuinely missing local backup still surfaces.
 	if target, err := contract.ResolveDoltConnectionTarget(fsys.OSFS{}, c.cityPath, rigPath); err == nil && target.External {
 		r.Status = StatusOK
-		r.Message = fmt.Sprintf("rig %q: external Dolt endpoint %s:%s — backups assumed self-managed at the endpoint", c.rig.Name, target.Host, target.Port)
+		r.Message = fmt.Sprintf("%s: external Dolt endpoint %s:%s — backups assumed self-managed at the endpoint", c.scopeLabel(), target.Host, target.Port)
 		return r
 	}
 
@@ -82,14 +121,23 @@ func (c *DoltBackupCheck) Run(_ *CheckContext) *CheckResult {
 	r.Details = append(r.Details, details...)
 	backupDir := filepath.Join(c.cityPath, ".dolt-backup", dbName)
 
-	// Signal 1: backup directory exists on disk with contents.
-	backupDirHasContent, err := dirHasEntries(backupDir)
+	// Signal 1: backup directory contains a recent backup artifact. Directory
+	// existence alone is not evidence of a working backup: it remains after a
+	// sync stops and otherwise makes a stale recovery point look healthy.
+	latestArtifact, backupDirHasContent, err := newestBackupArtifactModTime(backupDir)
 	switch {
 	case err != nil:
 		r.Details = append(r.Details, fmt.Sprintf("read backup dir: %v", err))
 	case backupDirHasContent:
+		age := c.now().Sub(latestArtifact)
+		if age > defaultDoltBackupArtifactFreshnessMaxAge {
+			r.Status = StatusWarning
+			r.Message = fmt.Sprintf("%s: backup artifact is stale (%s old; maximum %s): %s", c.scopeLabel(), age.Round(time.Minute), defaultDoltBackupArtifactFreshnessMaxAge, backupDir)
+			r.FixHint = fmt.Sprintf("run the scheduled Dolt backup sync and confirm it writes a current artifact under %s", backupDir)
+			return r
+		}
 		r.Status = StatusOK
-		r.Message = fmt.Sprintf("backup artifact dir present (assumed previously synced): %s", backupDir)
+		r.Message = fmt.Sprintf("backup artifact is current (%s old): %s", age.Round(time.Minute), backupDir)
 		return r
 	}
 
@@ -108,9 +156,16 @@ func (c *DoltBackupCheck) Run(_ *CheckContext) *CheckResult {
 	}
 
 	r.Status = StatusWarning
-	r.Message = fmt.Sprintf("rig %q: no dolt backup registered (expected %s)", c.rig.Name, backupDir)
+	r.Message = fmt.Sprintf("%s: no dolt backup registered (expected %s)", c.scopeLabel(), backupDir)
 	r.FixHint = doltBackupFixHint(dbName, backupDir)
 	return r
+}
+
+func (c *DoltBackupCheck) scopeLabel() string {
+	if c.scopeDescription != "" {
+		return c.scopeDescription
+	}
+	return fmt.Sprintf("rig %q", c.rig.Name)
 }
 
 // CanFix returns false. Registering a backup destination is operator
@@ -186,22 +241,40 @@ func backupRemoteRegistered(doltDataDir, dbName string) (bool, error) {
 	return ok, nil
 }
 
-func dirHasEntries(path string) (bool, error) {
+func newestBackupArtifactModTime(path string) (time.Time, bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
+			return time.Time{}, false, nil
 		}
-		return false, err
+		return time.Time{}, false, err
 	}
 	if !info.IsDir() {
-		return false, nil
+		return time.Time{}, false, nil
 	}
-	entries, err := os.ReadDir(path)
+	var newest time.Time
+	hasArtifact := false
+	err = filepath.WalkDir(path, func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		hasArtifact = true
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
 	if err != nil {
-		return false, err
+		return time.Time{}, false, err
 	}
-	return len(entries) > 0, nil
+	return newest, hasArtifact, nil
 }
 
 // doltBackupFixHint returns the multi-line DOLT_BACKUP add+sync
