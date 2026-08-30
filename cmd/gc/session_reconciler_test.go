@@ -3800,6 +3800,89 @@ func TestReconcileSessionBeads_CloseGateIgnoresUnreachableRigAssignedWork(t *tes
 	}
 }
 
+// TestReconcileSessionBeads_LiveAliasOwnerIsNotOrphanDrained drives the live
+// reconciler path where pool demand has made a session undesired. Work claimed
+// under the session's alias is still live ownership, so the orphan-drain guard
+// must keep the session and the in-progress work unchanged.
+func TestReconcileSessionBeads_LiveAliasOwnerIsNotOrphanDrained(t *testing.T) {
+	env := newReconcilerTestEnv()
+	cityPath := t.TempDir()
+	rigPath := filepath.Join(cityPath, "riga")
+	env.cfg = &config.City{
+		Rigs: []config.Rig{{Name: "riga", Path: rigPath}},
+		Agents: []config.Agent{{
+			Name: "worker",
+			Dir:  "riga",
+		}},
+	}
+	session := env.createSessionBead("worker-session", "riga/worker")
+	env.markSessionActive(&session)
+	env.setSessionMetadata(&session, map[string]string{"alias": "riga/worker-1"})
+	if err := env.sp.Start(context.Background(), "worker-session", runtime.Config{Command: "test-cmd"}); err != nil {
+		t.Fatalf("Start(worker-session): %v", err)
+	}
+
+	rigStore := beads.NewMemStore()
+	work, err := rigStore.Create(beads.Bead{
+		Title:    "live alias-owned work",
+		Type:     "task",
+		Assignee: "riga/worker-1",
+	})
+	if err != nil {
+		t.Fatalf("Create rig work: %v", err)
+	}
+	inProgress := "in_progress"
+	if err := rigStore.Update(work.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+		t.Fatalf("mark rig work in progress: %v", err)
+	}
+
+	reconcileSessionBeadsAtPath(
+		context.Background(),
+		cityPath,
+		[]beads.Bead{session},
+		env.desiredState, // empty: the pool controller considers this slot undesired
+		map[string]bool{},
+		env.cfg,
+		env.sp,
+		env.store,
+		nil,
+		nil,
+		map[string]beads.Store{"riga": rigStore},
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+
+	persistedSession, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session: %v", err)
+	}
+	if persistedSession.Status == "closed" || persistedSession.Metadata["state"] == string(sessionpkg.StateDraining) {
+		t.Fatalf("alias-owning live session was orphan-drained: %#v", persistedSession)
+	}
+	if !strings.Contains(env.stdout.String(), "Skipping drain for 'worker-session': live assigned work found") {
+		t.Fatalf("reconciler output = %q, want live-assigned-work drain guard", env.stdout.String())
+	}
+
+	persistedWork, err := rigStore.Get(work.ID)
+	if err != nil {
+		t.Fatalf("Get rig work: %v", err)
+	}
+	if persistedWork.Assignee != "riga/worker-1" || persistedWork.Status != "in_progress" {
+		t.Fatalf("alias-owned work changed during reconcile: %#v", persistedWork)
+	}
+}
+
 func TestReconcileSessionBeads_DrainAckedOrphanCloseIgnoresUnreachableRigAssignedWork(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
