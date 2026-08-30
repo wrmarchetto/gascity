@@ -412,6 +412,81 @@ func TestSessionAssignedWorkGuardsFederateForCityScopedSession(t *testing.T) {
 	}
 }
 
+// TestSessionAssignedWorkGuardsRecognizeLivePoolAlias proves that every
+// reconciler guard which decides whether a live session may be drained sees
+// work stamped with that session's current pool alias. A pool worker can claim
+// under its alias rather than its bead ID or runtime session name; treating
+// that alias as dead ownership drains the live worker and releases its
+// in-progress work on the next pass.
+func TestSessionAssignedWorkGuardsRecognizeLivePoolAlias(t *testing.T) {
+	cityPath := t.TempDir()
+	rigPath := filepath.Join(cityPath, "riga")
+	cfg := &config.City{
+		Rigs: []config.Rig{{Name: "riga", Path: rigPath}},
+		Agents: []config.Agent{{
+			Name: "worker",
+			Dir:  "riga",
+		}},
+	}
+	cityStore := beads.NewMemStore()
+	rigStore := beads.NewMemStore()
+	rigStores := map[string]beads.Store{"riga": rigStore}
+	session := sessiontest.SeedBead(t, beads.Bead{
+		ID:     "session-1",
+		Type:   sessionBeadType,
+		Status: "open",
+		Metadata: map[string]string{
+			"template":     "riga/worker",
+			"session_name": "worker-session",
+			"alias":        "riga/worker-1",
+		},
+	})
+	work, err := rigStore.Create(beads.Bead{
+		Type:     "task",
+		Status:   "in_progress",
+		Assignee: "riga/worker-1",
+	})
+	if err != nil {
+		t.Fatalf("Create alias-assigned work: %v", err)
+	}
+	inProgress := "in_progress"
+	if err := rigStore.Update(work.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+		t.Fatalf("mark alias-assigned work in progress: %v", err)
+	}
+
+	hasOpen, err := sessionHasOpenAssignedWorkForConfigInfo(cityStore, rigStores, session, cfg)
+	if err != nil {
+		t.Fatalf("sessionHasOpenAssignedWorkForConfigInfo: %v", err)
+	}
+	if !hasOpen {
+		t.Fatal("alias-assigned work must block the orphan-drain guard")
+	}
+
+	hasReachable, err := sessionHasOpenAssignedWorkForReachableStore(cityPath, cfg, cityStore, rigStores, session)
+	if err != nil {
+		t.Fatalf("sessionHasOpenAssignedWorkForReachableStore: %v", err)
+	}
+	if !hasReachable {
+		t.Fatal("alias-assigned work must block the reachable-store drain guard")
+	}
+
+	hasAwake, err := sessionHasAwakeAssignedWorkForReachableStore(cityPath, cfg, cityStore, rigStores, session)
+	if err != nil {
+		t.Fatalf("sessionHasAwakeAssignedWorkForReachableStore: %v", err)
+	}
+	if !hasAwake {
+		t.Fatal("in-progress alias-assigned work must keep the live session awake")
+	}
+
+	persisted, err := rigStore.Get(work.ID)
+	if err != nil {
+		t.Fatalf("Get alias-assigned work: %v", err)
+	}
+	if persisted.Assignee != "riga/worker-1" || persisted.Status != "in_progress" {
+		t.Fatalf("guard probes mutated live work: %#v", persisted)
+	}
+}
+
 func TestSessionHasOpenAssignedWorkMatchesConfiguredNamedSessionRuntimeFallback(t *testing.T) {
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},

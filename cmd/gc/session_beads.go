@@ -784,10 +784,11 @@ func sessionAssignmentIdentifiers(sessionBead beads.Bead) []string {
 	return compactSessionAssignmentIdentifiers(sessionAssignmentIdentifierRaw(sessionBead))
 }
 
-// sessionAssignmentIdentifiersForConfig extends the persisted session-bead
-// identifiers with the configured named-session identity when a recovered bead
-// is missing identity metadata. Keep this fallback aligned with
-// sessionAssigneeMatches and compute_awake_bridge's AwakeNamedSession fields.
+// sessionAssignmentIdentifiersForConfig returns every durable identity under
+// which a session can own work, plus the configured named-session fallback for
+// recovered legacy beads missing their identity metadata. Keep this fallback
+// aligned with sessionAssigneeMatches and compute_awake_bridge's
+// AwakeNamedSession fields.
 func sessionAssignmentIdentifiersForConfig(sessionBead beads.Bead, cfg *config.City) []string {
 	raw := sessionAssignmentIdentifierRaw(sessionBead)
 	if cfg == nil ||
@@ -823,18 +824,14 @@ func sessionAssignmentIdentifiersForConfig(sessionBead beads.Bead, cfg *config.C
 }
 
 func sessionAssignmentIdentifierRaw(sessionBead beads.Bead) []string {
-	return []string{
-		strings.TrimSpace(sessionBead.ID),
-		strings.TrimSpace(sessionBead.Metadata["session_name"]),
-		strings.TrimSpace(sessionBead.Metadata[namedSessionIdentityMetadata]),
-	}
+	return sessionBeadAssigneeIdentities(sessionBead)
 }
 
 // sessionAssignmentIdentifiersForConfigInfo is the session.Info form of
-// sessionAssignmentIdentifiersForConfig: it reads the identity/name/template
-// through typed Info fields (ConfiguredNamedSession, ConfiguredNamedIdentity,
-// SessionNameMetadata, Template) instead of cracking the raw bead, staying
-// byte-identical to the raw form (TestSessionClassifierInfoEquivalence pins it).
+// sessionAssignmentIdentifiersForConfig: it reads the session ownership
+// vocabulary and named-session fallback through typed Info fields instead of
+// cracking the raw bead, staying byte-identical to the raw form
+// (TestSessionClassifierInfoEquivalence pins it).
 func sessionAssignmentIdentifiersForConfigInfo(info session.Info, cfg *config.City) []string {
 	raw := sessionAssignmentIdentifierRawInfo(info)
 	if cfg == nil ||
@@ -870,17 +867,13 @@ func sessionAssignmentIdentifiersForConfigInfo(info session.Info, cfg *config.Ci
 }
 
 func sessionAssignmentIdentifierRawInfo(info session.Info) []string {
-	return []string{
-		strings.TrimSpace(info.ID),
-		strings.TrimSpace(info.SessionNameMetadata),
-		strings.TrimSpace(info.ConfiguredNamedIdentity),
-	}
+	return session.AssigneeIdentities(info)
 }
 
 // sessionAssignmentIdentifiersInfo is the session.Info form of
 // sessionAssignmentIdentifiers (no configured-named fallback): the deduped
-// {ID, session_name, configured_named_identity} identifier set read off Info,
-// byte-identical to the raw form. Pinned by the classifier equivalence oracle.
+// durable ownership identity set read off Info, byte-identical to the raw form.
+// Pinned by the classifier equivalence oracle.
 func sessionAssignmentIdentifiersInfo(info session.Info) []string {
 	return compactSessionAssignmentIdentifiers(sessionAssignmentIdentifierRawInfo(info))
 }
