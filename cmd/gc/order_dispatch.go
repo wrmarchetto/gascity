@@ -137,6 +137,24 @@ type orderDispatcher interface {
 // *exec.ExitError, and the returned output may be partial.
 type ExecRunner func(ctx context.Context, command, dir string, env []string) ([]byte, error)
 
+// maxOrderFailureOutputBytes bounds the diagnostic retained on a failed order
+// run so a chatty command cannot turn a tracking bead into an unbounded log.
+const maxOrderFailureOutputBytes = 2048
+
+// tailForOrderFailureOutput retains the diagnostic tail, cutting at a line
+// boundary when truncation is necessary.
+func tailForOrderFailureOutput(output string) string {
+	trimmed := strings.TrimRight(output, "\n")
+	if len(trimmed) <= maxOrderFailureOutputBytes {
+		return trimmed
+	}
+	tail := trimmed[len(trimmed)-maxOrderFailureOutputBytes:]
+	if idx := strings.IndexByte(tail, '\n'); idx >= 0 {
+		tail = tail[idx+1:]
+	}
+	return "[output truncated] " + tail
+}
+
 // shellExecRunner is the production ExecRunner using os/exec.
 func shellExecRunner(ctx context.Context, command, dir string, env []string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -1401,6 +1419,7 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 	env, err := orderExecEnvWithError(cityPath, m.cfg, target, a, vars)
 	var output []byte
 	var execErrMsg string
+	var redactedOutput string
 	if err != nil {
 		redactionEnv := append(os.Environ(), env...)
 		redacted := redactOrderEnvError(err, redactionEnv)
@@ -1415,7 +1434,8 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 			outcome = orders.RunOutcomeExecFailed
 			logDispatchError(m.stderr, "gc: order exec %s failed: %s", scoped, execErrMsg)
 			if len(output) > 0 {
-				logDispatchError(m.stderr, "gc: order exec %s output: %s", scoped, execenv.RedactText(string(output), redactionEnv))
+				redactedOutput = execenv.RedactText(string(output), redactionEnv)
+				logDispatchError(m.stderr, "gc: order exec %s output: %s", scoped, redactedOutput)
 			}
 		}
 	}
@@ -1435,6 +1455,11 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 			Message: msg,
 		})
 		return
+	}
+	if execErrMsg != "" && redactedOutput != "" {
+		if err := front.SetExecFailureOutput(trackingID, tailForOrderFailureOutput(redactedOutput)); err != nil {
+			logDispatchError(m.stderr, "gc: order %s: failed to store exec output on tracking bead %s: %v", scoped, trackingID, err)
+		}
 	}
 	if execErrMsg != "" {
 		if hasEventCursor {

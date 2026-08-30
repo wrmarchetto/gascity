@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 )
 
@@ -289,6 +290,15 @@ func (s *Store) CreateRun(scoped string, opts RunOpts) (OrderRun, error) {
 func (s *Store) SetOutcome(runID string, outcome RunOutcome) error {
 	if err := s.store.Update(runID, beads.UpdateOpts{Labels: outcome.Labels()}); err != nil {
 		return fmt.Errorf("setting order run outcome on %q: %w", runID, err)
+	}
+	return nil
+}
+
+// SetExecFailureOutput stores the bounded, redacted diagnostic from a failed
+// exec order on its tracking bead.
+func (s *Store) SetExecFailureOutput(runID, output string) error {
+	if err := s.store.SetMetadata(runID, beadmeta.OrderExecFailureOutputMetadataKey, output); err != nil {
+		return fmt.Errorf("storing exec failure output on order run %q: %w", runID, err)
 	}
 	return nil
 }
