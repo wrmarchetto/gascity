@@ -141,6 +141,7 @@ const (
 	OnExhaustedMetadataKey               = "gc.on_exhausted"
 	OnFailMetadataKey                    = "gc.on_fail"
 	OriginalKindMetadataKey              = "gc.original_kind"
+	OrderExecFailureOutputMetadataKey    = "gc.order_exec_failure_output"
 	OutcomeBeadIDMetadataKey             = "gc.outcome_bead_id"
 	OutcomeMetadataKey                   = "gc.outcome"
 	OutputJSONMetadataKey                = "gc.output_json"
@@ -395,6 +396,7 @@ var KnownMetadataKeys = []string{
 	OnExhaustedMetadataKey,
 	OnFailMetadataKey,
 	OriginalKindMetadataKey,
+	OrderExecFailureOutputMetadataKey,
 	OutcomeBeadIDMetadataKey,
 	OutcomeMetadataKey,
 	OutputJSONMetadataKey,

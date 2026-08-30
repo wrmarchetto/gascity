@@ -1986,6 +1986,9 @@ func TestOrderDispatchExecFailure(t *testing.T) {
 	if !hasFailed {
 		t.Error("tracking bead missing exec-failed label")
 	}
+	if got := all[0].Metadata["gc.order_exec_failure_output"]; got != "error output" {
+		t.Fatalf("tracking bead failure output = %q, want command output", got)
+	}
 
 	// Check order.failed event.
 	if !rec.hasType(events.OrderFailed) {
@@ -2093,6 +2096,53 @@ func TestOrderDispatchExecFailureRedactsSecrets(t *testing.T) {
 		if strings.Contains(event.Message, "ghs_order_secret") || strings.Contains(event.Message, "hunter2") {
 			t.Fatalf("order failed event leaked secret: %#v", event)
 		}
+	}
+	all := trackingBeads(t, store, "order-run:leaky-exec")
+	if len(all) != 1 {
+		t.Fatalf("tracking beads = %d, want 1", len(all))
+	}
+	if got := all[0].Metadata["gc.order_exec_failure_output"]; strings.Contains(got, "ghs_order_secret") || strings.Contains(got, "hunter2") || !strings.Contains(got, "[redacted]") {
+		t.Fatalf("tracking bead failure output = %q, want redacted command output", got)
+	}
+}
+
+func TestOrderDispatchExecFailureBoundsTrackingOutput(t *testing.T) {
+	store := beads.NewMemStore()
+	var rec memRecorder
+	tracking, err := store.Create(beads.Bead{
+		Title:  "order:chatty-exec",
+		Labels: []string{"order-run:chatty-exec", labelOrderTracking},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output := strings.Repeat("discard this line\n", 512) + "keep this final diagnostic\n"
+	fakeExec := func(_ context.Context, _, _ string, _ []string) ([]byte, error) {
+		return []byte(output), fmt.Errorf("exit status 1")
+	}
+	aa := []orders.Order{{
+		Name:     "chatty-exec",
+		Trigger:  "cooldown",
+		Interval: "2m",
+		Exec:     "scripts/fail.sh",
+	}}
+	mad := buildOrderDispatcherFromListExec(aa, store, nil, fakeExec, &rec).(*memoryOrderDispatcher)
+	mad.dispatchExec(context.Background(), orders.NewStore(beads.OrdersStore{Store: store}), execStoreTarget{ScopeRoot: t.TempDir()}, aa[0], t.TempDir(), tracking.ID, nil)
+
+	all := trackingBeads(t, store, "order-run:chatty-exec")
+	if len(all) != 1 {
+		t.Fatalf("tracking beads = %d, want 1", len(all))
+	}
+	got := all[0].Metadata[beadmeta.OrderExecFailureOutputMetadataKey]
+	if !strings.HasPrefix(got, "[output truncated] ") {
+		t.Fatalf("tracking bead failure output = %q, want truncation marker", got)
+	}
+	if len(got) > maxOrderFailureOutputBytes+len("[output truncated] ") {
+		t.Fatalf("tracking bead failure output = %d bytes, want <= %d", len(got), maxOrderFailureOutputBytes+len("[output truncated] "))
+	}
+	if !strings.Contains(got, "keep this final diagnostic") {
+		t.Fatalf("tracking bead failure output = %q, want final diagnostic", got)
 	}
 }
 
