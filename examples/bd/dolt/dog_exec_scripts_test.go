@@ -2979,6 +2979,36 @@ func TestCompactScriptDryRunSkipsDoltIgnoreVersioning(t *testing.T) {
 	}
 }
 
+func TestCompactScriptSkipsExistingIntegrityQuarantineAndCompactsOtherDatabases(t *testing.T) {
+	fixture := newCompactScriptFixture(t)
+	if err := os.MkdirAll(filepath.Join(fixture.dataDir, "hq", ".dolt"), 0o755); err != nil {
+		t.Fatalf("create quarantined database: %v", err)
+	}
+	quarantineDir := filepath.Join(fixture.cityPath, ".gc", "runtime", "packs", "dolt", "compact-quarantine")
+	if err := os.MkdirAll(quarantineDir, 0o755); err != nil {
+		t.Fatalf("create quarantine directory: %v", err)
+	}
+	marker := filepath.Join(quarantineDir, "hq")
+	if err := os.WriteFile(marker, []byte("db=hq\nreason=integrity review\ncreated_at=2026-08-31T00:00:00Z\ndecision=preserve_marker_manual_review_required\n"), 0o600); err != nil {
+		t.Fatalf("write quarantine marker: %v", err)
+	}
+
+	out, err := fixture.run(t, "success", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
+	if err != nil {
+		t.Fatalf("existing quarantine must be a skip, not an execution failure: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "db=hq integrity quarantine marker exists") ||
+		!strings.Contains(out, "decision=preserve_marker_manual_review_required") {
+		t.Fatalf("output missing existing-quarantine evidence:\n%s", out)
+	}
+	if !strings.Contains(out, "db=beads commits=600->600") || !strings.Contains(out, "db=beads — running DOLT_GC --full") {
+		t.Fatalf("output missing successful compaction of non-quarantined database:\n%s", out)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("existing quarantine marker must be preserved: %v", err)
+	}
+}
+
 func TestCompactScriptFailsOnRowCountDecreaseBeforeGC(t *testing.T) {
 	fixture := newCompactScriptFixture(t)
 	out, err := fixture.run(t, "row_count_decreases", "GC_DOLT_COMPACT_THRESHOLD_COMMITS=500")
