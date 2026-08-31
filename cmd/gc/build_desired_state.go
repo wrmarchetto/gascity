@@ -418,10 +418,9 @@ func buildDesiredStateWithSessionBeads(
 	var pendingPools []poolEvalWork
 	var defaultScaleTargets []defaultScaleCheckTarget
 	var defaultNamedScaleTargets []defaultScaleCheckTarget
-	// coldWakeTemplates marks pool templates that received a cold-pool wake
-	// probe (FR-S0.1). Their default-probe demand is clamped to 1 in the merge
-	// below so the probe wakes a cold pool from zero without overriding the
-	// pool's custom scale_check count.
+	// coldWakeTemplates marks custom-scale pools that use the default work
+	// query. Their generic routed-demand probe can safely wake one session,
+	// because the worker and probe share that predicate.
 	coldWakeTemplates := map[string]bool{}
 	// namedOnDemandTemplates marks templates where namedSessionMode != "always"
 	// and a defaultScaleTargets entry was appended (on_demand named-backing).
@@ -469,6 +468,7 @@ func buildDesiredStateWithSessionBeads(
 		}
 
 		hasCustomScaleCheck := strings.TrimSpace(cfg.Agents[i].ScaleCheck) != ""
+		hasCustomWorkQuery := strings.TrimSpace(cfg.Agents[i].WorkQuery) != ""
 		template := cfg.Agents[i].QualifiedName()
 		storeScopedControlDispatcher := cfg.Agents[i].Name == config.ControlDispatcherAgentName
 		runningSessions := 0
@@ -476,30 +476,15 @@ func buildDesiredStateWithSessionBeads(
 			if isPoolManagedSessionInfo(si) && poolSessionIsLiveInfo(si) {
 				// Match the qualified template by identity equivalence.
 				// allOpenSessionInfos is aggregated across the city + every rig
-				// store, and pool session beads store the qualified name
-				// (agent.QualifiedName(), see session_sleep.go); adopted beads may
-				// still carry a legacy bound form of the same identity, which must
-				// count here or the cold-wake probe over-wakes a pool that already
-				// has a live session. Equivalence preserves the cross-rig guarantee:
-				// an unqualified base name never normalizes to a dir-scoped agent,
-				// and a same-base-name pool in another rig (e.g. rigB/planner)
-				// normalizes to itself, so neither inflates this rig's count.
+				// store, and pool session beads store the qualified name.
+				// Equivalence preserves the cross-rig guarantee: an unqualified
+				// base name never normalizes to a dir-scoped agent.
 				if agentTemplateIdentitiesEquivalent(cfg, si.Template, template) {
 					runningSessions++
 				}
 			}
 		}
-
-		// Cold-pool wake probe (FR-S0.1): a pool with a custom scale_check that
-		// returns 0 while it has zero running sessions and min=0 would never wake
-		// to discover routed demand it can't see while asleep. For that case we
-		// probe every active store and clamp the result to 1 in the merge below,
-		// so the pool wakes from zero without the probe overriding the custom
-		// check's count. Pools without a custom scale_check use their own-store
-		// default probe (authoritative count; a missing rig store reports
-		// zero/partial), so they need no cold-specific handling.
 		isCold := runningSessions == 0 && cfg.Agents[i].EffectiveMinActiveSessions() == 0
-
 		if backsNamedSession {
 			rigName := configuredRigName(cityPath, &cfg.Agents[i], cfg.Rigs)
 			if rigName != "" && suspendedRigPaths[filepath.Clean(rigRootForName(rigName, cfg.Rigs))] {
@@ -530,8 +515,8 @@ func buildDesiredStateWithSessionBeads(
 				// generic-pool guard (vp-s37 / #3078 below). A rig pool that backs
 				// a named session and has no custom scale_check must also probe
 				// the city store so that routed demand delivered there (vp-kvp)
-				// counts, warm or cold — like the generic-pool probe below, this
-				// is NOT gated on isCold: a warm named-backing pool that only
+				// counts, warm or cold — like the generic-pool probe below. A warm
+				// named-backing pool that only
 				// probed its rig store would drop to zero demand between city
 				// beads and be orphan-drained, then re-glimpse city demand on the
 				// next cold tick and respawn (the same spawn/drain treadmill,
@@ -548,32 +533,17 @@ func buildDesiredStateWithSessionBeads(
 				}
 				continue
 			}
-			if store != nil && isCold && !storeScopedControlDispatcher {
+			// Generic cold demand is valid only if the default work query will
+			// claim exactly the same routed candidate.
+			if store != nil && isCold && !hasCustomWorkQuery && !storeScopedControlDispatcher {
 				for _, source := range activeStores {
 					target := defaultScaleCheckTarget{template: template, store: source.store, storeKey: source.ref}
-					// Mirror the generic-pool cold-wake probe below (vp-s37 /
-					// #3078): a custom scale_check that is cold and asleep
-					// cannot see routed demand, so probe every active store
-					// and feed defaultScaleTargets too, not just
-					// defaultNamedScaleTargets (which only preserves
-					// partial-query retention for defaultNamedSessionDemand
-					// and never itself produces demand — see its doc
-					// comment). Gate on mode != "always": an always-on named
-					// session is already unconditionally desired by the
-					// named pass, so adding pool demand for the same
-					// template would spawn a redundant {name}-N phantom
-					// alongside it, mirroring the identical guard on the
-					// !hasCustomScaleCheck branch above.
 					if namedSessionMode != "always" {
 						defaultScaleTargets = append(defaultScaleTargets, target)
 					}
 					defaultNamedScaleTargets = append(defaultNamedScaleTargets, target)
 				}
 				if namedSessionMode != "always" {
-					// Clamp to 1 in the merge below (coldWakeTemplates), same
-					// as the generic-pool branch: this probe only wakes the
-					// pool from zero and must never override the custom
-					// check's own authoritative warm count.
 					coldWakeTemplates[template] = true
 				}
 			}
@@ -599,9 +569,8 @@ func buildDesiredStateWithSessionBeads(
 			// claim path, where a rig agent's work_query already federates
 			// across stores and claims city-delivered work.
 			//
-			// NOT gated on isCold. This probe began as a cold-wake assist (a
-			// sleeping pool can't discover city-store demand), but gating it on
-			// isCold left a WARM rig pool structurally blind to the same
+			// This probe must run for both warm and cold pools. A probe limited to
+			// cold pools leaves a WARM rig pool structurally blind to the same
 			// demand: its count stayed pinned at the rig-store total while
 			// routed beads sat unclaimed in the city store, and a pool at the
 			// warm/cold boundary oscillated pool_desired N↔0 (cold ticks
@@ -613,10 +582,8 @@ func buildDesiredStateWithSessionBeads(
 			// all dep-downstream control beads. Demand a pool can claim is
 			// demand it must be able to count, warm or cold.
 			//
-			// No clamp: unlike a custom-scale_check pool — where the probe is
-			// clamped so it cannot override the custom count (see
-			// coldWakeTemplates below) — the default probe IS the
-			// authoritative count, so it scales to total routed demand (bounded
+			// No clamp: the default probe is authoritative, so it scales to total
+			// routed demand (bounded
 			// by max_active and the daemon's max_wakes_per_tick), matching the
 			// retired cold-pool-spawner's scale-to-want. Counts sum across
 			// store groups and the beads are distinct per store, so probing
@@ -662,14 +629,10 @@ func buildDesiredStateWithSessionBeads(
 			}
 			continue
 		}
-		// Custom-scale_check pools deliberately KEEP the cold-only probe (unlike
-		// the default-probe branches above, which count cross-store demand warm
-		// or cold): the custom check is the authoritative count while the pool
-		// is awake, and this probe is clamped to 1 (coldWakeTemplates) so it can
-		// only wake a sleeping pool, never override the custom count. A custom
-		// scale_check that should scale on cross-store routed demand must count
-		// it itself, or the pool will churn at the warm/cold boundary.
-		if store != nil && isCold && !storeScopedControlDispatcher {
+		// A generic Ready() fallback is safe only when the worker uses the
+		// default work query. With custom selectors, it can select a routed bead
+		// that the worker deliberately excludes, starting a drain loop.
+		if store != nil && isCold && !hasCustomWorkQuery && !storeScopedControlDispatcher {
 			for _, source := range activeStores {
 				defaultScaleTargets = append(defaultScaleTargets, defaultScaleCheckTarget{template: template, store: source.store, storeKey: source.ref})
 			}
@@ -792,9 +755,6 @@ func buildDesiredStateWithSessionBeads(
 				scaleCheckDemandByTemplate = make(map[string]scaleCheckDemand)
 			}
 			for template, count := range defaultCounts {
-				// A cold-pool wake probe only wakes the pool from zero; clamp its
-				// contribution to 1 so it never overrides a custom scale_check's
-				// authoritative count for the same template.
 				if coldWakeTemplates[template] && count > 1 {
 					count = 1
 				}

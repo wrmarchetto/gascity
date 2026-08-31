@@ -7430,19 +7430,11 @@ func TestBuildDesiredState_OnDemandNamedSession_ScaleCheckZeroDoesNotMaterialize
 	}
 }
 
-func TestBuildDesiredState_OnDemandNamedSession_ColdCustomScaleCheckWakesOnRoutedDemand(t *testing.T) {
-	// FR-S0.1 cold-wake bootstrap (ga-d5au8t): a named-session-backing pool
-	// with a custom scale_check that is cold (zero running sessions, min=0)
-	// must still wake from generic gc.routed_to demand it cannot see while
-	// asleep, exactly like the already-correct generic (non-named) cold
-	// custom-scale_check pool branch (build_desired_state.go:588-593). Before
-	// the fix, the cold-wake probe targets for this named+custom-scale_check
-	// +cold combination were appended only to
-	// defaultNamedScaleTargets, which feeds defaultNamedSessionDemand -- a
-	// function that by design never populates real demand from routed_to
-	// (named sessions wake only via direct Assignee=<identity> matches). So
-	// the routed bead below was stranded forever: scale_check reports 0, and
-	// nothing else ever woke the pool to re-evaluate it.
+func TestBuildDesiredState_OnDemandNamedSession_CustomScaleCheckDoesNotWakeFromRoutedDemand(t *testing.T) {
+	// A named-session backing pool with both custom selectors must not receive
+	// generic routed demand while cold. Its work_query can deliberately exclude
+	// the routed bead, so treating that bead as a wake signal creates a
+	// start/drain loop; the configured scale_check is authoritative.
 	cityPath := t.TempDir()
 	store := beads.NewMemStore()
 	if _, err := store.Create(beads.Bead{
@@ -7470,20 +7462,17 @@ func TestBuildDesiredState_OnDemandNamedSession_ColdCustomScaleCheckWakesOnRoute
 	}
 
 	dsResult := buildDesiredState("test-city", cityPath, time.Now().UTC(), cfg, runtime.NewFake(), store, io.Discard)
-	if dsResult.ScaleCheckCounts["dog"] != 1 {
-		t.Fatalf("ScaleCheckCounts[dog] = %d, want 1 (cold-wake probe should surface routed demand the custom scale_check can't see while asleep)", dsResult.ScaleCheckCounts["dog"])
+	if dsResult.ScaleCheckCounts["dog"] != 0 {
+		t.Fatalf("ScaleCheckCounts[dog] = %d, want 0 (custom scale_check must remain authoritative)", dsResult.ScaleCheckCounts["dog"])
 	}
 	dogCount := 0
 	for _, tp := range dsResult.State {
-		if tp.TemplateName == "dog" {
+		if tp.TemplateName == "dog" && tp.ConfiguredNamedIdentity == "" {
 			dogCount++
-			if tp.ConfiguredNamedIdentity != "" {
-				t.Fatalf("cold-wake probe materialized configured named identity: %+v", tp)
-			}
 		}
 	}
-	if dogCount != 1 {
-		t.Fatalf("dog ephemeral desired count = %d, want 1 (cold-wake probe should spawn exactly one ephemeral session, clamped, not zero and not name-N phantoms)", dogCount)
+	if dogCount != 0 {
+		t.Fatalf("dog ephemeral desired count = %d, want 0", dogCount)
 	}
 }
 
