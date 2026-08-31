@@ -2964,6 +2964,50 @@ func TestDoSlingBatchGraphFormulaTreatsConvoyAsSingleInput(t *testing.T) {
 	}
 }
 
+// TestDoSlingBatchGraphFormulaRejectsBlockedSourceConvoy ensures that a
+// graph.v2 workflow cannot bypass a source work item's blocker merely because
+// the item is supplied through a convoy.
+func TestDoSlingBatchGraphFormulaRejectsBlockedSourceConvoy(t *testing.T) {
+	formulaDir := t.TempDir()
+	writeGraphV2ConvoyFormula(t, formulaDir)
+	cfg := graphV2SlingTestConfig(t, formulaDir)
+	deps := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+	convoy, err := deps.Store.Create(beads.Bead{Title: "convoy", Type: "convoy", Status: "open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := deps.Store.Create(beads.Bead{Title: "blocked source", Type: "task", Status: "open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker, err := deps.Store.Create(beads.Bead{Title: "blocker", Type: "task", Status: "open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := convoycore.TrackItem(deps.Store, convoy.ID, source.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Store.DepAdd(source.ID, blocker.ID, "blocks"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := DoSlingBatch(SlingOpts{
+		Target:        config.Agent{Name: "mayor", MaxActiveSessions: intPtr(1)},
+		BeadOrFormula: convoy.ID,
+		OnFormula:     "graph-work",
+	}, deps, deps.Store)
+	if err == nil {
+		t.Fatalf("DoSlingBatch result = %+v, want source blocker rejection", result)
+	}
+	inProgress, err := deps.Store.List(beads.ListQuery{Status: "in_progress", AllowScan: true, TierMode: beads.TierBoth})
+	if err != nil {
+		t.Fatalf("List(in_progress): %v", err)
+	}
+	if len(inProgress) != 0 {
+		t.Fatalf("in-progress beads = %+v, want no workflow derived from blocked source", inProgress)
+	}
+}
+
 func writeGraphV2ConvoyFormula(t *testing.T, dir string) {
 	t.Helper()
 	writeNamedGraphV2ConvoyFormula(t, dir, "graph-work")

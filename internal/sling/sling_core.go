@@ -498,6 +498,10 @@ func attachFormulaToBead(opts SlingOpts, deps SlingDeps, querier BeadQuerier, be
 	if isGraph {
 		formulaVars = graphInv.Vars
 		result.Deprecations = append(result.Deprecations, graphInv.Deprecations...)
+		if err := ensureGraphV2InputConvoyReady(deps.Store, graphInv.InputConvoy); err != nil {
+			graphv2.CloseSyntheticInputConvoy(deps.Store, graphInv.InputConvoy, beadID)
+			return result, fmt.Errorf("instantiating %s %q on %s: %w", errLabel, formulaName, beadID, err)
+		}
 		if err := validateSlingFormulaRuntimeVars(context.Background(), formulaName, searchPaths, molecule.Options{
 			Title: opts.Title,
 			Vars:  formulaVars,
@@ -610,6 +614,36 @@ func attachFormulaToBead(opts SlingOpts, deps SlingDeps, querier BeadQuerier, be
 		return run()
 	}
 	return withSourceWorkflowLaunchLock(context.Background(), deps, beadID, opts.Force, runGraph)
+}
+
+// ensureGraphV2InputConvoyReady rejects graph-v2 launches whose input convoy
+// contains a work bead still blocked by an open dependency. Graph workflows
+// derive their work from the convoy rather than from a source bead directly,
+// so the normal Ready lookup does not guard this launch path.
+func ensureGraphV2InputConvoyReady(store beads.Store, convoyID string) error {
+	members, err := convoycore.Members(store, convoyID, false)
+	if err != nil {
+		return fmt.Errorf("listing input convoy %s members: %w", convoyID, err)
+	}
+	for _, member := range members {
+		deps, err := store.DepList(member.ID, "down")
+		if err != nil {
+			return fmt.Errorf("listing dependencies for input convoy member %s: %w", member.ID, err)
+		}
+		for _, dep := range deps {
+			if !beads.IsReadyBlockingDependencyType(dep.Type) {
+				continue
+			}
+			blocker, err := store.Get(dep.DependsOnID)
+			if err != nil {
+				return fmt.Errorf("reading blocker %s for input convoy member %s: %w", dep.DependsOnID, member.ID, err)
+			}
+			if blocker.Status != "closed" {
+				return fmt.Errorf("input convoy member %s is blocked by open dependency %s", member.ID, blocker.ID)
+			}
+		}
+	}
+	return nil
 }
 
 // slingPlainBead handles plain bead routing (no formula).
