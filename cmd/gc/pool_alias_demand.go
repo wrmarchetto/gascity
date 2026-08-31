@@ -51,20 +51,14 @@ func controllerDemandPoolAliasTarget(cfg *config.City, b beads.Bead, templates m
 	if assignee == "" {
 		return ""
 	}
-	// A route present means routing was expressed explicitly, so the assignee is
-	// a concrete-ownership marker on top of it -- the refinery handoff shape
-	// (#2527), which must wake the named holder and NOT also raise generic pool
-	// demand. A route absent means the assignee IS the routing expression, which
-	// is the pool-alias shape. That split is what lets both invariants hold, and
-	// it is why this is a route check rather than a target comparison: a handoff
-	// routed ELSEWHERE must not raise demand here either.
-	//
-	// Residual divergence from the shell form, recorded rather than hidden:
-	// `bd ready --assignee="$target"` applies no route filter, so for a bead both
-	// assigned AND routed to this same target the shell counts 1 where this
-	// counts 0. #2527's invariant is explicit and regression-tested, so it wins
-	// for that shape; ci-c000's tier has no producer of it.
-	if routedToOrLegacyWorkflowTarget(b) != "" {
+	// A route to a DIFFERENT target means routing was expressed as a concrete
+	// handoff (#2527), so its assignee must not also create demand for the old
+	// pool. A root-only order wisp intentionally preserves both the pool
+	// assignee and the canonical route to that SAME pool; the worker's pool-alias
+	// claim tier serves that shape, so the controller must count it as well.
+	// Other assigned+routed work remains a concrete handoff.
+	routed := routedToOrLegacyWorkflowTarget(b)
+	if routed != "" && (routed != assignee || b.Metadata[beadmeta.KindMetadataKey] != beadmeta.KindWisp) {
 		return ""
 	}
 	if _, ok := templates[assignee]; !ok {
