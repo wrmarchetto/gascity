@@ -272,30 +272,33 @@ func TestPoolAliasDemandSkipsSuspendedAgent(t *testing.T) {
 	}
 }
 
-// TestPoolAliasDemandSkipsAssignedAndRoutedHandoff pins the boundary between
-// this tier and the invariant #2527 restored: a bead that is BOTH assigned and
-// routed is a concrete handoff (the refinery done-sequence), which must wake its
-// named holder without also raising generic pool demand. A route present means
-// routing was expressed explicitly and the assignee sits on top of it as
-// ownership; a route absent means the assignee IS the routing expression, which
-// is the only shape this tier serves.
-//
-// Both directions are covered because only one of them is caught by the existing
-// #2527 regressions: routed to the SAME name is what those tests use, while
-// routed ELSEWHERE would slip past a naive same-target comparison and raise
-// demand on a pool the work has already left.
-func TestPoolAliasDemandSkipsAssignedAndRoutedHandoff(t *testing.T) {
-	for name, route := range map[string]string{
-		"routed to the same name": "toolsmith",
-		"routed elsewhere":        "mayor",
+// TestPoolAliasDemandCountsAssignedAndRoutedPoolWork matches the two worker
+// claim tiers. Root-only formula wisps preserve both their pool assignee and
+// canonical route, so a route equal to the pool assignee remains pool-door
+// work. A route to another target is a concrete handoff and must not wake the
+// old pool.
+func TestPoolAliasDemandCountsAssignedAndRoutedPoolWork(t *testing.T) {
+	cfg := poolAliasDemandCity()
+	cfg.Agents[0].BindingName = "bd"
+	const pool = "bd.toolsmith"
+
+	for name, tc := range map[string]struct {
+		route string
+		want  int
+	}{
+		"routed to the same pool": {route: pool, want: 1},
+		"routed elsewhere":        {route: "mayor", want: 0},
 	} {
 		t.Run(name, func(t *testing.T) {
-			result := poolAliasDemandResult(t, poolAliasDemandCity(), beads.Bead{
-				ID: "b", Status: "open", Type: "task", Assignee: "toolsmith",
-				Metadata: map[string]string{beadmeta.RoutedToMetadataKey: route},
+			result := poolAliasDemandResult(t, cfg, beads.Bead{
+				ID: "b", Status: "open", Type: "task", Assignee: pool,
+				Metadata: map[string]string{
+					beadmeta.KindMetadataKey:     beadmeta.KindWisp,
+					beadmeta.RoutedToMetadataKey: tc.route,
+				},
 			})
-			if got := result.ScaleCheckCounts["toolsmith"]; got != 0 {
-				t.Errorf("demand = %d, want 0 — an assigned+routed bead is a concrete handoff, not pool-door work", got)
+			if got := result.ScaleCheckCounts[pool]; got != tc.want {
+				t.Errorf("demand = %d, want %d", got, tc.want)
 			}
 		})
 	}
