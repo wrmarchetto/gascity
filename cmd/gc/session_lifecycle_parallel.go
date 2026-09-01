@@ -2279,6 +2279,9 @@ func commitStartFailure(result startResult, sessFront *sessionpkg.Store, clk clo
 				"error": formatLifecycleError(result.err),
 			})
 		}
+		if backoffErr := recordPoolCreateFailureBackoff(info, sessFront, clk.Now().UTC(), result.err); backoffErr != nil {
+			fmt.Fprintf(stderr, "session reconciler: %v\n", backoffErr) //nolint:errcheck // best-effort diagnostics
+		}
 		rollbackPendingCreate(info, sessFront, clk.Now().UTC(), stderr)
 		logLifecycleOutcome(stderr, "start", wave, name, tp.TemplateName, string(result.outcome), result.started, result.finished, result.err, result.phases)
 		return

@@ -182,6 +182,7 @@ var (
 	errPoolSessionCreateBudgetExhausted = errors.New("pool session create budget exhausted")
 	errPoolSessionCreatePartial         = errors.New("pool session create skipped: demand read partial")
 	errPoolSessionCreateProviderRed     = errors.New("pool session create skipped: provider red")
+	errPoolSessionCreateBackoff         = errors.New("pool session create skipped: failed-create backoff active")
 )
 
 // poolSessionCreateFairShareCounter rotates scarce create tokens across
@@ -3832,6 +3833,14 @@ func selectOrPlanPoolSessionBead(
 	if healthy, present := bp.providerHealthSnapshot.check(provName); present && !healthy {
 		delete(usedSlots, slot)
 		return session.Info{}, 0, nil, errPoolSessionCreateProviderRed
+	}
+	backoffActive, backoffErr := poolCreateFailureBackoffActive(sessionFrontDoor(bp.beadStore), template, qualifiedInstance, request.WorkBeadID, bp.beaconTime)
+	if backoffErr != nil {
+		fmt.Fprintf(bp.stderr, "session reconciler: %v; allowing pool session create\n", backoffErr) //nolint:errcheck
+	}
+	if backoffActive {
+		delete(usedSlots, slot)
+		return session.Info{}, 0, nil, errPoolSessionCreateBackoff
 	}
 
 	if !bp.tryClaimPoolSessionCreate(template) {
