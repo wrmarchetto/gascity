@@ -127,6 +127,12 @@
 #                                         flatten-remediation state).
 set -eu
 
+# A database with an existing integrity quarantine is intentionally not
+# compacted. Callers account for this separately from a hard compaction
+# failure, so an invocation can complete healthy siblings but still fails
+# when every selected database is quarantined.
+quarantine_skip_status=2
+
 : "${GC_CITY_PATH:?GC_CITY_PATH must be set}"
 
 # CLI flags. The discovered-command bridge forwards `gc dolt compact` argv here
@@ -2127,7 +2133,7 @@ flatten_database() {
     # A held integrity marker deliberately blocks this database, but the
     # scheduled compactor can still make progress on every other database.
     # Preserve and report the marker as a skip rather than failing the order.
-    return 0
+    return "$quarantine_skip_status"
   fi
 
   if has_compact_marker "$pending_gc_dir" "$db"; then
@@ -2823,7 +2829,7 @@ bare_gc_database() {
     report_existing_quarantine "$db"
     # An existing marker is a deliberate per-database skip, not a failed
     # maintenance run for the other databases in this invocation.
-    return 0
+    return "$quarantine_skip_status"
   fi
 
   if [ -n "$dry_run" ]; then
@@ -2881,7 +2887,7 @@ gc_only_database() {
     print_existing_quarantine_marker "$db" "$quarantine_marker" "$quarantine_reason" "$quarantine_created_at"
     # Keep the manual-review marker in place while treating this database as
     # skipped so a scheduled run remains successful for healthy siblings.
-    return 0
+    return "$quarantine_skip_status"
   fi
 
   if [ -n "$dry_run" ]; then
@@ -3062,15 +3068,24 @@ main() {
   done < "$_db_tmp"
 
   failed_count=0
+  quarantined_count=0
+  completed_count=0
   if [ "$gc_only" = "1" ]; then
     while IFS= read -r db; do
       [ -n "$db" ] || continue
-      if ! gc_only_database "$db"; then
-        failed_count=$((failed_count + 1))
+      if gc_only_database "$db"; then
+        completed_count=$((completed_count + 1))
+      else
+        database_rc=$?
+        if [ "$database_rc" -eq "$quarantine_skip_status" ]; then
+          quarantined_count=$((quarantined_count + 1))
+        else
+          failed_count=$((failed_count + 1))
+        fi
       fi
     done < "$_unique_db_tmp"
 
-    if [ "$failed_count" -gt 0 ]; then
+    if [ "$failed_count" -gt 0 ] || { [ "$quarantined_count" -gt 0 ] && [ "$completed_count" -eq 0 ]; }; then
       printf 'compact: %s database(s) failed gc-only reclaim\n' "$failed_count" >&2
       exit 1
     fi
@@ -3080,12 +3095,19 @@ main() {
   if [ "$bare_gc" = "1" ]; then
     while IFS= read -r db; do
       [ -n "$db" ] || continue
-      if ! bare_gc_database "$db"; then
-        failed_count=$((failed_count + 1))
+      if bare_gc_database "$db"; then
+        completed_count=$((completed_count + 1))
+      else
+        database_rc=$?
+        if [ "$database_rc" -eq "$quarantine_skip_status" ]; then
+          quarantined_count=$((quarantined_count + 1))
+        else
+          failed_count=$((failed_count + 1))
+        fi
       fi
     done < "$_unique_db_tmp"
 
-    if [ "$failed_count" -gt 0 ]; then
+    if [ "$failed_count" -gt 0 ] || { [ "$quarantined_count" -gt 0 ] && [ "$completed_count" -eq 0 ]; }; then
       printf 'compact: %s database(s) failed bare GC\n' "$failed_count" >&2
       exit 1
     fi
@@ -3094,12 +3116,19 @@ main() {
 
   while IFS= read -r db; do
     [ -n "$db" ] || continue
-    if ! flatten_database "$db"; then
-      failed_count=$((failed_count + 1))
+    if flatten_database "$db"; then
+      completed_count=$((completed_count + 1))
+    else
+      database_rc=$?
+      if [ "$database_rc" -eq "$quarantine_skip_status" ]; then
+        quarantined_count=$((quarantined_count + 1))
+      else
+        failed_count=$((failed_count + 1))
+      fi
     fi
   done < "$_unique_db_tmp"
 
-  if [ "$failed_count" -gt 0 ]; then
+  if [ "$failed_count" -gt 0 ] || { [ "$quarantined_count" -gt 0 ] && [ "$completed_count" -eq 0 ]; }; then
     printf 'compact: %s database(s) failed compaction\n' "$failed_count" >&2
     exit 1
   fi

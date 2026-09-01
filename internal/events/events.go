@@ -116,10 +116,15 @@ const (
 	// Emitted by the session reconciler's start-result commit path; the
 	// envelope's Subject carries the session name.
 	SessionColdStartTimeout = "session.cold_start_timeout"
-	ConvoyCreated           = "convoy.created"
-	ConvoyClosed            = "convoy.closed"
-	ControllerStarted       = "controller.started"
-	ControllerStopped       = "controller.stopped"
+	// SessionDemandClaimMismatch fires when a pool session created for a
+	// specific work trigger drains itself with no_work. It is an observation of
+	// demand and claim disagreeing; subscribers decide how to investigate the
+	// selector, store, or runtime environment.
+	SessionDemandClaimMismatch = "session.demand_claim_mismatch"
+	ConvoyCreated              = "convoy.created"
+	ConvoyClosed               = "convoy.closed"
+	ControllerStarted          = "controller.started"
+	ControllerStopped          = "controller.stopped"
 	// SupervisorStarted fires once per supervisor startup, after the
 	// instance lock is acquired. Its payload classifies how the previous
 	// supervisor instance exited (clean, crash, or unknown), derived from
@@ -281,6 +286,7 @@ var KnownEventTypes = []string{
 	SessionResetStalled,
 	SessionWorkQueryFailed,
 	SessionColdStartTimeout,
+	SessionDemandClaimMismatch,
 	BeadCreated, BeadClosed, BeadDeleted, BeadUpdated,
 	BeadWorktreeReaped, BeadWorktreeReapSkipped,
 	BeadClaimRejected,

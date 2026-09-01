@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/gastownhall/gascity/internal/api"
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/runtime"
 	sessionpkg "github.com/gastownhall/gascity/internal/session"
 )
@@ -174,5 +178,130 @@ func TestDrainOriginUnrecordedNamesNoActor(t *testing.T) {
 	}
 	if got := closed.Metadata[sessionpkg.DrainOriginMetadataKey]; got != "" {
 		t.Errorf("drain_origin = %q, want empty for an unrecorded origin", got)
+	}
+}
+
+// TestDemandTriggeredNoWorkDrainBacksOffAndEmitsMismatch proves the completed
+// start path has the same durable retry guard as an aborted create. A pool
+// session that was created for a trigger but drains itself with no_work is the
+// observable demand/claim disagreement: the next matching desired-state pass
+// must not recreate it immediately, and observers must receive the typed fact.
+func TestDemandTriggeredNoWorkDrainBacksOffAndEmitsMismatch(t *testing.T) {
+	env := newReconcilerTestEnv()
+	session := env.createSessionBead("worker", "worker")
+	env.setSessionMetadata(&session, map[string]string{
+		"pool_managed":                          "true",
+		"session_origin":                        "ephemeral",
+		beadmeta.TriggerBeadIDMetadataKey:       "work-1",
+		beadmeta.TriggerBeadStoreRefMetadataKey: "rig:work",
+	})
+	env.markSessionActive(&session)
+	if err := env.sp.Start(context.Background(), "worker", runtime.Config{Command: "test-cmd"}); err != nil {
+		t.Fatalf("Start(worker): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAckWithReason("worker", hookClaimReasonNoWork); err != nil {
+		t.Fatalf("setDrainAckWithReason: %v", err)
+	}
+	if woken := env.reconcileWithPoolDesiredAndDrainOps([]beads.Bead{session}, nil, dops); woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+
+	rec := events.NewFake()
+	env.rec = rec
+	closed := env.reconcileStopPendingToTerminal(t, env.sp, session, dops, nil)
+	if closed.Status != "closed" {
+		t.Fatalf("status = %q, want closed; metadata=%v", closed.Status, closed.Metadata)
+	}
+	if got := closed.Metadata[poolCreateFailureClassMetadataKey]; got != poolCreateFailureClassClaimNoWork {
+		t.Fatalf("retry class = %q, want %q", got, poolCreateFailureClassClaimNoWork)
+	}
+	if active, err := poolCreateFailureBackoffActive(sessionFrontDoor(env.store), "worker", "worker", "work-1", env.clk.Now()); err != nil {
+		t.Fatalf("poolCreateFailureBackoffActive: %v", err)
+	} else if !active {
+		t.Fatal("matching no-work drain did not block an immediate replacement create")
+	}
+
+	var mismatch *events.Event
+	for i := range rec.Events {
+		if rec.Events[i].Type == events.SessionDemandClaimMismatch {
+			mismatch = &rec.Events[i]
+			break
+		}
+	}
+	if mismatch == nil {
+		t.Fatal("no demand/claim mismatch event recorded")
+	}
+	var payload api.SessionDemandClaimMismatchPayload
+	if err := json.Unmarshal(mismatch.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal mismatch payload: %v", err)
+	}
+	if payload.SessionID != session.ID || payload.Template != "worker" || payload.DemandScope != "work_bead" || payload.TriggerBeadID != "work-1" || payload.TriggerBeadStoreRef != "rig:work" || payload.Reason != hookClaimReasonNoWork {
+		t.Fatalf("mismatch payload = %+v, want session/template/trigger/store/reason facts", payload)
+	}
+}
+
+// TestCountOnlyDemandNoWorkDrainBacksOffAndEmitsMismatch covers custom
+// scale_check pools, whose integer result creates a session without a specific
+// work-bead trigger. The retry boundary is then per pool identity rather than
+// per bead, but it must still stop a count/claim race from recreating a session
+// every patrol tick.
+func TestCountOnlyDemandNoWorkDrainBacksOffAndEmitsMismatch(t *testing.T) {
+	env := newReconcilerTestEnv()
+	session := env.createSessionBead("worker", "worker")
+	env.setSessionMetadata(&session, map[string]string{
+		"pool_managed":   "true",
+		"session_origin": "ephemeral",
+	})
+	env.markSessionActive(&session)
+	if err := env.sp.Start(context.Background(), "worker", runtime.Config{Command: "test-cmd"}); err != nil {
+		t.Fatalf("Start(worker): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAckWithReason("worker", hookClaimReasonNoWork); err != nil {
+		t.Fatalf("setDrainAckWithReason: %v", err)
+	}
+	if woken := env.reconcileWithPoolDesiredAndDrainOps([]beads.Bead{session}, nil, dops); woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+
+	rec := events.NewFake()
+	env.rec = rec
+	closed := env.reconcileStopPendingToTerminal(t, env.sp, session, dops, nil)
+	if closed.Status != "closed" {
+		t.Fatalf("status = %q, want closed; metadata=%v", closed.Status, closed.Metadata)
+	}
+	if got := closed.Metadata[poolCreateFailureClassMetadataKey]; got != poolCreateFailureClassClaimNoWork {
+		t.Fatalf("retry class = %q, want %q", got, poolCreateFailureClassClaimNoWork)
+	}
+	if active, err := poolCreateFailureBackoffActive(sessionFrontDoor(env.store), "worker", "worker", "", env.clk.Now()); err != nil {
+		t.Fatalf("poolCreateFailureBackoffActive: %v", err)
+	} else if !active {
+		t.Fatal("count-only no-work drain did not block an immediate replacement create")
+	}
+	if active, err := poolCreateFailureBackoffActive(sessionFrontDoor(env.store), "worker", "worker", "new-work", env.clk.Now()); err != nil {
+		t.Fatalf("poolCreateFailureBackoffActive for new work: %v", err)
+	} else if active {
+		t.Fatal("count-only retry ledger blocked an independent concrete work trigger")
+	}
+
+	var mismatch *events.Event
+	for i := range rec.Events {
+		if rec.Events[i].Type == events.SessionDemandClaimMismatch {
+			mismatch = &rec.Events[i]
+			break
+		}
+	}
+	if mismatch == nil {
+		t.Fatal("no count-only demand/claim mismatch event recorded")
+	}
+	var payload api.SessionDemandClaimMismatchPayload
+	if err := json.Unmarshal(mismatch.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal mismatch payload: %v", err)
+	}
+	if payload.SessionID != session.ID || payload.Template != "worker" || payload.DemandScope != "pool" || payload.TriggerBeadID != "" || payload.TriggerBeadStoreRef != "" || payload.Reason != hookClaimReasonNoWork {
+		t.Fatalf("mismatch payload = %+v, want session/template/reason with no bead trigger", payload)
 	}
 }

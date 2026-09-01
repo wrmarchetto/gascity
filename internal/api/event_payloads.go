@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -315,6 +316,41 @@ func SessionLifecyclePayloadJSON(sessionID, template, reason string) json.RawMes
 		Reason:    reason,
 	})
 	return b
+}
+
+// SessionDemandClaimMismatchPayload carries the durable correlation facts for
+// a pool session whose demand-triggered start found no claimable work.
+type SessionDemandClaimMismatchPayload struct {
+	SessionID           string `json:"session_id" doc:"Canonical session bead ID that drained without claiming work."`
+	Template            string `json:"template" doc:"Pool template whose demand created the session."`
+	DemandScope         string `json:"demand_scope" doc:"Correlation scope: work_bead when demand named a bead, or pool when a count-only demand did not."`
+	TriggerBeadID       string `json:"trigger_bead_id,omitempty" doc:"Work bead ID that triggered the pool session creation, when the demand source identifies one."`
+	TriggerBeadStoreRef string `json:"trigger_bead_store_ref,omitempty" doc:"Store reference recorded with the triggering work bead, when set."`
+	Reason              string `json:"reason" doc:"Worker drain reason; for this event it is no_work."`
+}
+
+// IsEventPayload marks SessionDemandClaimMismatchPayload as an events.Payload variant.
+func (SessionDemandClaimMismatchPayload) IsEventPayload() {}
+
+// SessionDemandClaimMismatchPayloadJSON builds the typed event payload for a
+// demand-triggered pool session that drained without claiming work.
+func SessionDemandClaimMismatchPayloadJSON(sessionID, template, triggerBeadID, triggerBeadStoreRef, reason string) json.RawMessage {
+	b, _ := json.Marshal(SessionDemandClaimMismatchPayload{
+		SessionID:           sessionID,
+		Template:            template,
+		DemandScope:         sessionDemandClaimMismatchScope(triggerBeadID),
+		TriggerBeadID:       triggerBeadID,
+		TriggerBeadStoreRef: triggerBeadStoreRef,
+		Reason:              reason,
+	})
+	return b
+}
+
+func sessionDemandClaimMismatchScope(triggerBeadID string) string {
+	if strings.TrimSpace(triggerBeadID) != "" {
+		return "work_bead"
+	}
+	return "pool"
 }
 
 // MoleculeResolvedPayload is the typed payload for molecule.resolved events.
@@ -645,6 +681,7 @@ func init() {
 	events.RegisterPayload(events.SessionResetStalled, events.SessionResetStalledPayload{})
 	events.RegisterPayload(events.SessionWorkQueryFailed, SessionLifecyclePayload{})
 	events.RegisterPayload(events.SessionColdStartTimeout, events.NoPayload{})
+	events.RegisterPayload(events.SessionDemandClaimMismatch, SessionDemandClaimMismatchPayload{})
 	events.RegisterPayload(events.ConvoyCreated, events.NoPayload{})
 	events.RegisterPayload(events.ConvoyClosed, events.NoPayload{})
 	events.RegisterPayload(events.ControllerStarted, events.NoPayload{})

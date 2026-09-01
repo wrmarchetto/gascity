@@ -2432,6 +2432,9 @@
             "$ref": "#/components/schemas/SessionCreateSucceededPayload"
           },
           {
+            "$ref": "#/components/schemas/SessionDemandClaimMismatchPayload"
+          },
+          {
             "$ref": "#/components/schemas/SessionDrainAckedWithAssignedWorkPayload"
           },
           {
@@ -7221,6 +7224,42 @@
         ],
         "type": "object"
       },
+      "SessionDemandClaimMismatchPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "demand_scope": {
+            "description": "Correlation scope: work_bead when demand named a bead, or pool when a count-only demand did not.",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Worker drain reason; for this event it is no_work.",
+            "type": "string"
+          },
+          "session_id": {
+            "description": "Canonical session bead ID that drained without claiming work.",
+            "type": "string"
+          },
+          "template": {
+            "description": "Pool template whose demand created the session.",
+            "type": "string"
+          },
+          "trigger_bead_id": {
+            "description": "Work bead ID that triggered the pool session creation, when the demand source identifies one.",
+            "type": "string"
+          },
+          "trigger_bead_store_ref": {
+            "description": "Store reference recorded with the triggering work bead, when set.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "template",
+          "demand_scope",
+          "reason"
+        ],
+        "type": "object"
+      },
       "SessionDrainAckedWithAssignedWorkPayload": {
         "additionalProperties": false,
         "properties": {
@@ -11977,6 +12016,7 @@
             "rig.provision.progress": "#/components/schemas/TypedEventStreamEnvelopeRigProvisionProgress",
             "session.cold_start_timeout": "#/components/schemas/TypedEventStreamEnvelopeSessionColdStartTimeout",
             "session.crashed": "#/components/schemas/TypedEventStreamEnvelopeSessionCrashed",
+            "session.demand_claim_mismatch": "#/components/schemas/TypedEventStreamEnvelopeSessionDemandClaimMismatch",
             "session.drain_acked_with_assigned_work": "#/components/schemas/TypedEventStreamEnvelopeSessionDrainAckedWithAssignedWork",
             "session.draining": "#/components/schemas/TypedEventStreamEnvelopeSessionDraining",
             "session.idle_killed": "#/components/schemas/TypedEventStreamEnvelopeSessionIdleKilled",
@@ -12185,6 +12225,9 @@
           },
           {
             "$ref": "#/components/schemas/TypedEventStreamEnvelopeSessionCrashed"
+          },
+          {
+            "$ref": "#/components/schemas/TypedEventStreamEnvelopeSessionDemandClaimMismatch"
           },
           {
             "$ref": "#/components/schemas/TypedEventStreamEnvelopeSessionDrainAckedWithAssignedWork"
@@ -13292,6 +13335,7 @@
                 "session.reset_stalled",
                 "session.work_query_failed",
                 "session.cold_start_timeout",
+                "session.demand_claim_mismatch",
                 "bead.created",
                 "bead.closed",
                 "bead.deleted",
@@ -15830,6 +15874,63 @@
         "title": "TypedEventStreamEnvelope session.crashed",
         "type": "object"
       },
+      "TypedEventStreamEnvelopeSessionDemandClaimMismatch": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "depends_on_step_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/SessionDemandClaimMismatchPayload"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "step_id": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "ts": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "const": "session.demand_claim_mismatch",
+            "type": "string"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/WorkflowEventProjection"
+          }
+        },
+        "required": [
+          "seq",
+          "type",
+          "ts",
+          "actor",
+          "payload"
+        ],
+        "title": "TypedEventStreamEnvelope session.demand_claim_mismatch",
+        "type": "object"
+      },
       "TypedEventStreamEnvelopeSessionDrainAckedWithAssignedWork": {
         "additionalProperties": false,
         "properties": {
@@ -17319,6 +17420,7 @@
             "rig.provision.progress": "#/components/schemas/TypedTaggedEventStreamEnvelopeRigProvisionProgress",
             "session.cold_start_timeout": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionColdStartTimeout",
             "session.crashed": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionCrashed",
+            "session.demand_claim_mismatch": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionDemandClaimMismatch",
             "session.drain_acked_with_assigned_work": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionDrainAckedWithAssignedWork",
             "session.draining": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionDraining",
             "session.idle_killed": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionIdleKilled",
@@ -17527,6 +17629,9 @@
           },
           {
             "$ref": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionCrashed"
+          },
+          {
+            "$ref": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionDemandClaimMismatch"
           },
           {
             "$ref": "#/components/schemas/TypedTaggedEventStreamEnvelopeSessionDrainAckedWithAssignedWork"
@@ -18705,6 +18810,7 @@
                 "session.reset_stalled",
                 "session.work_query_failed",
                 "session.cold_start_timeout",
+                "session.demand_claim_mismatch",
                 "bead.created",
                 "bead.closed",
                 "bead.deleted",
@@ -21414,6 +21520,67 @@
           "city"
         ],
         "title": "TypedTaggedEventStreamEnvelope session.crashed",
+        "type": "object"
+      },
+      "TypedTaggedEventStreamEnvelopeSessionDemandClaimMismatch": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "depends_on_step_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/SessionDemandClaimMismatchPayload"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "seq": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "step_id": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "ts": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "type": {
+            "const": "session.demand_claim_mismatch",
+            "type": "string"
+          },
+          "workflow": {
+            "$ref": "#/components/schemas/WorkflowEventProjection"
+          }
+        },
+        "required": [
+          "seq",
+          "type",
+          "ts",
+          "actor",
+          "payload",
+          "city"
+        ],
+        "title": "TypedTaggedEventStreamEnvelope session.demand_claim_mismatch",
         "type": "object"
       },
       "TypedTaggedEventStreamEnvelopeSessionDrainAckedWithAssignedWork": {
