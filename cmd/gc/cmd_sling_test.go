@@ -30,6 +30,7 @@ import (
 	"github.com/gastownhall/gascity/internal/shellquote"
 	"github.com/gastownhall/gascity/internal/sling"
 	"github.com/gastownhall/gascity/internal/sourceworkflow"
+	"github.com/gastownhall/gascity/internal/suspensionstate"
 )
 
 // selectiveErrStore wraps a beads.Store and injects Create errors for selected
@@ -985,6 +986,108 @@ func TestSlingJSONWarningsSuspendedRig(t *testing.T) {
 	warnings := slingJSONWarnings(sling.SlingResult{SuspendedRig: "myrig"})
 	if !slices.Contains(warnings, "rig_suspended") {
 		t.Errorf("warnings = %v, want to contain rig_suspended", warnings)
+	}
+}
+
+// TestDoSlingWarnsOnEffectiveRigSuspension pins that the suspended-rig sling
+// warning reads the EFFECTIVE suspension state -- the runtime override in
+// .gc/runtime/suspension-state.json merged over the authored
+// suspended_on_start default -- and not the deprecated `[[rig]] suspended`
+// field alone.
+//
+// One case per spelling a live city can actually produce, because the defect
+// was a check that covered exactly one of them. `gc rig suspend` writes only
+// the runtime state file and `suspended_on_start = true` is the committable
+// spelling, so a rig suspended either way accepted the sling in silence and
+// the bead queued forever behind a reconciler that spawns no worker for it.
+// The explicit-resume case is here because the merge must be able to answer
+// NO as well: warning on a rig that runtime state has resumed trains
+// operators to ignore the warning, which costs the same silence by a longer
+// route.
+//
+// Runtime fixtures are written through suspensionstate.SetRigSuspended, the
+// same call `gc rig suspend` reaches via configedit.Editor. A hand-rolled
+// JSON fixture would still pass if the writer and this reader disagreed about
+// the file's shape, and that disagreement is exactly what the test forbids.
+//
+// Both operator-visible surfaces are asserted -- the stderr line and the
+// `rig_suspended` token in --json warnings -- so a predicate repaired without
+// the warning reaching an operator cannot pass.
+func TestDoSlingWarnsOnEffectiveRigSuspension(t *testing.T) {
+	cases := []struct {
+		name         string
+		rig          config.Rig
+		runtimeState *bool
+		wantWarning  bool
+	}{
+		{
+			name:        "deprecated suspended field",
+			rig:         config.Rig{Name: "myrig", Suspended: true},
+			wantWarning: true,
+		},
+		{
+			name:        "suspended_on_start",
+			rig:         config.Rig{Name: "myrig", SuspendedOnStart: true},
+			wantWarning: true,
+		},
+		{
+			name:         "runtime state suspend",
+			rig:          config.Rig{Name: "myrig"},
+			runtimeState: boolPtr(true),
+			wantWarning:  true,
+		},
+		{
+			name:         "runtime resume overrides suspended_on_start",
+			rig:          config.Rig{Name: "myrig", SuspendedOnStart: true},
+			runtimeState: boolPtr(false),
+			wantWarning:  false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cityDir := t.TempDir()
+			if tc.runtimeState != nil {
+				if err := suspensionstate.SetRigSuspended(fsys.OSFS{}, cityDir, tc.rig.Name, tc.runtimeState); err != nil {
+					t.Fatalf("seeding runtime suspension state: %v", err)
+				}
+			}
+			cfg := &config.City{
+				Workspace: config.Workspace{Name: "test-city"},
+				Rigs:      []config.Rig{tc.rig},
+			}
+			a := config.Agent{Name: "polecat", Dir: "myrig", MaxActiveSessions: intPtr(1)}
+			opts := testOpts(a, "my-1")
+
+			deps, stdout, stderr := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+			deps.CityPath = cityDir
+			// Rig-scoped agents read their rig's store; match it so the
+			// cross-store route guard does not trip before the rig check.
+			deps.StoreRef = "rig:myrig"
+			if code := doSling(opts, deps, nil, stdout, stderr); code != 0 {
+				t.Fatalf("doSling returned %d, want 0 (a suspended rig still routes)", code)
+			}
+			gotStderr := strings.Contains(stderr.String(), `rig "myrig" is suspended`)
+			if gotStderr != tc.wantWarning {
+				t.Errorf("stderr warning = %v, want %v; stderr = %q", gotStderr, tc.wantWarning, stderr.String())
+			}
+
+			// Fresh deps for the JSON surface: the call above routed the bead,
+			// and reusing its store would put this one on the idempotent
+			// short-circuit rather than the path an operator's first sling
+			// takes.
+			jsonDeps, _, _ := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+			jsonDeps.CityPath = cityDir
+			jsonDeps.StoreRef = "rig:myrig"
+			result, err := sling.DoSling(opts, jsonDeps, nil)
+			if err != nil {
+				t.Fatalf("DoSling: %v", err)
+			}
+			warnings := slingJSONWarnings(result)
+			gotJSON := slices.Contains(warnings, "rig_suspended")
+			if gotJSON != tc.wantWarning {
+				t.Errorf("rig_suspended in --json warnings = %v, want %v; warnings = %v", gotJSON, tc.wantWarning, warnings)
+			}
+		})
 	}
 }
 

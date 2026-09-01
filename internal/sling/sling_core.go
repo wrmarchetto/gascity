@@ -14,10 +14,12 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	convoycore "github.com/gastownhall/gascity/internal/convoy"
 	"github.com/gastownhall/gascity/internal/formula"
+	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/graphroute"
 	"github.com/gastownhall/gascity/internal/graphv2"
 	"github.com/gastownhall/gascity/internal/molecule"
 	"github.com/gastownhall/gascity/internal/sourceworkflow"
+	"github.com/gastownhall/gascity/internal/suspensionstate"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
 
@@ -90,7 +92,7 @@ func preflight(opts SlingOpts, deps SlingDeps, querier BeadQuerier) (SlingResult
 	if a.Suspended && !opts.Force {
 		result.AgentSuspended = true
 	}
-	if !opts.Force && rigSuspended(deps.Cfg, a.Dir) {
+	if !opts.Force && rigSuspended(deps.Cfg, deps.CityPath, a.Dir) {
 		result.SuspendedRig = a.Dir
 	}
 	sp := agentutil.ScaleParamsFor(&a)
@@ -230,16 +232,40 @@ func resolveIdempotentShortCircuit(opts SlingOpts, a config.Agent, deps SlingDep
 	return true
 }
 
-// rigSuspended reports whether the named rig is marked suspended in config.
-// The pool reconciler skips suspended rigs entirely, so a bead routed into
-// one stalls silently — no worker ever spawns to claim it.
-func rigSuspended(cfg *config.City, rigName string) bool {
+// rigSuspended reports whether the named rig is EFFECTIVELY suspended: the
+// runtime override in .gc/runtime/suspension-state.json merged over the rig's
+// authored suspended_on_start default. The pool reconciler skips suspended
+// rigs entirely, so a bead routed into one stalls silently — no worker ever
+// spawns to claim it.
+//
+// Reading the deprecated `[[rig]] suspended` field alone — the obvious thing,
+// and what this did until 2026-09-01 — missed both spellings a live city
+// produces. `gc rig suspend` writes only the runtime state file, and
+// suspended_on_start is the committable field, so a rig suspended either way
+// took the sling with no warning at all. It also could not see a resume: a
+// rig that runtime state has explicitly resumed must NOT warn even while
+// city.toml still asks for a suspended start.
+//
+// The merge deliberately mirrors buildEffectiveSuspendedRigNames
+// (cmd/gc/suspension_state.go), which feeds buildSuspendedRigPathsForCity and
+// so decides whether the reconciler will spawn a worker at all. Sling must not
+// be able to disagree with the component that answers the same question.
+//
+// A missing or unparseable state file is the no-override case, not a reason to
+// refuse: Load already returns a zero State for ErrNotExist, and degrading a
+// decode error to the authored default keeps a corrupt runtime file from
+// warning on every rig in the city.
+func rigSuspended(cfg *config.City, cityPath, rigName string) bool {
 	if cfg == nil || rigName == "" {
 		return false
 	}
+	var st suspensionstate.State
+	if cityPath != "" {
+		st, _ = suspensionstate.Load(fsys.OSFS{}, cityPath)
+	}
 	for _, r := range cfg.Rigs {
 		if r.Name == rigName {
-			return r.Suspended
+			return suspensionstate.EffectiveRigSuspended(st, r.Name, r.EffectiveSuspendedOnStart())
 		}
 	}
 	return false
