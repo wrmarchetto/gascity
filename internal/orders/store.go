@@ -143,6 +143,9 @@ type OrderRun struct {
 	Scoped string
 	// Outcome is the terminal outcome, or RunOutcomeNone for an in-flight run.
 	Outcome RunOutcome
+	// FailureOutput is the bounded, redacted diagnostic captured for a failed
+	// exec run. It is empty for other outcomes and for legacy tracking beads.
+	FailureOutput string
 	// CreatedAt is the COOLDOWN CLOCK: the dispatcher reads the most recent
 	// run's CreatedAt to decide whether the cooldown has elapsed.
 	CreatedAt time.Time
@@ -482,13 +485,14 @@ func RunFromTrackingBead(b beads.Bead) (OrderRun, bool) {
 // outcome (from labels), and event cursor (max seq from labels) are decoded here.
 func decodeRun(scoped string, b beads.Bead) OrderRun {
 	return OrderRun{
-		ID:        b.ID,
-		Scoped:    scoped,
-		Outcome:   outcomeFromLabels(b.Labels),
-		CreatedAt: b.CreatedAt,
-		UpdatedAt: b.UpdatedAt,
-		Open:      b.Status != "closed",
-		Cursor:    EventCursor(MaxSeqFromLabels([][]string{b.Labels})),
+		ID:            b.ID,
+		Scoped:        scoped,
+		Outcome:       outcomeFromLabels(b.Labels),
+		FailureOutput: b.Metadata[beadmeta.OrderExecFailureOutputMetadataKey],
+		CreatedAt:     b.CreatedAt,
+		UpdatedAt:     b.UpdatedAt,
+		Open:          b.Status != "closed",
+		Cursor:        EventCursor(MaxSeqFromLabels([][]string{b.Labels})),
 	}
 }
 

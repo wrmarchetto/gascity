@@ -97,6 +97,43 @@ func TestOrderFiringCurrent_ConsecutiveExecutionFailuresStayBlocking(t *testing.
 	}
 }
 
+func TestOrderFiringCurrent_ConsecutiveIntegrityQuarantineRefusalsNameMarker(t *testing.T) {
+	now := time.Date(2026, 9, 1, 18, 0, 0, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "compact", "cooldown", "1h")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "compact", Ts: now.Add(-10 * time.Minute)},
+	)
+
+	marker := "/city/.gc/runtime/packs/dolt/compact-quarantine/hq"
+	quarantineOutput := "compact: db=hq integrity quarantine marker exists at " + marker + " reason=review required"
+	check := NewOrderFiringCurrentCheck(cfg, cityPath)
+	check.clock = func() time.Time { return now }
+	check.history = func(orders.Order) ([]orders.OrderRun, error) {
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExecFailed, FailureOutput: quarantineOutput, CreatedAt: now.Add(-10 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, FailureOutput: quarantineOutput, CreatedAt: now.Add(-70 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, FailureOutput: quarantineOutput, CreatedAt: now.Add(-130 * time.Minute)},
+		}, nil
+	}
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	if result.Status != StatusError {
+		t.Fatalf("status = %v, want error; msg = %s; details = %v", result.Status, result.Message, result.Details)
+	}
+	if result.Message != "scheduled orders are refused by integrity quarantine markers" {
+		t.Fatalf("message = %q, want quarantine-refusal summary", result.Message)
+	}
+	details := strings.Join(result.Details, "\n")
+	if !strings.Contains(details, "compact: 3 consecutive executions refused by integrity quarantine marker "+marker) {
+		t.Fatalf("details = %v, want marker-specific refusal diagnostic", result.Details)
+	}
+	if strings.Contains(details, "execution failures") {
+		t.Fatalf("details = %v, must not misclassify the quarantine as an execution failure", result.Details)
+	}
+}
+
 func TestOrderFiringCurrent_SuccessResetsConsecutiveExecutionFailures(t *testing.T) {
 	now := time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC)
 	cityPath, cfg := orderFiringTestCity(t)
