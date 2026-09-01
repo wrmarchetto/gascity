@@ -204,7 +204,7 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 	// identical to what the loop derives for itself.
 	lastRunFor := c.prefetchedLastRunFunc(c.pendingLastRunOrders(monitoredOrders, firedEvents, nil, cronIntervals, now))
 	historyFor := c.prefetchedHistoryFunc(monitoredOrders)
-	var repeatedFailures bool
+	var repeatedFailures, repeatedQuarantineRefusals bool
 
 	for _, order := range monitoredOrders {
 		monitored++
@@ -231,12 +231,18 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 			}
 			if failures := consecutiveOrderExecutionFailures(runs); failures >= OrderFiringCurrentFailureHistoryLimit {
 				worst = worseStatus(worst, StatusError)
-				result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive execution failures", orderDisplayName(order), failures))
+				refusals, marker := consecutiveOrderIntegrityQuarantineRefusals(runs)
+				if refusals >= OrderFiringCurrentFailureHistoryLimit {
+					result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive executions refused by integrity quarantine marker %s", orderDisplayName(order), refusals, marker))
+					repeatedQuarantineRefusals = true
+				} else {
+					result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive execution failures", orderDisplayName(order), failures))
+					repeatedFailures = true
+				}
 				if firstNonOK == "" {
 					firstNonOK = orderHistoryHintTarget(order)
 				}
 				blockingErrors++
-				repeatedFailures = true
 				continue
 			}
 		}
@@ -280,9 +286,12 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 	case StatusWarning:
 		result.Message = "scheduled orders are overdue"
 	case StatusError:
-		if repeatedFailures {
+		switch {
+		case repeatedFailures:
 			result.Message = "scheduled orders have repeated execution failures"
-		} else {
+		case repeatedQuarantineRefusals:
+			result.Message = "scheduled orders are refused by integrity quarantine markers"
+		default:
 			result.Message = "scheduled orders are stale"
 		}
 	}
@@ -864,6 +873,49 @@ func consecutiveOrderExecutionFailures(runs []orders.OrderRun) int {
 		failed++
 	}
 	return failed
+}
+
+// consecutiveOrderIntegrityQuarantineRefusals counts the failed newest-edge
+// runs that were refused by one stable compact-integrity marker. The compact
+// command writes this exact diagnostic before preserving the marker, so this
+// check can report the safety stop without hiding a genuine execution failure.
+func consecutiveOrderIntegrityQuarantineRefusals(runs []orders.OrderRun) (int, string) {
+	var marker string
+	refusals := 0
+	for _, run := range runs {
+		if run.Outcome.Display() != "failed" {
+			break
+		}
+		path := integrityQuarantineMarkerPath(run.FailureOutput)
+		if path == "" || (marker != "" && path != marker) {
+			break
+		}
+		marker = path
+		refusals++
+	}
+	return refusals, marker
+}
+
+// integrityQuarantineMarkerPath extracts the marker path from the compact
+// command's existing-quarantine diagnostic. It intentionally requires both
+// fixed delimiters so unrelated command output cannot be reclassified.
+func integrityQuarantineMarkerPath(output string) string {
+	const prefix = " integrity quarantine marker exists at "
+	const suffix = " reason="
+	for _, line := range strings.Split(output, "\n") {
+		before, after, ok := strings.Cut(line, prefix)
+		if !ok || !strings.HasPrefix(before, "compact: db=") {
+			continue
+		}
+		path, _, ok := strings.Cut(after, suffix)
+		if !ok {
+			continue
+		}
+		if path = strings.TrimSpace(path); path != "" {
+			return path
+		}
+	}
+	return ""
 }
 
 func latestOrderFiredAt(evts []events.Event, subject string) time.Time {

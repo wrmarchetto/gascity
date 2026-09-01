@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/beads/beadstest"
 )
@@ -240,6 +241,9 @@ func TestRunFromTrackingBeadDecodesScopedOutcomeOpenCursor(t *testing.T) {
 	b := beads.Bead{
 		ID:     "gc-42",
 		Status: "open",
+		Metadata: map[string]string{
+			beadmeta.OrderExecFailureOutputMetadataKey: "compact: db=hq integrity quarantine marker exists at /city/.gc/runtime/packs/dolt/compact-quarantine/hq",
+		},
 		Labels: []string{
 			"order-tracking",
 			"order-run:digest:rig:demo",
@@ -254,12 +258,13 @@ func TestRunFromTrackingBeadDecodesScopedOutcomeOpenCursor(t *testing.T) {
 		t.Fatal("RunFromTrackingBead ok = false, want true")
 	}
 	want := OrderRun{
-		ID:        "gc-42",
-		Scoped:    "digest:rig:demo",
-		Outcome:   RunOutcomeWispFailed,
-		CreatedAt: b.CreatedAt,
-		Open:      true,
-		Cursor:    EventCursor(7),
+		ID:            "gc-42",
+		Scoped:        "digest:rig:demo",
+		Outcome:       RunOutcomeWispFailed,
+		FailureOutput: "compact: db=hq integrity quarantine marker exists at /city/.gc/runtime/packs/dolt/compact-quarantine/hq",
+		CreatedAt:     b.CreatedAt,
+		Open:          true,
+		Cursor:        EventCursor(7),
 	}
 	if !reflect.DeepEqual(run, want) {
 		t.Fatalf("run = %+v, want %+v", run, want)
