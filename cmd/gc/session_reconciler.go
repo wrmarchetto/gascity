@@ -705,7 +705,6 @@ func finalizeDrainAckStoppedSession(
 
 func isDemandClaimNoWorkDrain(info sessionpkg.Info, origin sessionpkg.DrainOrigin, reason string) bool {
 	return isPoolManagedSessionInfo(info) &&
-		strings.TrimSpace(info.TriggerBeadID) != "" &&
 		origin == sessionpkg.DrainOriginSelf &&
 		strings.TrimSpace(reason) == hookClaimReasonNoWork
 }

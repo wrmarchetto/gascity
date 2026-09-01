@@ -3082,6 +3082,10 @@ export type SessionCreateSucceededPayload = {
 
 export type SessionDemandClaimMismatchPayload = {
     /**
+     * Correlation scope: work_bead when demand named a bead, or pool when a count-only demand did not.
+     */
+    demand_scope: string;
+    /**
      * Worker drain reason; for this event it is no_work.
      */
     reason: string;
@@ -3094,9 +3098,9 @@ export type SessionDemandClaimMismatchPayload = {
      */
     template: string;
     /**
-     * Work bead ID that triggered the pool session creation.
+     * Work bead ID that triggered the pool session creation, when the demand source identifies one.
      */
-    trigger_bead_id: string;
+    trigger_bead_id?: string;
     /**
      * Store reference recorded with the triggering work bead, when set.
      */

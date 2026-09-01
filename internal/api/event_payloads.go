@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -322,7 +323,8 @@ func SessionLifecyclePayloadJSON(sessionID, template, reason string) json.RawMes
 type SessionDemandClaimMismatchPayload struct {
 	SessionID           string `json:"session_id" doc:"Canonical session bead ID that drained without claiming work."`
 	Template            string `json:"template" doc:"Pool template whose demand created the session."`
-	TriggerBeadID       string `json:"trigger_bead_id" doc:"Work bead ID that triggered the pool session creation."`
+	DemandScope         string `json:"demand_scope" doc:"Correlation scope: work_bead when demand named a bead, or pool when a count-only demand did not."`
+	TriggerBeadID       string `json:"trigger_bead_id,omitempty" doc:"Work bead ID that triggered the pool session creation, when the demand source identifies one."`
 	TriggerBeadStoreRef string `json:"trigger_bead_store_ref,omitempty" doc:"Store reference recorded with the triggering work bead, when set."`
 	Reason              string `json:"reason" doc:"Worker drain reason; for this event it is no_work."`
 }
@@ -336,11 +338,19 @@ func SessionDemandClaimMismatchPayloadJSON(sessionID, template, triggerBeadID, t
 	b, _ := json.Marshal(SessionDemandClaimMismatchPayload{
 		SessionID:           sessionID,
 		Template:            template,
+		DemandScope:         sessionDemandClaimMismatchScope(triggerBeadID),
 		TriggerBeadID:       triggerBeadID,
 		TriggerBeadStoreRef: triggerBeadStoreRef,
 		Reason:              reason,
 	})
 	return b
+}
+
+func sessionDemandClaimMismatchScope(triggerBeadID string) string {
+	if strings.TrimSpace(triggerBeadID) != "" {
+		return "work_bead"
+	}
+	return "pool"
 }
 
 // MoleculeResolvedPayload is the typed payload for molecule.resolved events.

@@ -23,11 +23,13 @@ const (
 )
 
 // poolCreateFailureBackoffActive reports whether a recent pool-session retry
-// failure suppresses another attempt for the exact agent and triggering work
-// bead. A closed session bead is the durable retry ledger: failures survive a
-// controller restart without preventing unrelated work from using the pool.
+// failure suppresses another attempt for the exact agent and work trigger. A
+// custom scale_check only returns a count, not a work-bead ID; its no-work
+// retry ledger is therefore keyed by the empty trigger for that pool identity.
+// A closed session bead is durable across controller restarts without
+// preventing unrelated triggered work from using the pool.
 func poolCreateFailureBackoffActive(sessFront *sessionpkg.Store, template, agent, trigger string, now time.Time) (bool, error) {
-	if sessFront == nil || strings.TrimSpace(template) == "" || strings.TrimSpace(agent) == "" || strings.TrimSpace(trigger) == "" {
+	if sessFront == nil || strings.TrimSpace(template) == "" || strings.TrimSpace(agent) == "" {
 		return false, nil
 	}
 	rows, err := sessFront.ListAll(sessionpkg.ListAllOptions{IncludeClosed: true})
@@ -35,11 +37,15 @@ func poolCreateFailureBackoffActive(sessFront *sessionpkg.Store, template, agent
 		return false, fmt.Errorf("listing failed-create history: %w", err)
 	}
 	for _, row := range rows {
+		class := strings.TrimSpace(row.CreateFailureClass)
 		if strings.TrimSpace(row.Template) != template ||
 			strings.TrimSpace(row.SessionOrigin) != "ephemeral" ||
 			strings.TrimSpace(row.AgentName) != agent ||
-			strings.TrimSpace(row.TriggerBeadID) != trigger ||
-			!isPoolCreateFailureBackoffClass(row.CreateFailureClass) {
+			!isPoolCreateFailureBackoffClass(class) ||
+			strings.TrimSpace(row.TriggerBeadID) != strings.TrimSpace(trigger) {
+			continue
+		}
+		if class == poolCreateFailureClassAborted && strings.TrimSpace(trigger) == "" {
 			continue
 		}
 		retryAfter, parseErr := time.Parse(time.RFC3339, strings.TrimSpace(row.CreateRetryAfter))
@@ -83,11 +89,14 @@ func poolNoWorkDrainBackoffPatch(info sessionpkg.Info, sessFront *sessionpkg.Sto
 }
 
 func poolSessionRetryBackoffPatch(info sessionpkg.Info, sessFront *sessionpkg.Store, now time.Time, class, cause string) (sessionpkg.MetadataPatch, error) {
-	if sessFront == nil || !isPoolManagedSessionInfo(info) || strings.TrimSpace(info.TriggerBeadID) == "" {
+	if sessFront == nil || !isPoolManagedSessionInfo(info) {
 		return nil, nil
 	}
 	if !isPoolCreateFailureBackoffClass(class) {
 		return nil, fmt.Errorf("unknown pool retry class %q", class)
+	}
+	if class == poolCreateFailureClassAborted && strings.TrimSpace(info.TriggerBeadID) == "" {
+		return nil, nil
 	}
 	attempts := 1
 	if rows, err := sessFront.ListAll(sessionpkg.ListAllOptions{IncludeClosed: true}); err == nil {

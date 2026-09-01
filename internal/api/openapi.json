@@ -7227,6 +7227,10 @@
       "SessionDemandClaimMismatchPayload": {
         "additionalProperties": false,
         "properties": {
+          "demand_scope": {
+            "description": "Correlation scope: work_bead when demand named a bead, or pool when a count-only demand did not.",
+            "type": "string"
+          },
           "reason": {
             "description": "Worker drain reason; for this event it is no_work.",
             "type": "string"
@@ -7240,7 +7244,7 @@
             "type": "string"
           },
           "trigger_bead_id": {
-            "description": "Work bead ID that triggered the pool session creation.",
+            "description": "Work bead ID that triggered the pool session creation, when the demand source identifies one.",
             "type": "string"
           },
           "trigger_bead_store_ref": {
@@ -7251,7 +7255,7 @@
         "required": [
           "session_id",
           "template",
-          "trigger_bead_id",
+          "demand_scope",
           "reason"
         ],
         "type": "object"

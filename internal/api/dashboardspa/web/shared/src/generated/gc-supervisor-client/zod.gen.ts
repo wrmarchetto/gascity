@@ -1556,10 +1556,11 @@ export const zSessionCreateBody = z.object({
 });
 
 export const zSessionDemandClaimMismatchPayload = z.object({
+    demand_scope: z.string(),
     reason: z.string(),
     session_id: z.string(),
     template: z.string(),
-    trigger_bead_id: z.string(),
+    trigger_bead_id: z.string().optional(),
     trigger_bead_store_ref: z.string().optional()
 });
 

@@ -3516,6 +3516,9 @@ type SessionCreateSucceededPayload struct {
 
 // SessionDemandClaimMismatchPayload defines model for SessionDemandClaimMismatchPayload.
 type SessionDemandClaimMismatchPayload struct {
+	// DemandScope Correlation scope: work_bead when demand named a bead, or pool when a count-only demand did not.
+	DemandScope string `json:"demand_scope"`
+
 	// Reason Worker drain reason; for this event it is no_work.
 	Reason string `json:"reason"`
 
@@ -3525,8 +3528,8 @@ type SessionDemandClaimMismatchPayload struct {
 	// Template Pool template whose demand created the session.
 	Template string `json:"template"`
 
-	// TriggerBeadId Work bead ID that triggered the pool session creation.
-	TriggerBeadId string `json:"trigger_bead_id"`
+	// TriggerBeadId Work bead ID that triggered the pool session creation, when the demand source identifies one.
+	TriggerBeadId *string `json:"trigger_bead_id,omitempty"`
 
 	// TriggerBeadStoreRef Store reference recorded with the triggering work bead, when set.
 	TriggerBeadStoreRef *string `json:"trigger_bead_store_ref,omitempty"`
