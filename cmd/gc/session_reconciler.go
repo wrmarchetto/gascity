@@ -598,6 +598,15 @@ func finalizeDrainAckStoppedSession(
 		// close_reason and adds the machine-readable origin/reason pair.
 		drainOrigin, drainReason := resolveDrainAckOrigin(info, dops, name)
 		overlay := sessionpkg.DrainAckCloseOverlay(drainOrigin, drainReason)
+		demandClaimMismatch := isDemandClaimNoWorkDrain(info, drainOrigin, drainReason)
+		if demandClaimMismatch {
+			retryPatch, retryErr := poolNoWorkDrainBackoffPatch(info, sessionFrontDoor(store), clk.Now().UTC())
+			if retryErr != nil {
+				fmt.Fprintf(stderr, "session reconciler: recording no-work pool retry backoff for %s: %v\n", name, retryErr) //nolint:errcheck // the mismatch event still records the observed disagreement
+			} else {
+				overlay = sessionpkg.MetadataPatch(mergeMetadataPatch(overlay, retryPatch))
+			}
+		}
 		if closeSessionBeadIfReachableStoreUnassignedWithTerminalPatch(cityPath, cfg, store, rigStores, info, "drained", overlay, clk.Now().UTC(), stderr, true) {
 			closePatch := sessionpkg.MetadataPatch(mergeMetadataPatch(
 				sessionpkg.ClosePatch(clk.Now().UTC(), "drained"), overlay,
@@ -610,6 +619,9 @@ func finalizeDrainAckStoppedSession(
 				dt.remove(info.ID)
 			}
 			recordStopped(true)
+			if demandClaimMismatch {
+				recordDemandClaimMismatch(info, template, drainReason, rec)
+			}
 			// write-returns-Info (Step 6d): the caller's snapshot fold is ApplyPatch(the
 			// ClosePatch) + MarkClosed (closed:true). The raw session.Status="closed"
 			// mirror is deleted — the caller's MarkClosed fold is the sole same-tick
@@ -689,6 +701,33 @@ func finalizeDrainAckStoppedSession(
 	}
 	// Non-close drain-ack: the snapshot fold is the ApplyPatchInfo result above.
 	return drainAckFinalizeResult{folded: &foldedInfo}
+}
+
+func isDemandClaimNoWorkDrain(info sessionpkg.Info, origin sessionpkg.DrainOrigin, reason string) bool {
+	return isPoolManagedSessionInfo(info) &&
+		strings.TrimSpace(info.TriggerBeadID) != "" &&
+		origin == sessionpkg.DrainOriginSelf &&
+		strings.TrimSpace(reason) == hookClaimReasonNoWork
+}
+
+func recordDemandClaimMismatch(info sessionpkg.Info, template, reason string, rec events.Recorder) {
+	if rec == nil {
+		return
+	}
+	rec.Record(events.Event{
+		Type:      events.SessionDemandClaimMismatch,
+		Actor:     "gc",
+		Subject:   template,
+		Message:   "demand-triggered pool session drained without claiming work",
+		SessionID: info.ID,
+		Payload: api.SessionDemandClaimMismatchPayloadJSON(
+			info.ID,
+			template,
+			strings.TrimSpace(info.TriggerBeadID),
+			strings.TrimSpace(info.TriggerBeadStoreRef),
+			strings.TrimSpace(reason),
+		),
+	})
 }
 
 func reconcileDrainAckStopPending(

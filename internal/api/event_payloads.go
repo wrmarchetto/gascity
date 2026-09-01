@@ -317,6 +317,32 @@ func SessionLifecyclePayloadJSON(sessionID, template, reason string) json.RawMes
 	return b
 }
 
+// SessionDemandClaimMismatchPayload carries the durable correlation facts for
+// a pool session whose demand-triggered start found no claimable work.
+type SessionDemandClaimMismatchPayload struct {
+	SessionID           string `json:"session_id" doc:"Canonical session bead ID that drained without claiming work."`
+	Template            string `json:"template" doc:"Pool template whose demand created the session."`
+	TriggerBeadID       string `json:"trigger_bead_id" doc:"Work bead ID that triggered the pool session creation."`
+	TriggerBeadStoreRef string `json:"trigger_bead_store_ref,omitempty" doc:"Store reference recorded with the triggering work bead, when set."`
+	Reason              string `json:"reason" doc:"Worker drain reason; for this event it is no_work."`
+}
+
+// IsEventPayload marks SessionDemandClaimMismatchPayload as an events.Payload variant.
+func (SessionDemandClaimMismatchPayload) IsEventPayload() {}
+
+// SessionDemandClaimMismatchPayloadJSON builds the typed event payload for a
+// demand-triggered pool session that drained without claiming work.
+func SessionDemandClaimMismatchPayloadJSON(sessionID, template, triggerBeadID, triggerBeadStoreRef, reason string) json.RawMessage {
+	b, _ := json.Marshal(SessionDemandClaimMismatchPayload{
+		SessionID:           sessionID,
+		Template:            template,
+		TriggerBeadID:       triggerBeadID,
+		TriggerBeadStoreRef: triggerBeadStoreRef,
+		Reason:              reason,
+	})
+	return b
+}
+
 // MoleculeResolvedPayload is the typed payload for molecule.resolved events.
 // It records a molecule root's state transition at its auto-close site and
 // joins it to the resolving session resolved from the root's stamped
@@ -645,6 +671,7 @@ func init() {
 	events.RegisterPayload(events.SessionResetStalled, events.SessionResetStalledPayload{})
 	events.RegisterPayload(events.SessionWorkQueryFailed, SessionLifecyclePayload{})
 	events.RegisterPayload(events.SessionColdStartTimeout, events.NoPayload{})
+	events.RegisterPayload(events.SessionDemandClaimMismatch, SessionDemandClaimMismatchPayload{})
 	events.RegisterPayload(events.ConvoyCreated, events.NoPayload{})
 	events.RegisterPayload(events.ConvoyClosed, events.NoPayload{})
 	events.RegisterPayload(events.ControllerStarted, events.NoPayload{})
