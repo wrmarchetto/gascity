@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,9 +31,10 @@ const defaultDoltBackupArtifactFreshnessMaxAge = 12 * time.Hour
 //
 // Two signals satisfy the check; either is sufficient:
 //
-//   - Filesystem: <city>/.dolt-backup/<db>/ contains a backup artifact
-//     newer than the recovery-point window. mol-dog-backup syncs here, so a
-//     current artifact is evidence that a sync has run recently.
+//   - Filesystem: the local destination in .beads/dolt-backup.json, or the
+//     historical <city>/.dolt-backup/<db>/ fallback when no destination is
+//     registered, contains a backup artifact newer than the recovery-point
+//     window. This matches the destination bd backup sync uses.
 //   - Repo state: <managed-dolt-data-dir>/<db>/.dolt/repo_state.json
 //     contains a backup entry named <db>-backup. This is the
 //     post-registration, pre-sync state.
@@ -120,6 +122,11 @@ func (c *DoltBackupCheck) Run(_ *CheckContext) *CheckResult {
 	dbName, details := c.resolveDBName(rigPath)
 	r.Details = append(r.Details, details...)
 	backupDir := filepath.Join(c.cityPath, ".dolt-backup", dbName)
+	configuredDestination := false
+	if destination, ok := configuredBdBackupDestination(rigPath); ok {
+		backupDir = destination
+		configuredDestination = true
+	}
 
 	// Signal 1: backup directory contains a recent backup artifact. Directory
 	// existence alone is not evidence of a working backup: it remains after a
@@ -156,6 +163,11 @@ func (c *DoltBackupCheck) Run(_ *CheckContext) *CheckResult {
 	}
 
 	r.Status = StatusWarning
+	if configuredDestination {
+		r.Message = fmt.Sprintf("%s: configured bd backup has no artifact yet: %s", c.scopeLabel(), backupDir)
+		r.FixHint = fmt.Sprintf("run `bd backup sync` from %s and confirm it writes a current artifact under %s", rigPath, backupDir)
+		return r
+	}
 	r.Message = fmt.Sprintf("%s: no dolt backup registered (expected %s)", c.scopeLabel(), backupDir)
 	r.FixHint = doltBackupFixHint(dbName, backupDir)
 	return r
@@ -216,6 +228,28 @@ func resolveDoltDBName(rig config.Rig, rigPath string) (string, []string) {
 		return s, nil
 	}
 	return rig.Name, nil
+}
+
+// configuredBdBackupDestination returns the local path registered for bd
+// backup sync in <scope>/.beads/dolt-backup.json. Only file URLs can be
+// inspected for freshness; remote destinations retain the historical fallback
+// and repo-state signals.
+func configuredBdBackupDestination(scopePath string) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(scopePath, ".beads", "dolt-backup.json"))
+	if err != nil {
+		return "", false
+	}
+	var registration struct {
+		BackupURL string `json:"backup_url"`
+	}
+	if err := json.Unmarshal(data, &registration); err != nil {
+		return "", false
+	}
+	u, err := url.Parse(registration.BackupURL)
+	if err != nil || u.Scheme != "file" || u.Path == "" {
+		return "", false
+	}
+	return filepath.FromSlash(u.Path), true
 }
 
 // backupRemoteRegistered reports whether

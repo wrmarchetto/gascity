@@ -156,6 +156,98 @@ func TestDoltBackupCheck_StaleBackupArtifactWarns(t *testing.T) {
 	}
 }
 
+func TestDoltBackupCheck_UsesConfiguredBdBackupDestination(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	cityPath := t.TempDir()
+	doltDataDir := filepath.Join(cityPath, ".beads", "dolt")
+	rigPath := filepath.Join(cityPath, "rig")
+	if err := os.MkdirAll(rigPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeRigMetadata(t, rigPath, "testdb")
+
+	// The historical default remains on disk after a destination is repointed.
+	// Its old artifact must not make the active configured destination look stale.
+	oldDir := filepath.Join(cityPath, ".dolt-backup", "testdb")
+	if err := os.MkdirAll(oldDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldArtifact := filepath.Join(oldDir, "sync.marker")
+	if err := os.WriteFile(oldArtifact, []byte("old backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := now.Add(-48 * time.Hour)
+	if err := os.Chtimes(oldArtifact, stale, stale); err != nil {
+		t.Fatalf("age old backup artifact: %v", err)
+	}
+
+	configuredDir := filepath.Join(cityPath, "configured-backup")
+	if err := os.MkdirAll(configuredDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(configuredDir, "manifest"), []byte("current backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rigPath, ".beads"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registration := `{"backup_url":"file://` + configuredDir + `","backup_name":"default"}`
+	if err := os.WriteFile(filepath.Join(rigPath, ".beads", "dolt-backup.json"), []byte(registration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rig := config.Rig{Name: "testrig", Path: rigPath}
+	r := newDoltBackupCheck(cityPath, rig, doltDataDir, "", "", func() time.Time { return now }).Run(&CheckContext{CityPath: cityPath})
+
+	if r.Status != StatusOK {
+		t.Fatalf("status = %d, want StatusOK for current configured destination; message=%s", r.Status, r.Message)
+	}
+	if !strings.Contains(r.Message, configuredDir) {
+		t.Errorf("Message = %q, want configured destination %q", r.Message, configuredDir)
+	}
+}
+
+func TestDoltBackupCheck_StaleConfiguredBdBackupDestinationWarns(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	cityPath := t.TempDir()
+	doltDataDir := filepath.Join(cityPath, ".beads", "dolt")
+	rigPath := filepath.Join(cityPath, "rig")
+	if err := os.MkdirAll(rigPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeRigMetadata(t, rigPath, "testdb")
+
+	configuredDir := filepath.Join(cityPath, "configured-backup")
+	if err := os.MkdirAll(configuredDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(configuredDir, "manifest")
+	if err := os.WriteFile(artifact, []byte("old backup"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := now.Add(-48 * time.Hour)
+	if err := os.Chtimes(artifact, stale, stale); err != nil {
+		t.Fatalf("age configured backup artifact: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(rigPath, ".beads"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registration := `{"backup_url":"file://` + configuredDir + `","backup_name":"default"}`
+	if err := os.WriteFile(filepath.Join(rigPath, ".beads", "dolt-backup.json"), []byte(registration), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	rig := config.Rig{Name: "testrig", Path: rigPath}
+	r := newDoltBackupCheck(cityPath, rig, doltDataDir, "", "", func() time.Time { return now }).Run(&CheckContext{CityPath: cityPath})
+
+	if r.Status != StatusWarning {
+		t.Fatalf("status = %d, want StatusWarning for stale configured destination; message=%s", r.Status, r.Message)
+	}
+	if !strings.Contains(r.Message, configuredDir) {
+		t.Errorf("Message = %q, want configured destination %q", r.Message, configuredDir)
+	}
+}
+
 func TestDoltBackupCheck_EmptyBackupDirFallsThroughToWarning(t *testing.T) {
 	cityPath := t.TempDir()
 	doltDataDir := filepath.Join(cityPath, ".beads", "dolt")
