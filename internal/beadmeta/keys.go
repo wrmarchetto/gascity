@@ -64,6 +64,11 @@ const (
 	// CoordinatorOutcomeProducerDispositionMetadataKey holds the typed-close JSON
 	// envelope written by gc-outcome-close.
 	CoordinatorOutcomeProducerDispositionMetadataKey = "gc.coordinator_outcome.producer_disposition"
+	CreateFailureAttemptsMetadataKey                 = "gc.create_failure_attempts"
+	CreateFailureAtMetadataKey                       = "gc.create_failure_at"
+	CreateFailureClassMetadataKey                    = "gc.create_failure_class"
+	CreateFailureErrorMetadataKey                    = "gc.create_failure_error"
+	CreateRetryAfterMetadataKey                      = "gc.create_retry_after"
 	CurrentRunIDMetadataKey                          = "gc.current_run_id"
 	CwdMetadataKey                                   = "gc.cwd"
 	// AttachFencePendingMetadataKey marks a fenced attach's sub-DAG root
@@ -331,6 +336,11 @@ var KnownMetadataKeys = []string{
 	ControllerErrorMetadataKey,
 	ControllerRetryableMetadataKey,
 	CoordinatorOutcomeProducerDispositionMetadataKey,
+	CreateFailureAttemptsMetadataKey,
+	CreateFailureAtMetadataKey,
+	CreateFailureClassMetadataKey,
+	CreateFailureErrorMetadataKey,
+	CreateRetryAfterMetadataKey,
 	CurrentRunIDMetadataKey,
 	CwdMetadataKey,
 	AttachFencePendingMetadataKey,

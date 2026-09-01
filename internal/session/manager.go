@@ -75,11 +75,11 @@ const MetadataLastNudgeDeliveredAt = "last_nudge_delivered_at"
 // durable, per-trigger retry ledger so a transient provider outage cannot
 // cause a new failed session bead on every reconciliation tick.
 const (
-	MetadataCreateFailureClass    = "gc.create_failure_class"
-	MetadataCreateFailureAt       = "gc.create_failure_at"
-	MetadataCreateFailureAttempts = "gc.create_failure_attempts"
-	MetadataCreateRetryAfter      = "gc.create_retry_after"
-	MetadataCreateFailureError    = "gc.create_failure_error"
+	MetadataCreateFailureClass    = beadmeta.CreateFailureClassMetadataKey
+	MetadataCreateFailureAt       = beadmeta.CreateFailureAtMetadataKey
+	MetadataCreateFailureAttempts = beadmeta.CreateFailureAttemptsMetadataKey
+	MetadataCreateRetryAfter      = beadmeta.CreateRetryAfterMetadataKey
+	MetadataCreateFailureError    = beadmeta.CreateFailureErrorMetadataKey
 )
 
 // Info holds the user-facing details of a chat session.
