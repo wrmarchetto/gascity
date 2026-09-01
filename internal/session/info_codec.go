@@ -129,6 +129,11 @@ var infoKeyCodec = []infoKeySpec{
 	{"session_health", func(i *Info, v string) { i.HealthState = v }},
 	{"session_health_reason", func(i *Info, v string) { i.HealthReason = v }},
 	{"session_drainable", func(i *Info, v string) { i.Drainable = strings.TrimSpace(v) == "true" }},
+	{MetadataCreateFailureClass, func(i *Info, v string) { i.CreateFailureClass = v }},
+	{MetadataCreateFailureAt, func(i *Info, v string) { i.CreateFailureAt = v }},
+	{MetadataCreateFailureAttempts, func(i *Info, v string) { i.CreateFailureAttempts = v }},
+	{MetadataCreateRetryAfter, func(i *Info, v string) { i.CreateRetryAfter = v }},
+	{MetadataCreateFailureError, func(i *Info, v string) { i.CreateFailureError = v }},
 
 	// trigger / brain-parent cluster (canonical gc.* keys via beadmeta)
 	{beadmeta.TriggerBeadIDMetadataKey, func(i *Info, v string) { i.TriggerBeadID = v }},

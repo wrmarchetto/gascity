@@ -30,6 +30,8 @@ var allProjectedMetadataKeys = []string{
 	MCPIdentityMetadataKey,
 	MCPServersSnapshotMetadataKey, "provider_terminal_error", "session_health",
 	"session_health_reason", "session_drainable", beadmeta.TriggerBeadIDMetadataKey,
+	MetadataCreateFailureClass, MetadataCreateFailureAt, MetadataCreateFailureAttempts,
+	MetadataCreateRetryAfter, MetadataCreateFailureError,
 	beadmeta.TriggerBeadStoreRefMetadataKey, beadmeta.BrainParentSIDMetadataKey,
 	beadmeta.PackMetadataKey, beadmeta.PackWorkspaceMetadataKey, beadmeta.WorkDirMetadataKey,
 	beadmeta.WorkerDirMetadataKey,

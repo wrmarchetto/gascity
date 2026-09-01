@@ -87,6 +87,11 @@ func infoFromPersistedBeadFrozen(b beads.Bead) Info {
 		HealthState:           b.Metadata["session_health"],
 		HealthReason:          b.Metadata["session_health_reason"],
 		Drainable:             strings.TrimSpace(b.Metadata["session_drainable"]) == "true",
+		CreateFailureClass:    b.Metadata[MetadataCreateFailureClass],
+		CreateFailureAt:       b.Metadata[MetadataCreateFailureAt],
+		CreateFailureAttempts: b.Metadata[MetadataCreateFailureAttempts],
+		CreateRetryAfter:      b.Metadata[MetadataCreateRetryAfter],
+		CreateFailureError:    b.Metadata[MetadataCreateFailureError],
 
 		TriggerBeadID:       b.Metadata[beadmeta.TriggerBeadIDMetadataKey],
 		TriggerBeadStoreRef: b.Metadata[beadmeta.TriggerBeadStoreRefMetadataKey],

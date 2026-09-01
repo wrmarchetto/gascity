@@ -70,6 +70,18 @@ const LabelSession = "gc:session"
 // the wall-clock time of the most recent successful queued-nudge delivery.
 const MetadataLastNudgeDeliveredAt = "last_nudge_delivered_at"
 
+// Failed-create retry metadata records a pool session creation that the
+// provider aborted before completing. The controller uses the fields as a
+// durable, per-trigger retry ledger so a transient provider outage cannot
+// cause a new failed session bead on every reconciliation tick.
+const (
+	MetadataCreateFailureClass    = "gc.create_failure_class"
+	MetadataCreateFailureAt       = "gc.create_failure_at"
+	MetadataCreateFailureAttempts = "gc.create_failure_attempts"
+	MetadataCreateRetryAfter      = "gc.create_retry_after"
+	MetadataCreateFailureError    = "gc.create_failure_error"
+)
+
 // Info holds the user-facing details of a chat session.
 type Info struct {
 	ID string
@@ -200,6 +212,16 @@ type Info struct {
 	HealthState           string // session_health (raw)
 	HealthReason          string // session_health_reason (raw)
 	Drainable             bool   // session_drainable == "true"
+	// CreateFailureClass / CreateFailureAt / CreateFailureAttempts /
+	// CreateRetryAfter / CreateFailureError are the raw failed-create retry
+	// ledger written when a pool session provider aborts before creation
+	// completes. They remain internal-only, like the rest of this controller
+	// read surface, and allow retry decisions without exposing a raw bead.
+	CreateFailureClass    string // gc.create_failure_class (raw)
+	CreateFailureAt       string // gc.create_failure_at (raw RFC3339)
+	CreateFailureAttempts string // gc.create_failure_attempts (raw integer)
+	CreateRetryAfter      string // gc.create_retry_after (raw RFC3339)
+	CreateFailureError    string // gc.create_failure_error (raw provider cause)
 
 	// --- trigger / brain-parent cluster (controller read surface) ---
 	//
