@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"reflect"
 	"testing"
@@ -23,6 +24,8 @@ func TestHookClaimWithBdStoreReloadsCanonicalBeadAfterPartialMutation(t *testing
 			}
 			calls = append(calls, append([]string(nil), args...))
 			switch {
+			case reflect.DeepEqual(args, []string{"update", "work-1", "--if-assignee", "", "--assignee", "worker-1", "--json"}):
+				return []byte(`[{"id":"work-1","status":"open","assignee":"worker-1","metadata":{"gc.routed_to":"rig/worker"}}]`), nil
 			case reflect.DeepEqual(args, []string{"update", "work-1", "--claim", "--json"}):
 				return []byte(`[{"id":"work-1","status":"in_progress","assignee":"worker-1","metadata":{"gc.routed_to":"rig/worker"}}]`), nil
 			case reflect.DeepEqual(args, []string{"show", "--json", "work-1"}):
@@ -44,8 +47,92 @@ func TestHookClaimWithBdStoreReloadsCanonicalBeadAfterPartialMutation(t *testing
 	if claimed.Metadata["gc.root_bead_id"] != "root-1" || claimed.Metadata["gc.continuation_group"] != "review" {
 		t.Fatalf("claimed metadata = %#v, want canonical root and continuation group", claimed.Metadata)
 	}
-	if len(calls) != 2 {
-		t.Fatalf("bd calls = %#v, want claim update followed by canonical show", calls)
+	if len(calls) != 3 {
+		t.Fatalf("bd calls = %#v, want guarded transfer, claim update, then canonical show", calls)
+	}
+}
+
+func TestHookClaimWithBdStoreDoesNotStealRoutedBeadReassignedAfterQuery(t *testing.T) {
+	originalRunner := hookClaimCommandRunnerWithEnvContext
+	t.Cleanup(func() { hookClaimCommandRunnerWithEnvContext = originalRunner })
+
+	var calls [][]string
+	hookClaimCommandRunnerWithEnvContext = func(_ context.Context, _ map[string]string) beads.CommandRunner {
+		return func(_ string, name string, args ...string) ([]byte, error) {
+			if name != "bd" {
+				t.Fatalf("command name = %q, want bd", name)
+			}
+			calls = append(calls, append([]string(nil), args...))
+			switch {
+			case reflect.DeepEqual(args, []string{"update", "work-1", "--if-assignee", "", "--assignee", "worker-1", "--json"}):
+				return []byte(`assignee mismatch: work-1 is held by "human", expected ""`), errors.New("exit status 13")
+			case reflect.DeepEqual(args, []string{"show", "--json", "work-1"}):
+				return []byte(`[{"id":"work-1","status":"open","assignee":"human","metadata":{"gc.routed_to":"rig/worker"}}]`), nil
+			default:
+				t.Fatalf("unexpected bd args: %#v", args)
+				return nil, nil
+			}
+		}
+	}
+
+	claimed, ok, err := hookClaimWithBdStore(context.Background(), "/rig", nil, "work-1", "worker-1")
+	if err != nil {
+		t.Fatalf("hookClaimWithBdStore: %v", err)
+	}
+	if ok {
+		t.Fatalf("hookClaimWithBdStore ok = true, want false; claimed=%+v", claimed)
+	}
+	if claimed.Assignee != "human" {
+		t.Fatalf("claim conflict holder = %q, want human", claimed.Assignee)
+	}
+	for _, call := range calls {
+		if reflect.DeepEqual(call, []string{"update", "work-1", "--claim", "--json"}) {
+			t.Fatalf("plain claim ran after the guarded transfer was refused: %#v", calls)
+		}
+	}
+}
+
+func TestHookClaimWithBdStoreClaimsAlreadyAssignedToThisSession(t *testing.T) {
+	originalRunner := hookClaimCommandRunnerWithEnvContext
+	t.Cleanup(func() { hookClaimCommandRunnerWithEnvContext = originalRunner })
+
+	var (
+		calls     [][]string
+		showCalls int
+	)
+	hookClaimCommandRunnerWithEnvContext = func(_ context.Context, _ map[string]string) beads.CommandRunner {
+		return func(_ string, name string, args ...string) ([]byte, error) {
+			if name != "bd" {
+				t.Fatalf("command name = %q, want bd", name)
+			}
+			calls = append(calls, append([]string(nil), args...))
+			switch {
+			case reflect.DeepEqual(args, []string{"update", "work-1", "--if-assignee", "", "--assignee", "worker-1", "--json"}):
+				return []byte(`assignee mismatch: work-1 is held by "worker-1", expected ""`), errors.New("exit status 13")
+			case reflect.DeepEqual(args, []string{"show", "--json", "work-1"}):
+				showCalls++
+				if showCalls == 1 {
+					return []byte(`[{"id":"work-1","status":"open","assignee":"worker-1","metadata":{"gc.routed_to":"rig/worker"}}]`), nil
+				}
+				return []byte(`[{"id":"work-1","status":"in_progress","assignee":"worker-1","metadata":{"gc.routed_to":"rig/worker"}}]`), nil
+			case reflect.DeepEqual(args, []string{"update", "work-1", "--claim", "--json"}):
+				return []byte(`[{"id":"work-1","status":"in_progress","assignee":"worker-1","metadata":{"gc.routed_to":"rig/worker"}}]`), nil
+			default:
+				t.Fatalf("unexpected bd args: %#v", args)
+				return nil, nil
+			}
+		}
+	}
+
+	claimed, ok, err := hookClaimWithBdStore(context.Background(), "/rig", nil, "work-1", "worker-1")
+	if err != nil {
+		t.Fatalf("hookClaimWithBdStore: %v", err)
+	}
+	if !ok {
+		t.Fatalf("hookClaimWithBdStore ok = false, want true; claimed=%+v", claimed)
+	}
+	if claimed.Assignee != "worker-1" || claimed.Status != "in_progress" {
+		t.Fatalf("claimed = %+v, want worker-1 in progress", claimed)
 	}
 }
 
