@@ -6,7 +6,6 @@ package graphroute
 import (
 	"fmt"
 	"maps"
-	"slices"
 	"strings"
 
 	"github.com/gastownhall/gascity/internal/agentutil"
@@ -77,7 +76,7 @@ func IsControlDispatcherKind(kind string) bool {
 // Routing never lands on these — they exist to structure the graph, not
 // to be claimed by an agent.
 func IsWorkflowTopologyKind(kind string) bool {
-	return slices.Contains(beadmeta.WorkflowTopologyKinds, kind)
+	return beadmeta.IsWorkflowTopologyKind(kind)
 }
 
 // IsCompiledGraphWorkflow reports whether a compiled recipe is a graph.v2

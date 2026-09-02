@@ -23,6 +23,7 @@ func TestPinnedKindValues(t *testing.T) {
 		KindWorkflow:         "workflow",
 		KindWisp:             "wisp",
 		KindSpec:             "spec",
+		KindGate:             "gate",
 	}
 	for got, want := range pinned {
 		if got != want {

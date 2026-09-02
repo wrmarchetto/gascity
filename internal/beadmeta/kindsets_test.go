@@ -96,7 +96,7 @@ func TestKindSetRelationships(t *testing.T) {
 
 // TestScopeCheckExemptKindsComposition pins ScopeCheckExemptKinds to its
 // declared composition — (ControlKinds \ {retry, ralph, retry-eval}) ∪
-// {scope, spec} — so a new control kind forces an explicit decision about
+// {scope, spec, gate} — so a new control kind forces an explicit decision about
 // scope-check pairing instead of silently drifting one of the injection
 // predicates (the drift this set was introduced to end; see ga-e154xo).
 func TestScopeCheckExemptKindsComposition(t *testing.T) {
@@ -112,7 +112,7 @@ func TestScopeCheckExemptKindsComposition(t *testing.T) {
 		}
 		derived = append(derived, k)
 	}
-	derived = append(derived, KindScope, KindSpec)
+	derived = append(derived, KindScope, KindSpec, KindGate)
 	slices.Sort(derived)
 	got := slices.Clone(ScopeCheckExemptKinds)
 	slices.Sort(got)

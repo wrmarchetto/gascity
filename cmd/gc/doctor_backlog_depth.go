@@ -85,8 +85,8 @@ func classifyBacklog(open []beads.Bead, readyIDs map[string]bool) backlogBreakdo
 			b.notification++
 		case bead.Type == "epic":
 			b.epic++
-		case strings.EqualFold(strings.TrimSpace(bead.Metadata[beadmeta.KindMetadataKey]), beadmeta.KindSpec):
-			// Generated step specs carry workflow-engine metadata, never agent work.
+		case beadmeta.IsWorkflowTopologyKind(strings.TrimSpace(bead.Metadata[beadmeta.KindMetadataKey])):
+			// Topology nodes structure a workflow but are never agent work.
 			b.other++
 		case readyIDs[bead.ID]:
 			b.real = append(b.real, bead)
