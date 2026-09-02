@@ -423,6 +423,9 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "gc bd: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if rejectCrossStoreBdDependency(cfg, cityPath, target, bdArgs, stderr) {
+		return 1
+	}
 	if rejectCrossRigBdUpdateAssignee(cfg, bdArgs, stderr) {
 		return 1
 	}
@@ -585,6 +588,89 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	}
 
 	return 0
+}
+
+// rejectCrossStoreBdDependency refuses a direct dependency edge whose two
+// beads resolve to different stores. Dependency rows live with their source
+// bead, and some bd versions acknowledge a foreign target while dropping that
+// row. Refusing before bd runs is the only honest result: neither store can
+// later render or enforce an edge it cannot persist.
+//
+// Bulk --file input is left to bd because its JSONL can contain many edges and
+// the single-edge CLI syntax has no equivalent preflight shape. External
+// references are also intentionally left alone: they are not bead IDs in a
+// second store and bd persists them as external capabilities.
+func rejectCrossStoreBdDependency(cfg *config.City, cityPath string, source execStoreTarget, args []string, stderr io.Writer) bool {
+	issueID, dependsOnID, ok := bdDirectDependencyEdge(args)
+	if !ok {
+		return false
+	}
+	target, err := resolveBdScopeTarget(cfg, cityPath, "", []string{"show", dependsOnID}, false, io.Discard)
+	if err != nil || samePath(source.ScopeRoot, target.ScopeRoot) {
+		return false
+	}
+	fmt.Fprintf(stderr, "gc bd: refusing cross-store dependency %s → %s: source is the %s store and target is the %s store. Dependencies must be persisted with both beads in one store; create a gate in the %s store to represent the external constraint.\n", issueID, dependsOnID, scopeLabel(source), scopeLabel(target), scopeLabel(source)) //nolint:errcheck // best-effort stderr
+	return true
+}
+
+// bdDirectDependencyEdge returns the source and target IDs for bd dep add's
+// one-edge forms. bd also accepts --file JSONL batches; that format has no
+// single target to inspect here and is deliberately left to bd.
+func bdDirectDependencyEdge(args []string) (issueID, dependsOnID string, ok bool) {
+	verb, rest := bdflags.SplitGlobalFlags(args)
+	if verb != "dep" || len(rest) == 0 || rest[0] != "add" {
+		return "", "", false
+	}
+	addArgs := rest[1:]
+	for _, arg := range addArgs {
+		if arg == "--file" || strings.HasPrefix(arg, "--file=") {
+			return "", "", false
+		}
+	}
+	positionals := bdflags.Positionals("dep add", addArgs)
+	if len(positionals) == 2 {
+		if strings.HasPrefix(positionals[1], "external:") {
+			return "", "", false
+		}
+		return positionals[0], positionals[1], true
+	}
+	if len(positionals) != 1 {
+		return "", "", false
+	}
+	dependsOnID, found := bdDependencyTargetFlag(addArgs)
+	if !found || strings.HasPrefix(dependsOnID, "external:") {
+		return "", "", false
+	}
+	return positionals[0], dependsOnID, true
+}
+
+// bdDependencyTargetFlag extracts exactly one of dep add's two target aliases.
+func bdDependencyTargetFlag(args []string) (string, bool) {
+	var target string
+	found := false
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		var value string
+		switch {
+		case arg == "--blocked-by" || arg == "--depends-on":
+			if i+1 >= len(args) {
+				return "", false
+			}
+			value = args[i+1]
+			i++
+		case strings.HasPrefix(arg, "--blocked-by="):
+			value = strings.TrimPrefix(arg, "--blocked-by=")
+		case strings.HasPrefix(arg, "--depends-on="):
+			value = strings.TrimPrefix(arg, "--depends-on=")
+		default:
+			continue
+		}
+		if found || strings.TrimSpace(value) == "" {
+			return "", false
+		}
+		target, found = value, true
+	}
+	return target, found
 }
 
 // rejectCrossRigBdUpdateAssignee rejects a direct bd assignment that gives a
