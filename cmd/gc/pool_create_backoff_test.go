@@ -179,6 +179,7 @@ func TestSelectOrPlanPoolSessionBeadBacksOffMatchingFailedCreate(t *testing.T) {
 		beadStore:              store,
 		sessionBeads:           newSessionBeadSnapshotFromInfos(nil),
 		beaconTime:             now,
+		now:                    func() time.Time { return now },
 		providerHealthSnapshot: &providerHealthSnapshot{},
 	}
 	_, _, plan, err := selectOrPlanPoolSessionBead(bp, &agent, "worker", nil, SessionRequest{WorkBeadID: "work-1"}, map[string]bool{}, map[int]bool{})
@@ -187,6 +188,49 @@ func TestSelectOrPlanPoolSessionBeadBacksOffMatchingFailedCreate(t *testing.T) {
 	}
 	if plan != nil {
 		t.Fatalf("selectOrPlanPoolSessionBead returned plan %#v while backoff is active", plan)
+	}
+}
+
+func TestSelectOrPlanPoolSessionBeadRetriesAfterBackoffRelativeToCurrentCycle(t *testing.T) {
+	createdAt := time.Date(2026, 9, 1, 1, 30, 0, 0, time.UTC)
+	store := beads.NewMemStore()
+	agent := config.Agent{Name: "worker", MaxActiveSessions: intPtr(1)}
+	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}, Agents: []config.Agent{agent}}
+
+	_, err := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Status: "closed",
+		Metadata: map[string]string{
+			"agent_name":                        "worker",
+			"template":                          "worker",
+			"session_origin":                    "ephemeral",
+			"gc.trigger_bead_id":                "work-1",
+			poolCreateFailureClassMetadataKey:   poolCreateFailureClassAborted,
+			poolCreateFailureRetryAfterMetadata: createdAt.Add(time.Minute).Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		t.Fatalf("create failed session history: %v", err)
+	}
+
+	bp := &agentBuildParams{
+		city:                   cfg,
+		cityName:               cfg.EffectiveCityName(),
+		cityPath:               t.TempDir(),
+		agents:                 cfg.Agents,
+		beadStore:              store,
+		sessionBeads:           newSessionBeadSnapshotFromInfos(nil),
+		beaconTime:             createdAt,
+		now:                    func() time.Time { return createdAt.Add(time.Minute) },
+		providerHealthSnapshot: &providerHealthSnapshot{},
+	}
+	_, _, plan, err := selectOrPlanPoolSessionBead(bp, &agent, "worker", nil, SessionRequest{WorkBeadID: "work-1"}, map[string]bool{}, map[int]bool{})
+	if err != nil {
+		t.Fatalf("selectOrPlanPoolSessionBead error = %v, want retry after the backoff expires", err)
+	}
+	if plan == nil {
+		t.Fatal("selectOrPlanPoolSessionBead returned no plan after the backoff expired")
 	}
 }
 

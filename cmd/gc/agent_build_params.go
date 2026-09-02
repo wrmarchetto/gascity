@@ -31,6 +31,10 @@ type agentBuildParams struct {
 	rigs            []config.Rig
 	sessionTemplate string
 	beaconTime      time.Time
+	// now is the current reconciliation time. It is distinct from beaconTime,
+	// which is intentionally captured once so rendered startup prompts remain
+	// stable for a controller lifetime.
+	now             func() time.Time
 	packDirs        []string
 	packOverlayDirs []string
 	rigOverlayDirs  map[string][]string
@@ -122,6 +126,7 @@ func newAgentBuildParams(cityName, cityPath string, cfg *config.City, sp runtime
 		rigs:            cfg.Rigs,
 		sessionTemplate: cfg.Workspace.SessionTemplate,
 		beaconTime:      beaconTime,
+		now:             time.Now,
 		packDirs:        cfg.PackDirs,
 		packOverlayDirs: cfg.PackOverlayDirs,
 		rigOverlayDirs:  cfg.RigOverlayDirs,
@@ -210,6 +215,13 @@ func newAgentBuildParams(cityName, cityPath string, cfg *config.City, sp runtime
 		}
 	}
 	return params
+}
+
+func (p *agentBuildParams) currentTime() time.Time {
+	if p != nil && p.now != nil {
+		return p.now()
+	}
+	return time.Now()
 }
 
 func (p *agentBuildParams) sharedSkillCatalogForAgent(agent *config.Agent) *materialize.CityCatalog {
