@@ -191,6 +191,7 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 	cronIntervals := map[string]time.Duration{}
 	worst := StatusOK
 	monitored := 0
+	var healthyDetails []string
 	var firstNonOK string
 	// Track severity contributions across error-level entries. Warnings should
 	// stay visible without converting an advisory error into a blocking gate.
@@ -258,7 +259,11 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		}
 		status, severity, detail := classifyOrderFiring(order, now, expected, lastFired, startedAt)
 		worst = worseStatus(worst, status)
-		result.Details = append(result.Details, detail)
+		if status == StatusOK {
+			healthyDetails = append(healthyDetails, detail)
+		} else {
+			result.Details = append(result.Details, detail)
+		}
 		if status != StatusOK {
 			if firstNonOK == "" {
 				firstNonOK = orderHistoryHintTarget(order)
@@ -277,6 +282,11 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		result.Status = StatusOK
 		result.Message = "no cron or cooldown orders"
 		return result
+	}
+	if worst == StatusOK {
+		result.Details = healthyDetails
+	} else if len(healthyDetails) > 0 {
+		result.Details = append(result.Details, formatOrderFiringHealthySummary(len(healthyDetails)))
 	}
 
 	result.Status = worst
@@ -302,6 +312,13 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		result.FixHint = fmt.Sprintf(orderFiringInspectHintFmt, firstNonOK)
 	}
 	return result
+}
+
+func formatOrderFiringHealthySummary(count int) string {
+	if count == 1 {
+		return "1 scheduled order is current"
+	}
+	return fmt.Sprintf("%d scheduled orders are current", count)
 }
 
 func monitoredOrderFiringOrders(allOrders []orders.Order, suspendedRigs map[string]bool) []orders.Order {

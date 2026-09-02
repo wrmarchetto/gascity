@@ -97,6 +97,41 @@ func TestOrderFiringCurrent_ConsecutiveExecutionFailuresStayBlocking(t *testing.
 	}
 }
 
+func TestOrderFiringCurrent_ListsFailuresAndSummarizesHealthyOrders(t *testing.T) {
+	now := time.Date(2026, 9, 2, 20, 0, 0, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "backup-sync", "cooldown", "6h")
+	writeOrderFiringTestOrder(t, cityPath, "healthy-cleanup", "cooldown", "6h")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "healthy-cleanup", Ts: now.Add(-1 * time.Hour)},
+	)
+
+	check := NewOrderFiringCurrentCheck(cfg, cityPath, WithOrderFiringCurrentHistoryFunc(func(order orders.Order) ([]orders.OrderRun, error) {
+		if order.Name != "backup-sync" {
+			return nil, nil
+		}
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-10 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-70 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-130 * time.Minute)},
+		}, nil
+	}))
+	check.clock = func() time.Time { return now }
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	details := strings.Join(result.Details, "\n")
+	if !strings.Contains(details, "backup-sync: 3 consecutive execution failures") {
+		t.Fatalf("details = %v, want failed order named", result.Details)
+	}
+	if !strings.Contains(details, "1 scheduled order is current") {
+		t.Fatalf("details = %v, want healthy orders summarized", result.Details)
+	}
+	if strings.Contains(details, "healthy-cleanup: last fired") {
+		t.Fatalf("details = %v, healthy order must not obscure the failure", result.Details)
+	}
+}
+
 func TestOrderFiringCurrent_ConsecutiveIntegrityQuarantineRefusalsNameMarker(t *testing.T) {
 	now := time.Date(2026, 9, 1, 18, 0, 0, 0, time.UTC)
 	cityPath, cfg := orderFiringTestCity(t)
