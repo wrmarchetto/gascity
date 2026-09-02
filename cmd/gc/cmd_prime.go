@@ -501,6 +501,30 @@ func primeHookSessionStart(ctx primeHookContext) bool {
 	return strings.TrimSpace(ctx.HookEventName) == "SessionStart"
 }
 
+// hookIdentityEnv marks processes that Gas City started. Provider hook
+// overlays are directory scoped, so a human-launched provider process can load
+// them too; hook injection must remain silent for that process.
+var hookIdentityEnv = []string{
+	"GC_SESSION_ID",
+	"GC_SESSION_NAME",
+	"GC_ALIAS",
+	"GC_AGENT",
+	"GC_TEMPLATE",
+	managedSessionHookEnv,
+}
+
+// hookHasManagedIdentity reports whether the current process carries a Gas
+// City session identity. Hook injection uses this weaker check rather than a
+// live-session lookup so manual aliases and template fallbacks still work.
+func hookHasManagedIdentity() bool {
+	for _, key := range hookIdentityEnv {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func primeHookHasLiveManagedSession(cityPath string) bool {
 	sessionID := strings.TrimSpace(os.Getenv("GC_SESSION_ID"))
 	if sessionID == "" {

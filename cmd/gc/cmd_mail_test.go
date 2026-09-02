@@ -3404,6 +3404,66 @@ func TestMailSendAllExcludesSender(t *testing.T) {
 
 // --- gc mail check ---
 
+// TestMailCheckInjectSkipsImplicitHumanMailboxWithoutGCIdentity ensures a
+// provider hook staged into a city directory cannot inject the operator's
+// mailbox into a provider session that Gas City did not start.
+func TestMailCheckInjectSkipsImplicitHumanMailboxWithoutGCIdentity(t *testing.T) {
+	clearGCEnv(t)
+	cityPath := writeMailTestCity(t)
+	t.Setenv("GC_MAIL", "")
+	for _, key := range []string{"GC_SESSION_ID", "GC_SESSION_NAME", "GC_ALIAS", "GC_AGENT", "GC_TEMPLATE", managedSessionHookEnv} {
+		t.Setenv(key, "")
+	}
+
+	store, err := openCityStoreAt(cityPath)
+	if err != nil {
+		t.Fatalf("openCityStoreAt: %v", err)
+	}
+	if _, err := beadmail.New(store).Send("sender", "human", "operator mail", "must not enter an unmanaged hook"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdMailCheckWithFormat(nil, true, "", &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdMailCheckWithFormat = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); got != "" {
+		t.Fatalf("unmanaged hook injected the implicit human mailbox: %q", got)
+	}
+}
+
+func TestMailCheckInjectDeliversImplicitManagedMailbox(t *testing.T) {
+	clearGCEnv(t)
+	cityPath := writeMailTestCity(t)
+	t.Setenv("GC_MAIL", "")
+	t.Setenv("GC_AGENT", "mayor")
+	configPath := filepath.Join(cityPath, "city.toml")
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("ReadFile city.toml: %v", err)
+	}
+	configData = append(configData, []byte("\n[[named_session]]\ntemplate = \"mayor\"\n")...)
+	if err := os.WriteFile(configPath, configData, 0o644); err != nil {
+		t.Fatalf("WriteFile city.toml: %v", err)
+	}
+
+	store, err := openCityStoreAt(cityPath)
+	if err != nil {
+		t.Fatalf("openCityStoreAt: %v", err)
+	}
+	if _, err := beadmail.New(store).Send("sender", "mayor", "worker mail", "must reach the managed hook"); err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdMailCheckWithFormat(nil, true, "", &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdMailCheckWithFormat = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "must reach the managed hook") {
+		t.Fatalf("managed hook did not receive its mailbox: %q", got)
+	}
+}
+
 func TestMailCheckNoMail(t *testing.T) {
 	store := beads.NewMemStore()
 	mp := beadmail.New(store)

@@ -516,6 +516,14 @@ $GC_ALIAS, $GC_AGENT, or "human".`,
 }
 
 func cmdMailCheckWithFormat(args []string, inject bool, hookFormat string, stdout, stderr io.Writer) int {
+	// A provider hook staged into a city directory can also run in a
+	// human-launched session. With no explicit target, the mailbox resolver
+	// falls back to "human"; injecting it would turn the operator's mail into a
+	// system instruction. Explicit targets and the ordinary CLI command remain
+	// intentional, so only the implicit hook-injection path is suppressed.
+	if inject && len(args) == 0 && !hookHasManagedIdentity() {
+		return 0
+	}
 	cityPath, cityPathErr := resolveCity()
 	if cityPathErr == nil {
 		if cfg, err := loadCityConfig(cityPath, stderr); err == nil && citySuspended(cfg) {
