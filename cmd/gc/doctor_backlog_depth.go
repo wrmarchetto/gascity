@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/doctor"
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
@@ -84,6 +85,9 @@ func classifyBacklog(open []beads.Bead, readyIDs map[string]bool) backlogBreakdo
 			b.notification++
 		case bead.Type == "epic":
 			b.epic++
+		case strings.EqualFold(strings.TrimSpace(bead.Metadata[beadmeta.KindMetadataKey]), beadmeta.KindSpec):
+			// Generated step specs carry workflow-engine metadata, never agent work.
+			b.other++
 		case readyIDs[bead.ID]:
 			b.real = append(b.real, bead)
 		default:

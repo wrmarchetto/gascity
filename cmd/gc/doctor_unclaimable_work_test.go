@@ -268,6 +268,21 @@ func TestUnclaimableWorkPassesNonClaimableBacklog(t *testing.T) {
 	assertUnclaimable(t, got)
 }
 
+// TestUnclaimableWorkExcludesGeneratedSpecsWithoutHidingTasks pins the
+// workflow-sidecar boundary: a generated spec carries step-definition metadata
+// for the workflow engine, not work an agent may claim. An ordinary ready task
+// alongside it must still report when it has no pool door.
+func TestUnclaimableWorkExcludesGeneratedSpecsWithoutHidingTasks(t *testing.T) {
+	got := unclaimableIDs(t, poolAgentCfg(4), []beads.Bead{
+		{
+			ID: "S-1", Title: "Step spec for review", Type: "spec", Status: "open",
+			Metadata: map[string]string{beadmeta.KindMetadataKey: beadmeta.KindSpec},
+		},
+		{ID: "W-1", Title: "forgotten route", Type: "task", Status: "open"},
+	}, nil)
+	assertUnclaimable(t, got, "W-1")
+}
+
 // TestUnclaimableWorkNamesTheRemedyItCannotChoose pins that the check reports
 // without routing. Which pool an unrouted bead belongs to is a judgment call
 // that must stay out of Go (AGENTS.md), so the result carries the two remedies
