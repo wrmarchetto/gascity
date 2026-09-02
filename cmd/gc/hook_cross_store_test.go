@@ -2,12 +2,32 @@ package main
 
 import (
 	"errors"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/config"
 )
 
 var errTestStoreTimeout = errors.New("store timed out")
+
+func TestAppendRigHookStoresExcludesSuspendedRig(t *testing.T) {
+	cityPath := t.TempDir()
+	cfg := &config.City{Rigs: []config.Rig{
+		{Name: "riga", Path: filepath.Join(cityPath, "riga")},
+		{Name: "rigb", Path: filepath.Join(cityPath, "rigb"), SuspendedOnStart: true},
+	}}
+
+	got := appendRigHookStores([]hookStore{{dir: "city"}}, cityPath, cfg, &config.Agent{Name: "worker"}, nil)
+	if len(got) != 2 {
+		t.Fatalf("stores = %+v, want city plus non-suspended riga", got)
+	}
+	for _, store := range got {
+		if strings.Contains(store.dir, "rigb") {
+			t.Fatalf("suspended rig store leaked into hook federation: %+v", got)
+		}
+	}
+}
 
 // TestRigScopedHookRig is the core of the rig-scope hook fix: a rig-scoped agent
 // ("<rig>/<name>") must resolve to its own rig so the hook also queries that
