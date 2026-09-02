@@ -3854,7 +3854,7 @@ func selectOrPlanPoolSessionBead(
 		delete(usedSlots, slot)
 		return session.Info{}, 0, nil, errPoolSessionCreateProviderRed
 	}
-	backoffActive, backoffErr := poolCreateFailureBackoffActive(sessionFrontDoor(bp.beadStore), template, qualifiedInstance, request.WorkBeadID, bp.beaconTime)
+	backoffActive, backoffErr := poolCreateFailureBackoffActive(sessionFrontDoor(bp.beadStore), template, qualifiedInstance, request.WorkBeadID, bp.currentTime())
 	if backoffErr != nil {
 		fmt.Fprintf(bp.stderr, "session reconciler: %v; allowing pool session create\n", backoffErr) //nolint:errcheck
 	}
