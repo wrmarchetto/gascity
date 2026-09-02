@@ -692,6 +692,25 @@ func preassignHookContinuationGroup(bead beads.Bead, opts hookClaimOptions, ops 
 
 func hookClaimWithBdStore(ctx context.Context, dir string, env []string, beadID, assignee string) (beads.Bead, bool, error) {
 	store := hookClaimBdStoreContext(ctx, dir, env, assignee)
+	// The work query is a snapshot, so a routed candidate may have been handed
+	// to a specific actor after it was read. Move only an unassigned bead onto
+	// this session before leasing it: bd's plain --claim does not preserve that
+	// assignment boundary on every supported backend.
+	claimed, ok, err := store.ReassignIfAssignee(beadID, "", assignee)
+	if err != nil {
+		return beads.Bead{}, false, err
+	}
+	if !ok && !hookClaimHasIdentity(claimed.Assignee, []string{assignee}) {
+		return claimed, false, nil
+	}
+	return hookLeaseClaimWithBdStore(ctx, dir, env, beadID, assignee)
+}
+
+// hookLeaseClaimWithBdStore takes the claim lease after the caller has either
+// atomically assigned an unassigned bead or established that this session
+// already owns it.
+func hookLeaseClaimWithBdStore(ctx context.Context, dir string, env []string, beadID, assignee string) (beads.Bead, bool, error) {
+	store := hookClaimBdStoreContext(ctx, dir, env, assignee)
 	claimed, ok, err := store.Claim(beadID)
 	if err != nil {
 		return beads.Bead{}, false, err
@@ -743,7 +762,7 @@ func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, bea
 	if err != nil || !ok {
 		return current, ok, err
 	}
-	return hookClaimWithBdStore(ctx, dir, env, beadID, assignee)
+	return hookLeaseClaimWithBdStore(ctx, dir, env, beadID, assignee)
 }
 
 // stampHookClaimIdentity records the claiming worker's execution identity on the
