@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -30,7 +31,7 @@ var hookIdentityEnvKeys = []string{
 	"GC_SESSION_ID", "GC_SESSION_ORIGIN", "GC_TEMPLATE",
 }
 
-// appendRigHookStores adds one hookStore per rig for a cross-store-eligible
+// appendRigHookStores adds one hookStore per non-suspended rig for a cross-store-eligible
 // (city-scoped) agent — vp-kvp stage iii read federation. Each entry reuses the
 // rig's store env (built the same way controller probes build it, via a per-rig
 // agent view) while keeping the city agent's identity overrides, so the query
@@ -41,7 +42,11 @@ func appendRigHookStores(stores []hookStore, cityPath string, cfg *config.City, 
 	if cfg == nil || a == nil {
 		return stores
 	}
+	suspendedRigPaths := buildSuspendedRigPathsForCity(cfg, cityPath)
 	for i := range cfg.Rigs {
+		if suspendedRigPaths[filepath.Clean(cfg.Rigs[i].Path)] {
+			continue
+		}
 		stores = appendOneRigHookStore(stores, cityPath, cfg, a, cfg.Rigs[i].Name, identityOverrides)
 	}
 	return stores

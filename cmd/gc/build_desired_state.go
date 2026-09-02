@@ -156,6 +156,9 @@ type poolEvalWork struct {
 	poolDir   string
 	env       map[string]string
 	newDemand bool
+	// probes is populated only for city-scoped custom scale checks. It makes
+	// their demand store set agree with cross-store hook discovery.
+	probes []poolStoreProbe
 }
 
 type defaultScaleCheckTarget struct {
@@ -253,17 +256,26 @@ func evaluatePendingPools(
 		agentName := cfg.Agents[pw.agentIdx].Name
 		agentIndex := pw.agentIdx
 		newDemand := pw.newDemand
-		go func(idx int, template, agentName string, agentIndex int, sp scaleParams, dir string, newDemand bool) {
+		probes := pw.probes
+		go func(idx int, template, agentName string, agentIndex int, sp scaleParams, dir string, newDemand bool, probes []poolStoreProbe) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
 			started := time.Now()
 			var d int
 			var err error
-			if newDemand {
-				d, err = evaluatePoolNewDemand(agentName, sp, dir, probeEnv, shellScaleCheck)
+			if len(probes) > 0 {
+				var errs []error
+				d, errs = evaluatePoolFanOutSum(agentName, sp, probes, shellScaleCheck, sem, newDemand)
+				err = errors.Join(errs...)
 			} else {
-				d, err = evaluatePool(agentName, sp, dir, probeEnv, shellScaleCheck)
+				sem <- struct{}{}
+				func() {
+					defer func() { <-sem }()
+					if newDemand {
+						d, err = evaluatePoolNewDemand(agentName, sp, dir, probeEnv, shellScaleCheck)
+					} else {
+						d, err = evaluatePool(agentName, sp, dir, probeEnv, shellScaleCheck)
+					}
+				}()
 			}
 			evalResults[idx] = poolEvalResult{desired: d, err: err}
 			if trace != nil {
@@ -281,7 +293,7 @@ func evaluatePendingPools(
 					"agent_index":    agentIndex,
 				})
 			}
-		}(j, template, agentName, agentIndex, sp, pw.poolDir, newDemand)
+		}(j, template, agentName, agentIndex, sp, pw.poolDir, newDemand, probes)
 	}
 	wg.Wait()
 
@@ -548,7 +560,11 @@ func buildDesiredStateWithSessionBeads(
 					coldWakeTemplates[template] = true
 				}
 			}
-			pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, sp: sp, poolDir: poolDir, newDemand: store != nil})
+			var probes []poolStoreProbe
+			if rigName == "" && hasCustomScaleCheck {
+				probes = cityScopedFanOutProbes(cityPath, cfg, &cfg.Agents[i], poolDir, nil, suspendedRigPaths)
+			}
+			pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, sp: sp, poolDir: poolDir, newDemand: store != nil, probes: probes})
 			continue
 		}
 
@@ -644,7 +660,11 @@ func buildDesiredStateWithSessionBeads(
 			fmt.Fprintf(stderr, "scaleCheck: building env for %s: %v\n", cfg.Agents[i].QualifiedName(), err) //nolint:errcheck
 			continue
 		}
-		pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, sp: sp, poolDir: poolDir, env: env, newDemand: store != nil})
+		var probes []poolStoreProbe
+		if rigName == "" && hasCustomScaleCheck {
+			probes = cityScopedFanOutProbes(cityPath, cfg, &cfg.Agents[i], poolDir, env, suspendedRigPaths)
+		}
+		pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, sp: sp, poolDir: poolDir, env: env, newDemand: store != nil, probes: probes})
 	}
 
 	// Collect work beads with assignees — used for both pool demand and
