@@ -280,6 +280,133 @@ touch "$GC_BD_CAPTURE"
 	}
 }
 
+// TestDoBdRefusesCrossStoreDependencyAdd keeps gc bd from forwarding an edge
+// that bd can acknowledge while silently dropping it. The control is essential:
+// a refusal must be scoped to two stores, not disable same-store dependencies.
+func TestDoBdRefusesCrossStoreDependencyAdd(t *testing.T) {
+	disableManagedDoltRecoveryForTest(t)
+
+	origCityFlag, origRigFlag := cityFlag, rigFlag
+	origProbe := bdBeadExists
+	t.Cleanup(func() {
+		cityFlag = origCityFlag
+		rigFlag = origRigFlag
+		bdBeadExists = origProbe
+	})
+	cityFlag, rigFlag = "", ""
+
+	cityDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityDir, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(`[workspace]
+name = "demo"
+prefix = "city"
+
+[[rigs]]
+name = "other"
+path = "other"
+prefix = "other"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityDir, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bdBeadExists = func(_ string, _ *config.City, target execStoreTarget, beadID string) bool {
+		return (target.ScopeKind == "city" && (beadID == "city-source" || beadID == "city-blocker")) ||
+			(target.ScopeKind == "rig" && target.RigName == "other" && beadID == "other-blocker")
+	}
+
+	binDir := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "bd-ran")
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(`#!/bin/sh
+touch "$GC_BD_CAPTURE"
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GC_BD_CAPTURE", capture)
+	t.Setenv("GC_CITY_PATH", cityDir)
+
+	t.Run("refuses cross-store edge before bd runs", func(t *testing.T) {
+		_ = os.Remove(capture)
+		var stdout, stderr bytes.Buffer
+		if got := doBd([]string{"--city", cityDir, "dep", "add", "city-source", "other-blocker"}, &stdout, &stderr); got != 1 {
+			t.Fatalf("doBd(dep add) = %d, want 1; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+		}
+		for _, want := range []string{"cross-store dependency", "city-source", "other-blocker", "city store", `rig "other" store`} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Errorf("stderr = %q, want %q", stderr.String(), want)
+			}
+		}
+		if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("bd subprocess ran despite rejected dependency: stat capture = %v", err)
+		}
+	})
+
+	t.Run("allows same-store edge", func(t *testing.T) {
+		_ = os.Remove(capture)
+		var stdout, stderr bytes.Buffer
+		if got := doBd([]string{"--city", cityDir, "dep", "add", "city-source", "city-blocker"}, &stdout, &stderr); got != 0 {
+			t.Fatalf("doBd(dep add) = %d, want 0; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+		}
+		if _, err := os.Stat(capture); err != nil {
+			t.Fatalf("bd subprocess did not run for same-store dependency: %v", err)
+		}
+	})
+}
+
+func TestBdDirectDependencyEdge(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		wantSource string
+		wantTarget string
+		wantOK     bool
+	}{
+		{
+			name:       "positional target",
+			args:       []string{"dep", "add", "city-source", "rig-target"},
+			wantSource: "city-source",
+			wantTarget: "rig-target",
+			wantOK:     true,
+		},
+		{
+			name:       "blocked-by target flag",
+			args:       []string{"dep", "add", "city-source", "--blocked-by", "rig-target"},
+			wantSource: "city-source",
+			wantTarget: "rig-target",
+			wantOK:     true,
+		},
+		{
+			name:       "depends-on inline target flag",
+			args:       []string{"dep", "add", "city-source", "--depends-on=rig-target"},
+			wantSource: "city-source",
+			wantTarget: "rig-target",
+			wantOK:     true,
+		},
+		{
+			name:   "external reference is not a second bead store",
+			args:   []string{"dep", "add", "city-source", "external:other:capability"},
+			wantOK: false,
+		},
+		{
+			name:   "bulk file has no single edge to preflight",
+			args:   []string{"dep", "add", "--file", "deps.jsonl"},
+			wantOK: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSource, gotTarget, gotOK := bdDirectDependencyEdge(tt.args)
+			if gotSource != tt.wantSource || gotTarget != tt.wantTarget || gotOK != tt.wantOK {
+				t.Fatalf("bdDirectDependencyEdge(%v) = (%q, %q, %v), want (%q, %q, %v)", tt.args, gotSource, gotTarget, gotOK, tt.wantSource, tt.wantTarget, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestResolveBdScopeTarget(t *testing.T) {
 	// Isolate cwd from any ambient `.beads/redirect` in the working tree
 	// (e.g. when `make test` runs from a polecat/crew worktree, the worktree's
