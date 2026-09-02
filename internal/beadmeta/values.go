@@ -48,6 +48,11 @@ const (
 	// KindSpec marks a generated step-spec sidecar bead carrying a serialized
 	// step definition rather than executable work.
 	KindSpec = "spec"
+
+	// KindGate marks a topology bead whose lifecycle is driven outside an agent
+	// work queue. It holds a workflow edge closed until its owning mechanism
+	// resolves it.
+	KindGate = "gate"
 )
 
 // Values of OutcomeMetadataKey ("gc.outcome").

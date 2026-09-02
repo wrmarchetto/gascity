@@ -50,7 +50,7 @@ func IsControlKind(kind string) bool {
 // ScopeCheckExemptKinds lists the gc.kind values that never receive a paired
 // scope-check control, even when the step carries gc.scope_ref. It is exactly
 // (ControlKinds \ {KindRetry, KindRalph, KindRetryEval}) ∪ {KindScope,
-// KindSpec}; TestScopeCheckExemptKindsComposition pins the composition.
+// KindSpec, KindGate}; TestScopeCheckExemptKindsComposition pins the composition.
 //
 // Rationale per member: KindScope is the scope latch itself; KindSpec marks
 // frozen step-spec sidecars (bookkeeping, not work); the remaining members are
@@ -85,6 +85,7 @@ var ScopeCheckExemptKinds = []string{
 	KindFanout,
 	KindDrain,
 	KindSpec,
+	KindGate,
 }
 
 // IsScopeCheckExemptKind reports whether kind is a member of
@@ -107,13 +108,20 @@ var StructuralGraphKinds = []string{
 }
 
 // WorkflowTopologyKinds lists kinds that anchor workflow topology (root
-// workflow, scope latch, formula spec). Routing never lands on these; agents
-// must never claim them. graphroute.IsWorkflowTopologyKind derives from this
-// set.
+// workflow, scope latch, formula spec, or gate). Routing never lands on these;
+// agents must never claim them. graphroute.IsWorkflowTopologyKind derives from
+// this set.
 var WorkflowTopologyKinds = []string{
 	KindWorkflow,
 	KindScope,
 	KindSpec,
+	KindGate,
+}
+
+// IsWorkflowTopologyKind reports whether kind marks a workflow-topology bead
+// rather than agent-executable work.
+func IsWorkflowTopologyKind(kind string) bool {
+	return slices.Contains(WorkflowTopologyKinds, kind)
 }
 
 // GraphContractMetadataKinds lists the gc.kind values that, when HAND-WRITTEN
