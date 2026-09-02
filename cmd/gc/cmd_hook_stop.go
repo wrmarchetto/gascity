@@ -101,11 +101,11 @@ type stopGateFacts struct {
 	sessionOrigin    string
 	restartRequested bool
 	drainAcked       bool
-	// outstanding holds the ids of beads still on this session's hook:
+	// outstanding holds the beads still on this session's hook:
 	// in_progress, assigned to one of this session's identities, and not
 	// dependency-blocked. The query that produces it already excludes mail and
 	// blocked steps, so anything here is work this session can act on right now.
-	outstanding []string
+	outstanding []beads.Bead
 	// unknownWork records that the outstanding-work query could not be
 	// answered. Distinct from an empty outstanding list, because "no work" and
 	// "could not tell" must reach opposite verdicts on a gate that fails open.
@@ -147,7 +147,8 @@ func evaluateStopGate(f stopGateFacts) stopGateVerdict {
 		// would wedge every session in the city the moment the store went down.
 		return allow
 	}
-	if len(f.outstanding) > 0 {
+	if outstanding := stopGateClosingContractBeads(f.outstanding); len(outstanding) > 0 {
+		f.outstanding = outstanding
 		return stopGateVerdict{block: true, reason: stopGateOutstandingReason(f)}
 	}
 	// No claimed work. Only an ephemeral worker still owes a drain-ack; a named
@@ -162,6 +163,38 @@ func evaluateStopGate(f stopGateFacts) stopGateVerdict {
 	return stopGateVerdict{block: true, reason: stopGateDrainAckReason()}
 }
 
+// stopGateClosingContractBeads returns the outstanding beads that still keep
+// the session's closing contract open. PM sittings deliberately remain open
+// across turns; their existing labels distinguish them from ordinary work.
+func stopGateClosingContractBeads(outstanding []beads.Bead) []beads.Bead {
+	closing := make([]beads.Bead, 0, len(outstanding))
+	for _, bead := range outstanding {
+		if isOpenPMSittingBead(bead) {
+			continue
+		}
+		closing = append(closing, bead)
+	}
+	return closing
+}
+
+// isOpenPMSittingBead reports whether bead is a PM conversation holder that
+// deliberately stays open between turns. The status check keeps a historic
+// closed bead with the same label out of the exception.
+func isOpenPMSittingBead(bead beads.Bead) bool {
+	switch strings.ToLower(strings.TrimSpace(bead.Status)) {
+	case "open", "in_progress":
+	default:
+		return false
+	}
+	for _, label := range bead.Labels {
+		switch strings.TrimSpace(label) {
+		case "pm-init", "pm-plan", "pm-chat":
+			return true
+		}
+	}
+	return false
+}
+
 // stopGateOutstandingReason renders the block text for a session still
 // holding claimed work.
 //
@@ -174,8 +207,8 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	var b strings.Builder
 	b.WriteString("Stop blocked: this session's closing contract is not finished.\n\n")
 	b.WriteString("Still open and assigned to this session:\n")
-	for _, id := range f.outstanding {
-		fmt.Fprintf(&b, "  %s\n", id)
+	for _, bead := range f.outstanding {
+		fmt.Fprintf(&b, "  %s\n", bead.ID)
 	}
 	b.WriteString("\nFinish the closing steps your prompt specifies for each id above")
 	b.WriteString(" -- set the result metadata the bead asks for, then close it")
@@ -421,25 +454,25 @@ func probeStopGateOutstanding(cfg *config.City, cityPath, cityName string, a *co
 	}
 }
 
-// readStopGateOutstandingWork returns the ids of beads still on this
-// session's hook, and whether the query could be answered at all.
+// readStopGateOutstandingWork returns the beads still on this session's hook,
+// and whether the query could be answered at all.
 //
 // It runs the agent's assigned-in-progress query over the SAME federated
 // store set gc hook --claim uses, so the gate sees exactly the beads the
 // claim saw. That query already excludes mail beads and dependency-blocked
 // steps, which is the behavior wanted here for free: a step this session
 // cannot progress must not hold its turn open.
-func readStopGateOutstandingWork(stderr io.Writer) ([]string, bool) {
+func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool) {
 	probe := &hookStopProbe{}
 	opts := hookCommandOptions{StopProbe: probe}
 	if cmdHookWithOptions(nil, opts, io.Discard, stderr) != 0 || probe.Err != nil {
 		return nil, true
 	}
-	ids := make([]string, 0, len(probe.Outstanding))
+	outstanding := make([]beads.Bead, 0, len(probe.Outstanding))
 	for _, bead := range probe.Outstanding {
-		if id := strings.TrimSpace(bead.ID); id != "" {
-			ids = append(ids, id)
+		if strings.TrimSpace(bead.ID) != "" {
+			outstanding = append(outstanding, bead)
 		}
 	}
-	return ids, false
+	return outstanding, false
 }

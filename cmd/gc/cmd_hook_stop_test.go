@@ -27,6 +27,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/gastownhall/gascity/internal/beads"
 )
 
 // stopGateHoldingWork is a session mid-contract: it claimed a bead and has
@@ -36,7 +38,7 @@ func stopGateHoldingWork() stopGateFacts {
 	return stopGateFacts{
 		sessionID:     "ci-l1ua",
 		sessionOrigin: sessionOriginEphemeral,
-		outstanding:   []string{"ci-yxpd"},
+		outstanding:   []beads.Bead{{ID: "ci-yxpd", Status: "in_progress"}},
 	}
 }
 
@@ -56,6 +58,61 @@ func TestStopGateBlocksTurnWhileClaimedWorkIsUnclosed(t *testing.T) {
 	}
 	if !strings.Contains(verdict.reason, "ci-yxpd") {
 		t.Errorf("block reason does not name the outstanding bead: %q", verdict.reason)
+	}
+}
+
+// TestStopGateExemptsOpenPMSittingBeads pins the deliberately narrow
+// exception for beads that hold a PM conversation open across turns.
+//
+// The surrounding closing-contract gate remains load-bearing: this test uses
+// otherwise-blocking facts and varies only the existing sitting marker. If
+// the marker set is inverted or omitted, the allow assertions fail; if the
+// entire gate is removed, TestStopGateBlocksTurnWhileClaimedWorkIsUnclosed
+// continues to fail.
+func TestStopGateExemptsOpenPMSittingBeads(t *testing.T) {
+	for _, label := range []string{"pm-init", "pm-plan", "pm-chat"} {
+		t.Run(label, func(t *testing.T) {
+			facts := stopGateHoldingWork()
+			facts.sessionOrigin = "named"
+			facts.outstanding = []beads.Bead{{
+				ID:     "ci-pm-sitting",
+				Status: "in_progress",
+				Labels: []string{label},
+			}}
+
+			if evaluateStopGate(facts).block {
+				t.Fatalf("gate blocked open %q sitting work", label)
+			}
+		})
+	}
+}
+
+// TestStopGateStillBlocksUnlabeledAndClosedPMSittingBeads pins both edges of
+// the exception: only open beads carrying one of the established PM sitting
+// labels are exempt from the closing-contract block.
+func TestStopGateStillBlocksUnlabeledAndClosedPMSittingBeads(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+		labels []string
+	}{
+		{name: "unlabeled", status: "in_progress"},
+		{name: "unrelated label", status: "in_progress", labels: []string{"pm-review"}},
+		{name: "closed pm chat", status: "closed", labels: []string{"pm-chat"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			facts := stopGateHoldingWork()
+			facts.sessionOrigin = "named"
+			facts.outstanding = []beads.Bead{{
+				ID:     "ci-not-exempt",
+				Status: tc.status,
+				Labels: tc.labels,
+			}}
+
+			if !evaluateStopGate(facts).block {
+				t.Fatalf("gate allowed non-exempt outstanding work: status=%q labels=%v", tc.status, tc.labels)
+			}
+		})
 	}
 }
 
@@ -188,7 +245,7 @@ func TestStopGateAllowsWhenOutstandingWorkIsUnknown(t *testing.T) {
 // GC_SESSION_ID and no closing contract. Gating that session would block a
 // human's own turns.
 func TestStopGateAllowsSessionWithoutCityIdentity(t *testing.T) {
-	facts := stopGateFacts{sessionOrigin: sessionOriginEphemeral, outstanding: []string{"ci-yxpd"}}
+	facts := stopGateFacts{sessionOrigin: sessionOriginEphemeral, outstanding: []beads.Bead{{ID: "ci-yxpd", Status: "in_progress"}}}
 
 	if evaluateStopGate(facts).block {
 		t.Fatal("gate blocked a session with no city identity")
