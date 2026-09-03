@@ -69,7 +69,7 @@ func cleanupClosedBeadAgentHomeWorktrees(
 	wtRoot := filepath.Join(cityPath, ".gc", "worktrees")
 	cleaned := 0
 
-	for rigName := range rigBeadStores {
+	for rigName, rigBeadStore := range rigBeadStores {
 		rigWorktreeDir := filepath.Join(wtRoot, rigName)
 		entries, err := os.ReadDir(rigWorktreeDir)
 		if err != nil {
@@ -113,19 +113,11 @@ func cleanupClosedBeadAgentHomeWorktrees(
 				continue
 			}
 
-			// Case B: on a named branch — check whether its bead is closed.
-			beadID := beadIDFromBranch(cfg, branch)
+			// Case B: on a named branch — reset only after a store that owns the
+			// branch ID confirms it is closed. Agent homes live below rig
+			// directories, so the work can belong to either the rig or city store.
+			beadID := closedBeadIDFromBranch(branch, rigBeadStore, cityStore)
 			if beadID == "" {
-				continue
-			}
-			// Named agent-home worktrees are allocated for city work, so their
-			// branch bead belongs to the city's store even though the worktree
-			// itself lives below a rig directory.
-			if cityStore == nil {
-				continue
-			}
-			bead, err := cityStore.Get(beadID)
-			if err != nil || bead.Status != "closed" {
 				continue
 			}
 
@@ -247,4 +239,32 @@ func beadIDFromBranch(cfg *config.City, branch string) string {
 		}
 	}
 	return extractBeadIDFromWorktreeName(cfg, suffix)
+}
+
+// closedBeadIDFromBranch returns a branch's first bead-shaped segment pair
+// whose owning store confirms it is closed. Store confirmation makes this safe
+// for rig prefixes that the city's own config does not know.
+func closedBeadIDFromBranch(branch string, stores ...beads.Store) string {
+	if branch == "" || branch == "HEAD" {
+		return ""
+	}
+
+	suffix := branch
+	if slash := strings.IndexByte(branch, '/'); slash >= 0 {
+		suffix = branch[slash+1:]
+	}
+	parts := strings.Split(suffix, "-")
+	for i := 0; i+1 < len(parts); i++ {
+		candidate := parts[i] + "-" + parts[i+1]
+		for _, store := range stores {
+			if store == nil {
+				continue
+			}
+			bead, err := store.Get(candidate)
+			if err == nil && bead.ID == candidate && bead.Status == "closed" {
+				return candidate
+			}
+		}
+	}
+	return ""
 }
