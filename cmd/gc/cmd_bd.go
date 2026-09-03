@@ -444,6 +444,23 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 		}
 		return 1
 	}
+	// A city may opt into a validator for mutation writes that become visible to
+	// a configured consumer. The validator is configuration, not SDK judgment;
+	// cities without it retain the ordinary bd passthrough.
+	if _, writeMutation, ambiguous := bdMutationWriteIDs(bdArgs); writeMutation {
+		if ambiguous {
+			fmt.Fprintf(stderr, "gc bd: cannot safely validate mutation args %v: unrecognized flag may consume a value\n", bdArgs) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		env, envErr := bdCommandEnv(cityPath, cfg, target)
+		if envErr != nil {
+			fmt.Fprintf(stderr, "gc bd: %v\n", envErr) //nolint:errcheck // best-effort stderr
+			return 1
+		}
+		if runBdPreWriteCommandWithEnv(cfg.Beads.PreWriteCommand, cityPath, target.ScopeRoot, bdArgs, workQueryEnvForDir(env, target.ScopeRoot), stderr) {
+			return 1
+		}
+	}
 
 	// Pre-flight exact-ID guard for write-mutating subcommands (gcy-g4o).
 	// bd's fuzzy/substring resolver can silently match a longer ID that
