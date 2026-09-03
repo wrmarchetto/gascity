@@ -396,6 +396,12 @@ func BeginDrainPatch(now time.Time, reason string) MetadataPatch {
 // running asynchronously and waiting for controller finalization.
 const DrainAckStopPendingReason = "drain-ack-stop-pending"
 
+// DrainAckAssignedWorkReason marks an acknowledgement the controller refused
+// because the live session still owns open work. It remains active rather than
+// releasing its capacity, so projections can distinguish it from ordinary
+// healthy occupancy.
+const DrainAckAssignedWorkReason = "drain-ack-assigned-work"
+
 // DrainAckStopPendingPatch records that a drain-acked session has moved into
 // durable stop-pending state. The provider stop itself is asynchronous; the
 // controller finalizes the bead with the normal drain completion patches after

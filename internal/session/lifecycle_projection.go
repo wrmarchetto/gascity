@@ -376,6 +376,9 @@ func lifecycleDisplayReasonFromView(view LifecycleView, metadata map[string]stri
 	if view.BaseState == BaseStateArchived && !view.ContinuityEligible {
 		return ""
 	}
+	if strings.TrimSpace(metadata["state_reason"]) == DrainAckAssignedWorkReason {
+		return DrainAckAssignedWorkReason
+	}
 	if strings.TrimSpace(metadata[SessionCircuitStateMetadataKey]) == SessionCircuitStateOpen {
 		return LifecycleReasonCircuitOpen
 	}
@@ -414,6 +417,9 @@ func lifecycleDisplayReasonFromViewInfo(view LifecycleView, info Info) string {
 	}
 	if view.BaseState == BaseStateArchived && !view.ContinuityEligible {
 		return ""
+	}
+	if strings.TrimSpace(info.StateReason) == DrainAckAssignedWorkReason {
+		return DrainAckAssignedWorkReason
 	}
 	if strings.TrimSpace(info.SessionCircuitState) == SessionCircuitStateOpen {
 		return LifecycleReasonCircuitOpen

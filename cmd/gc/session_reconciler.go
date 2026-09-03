@@ -2408,6 +2408,14 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 									fmt.Fprintf(stderr, "session reconciler: clearing invalid drain-ack for %s: %v\n", name, err) //nolint:errcheck
 								}
 							}
+							updated, err := sessFront.ApplyPatchInfo(infoByID[id], sessionpkg.MetadataPatch{
+								"state_reason": sessionpkg.DrainAckAssignedWorkReason,
+							})
+							if err != nil {
+								fmt.Fprintf(stderr, "session reconciler: recording refused drain-ack for %s: %v\n", name, err) //nolint:errcheck
+							} else {
+								tick.set(id, updated)
+							}
 							fmt.Fprintf(stdout, "Canceled drain-acked session '%s' (assigned work)\n", name) //nolint:errcheck
 							if trace != nil {
 								trace.RecordDecision(TraceSiteDrainCancel, TraceReasonAssignedWork, TraceOutcomeCancelAssignedWork, tp.TemplateName, name, nil)

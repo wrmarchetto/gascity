@@ -1647,6 +1647,16 @@ func TestSessionReason_PriorityMatrix(t *testing.T) {
 			want:        circuitOpenReason,
 		},
 		{
+			name: "drain ack refused for assigned work beats wake config",
+			metadata: map[string]string{
+				"state_reason": session.DrainAckAssignedWorkReason,
+				"pool_slot":    "1",
+			},
+			cfg:         cfg,
+			poolDesired: poolDesired,
+			want:        session.DrainAckAssignedWorkReason,
+		},
+		{
 			name: "sleep reason beats wake config",
 			metadata: map[string]string{
 				"sleep_reason": "idle-timeout",
