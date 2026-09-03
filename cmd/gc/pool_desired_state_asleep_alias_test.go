@@ -55,6 +55,47 @@ func TestCanonicalSingletonAliasHeldTemplates_AsleepNamedHolderStillHoldsAlias(t
 	}
 }
 
+func drainedManualAliasHolder() beads.Bead {
+	return beads.Bead{
+		ID:     "sess-drained-manual",
+		Status: "open",
+		Type:   sessionBeadType,
+		Metadata: map[string]string{
+			"session_name":   "mayor",
+			"template":       "mayor",
+			"alias":          "mayor",
+			"session_origin": "manual",
+			"state":          "asleep",
+			"sleep_reason":   "drained",
+		},
+	}
+}
+
+// TestCanonicalSingletonAliasHeldTemplates_DrainedManualHolderReleasesAlias
+// verifies that a manual session which has drained no longer consumes its
+// pool's canonical singleton identity. Work addressed to that alias must start
+// a replacement session, never resume the drained manual session.
+func TestCanonicalSingletonAliasHeldTemplates_DrainedManualHolderReleasesAlias(t *testing.T) {
+	cfg := &config.City{
+		Agents: []config.Agent{poolAgent("mayor", "", intPtr(1), 0)},
+	}
+	work := []beads.Bead{
+		workBead("work", "mayor", "mayor", "in_progress", 1),
+	}
+
+	states := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads([]beads.Bead{drainedManualAliasHolder()}), nil)
+	if len(states) != 1 || len(states[0].Requests) != 1 {
+		t.Fatalf("requests = %#v, want one replacement request", states)
+	}
+	request := states[0].Requests[0]
+	if request.Tier != "wake-known-identity" {
+		t.Errorf("tier = %q, want wake-known-identity for a replacement session", request.Tier)
+	}
+	if request.SessionBeadID != "" {
+		t.Errorf("SessionBeadID = %q, want empty; drained manual holder must not be resumed", request.SessionBeadID)
+	}
+}
+
 // asleepNamedAliasHolderWithDivergentIdentity mirrors asleepNamedAliasHolder
 // but for a named session whose configured identity differs from its backing
 // template ("primary" bound to template "worker") — the shape
