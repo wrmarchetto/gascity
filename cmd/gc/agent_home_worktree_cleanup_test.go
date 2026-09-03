@@ -290,6 +290,46 @@ func TestCleanupClosedBeadAgentHomeWorktrees_TrackedCityBeadBranchResets(t *test
 	}
 }
 
+// TestCleanupClosedBeadAgentHomeWorktrees_ClosedRigBeadBranchResets verifies
+// that an agent home below a rig is recovered when its branch names a closed
+// rig-store bead. The city's configured bead prefix does not describe every
+// registered rig, so routing this lookup only through the city store leaves a
+// resolved rig slot permanently quarantined.
+func TestCleanupClosedBeadAgentHomeWorktrees_ClosedRigBeadBranchResets(t *testing.T) {
+	cityPath, builderWTPath, _ := setupAgentHomeWorktreeCleanupTest(t)
+	cfg := agentHomeConfig()
+	cfg.Workspace.Prefix = "ci"
+	cityStore := beads.NewMemStore()
+	rigStore := beads.NewMemStoreFrom(1, []beads.Bead{{ID: "az-52m", Status: "closed"}}, nil)
+
+	stalePath := filepath.Join(builderWTPath, worktreeStaleFileName)
+	if err := os.WriteFile(stalePath, []byte("branch=docs/az-52m-cold-boot-residency-pre-rebase\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale marker: %v", err)
+	}
+
+	var fake *fakeAgentWorktreeGit
+	orig := newAgentWorktreeGitProbe
+	defer func() { newAgentWorktreeGitProbe = orig }()
+	newAgentWorktreeGitProbe = func(_ string) agentWorktreeGitProbe {
+		fake = &fakeAgentWorktreeGit{
+			isRepo:        true,
+			currentBranch: "docs/az-52m-cold-boot-residency-pre-rebase",
+		}
+		return fake
+	}
+
+	cleaned := cleanupClosedBeadAgentHomeWorktrees(cityPath, cfg, cityStore, map[string]beads.Store{"ga-rig": rigStore}, nil)
+	if cleaned != 1 {
+		t.Fatalf("cleaned = %d, want 1 for a closed rig-store branch", cleaned)
+	}
+	if fake.checkoutDetachRef != "origin/main" {
+		t.Errorf("CheckoutDetach(%q), want %q", fake.checkoutDetachRef, "origin/main")
+	}
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Errorf("stale marker remains after detaching closed rig branch: %v", err)
+	}
+}
+
 // TestCleanupClosedBeadAgentHomeWorktrees_CaseB_OpenBeadSkips verifies that
 // the worktree is left untouched when the bead is not closed.
 func TestCleanupClosedBeadAgentHomeWorktrees_CaseB_OpenBeadSkips(t *testing.T) {
