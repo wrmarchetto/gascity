@@ -1079,6 +1079,10 @@
           ],
           "description": "GuardedRelease selects the ownership-release discipline for work beads:\n\"off\" (legacy, owner-blind bd update/unclaim), \"auto\" (fence-guarded\nrelease verbs where the bd binary is capable, loud degrade otherwise), or\n\"require\" (guarded release or a typed refusal). Empty defaults to \"off\".\nAny other value fails config load."
         },
+        "pre_write_command": {
+          "type": "string",
+          "description": "PreWriteCommand optionally names an executable, relative to the city root\nor absolute, that validates gc bd mutations before they reach bd. The\ncommand receives GC_CITY, GC_STORE_ROOT, and GC_BD_ARGS_JSON. A non-zero\nexit refuses the mutation; an empty value preserves direct passthrough."
+        },
         "policies": {
           "additionalProperties": {
             "$ref": "#/$defs/BeadPolicyConfig"

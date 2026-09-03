@@ -293,6 +293,47 @@ touch "$GC_BD_CAPTURE"
 	}
 }
 
+func TestDoBdPreWriteCommandRefusesMutationBeforeBdRuns(t *testing.T) {
+	disableManagedDoltRecoveryForTest(t)
+
+	cityDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityDir, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(`[workspace]
+name = "demo"
+prefix = "city"
+
+[beads]
+pre_write_command = "pre-write"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "pre-write"), []byte("#!/bin/sh\necho refusing visibility write >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	binDir := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "bd-ran")
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte("#!/bin/sh\ntouch \"$GC_BD_CAPTURE\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GC_BD_CAPTURE", capture)
+	t.Setenv("GC_CITY_PATH", cityDir)
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"--city", cityDir, "update", "city-abc", "--add-label", "harness:astoria"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("doBd(update) = %d, want 1; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "refusing visibility write") {
+		t.Fatalf("stderr = %q, want validator refusal", stderr.String())
+	}
+	if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bd subprocess ran despite pre-write refusal: stat capture = %v", err)
+	}
+}
+
 // TestDoBdRefusesCrossStoreDependencyAdd keeps gc bd from forwarding an edge
 // that bd can acknowledge while silently dropping it. The control is essential:
 // a refusal must be scoped to two stores, not disable same-store dependencies.

@@ -1409,6 +1409,11 @@ type BeadsConfig struct {
 	// "require" (guarded release or a typed refusal). Empty defaults to "off".
 	// Any other value fails config load.
 	GuardedRelease string `toml:"guarded_release,omitempty" jsonschema:"enum=off,enum=auto,enum=require"`
+	// PreWriteCommand optionally names an executable, relative to the city root
+	// or absolute, that validates gc bd mutations before they reach bd. The
+	// command receives GC_CITY, GC_STORE_ROOT, and GC_BD_ARGS_JSON. A non-zero
+	// exit refuses the mutation; an empty value preserves direct passthrough.
+	PreWriteCommand string `toml:"pre_write_command,omitempty"`
 	// Policies defines per-bead-use storage and garbage-collection defaults.
 	// Policy names are interpreted by higher-level systems; unknown names are
 	// preserved so packs can stage future policy classes without breaking load.
