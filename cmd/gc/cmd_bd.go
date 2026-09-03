@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/gastownhall/gascity/internal/agentutil"
 	"github.com/gastownhall/gascity/internal/bdflags"
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
@@ -426,7 +427,7 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	if rejectCrossStoreBdDependency(cfg, cityPath, target, bdArgs, stderr) {
 		return 1
 	}
-	if rejectCrossRigBdUpdateAssignee(cfg, bdArgs, stderr) {
+	if rejectCrossStoreBdUpdateAssignee(cfg, cityPath, target, bdArgs, stderr) {
 		return 1
 	}
 	if id, expectedAssignee, ok, err := parseBdReleaseIfCurrentArgs(bdArgs); ok || err != nil {
@@ -673,11 +674,11 @@ func bdDependencyTargetFlag(args []string) (string, bool) {
 	return target, found
 }
 
-// rejectCrossRigBdUpdateAssignee rejects a direct bd assignment that gives a
-// bead to an agent in a different rig. gc sling already enforces this rule;
+// rejectCrossStoreBdUpdateAssignee rejects a direct bd assignment to an agent
+// that cannot read the source store. gc sling already enforces this rule;
 // accepting the same assignment through gc bd creates demand the target agent
 // cannot claim and lets the controller respawn it indefinitely.
-func rejectCrossRigBdUpdateAssignee(cfg *config.City, args []string, stderr io.Writer) bool {
+func rejectCrossStoreBdUpdateAssignee(cfg *config.City, cityPath string, source execStoreTarget, args []string, stderr io.Writer) bool {
 	verb, updateArgs := bdflags.SplitGlobalFlags(args)
 	if verb != "update" {
 		return false
@@ -692,11 +693,20 @@ func rejectCrossRigBdUpdateAssignee(cfg *config.City, args []string, stderr io.W
 		// a resolved assignment obey the same store-boundary rule as sling.
 		return false
 	}
+	cityName := loadedCityName(cfg, cityPath)
+	storeRef := workflowStoreRefForDir(source.ScopeRoot, cityPath, cityName, cfg)
+	if agentutil.AgentReachesWorkflowStore(storeRef, &agent, cityPath, cfg) {
+		return false
+	}
 	for _, beadID := range bdflags.Positionals("update", updateArgs) {
-		if routeErr := sling.CrossRigRouteError(beadID, agent, cfg); routeErr != nil {
-			fmt.Fprintf(stderr, "gc bd: %v\n", routeErr) //nolint:errcheck // best-effort stderr
-			return true
+		routeErr := &sling.CrossStoreRouteError{
+			BeadID:            beadID,
+			StoreRef:          storeRef,
+			Target:            agent.QualifiedName(),
+			ReachableStoreRef: agentutil.AgentReachableStoreLabel(&agent, cityPath, cityName, cfg),
 		}
+		fmt.Fprintf(stderr, "gc bd: %v\n", routeErr) //nolint:errcheck // best-effort stderr
+		return true
 	}
 	return false
 }

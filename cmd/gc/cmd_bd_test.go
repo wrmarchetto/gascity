@@ -166,11 +166,11 @@ func TestExtractBdDirectoryFlag(t *testing.T) {
 	}
 }
 
-func TestRejectCrossRigBdUpdateAssignee(t *testing.T) {
+func TestRejectCrossStoreBdUpdateAssignee(t *testing.T) {
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test", Prefix: "city"},
 		Rigs: []config.Rig{
-			{Name: "other", Prefix: "other"},
+			{Name: "other", Path: "other", Prefix: "other"},
 		},
 		Agents: []config.Agent{
 			{Name: "worker", Dir: "other"},
@@ -179,9 +179,10 @@ func TestRejectCrossRigBdUpdateAssignee(t *testing.T) {
 	}
 
 	tests := []struct {
-		name string
-		args []string
-		want bool
+		name   string
+		args   []string
+		source execStoreTarget
+		want   bool
 	}{
 		{
 			name: "rejects city bead assigned to rig agent",
@@ -194,9 +195,10 @@ func TestRejectCrossRigBdUpdateAssignee(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "allows matching rig assignment",
-			args: []string{"update", "other-abc", "-a", "other/worker"},
-			want: false,
+			name:   "allows matching rig assignment",
+			args:   []string{"update", "other-abc", "-a", "other/worker"},
+			source: execStoreTarget{ScopeRoot: "/city/other", ScopeKind: "rig", RigName: "other"},
+			want:   false,
 		},
 		{
 			name: "skips global flag values before update",
@@ -213,12 +215,16 @@ func TestRejectCrossRigBdUpdateAssignee(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var stderr bytes.Buffer
-			got := rejectCrossRigBdUpdateAssignee(cfg, tt.args, &stderr)
-			if got != tt.want {
-				t.Fatalf("rejectCrossRigBdUpdateAssignee(%v) = %v, want %v; stderr=%q", tt.args, got, tt.want, stderr.String())
+			source := tt.source
+			if source.ScopeRoot == "" {
+				source = execStoreTarget{ScopeRoot: "/city", ScopeKind: "city"}
 			}
-			if tt.want && !strings.Contains(stderr.String(), "cross-rig routing") {
-				t.Fatalf("stderr = %q, want cross-rig diagnostic", stderr.String())
+			got := rejectCrossStoreBdUpdateAssignee(cfg, "/city", source, tt.args, &stderr)
+			if got != tt.want {
+				t.Fatalf("rejectCrossStoreBdUpdateAssignee(%v) = %v, want %v; stderr=%q", tt.args, got, tt.want, stderr.String())
+			}
+			if tt.want && !strings.Contains(stderr.String(), "refusing cross-store route") {
+				t.Fatalf("stderr = %q, want cross-store diagnostic", stderr.String())
 			}
 		})
 	}
@@ -272,8 +278,15 @@ touch "$GC_BD_CAPTURE"
 	if got := doBd([]string{"--city", cityDir, "update", "city-abc", "--assignee", "other/worker"}, &stdout, &stderr); got != 1 {
 		t.Fatalf("doBd(update) = %d, want 1; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), `cross-rig routing — bead city-abc (prefix "city") → agent other/worker (rig prefix "other")`) {
-		t.Fatalf("stderr = %q, want cross-rig diagnostic", stderr.String())
+	for _, want := range []string{
+		"refusing cross-store route",
+		"city:demo",
+		"other/worker",
+		"rig:other",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr = %q, want %q", stderr.String(), want)
+		}
 	}
 	if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("bd subprocess ran despite rejected assignment: stat capture = %v", err)
