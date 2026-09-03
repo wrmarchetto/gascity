@@ -1733,7 +1733,7 @@ func TestConfirmDrainAckRuntimeDeadTokenFenceStopsOnReplacement(t *testing.T) {
 	}
 }
 
-func TestReconcileSessionBeads_AgentDrainAckWithAssignedOpenWorkStaysActive(t *testing.T) {
+func TestReconcileSessionBeads_AgentDrainAckWithAliasAssignedOpenWorkStaysActive(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
 		Agents: []config.Agent{{Name: "worker"}},
@@ -1741,11 +1741,16 @@ func TestReconcileSessionBeads_AgentDrainAckWithAssignedOpenWorkStaysActive(t *t
 	env.addDesired("worker", "worker", true)
 	session := env.createSessionBead("worker", "worker")
 	env.markSessionActive(&session)
+	const assigneeAlias = "worker-template-alias"
+	session.Metadata["configured_named_identity"] = assigneeAlias
+	if err := env.store.SetMetadata(session.ID, "configured_named_identity", assigneeAlias); err != nil {
+		t.Fatalf("SetMetadata(configured_named_identity): %v", err)
+	}
 	if _, err := env.store.Create(beads.Bead{
 		Title:    "future work",
 		Type:     "task",
 		Status:   "open",
-		Assignee: session.ID,
+		Assignee: assigneeAlias,
 	}); err != nil {
 		t.Fatalf("Create(future work): %v", err)
 	}
@@ -1791,6 +1796,9 @@ func TestReconcileSessionBeads_AgentDrainAckWithAssignedOpenWorkStaysActive(t *t
 	}
 	if got.Metadata["state"] != "active" {
 		t.Fatalf("state = %q, want active", got.Metadata["state"])
+	}
+	if got.Metadata["state_reason"] != sessionpkg.DrainAckAssignedWorkReason {
+		t.Fatalf("state_reason = %q, want %q so session list can explain the refused drain", got.Metadata["state_reason"], sessionpkg.DrainAckAssignedWorkReason)
 	}
 	if dops.acked["worker"] {
 		t.Fatal("agent drain acknowledgement remained set after assigned-work rejection")
