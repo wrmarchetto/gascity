@@ -252,6 +252,39 @@ func TestUnclaimableWorkPassesUnassignedWorkOnAHold(t *testing.T) {
 	assertUnclaimable(t, got)
 }
 
+// TestUnclaimableWorkHonorsAnExplicitDoorlessMarker pins the short authoring
+// window in which a bead must exist before its procedure artifact can name the
+// bead and before it can safely be routed. The explicit label is the author's
+// declaration that the otherwise-unaddressed state is intentional; removing it
+// must make the same ready work report again.
+func TestUnclaimableWorkHonorsAnExplicitDoorlessMarker(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		want   []string
+	}{
+		{
+			name:   "deliberately doorless authoring bead",
+			labels: []string{"gc:deliberately-doorless"},
+		},
+		{
+			name: "marker removed exposes stranded work",
+			want: []string{"W-1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := unclaimableIDs(t, poolAgentCfg(4), []beads.Bead{{
+				ID:     "W-1",
+				Title:  "procedure artifact placeholder",
+				Type:   "task",
+				Status: "open",
+				Labels: tc.labels,
+			}}, nil)
+			assertUnclaimable(t, got, tc.want...)
+		})
+	}
+}
+
 // TestUnclaimableWorkPassesNonClaimableBacklog pins that the check inherits
 // classifyBacklog's population rather than re-deriving it: session beads, nudge
 // and mail chores, epics and dep-blocked work are not claimable work, so none

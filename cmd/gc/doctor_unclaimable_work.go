@@ -114,6 +114,12 @@ const unclaimableWorkFixHint = "route it or address it: " +
 	"'bd update <id> --assignee <pool>' hands it to a pool any slot can claim, " +
 	"'gc sling <id> --to <agent>' stamps gc.routed_to."
 
+// unclaimableWorkDeliberatelyDoorlessLabel marks the short authoring window
+// where a bead must exist before its procedure artifact can be named and the
+// bead can safely receive a route. It suppresses only this reachability check;
+// it neither creates dispatch demand nor changes the bead's ready state.
+const unclaimableWorkDeliberatelyDoorlessLabel = "gc:deliberately-doorless"
+
 // unclaimableWorkSummaryIDs bounds how many bead IDs the one-line summary names.
 // The summary has to stand alone: Details is shown only under --verbose, and the
 // warm-up mailer carries Message and FixHint but drops Details entirely, so a
@@ -300,6 +306,13 @@ func (s unclaimableWorkScope) strandedReason(b beads.Bead) string {
 		if beadLabelsContain(b.Labels, label) {
 			return ""
 		}
+	}
+	// A producer can explicitly declare the temporary pre-routing window it
+	// creates while authoring a procedure artifact. This is deliberately not
+	// inferred from a description or another bead's state: the marker makes the
+	// exception auditable and removing it returns the bead to this check.
+	if beadLabelsContain(b.Labels, unclaimableWorkDeliberatelyDoorlessLabel) {
+		return ""
 	}
 
 	route := strings.TrimSpace(routedToOrLegacyWorkflowTarget(b))
