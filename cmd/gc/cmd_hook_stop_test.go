@@ -25,6 +25,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,6 +60,155 @@ func TestStopGateBlocksTurnWhileClaimedWorkIsUnclosed(t *testing.T) {
 	}
 	if !strings.Contains(verdict.reason, "ci-yxpd") {
 		t.Errorf("block reason does not name the outstanding bead: %q", verdict.reason)
+	}
+}
+
+// TestStopGateAllowsClaimParkedOnOpenAssignedQuestion pins the one deliberate
+// exception to the closing contract. ask-pm records the exact blocker on the
+// held bead; the fact is true only after the Stop probe has verified that the
+// dependency target is still open and has an assignee. A parked claim remains
+// claimed and in_progress so that closing the question wakes its next holder.
+func TestStopGateAllowsClaimParkedOnOpenAssignedQuestion(t *testing.T) {
+	facts := stopGateHoldingWork()
+	facts.parkedOnOpenAssignedQuestion = true
+
+	if evaluateStopGate(facts).block {
+		t.Fatal("gate blocked a claimed bead deliberately parked on an open assigned question")
+	}
+}
+
+// TestStopGateBlocksClaimWhoseQuestionIsNoLongerParked keeps the exception
+// narrow: a historical metadata record is not permission to leave an ordinary
+// claimed bead behind once its question has closed or lost its owner.
+func TestStopGateBlocksClaimWhoseQuestionIsNoLongerParked(t *testing.T) {
+	facts := stopGateHoldingWork()
+
+	if !evaluateStopGate(facts).block {
+		t.Fatal("gate allowed claimed work whose recorded question was not open and assigned")
+	}
+}
+
+// TestStopGateParkedClaimProbeDrivesTheStoreCommands pins the real Stop-probe
+// command path, rather than only the verdict model. The fixture is a strict bd
+// executable on PATH: it verifies the held claim, its dependency edge, and its
+// question target through the same subprocess boundary the installed hook uses.
+func TestStopGateParkedClaimProbeDrivesTheStoreCommands(t *testing.T) {
+	bin := t.TempDir()
+	bd := filepath.Join(bin, "bd")
+	script := `#!/bin/sh
+case "$1:$2" in
+list:*)
+  printf '%s\n' '[{"id":"ci-held","status":"in_progress","assignee":"worker","metadata":{"gc.waiting_on_question":"ci-question"}}]'
+  ;;
+show:ci-held)
+  printf '%s\n' '{"id":"ci-held","status":"in_progress","assignee":"worker","metadata":{"gc.waiting_on_question":"ci-question"},"dependencies":[{"id":"ci-question","dependency_type":"blocks"}]}'
+  ;;
+show:ci-question)
+  printf '{"id":"ci-question","status":"%s","assignee":"%s"}\n' "$STOP_GATE_QUESTION_STATUS" "$STOP_GATE_QUESTION_ASSIGNEE"
+  ;;
+*)
+  exit 71
+  ;;
+esac
+`
+	if err := os.WriteFile(bd, []byte(script), 0o700); err != nil {
+		t.Fatalf("writing fake bd: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GC_SESSION_ID", "worker")
+	t.Setenv("GC_SESSION_NAME", "")
+	t.Setenv("GC_ALIAS", "")
+
+	for _, tc := range []struct {
+		name     string
+		status   string
+		assignee string
+		want     bool
+	}{
+		{name: "open assigned question", status: "open", assignee: "decision-owner", want: true},
+		{name: "closed question", status: "closed", assignee: "decision-owner", want: false},
+		{name: "unassigned question", status: "open", assignee: "", want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("STOP_GATE_QUESTION_STATUS", tc.status)
+			t.Setenv("STOP_GATE_QUESTION_ASSIGNEE", tc.assignee)
+			if got := stopGateHasOnlyParkedClaims([]hookStore{{dir: t.TempDir()}}); got != tc.want {
+				t.Fatalf("stopGateHasOnlyParkedClaims() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCmdHookStopAllowsParkedClaimThroughTheRealHookPath drives cmdHookStop's
+// configuration, assigned-work probe, and Stop payload parsing together. It
+// would fail if the exception existed only in evaluateStopGate while the live
+// hook never established the parked-claim fact.
+func TestCmdHookStopAllowsParkedClaimThroughTheRealHookPath(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+	cityDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityDir, ".gc"), 0o755); err != nil {
+		t.Fatalf("making city runtime directory: %v", err)
+	}
+	cityTOML := `[workspace]
+name = "test-city"
+
+[[agent]]
+name = "worker"
+work_query = "printf '[]'"
+` + builtinImportsTOML("core", "bd")
+	writeBuiltinImportsLock(t, cityDir, "core", "bd")
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(cityTOML), 0o644); err != nil {
+		t.Fatalf("writing city config: %v", err)
+	}
+
+	bin := t.TempDir()
+	bd := filepath.Join(bin, "bd")
+	script := `#!/bin/sh
+case "$1:$2" in
+list:*)
+  if [ "$2" = "--status" ]; then
+    printf '%s\n' '[{"id":"ci-held","status":"in_progress","assignee":"worker","metadata":{"gc.waiting_on_question":"ci-question"}}]'
+  else
+    printf '%s\n' '[]'
+  fi
+  ;;
+show:ci-held)
+  printf '%s\n' '{"id":"ci-held","status":"in_progress","assignee":"worker","metadata":{"gc.waiting_on_question":"ci-question"},"dependencies":[{"id":"ci-question","dependency_type":"blocks"}]}'
+  ;;
+show:ci-question)
+  printf '{"id":"ci-question","status":"%s","assignee":"decision-owner"}\n' "$STOP_GATE_QUESTION_STATUS"
+  ;;
+*)
+  exit 71
+  ;;
+esac
+`
+	if err := os.WriteFile(bd, []byte(script), 0o700); err != nil {
+		t.Fatalf("writing fake bd: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GC_CITY", cityDir)
+	t.Setenv("GC_CITY_PATH", cityDir)
+	t.Setenv("GC_AGENT", "worker")
+	t.Setenv("GC_SESSION_ID", "worker")
+	t.Setenv("GC_SESSION_NAME", "")
+	t.Setenv("GC_ALIAS", "")
+	t.Setenv("GC_SESSION_ORIGIN", sessionOriginEphemeral)
+	t.Setenv("STOP_GATE_QUESTION_STATUS", "open")
+
+	var stderr bytes.Buffer
+	if code := cmdHookStop(bytes.NewBufferString(`{"stop_hook_active":false}`), &stderr); code != stopGateAllowExitCode {
+		t.Fatalf("cmdHookStop() = %d, want %d; stderr=%s", code, stopGateAllowExitCode, stderr.String())
+	}
+
+	stderr.Reset()
+	t.Setenv("STOP_GATE_QUESTION_STATUS", "closed")
+	if code := cmdHookStop(bytes.NewBufferString(`{"stop_hook_active":false}`), &stderr); code != stopGateBlockExitCode {
+		t.Fatalf("cmdHookStop() after question close = %d, want %d; stderr=%s", code, stopGateBlockExitCode, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "ci-held") {
+		t.Fatalf("closed-question block reason = %q, want held bead id", stderr.String())
 	}
 }
 

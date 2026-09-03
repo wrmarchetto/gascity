@@ -220,7 +220,10 @@ const (
 	WorkDirMetadataKey          = "gc.work_dir"
 	WorkOutcomeMetadataKey      = "gc.work_outcome"
 	WorkVerificationMetadataKey = "gc.work_verification"
-	WorkflowIDMetadataKey       = "gc.workflow_id"
+	// WaitingOnQuestionMetadataKey records the open, assigned question that
+	// deliberately parks a claimed bead between agent turns.
+	WaitingOnQuestionMetadataKey = "gc.waiting_on_question"
+	WorkflowIDMetadataKey        = "gc.workflow_id"
 )
 
 // Work-record metadata keys (ADR-0009). These bind a work bead to its claim
@@ -468,6 +471,7 @@ var KnownMetadataKeys = []string{
 	WorkDirMetadataKey,
 	WorkOutcomeMetadataKey,
 	WorkVerificationMetadataKey,
+	WaitingOnQuestionMetadataKey,
 	WorkflowIDMetadataKey,
 }
 
