@@ -60,8 +60,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/shellquote"
 )
 
 // Stop-hook exit codes. The provider reads the gate's verdict from the exit
@@ -110,6 +112,10 @@ type stopGateFacts struct {
 	// answered. Distinct from an empty outstanding list, because "no work" and
 	// "could not tell" must reach opposite verdicts on a gate that fails open.
 	unknownWork bool
+	// parkedOnOpenAssignedQuestion is established only when every claimed bead
+	// is linked to, and records, an open assigned question. Such work is
+	// intentionally parked for a later wake rather than abandoned.
+	parkedOnOpenAssignedQuestion bool
 }
 
 // stopGateVerdict is the gate's decision plus the text handed back to the
@@ -145,6 +151,10 @@ func evaluateStopGate(f stopGateFacts) stopGateVerdict {
 	case f.unknownWork:
 		// Could not tell. Not the same as "nothing outstanding": blocking here
 		// would wedge every session in the city the moment the store went down.
+		return allow
+	case f.parkedOnOpenAssignedQuestion:
+		// The held work is deliberately blocked on a durable, assigned question.
+		// It remains claimed so closing that question can wake the next session.
 		return allow
 	}
 	if outstanding := stopGateClosingContractBeads(f.outstanding); len(outstanding) > 0 {
@@ -305,7 +315,7 @@ func gatherStopGateFacts(stdin io.Reader, stderr io.Writer) stopGateFacts {
 	if facts.restartRequested {
 		return facts
 	}
-	facts.outstanding, facts.unknownWork = readStopGateOutstandingWork(stderr)
+	facts.outstanding, facts.unknownWork, facts.parkedOnOpenAssignedQuestion = readStopGateOutstandingWork(stderr)
 	return facts
 }
 
@@ -404,8 +414,9 @@ func readStopGateSessionSignals(stderr io.Writer) (bool, bool) {
 // cmdHookWithOptions' store resolution to avoid them would let the gate and
 // the claim drift apart, which is the one thing the design forbids.
 type hookStopProbe struct {
-	Outstanding []beads.Bead
-	Err         error
+	Outstanding                  []beads.Bead
+	ParkedOnOpenAssignedQuestion bool
+	Err                          error
 }
 
 // probeStopGateOutstanding runs the agent's assigned-in-progress query across
@@ -439,9 +450,8 @@ func probeStopGateOutstanding(cfg *config.City, cityPath, cityName string, a *co
 			lastErr = decodeErr
 			continue
 		}
-		if len(candidates) > 0 {
+		if len(candidates) > 0 && len(probe.Outstanding) == 0 {
 			probe.Outstanding = candidates
-			return
 		}
 		answered++
 	}
@@ -451,6 +461,22 @@ func probeStopGateOutstanding(cfg *config.City, cityPath, cityName string, a *co
 	// when NO store answered, which is the genuine "could not tell" case.
 	if answered == 0 && lastErr != nil {
 		probe.Err = lastErr
+		return
+	}
+	if len(probe.Outstanding) == 0 {
+		held, known := stopGateHeldClaims(stores)
+		if !known || len(held) == 0 {
+			return
+		}
+		if stopGateClaimsAreAllParked(held, stores) {
+			probe.ParkedOnOpenAssignedQuestion = true
+			return
+		}
+		// The ordinary work query hides dependency-blocked claims. A held
+		// claim that is not a verified parked question must nevertheless block
+		// this turn; otherwise a closed or unassigned question turns into an
+		// invisible abandoned claim whenever drain state is unavailable.
+		probe.Outstanding = held
 	}
 }
 
@@ -462,11 +488,11 @@ func probeStopGateOutstanding(cfg *config.City, cityPath, cityName string, a *co
 // claim saw. That query already excludes mail beads and dependency-blocked
 // steps, which is the behavior wanted here for free: a step this session
 // cannot progress must not hold its turn open.
-func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool) {
+func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool, bool) {
 	probe := &hookStopProbe{}
 	opts := hookCommandOptions{StopProbe: probe}
 	if cmdHookWithOptions(nil, opts, io.Discard, stderr) != 0 || probe.Err != nil {
-		return nil, true
+		return nil, true, false
 	}
 	outstanding := make([]beads.Bead, 0, len(probe.Outstanding))
 	for _, bead := range probe.Outstanding {
@@ -474,5 +500,153 @@ func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool) {
 			outstanding = append(outstanding, bead)
 		}
 	}
-	return outstanding, false
+	return outstanding, false, probe.ParkedOnOpenAssignedQuestion
+}
+
+// stopGateHasOnlyParkedClaims reports whether every held in-progress bead is
+// durably linked to the open, assigned question recorded on it. This is a
+// separate probe from the ordinary work query because that query deliberately
+// hides dependency-blocked work from a worker; the Stop gate must still see a
+// held bead to distinguish a designed wait from an abandoned claim.
+func stopGateHasOnlyParkedClaims(stores []hookStore) bool {
+	held, known := stopGateHeldClaims(stores)
+	return known && len(held) > 0 && stopGateClaimsAreAllParked(held, stores)
+}
+
+// stopGateHeldClaims reads all claimed, in-progress beads without the regular
+// work query's dependency readiness filtering. known is false when the store
+// cannot establish that list, preserving the Stop gate's fail-open policy for
+// infrastructure faults.
+func stopGateHeldClaims(stores []hookStore) ([]beads.Bead, bool) {
+	seen := make(map[string]struct{})
+	held := make([]beads.Bead, 0)
+	for _, store := range stores {
+		output, err := shellWorkQueryWithEnv(stopGateHeldClaimsQuery, store.dir, store.env)
+		if err != nil {
+			return nil, false
+		}
+		claims, _, err := decodeHookClaimBeads(strings.TrimSpace(output))
+		if err != nil {
+			return nil, false
+		}
+		for _, claim := range claims {
+			if claim.ID == "" {
+				return nil, false
+			}
+			if _, duplicate := seen[claim.ID]; duplicate {
+				continue
+			}
+			seen[claim.ID] = struct{}{}
+			held = append(held, claim)
+		}
+	}
+	return held, true
+}
+
+func stopGateClaimsAreAllParked(claims []beads.Bead, stores []hookStore) bool {
+	if len(claims) == 0 {
+		return false
+	}
+	seen := make(map[string]struct{})
+	found := false
+	for _, claim := range claims {
+		if _, duplicate := seen[claim.ID]; duplicate {
+			continue
+		}
+		seen[claim.ID] = struct{}{}
+		found = true
+		if !stopGateClaimIsParkedOnAnyStore(claim, stores) {
+			return false
+		}
+	}
+	return found
+}
+
+func stopGateClaimIsParkedOnAnyStore(claim beads.Bead, stores []hookStore) bool {
+	for _, store := range stores {
+		if stopGateClaimIsParkedOnOpenAssignedQuestion(claim, store) {
+			return true
+		}
+	}
+	return false
+}
+
+const stopGateHeldClaimsQuery = `for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] || bd list --status in_progress --assignee="$id" --exclude-type=message --json --limit=0 2>/dev/null; done | jq -s 'add // []'`
+
+func stopGateClaimIsParkedOnOpenAssignedQuestion(claim beads.Bead, store hookStore) bool {
+	questionID := strings.TrimSpace(claim.Metadata[beadmeta.WaitingOnQuestionMetadataKey])
+	if questionID == "" {
+		return false
+	}
+	current, ok := stopGateShowBead(claim.ID, store)
+	if !ok || !stopGateHasBlockingDependency(current, questionID) {
+		return false
+	}
+	question, ok := stopGateShowBead(questionID, store)
+	if !ok {
+		return false
+	}
+	return stopGateQuestionIsOpenAndAssigned(question)
+}
+
+// stopGateShownBead is the small bd show wire projection the Stop gate needs.
+// bd names dependency target ids and types `id` and `dependency_type`, unlike
+// the internal beads.Dep projection. Keeping this at the shell boundary avoids
+// widening the generic bead wire model for a read-only hook check.
+type stopGateShownBead struct {
+	ID           string          `json:"id"`
+	Status       string          `json:"status"`
+	Assignee     string          `json:"assignee"`
+	Metadata     beads.StringMap `json:"metadata"`
+	Dependencies []struct {
+		ID             string `json:"id"`
+		DependsOnID    string `json:"depends_on_id"`
+		DependencyType string `json:"dependency_type"`
+		Type           string `json:"type"`
+	} `json:"dependencies"`
+}
+
+func stopGateShowBead(id string, store hookStore) (stopGateShownBead, bool) {
+	output, err := shellWorkQueryWithEnv(shellquote.Join([]string{"bd", "show", id, "--json"}), store.dir, store.env)
+	if err != nil {
+		return stopGateShownBead{}, false
+	}
+	var shown stopGateShownBead
+	if err := json.Unmarshal([]byte(output), &shown); err == nil && strings.TrimSpace(shown.ID) == id {
+		return shown, true
+	}
+	var rows []stopGateShownBead
+	if err := json.Unmarshal([]byte(output), &rows); err != nil || len(rows) != 1 || strings.TrimSpace(rows[0].ID) != id {
+		return stopGateShownBead{}, false
+	}
+	return rows[0], true
+}
+
+func stopGateHasBlockingDependency(claim stopGateShownBead, questionID string) bool {
+	for _, dependency := range claim.Dependencies {
+		dependencyID := dependency.ID
+		if dependencyID == "" {
+			dependencyID = dependency.DependsOnID
+		}
+		dependencyType := dependency.DependencyType
+		if dependencyType == "" {
+			dependencyType = dependency.Type
+		}
+		if dependencyID == questionID && beads.IsReadyBlockingDependencyType(dependencyType) {
+			return true
+		}
+	}
+	return false
+}
+
+func stopGateQuestionIsOpenAndAssigned(question stopGateShownBead) bool {
+	if strings.TrimSpace(question.Assignee) == "" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(question.Status)) {
+	case "open", "in_progress":
+		return true
+	default:
+		return false
+	}
 }
