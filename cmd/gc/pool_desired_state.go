@@ -128,7 +128,7 @@ func computePoolDesiredStates(
 	sessionBeadTemplate := make(map[string]string)
 	namedSessionBeadIDs := make(map[string]bool)
 	for _, sb := range sessionInfos {
-		if sb.Closed {
+		if sb.Closed || isDrainedSessionInfo(sb) {
 			continue
 		}
 		if sessionHasProviderTerminalErrorInfo(sb) {
@@ -172,7 +172,8 @@ func computePoolDesiredStates(
 		template := agent.QualifiedName()
 
 		// Resume tier: actionable assigned work beads whose assignee resolves
-		// to a non-closed session bead. These sessions must stay alive.
+		// to a non-closed, non-drained session bead. These sessions must stay
+		// alive.
 		for _, wb := range assignedWorkBeads {
 			routedTo := routedToOrLegacyWorkflowTarget(wb)
 			if wb.Status != "in_progress" && wb.Status != "open" {
