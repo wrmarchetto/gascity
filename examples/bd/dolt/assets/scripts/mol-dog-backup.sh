@@ -176,10 +176,15 @@ for db in $DATABASES; do
         append_failed_db "$db(not found)"
         continue
     fi
-    if (cd "$db_dir" && run_bounded 120 dolt backup sync "${db}-backup" 2>/dev/null); then
+    sync_error=""
+    if sync_error="$(cd "$db_dir" && run_bounded 120 dolt backup sync "${db}-backup" 2>&1)"; then
         SYNCED=$((SYNCED + 1))
     else
-        append_failed_db "$db(sync failed)"
+        sync_error="$(printf '%s' "$sync_error" | tr '\r\n' ' ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//' | cut -c1-500)"
+        if [ -z "$sync_error" ]; then
+            sync_error="no error output"
+        fi
+        append_failed_db "$db(sync failed: $sync_error)"
     fi
 done
 

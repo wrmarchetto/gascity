@@ -4534,10 +4534,13 @@ if [ "${1:-}" = "remote" ]; then
   exit 64
 fi
 if [ "${1:-} ${2:-}" = "backup sync" ]; then
+  if [ %d -ne 0 ]; then
+    printf 'simulated backup sync failure\n' >&2
+  fi
   exit %d
 fi
 exit 0
-`, shellQuote(logPath), shellQuote(version), shellQuote(dbCSV), syncExit))
+`, shellQuote(logPath), shellQuote(version), shellQuote(dbCSV), syncExit, syncExit))
 	return logPath
 }
 
@@ -4829,6 +4832,27 @@ func TestBackupScriptCountsFailedDatabasesByDatabase(t *testing.T) {
 	}
 	if !strings.Contains(string(gcLog), "mail send human -s Dolt backup: 1/1 databases failed to sync [MEDIUM]") {
 		t.Fatalf("backup failure escalation must use the generic default recipient:\n%s", gcLog)
+	}
+}
+
+func TestBackupScriptEscalationIncludesSyncFailureOutput(t *testing.T) {
+	cityPath := t.TempDir()
+	dataDir := filepath.Join(cityPath, "dolt-data")
+	if err := os.MkdirAll(filepath.Join(dataDir, "prod", ".dolt"), 0o755); err != nil {
+		t.Fatalf("mkdir db: %v", err)
+	}
+	binDir := t.TempDir()
+	gcLogPath := writeDogFakeGC(t, binDir)
+	_ = writeBackupFakeDolt(t, binDir, "2.1.0", 1)
+
+	runDogScript(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+
+	gcLog, err := os.ReadFile(gcLogPath)
+	if err != nil {
+		t.Fatalf("read gc log: %v", err)
+	}
+	if !strings.Contains(string(gcLog), "prod(sync failed: simulated backup sync failure)") {
+		t.Fatalf("backup failure escalation omitted sync error:\n%s", gcLog)
 	}
 }
 
