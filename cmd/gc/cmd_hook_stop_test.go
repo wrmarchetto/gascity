@@ -286,6 +286,12 @@ func TestStopGateBlocksEphemeralSessionThatSkippedDrainAck(t *testing.T) {
 	if !strings.Contains(verdict.reason, "gc runtime drain-ack") {
 		t.Errorf("block reason does not name the remaining command: %q", verdict.reason)
 	}
+	if !strings.Contains(verdict.reason, "no remaining active closing work") {
+		t.Errorf("block reason does not describe the reachable drain-ack condition: %q", verdict.reason)
+	}
+	if strings.Contains(verdict.reason, "closed its work") {
+		t.Errorf("block reason falsely claims the session closed work: %q", verdict.reason)
+	}
 }
 
 // TestStopGateAllowsReentryWhileStopHookActive pins loop safety.
