@@ -135,8 +135,9 @@ func TestNudgeSessionReEntersUntilSubmittedForClaude(t *testing.T) {
 // delivery") even when the agent's busy indicator was never observed within
 // budget — the exact condition that let a drafted-but-unsubmitted nudge go
 // undetected for 15+ minutes. NudgeSession must now surface
-// ErrNudgeSubmitUnconfirmed instead, so a retry-capable caller (the queue
-// dispatcher) does not ack the item.
+// ErrNudgeSubmitUnconfirmed instead. The queue records that
+// delivered-but-unobserved outcome without injecting a duplicate, while the
+// error remains available to direct callers for diagnostics.
 func TestNudgeSessionReturnsUnconfirmedErrorWhenNeverBusyForClaude(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not installed")

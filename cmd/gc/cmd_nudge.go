@@ -1460,6 +1460,15 @@ func tryDeliverQueuedNudgesByPoller(target nudgeTarget, store, sessStore beads.S
 		Wake:     worker.NudgeWakeLiveOnly,
 	})
 	if err != nil {
+		if errors.Is(err, runtime.ErrNudgeSubmitUnconfirmed) {
+			// The provider handed the submit sequence to its transport, but did
+			// not observe the resulting busy state. This is a delivered nudge
+			// with incomplete observation, not a retryable delivery failure: a
+			// retry would paste the same reminder into an already-started turn.
+			telemetry.RecordNudge(context.Background(), target.agentKey(), nil)
+			stampLastNudgeDeliveredAt(deliverySessFront, target.sessionID, time.Now())
+			return true, errors.Join(bookkeepErr, ackQueuedNudges(target.cityPath, queuedNudgeIDs(items)))
+		}
 		telemetry.RecordNudge(context.Background(), target.agentKey(), err)
 		if errors.Is(err, runtime.ErrSessionNotFound) {
 			if recErr := releaseQueuedNudgeClaims(target.cityPath, queuedNudgeIDs(items)); recErr != nil {

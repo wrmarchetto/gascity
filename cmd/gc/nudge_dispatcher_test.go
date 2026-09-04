@@ -25,6 +25,17 @@ func supervisorCfg() *config.City {
 	}
 }
 
+type deliveredUnconfirmedNudgeProvider struct {
+	*runtime.Fake
+}
+
+func (p *deliveredUnconfirmedNudgeProvider) Nudge(name string, content []runtime.ContentBlock) error {
+	if err := p.Fake.Nudge(name, content); err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: %s", runtime.ErrNudgeSubmitUnconfirmed, name)
+}
+
 func TestPingNudgeWakeSocketNoListenerIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	// No listener — DialTimeout returns "no such file or directory". The
@@ -388,6 +399,73 @@ func TestDispatchAllQueuedNudgesDeliversAndAcks(t *testing.T) {
 	}
 	if len(pending) != 0 || len(inFlight) != 0 || len(dead) != 0 {
 		t.Fatalf("queue not drained: pending=%d inFlight=%d dead=%d", len(pending), len(inFlight), len(dead))
+	}
+}
+
+// TestDispatchAllQueuedNudgesAcksDeliveredUnconfirmedSubmit proves that a
+// nudge whose submit sequence reached tmux is not re-delivered merely because
+// the provider did not observe busy before its confirmation window elapsed.
+func TestDispatchAllQueuedNudgesAcksDeliveredUnconfirmedSubmit(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+	clearInheritedCityRoutingEnv(t)
+	t.Setenv("GC_BEADS", "file")
+
+	dir := t.TempDir()
+	store := openNudgeBeadStore(dir)
+	provider := &deliveredUnconfirmedNudgeProvider{Fake: runtime.NewFake()}
+	if err := provider.Start(context.Background(), "worker-session", runtime.Config{}); err != nil {
+		t.Fatalf("provider.Start: %v", err)
+	}
+	provider.SetActivity("worker-session", time.Now().Add(-10*time.Second))
+
+	created, err := store.Create(beads.Bead{
+		Title:  "Session: worker",
+		Type:   session.BeadType,
+		Status: "open",
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"session_name": "worker-session",
+			"agent_name":   "worker",
+			"template":     "worker",
+		},
+	})
+	if err != nil {
+		t.Fatalf("store.Create session bead: %v", err)
+	}
+	if err := enqueueQueuedNudgeWithStore(dir, store, newQueuedNudge("worker", "inspect the queued work", time.Now().Add(-time.Minute))); err != nil {
+		t.Fatalf("enqueueQueuedNudgeWithStore: %v", err)
+	}
+
+	snapshot := newSessionBeadSnapshot([]beads.Bead{created})
+	delivered, err := dispatchAllQueuedNudges(dir, supervisorCfg(), store, store, provider, snapshot)
+	if err != nil {
+		t.Fatalf("first dispatch: %v", err)
+	}
+	if delivered != 1 {
+		t.Fatalf("first dispatch delivered = %d, want 1", delivered)
+	}
+	if delivered, err = dispatchAllQueuedNudges(dir, supervisorCfg(), store, store, provider, snapshot); err != nil {
+		t.Fatalf("second dispatch: %v", err)
+	} else if delivered != 0 {
+		t.Fatalf("second dispatch delivered = %d, want 0 after acknowledgement", delivered)
+	}
+
+	var nudgeCalls int
+	for _, call := range provider.Calls {
+		if call.Method == "Nudge" {
+			nudgeCalls++
+		}
+	}
+	if nudgeCalls != 1 {
+		t.Fatalf("nudge calls = %d, want 1 (delivered-unconfirmed submit must not be re-delivered)", nudgeCalls)
+	}
+	pending, inFlight, dead, err := listQueuedNudges(dir, "worker", time.Now())
+	if err != nil {
+		t.Fatalf("listQueuedNudges: %v", err)
+	}
+	if len(pending) != 0 || len(inFlight) != 0 || len(dead) != 0 {
+		t.Fatalf("queue not drained after delivered-unconfirmed submit: pending=%d inFlight=%d dead=%d", len(pending), len(inFlight), len(dead))
 	}
 }
 

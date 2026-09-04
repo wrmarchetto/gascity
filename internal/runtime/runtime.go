@@ -43,6 +43,12 @@ var ErrSessionDiedDuringStartup = errors.New("session died during startup")
 // dispatch with errors.Is.
 var ErrSessionNotFound = errors.New("session not found")
 
+// ErrNudgeSubmitUnconfirmed reports that a nudge submit sequence reached the
+// runtime transport but the provider did not observe the resulting turn. The
+// submit itself is delivered and must not be re-issued by a queue consumer;
+// the error preserves the missing observation for diagnostics.
+var ErrNudgeSubmitUnconfirmed = errors.New("nudge submit delivered but not confirmed")
+
 // ErrExecUnsupported reports that a provider implements [ExecProvider] but the
 // underlying runtime does not implement the RPP `exec` wire op (it answered
 // exit 2). Carriers treat this as "fall back to the legacy driving op".

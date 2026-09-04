@@ -50,6 +50,32 @@ func TestSubmitEnterAndConfirmStopsWhenBusy(t *testing.T) {
 	}
 }
 
+// TestSubmitConfirmBudgetExceedsProviderTurnStartLatency proves that the
+// confirmation window outlasts the observed three-second delay between Claude
+// accepting a prompt and rendering its first busy indicator (ci-ddapcs).
+func TestSubmitConfirmBudgetExceedsProviderTurnStartLatency(t *testing.T) {
+	const observedProviderTurnStartLatency = 3 * time.Second
+
+	var elapsed time.Duration
+	var enters int
+	busy := func() (bool, error) {
+		return elapsed >= observedProviderTurnStartLatency, nil
+	}
+	sleep := func(delay time.Duration) { elapsed += delay }
+	sendEnter := func() error { enters++; return nil }
+
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, sleep)
+	if err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+	if !confirmed {
+		t.Fatalf("confirmed = false after %s provider turn-start latency, want true", observedProviderTurnStartLatency)
+	}
+	if enters != 1 {
+		t.Fatalf("enters = %d, want 1 (a delayed busy indicator must not re-submit)", enters)
+	}
+}
+
 // TestSubmitEnterAndConfirmNoDoubleSubmitOnFastTurn proves the safety property:
 // if a turn goes busy after the first send's polls but before a re-send, the
 // pre-re-send busy check catches it and no second Enter is issued.
