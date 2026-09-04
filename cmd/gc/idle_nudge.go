@@ -42,8 +42,17 @@ const (
 const (
 	idleClaimNudgeGrace       = 90 * time.Second // observe-before-first-nudge; lets a normal claim land
 	idleClaimNudgeBackoff     = 3 * time.Minute  // between retries when a delivered nudge didn't take
-	idleClaimNudgeMaxAttempts = 3                // then give up and log (manual re-nudge remains)
+	idleClaimNudgeMaxAttempts = 3                // then give up SILENTLY; see below
 )
+
+// Documented absence: giving up logs NOTHING. Both predicates implement
+// exhausted() as a no-op, so a slot the backstop tried and failed to rescue
+// goes quiet rather than announcing it. That is not an oversight to "fix" by
+// logging there -- this branch is re-reached on every patrol tick once the cap
+// is hit, so a line there floods, and the bounded report added for ci-a0tquz
+// (nudge_backstop.go) covers the case an operator can actually act on. A
+// once-only exhaustion line needs its own persisted marker; nobody has needed
+// one yet.
 
 // nudgeStalledPoolClaims is a reconcile-tick backstop that runs for every
 // runtime (herdr AND tmux). It re-delivers the claim nudge to a pool slot that
@@ -205,6 +214,15 @@ func (p poolContinuationBackstop) state(s beads.Bead, target backstopTarget) (sa
 
 func (p poolContinuationBackstop) content(s beads.Bead) string {
 	return claimNudgeFor(p.cfg, s)
+}
+
+// contentAbsenceReason reuses the pool-claim wording because both predicates
+// resolve their text through claimNudgeFor, so the cause and the remedy are
+// identical; only the label distinguishes the two lines. Delegating rather than
+// copying is what keeps them from drifting into two different explanations of
+// one config field.
+func (p poolContinuationBackstop) contentAbsenceReason(s beads.Bead) string {
+	return poolClaimBackstop{cfg: p.cfg}.contentAbsenceReason(s)
 }
 
 func (p poolContinuationBackstop) revalidate(target backstopTarget) backstopResolution {
@@ -404,6 +422,26 @@ func (p poolClaimBackstop) state(s beads.Bead, target backstopTarget) (same bool
 
 func (p poolClaimBackstop) content(s beads.Bead) string {
 	return claimNudgeFor(p.cfg, s)
+}
+
+// contentAbsenceReason names which of claimNudgeFor's three dead ends this
+// session hit, because they are three DIFFERENT operator edits and a single
+// "no nudge text" would send a reader to the wrong file for two of them.
+//
+// The agent template is named rather than the session's own name: the fix is an
+// edit to that agent's config, and one misconfigured template strands every
+// slot it backs, so naming the template is what lets one line stand for all of
+// them. No role name is branched on -- the template string is read from config
+// and printed, never compared.
+func (p poolClaimBackstop) contentAbsenceReason(s beads.Bead) string {
+	template := normalizedSessionTemplate(s, p.cfg)
+	if template == "" {
+		return "its session bead names no agent template, so no nudge text can be resolved"
+	}
+	if findAgentByTemplate(p.cfg, template) == nil {
+		return fmt.Sprintf("its template %q matches no configured agent, so no nudge text can be resolved", template)
+	}
+	return fmt.Sprintf("agent %q sets no nudge text (set `nudge` in its agent.toml)", template)
 }
 
 func (p poolClaimBackstop) revalidate(_ backstopTarget) backstopResolution {
