@@ -194,16 +194,10 @@ var (
 	ErrSessionNotFound    = errors.New("session not found")
 	ErrInvalidSessionName = errors.New("invalid session name")
 	ErrIdleTimeout        = errors.New("agent not idle before timeout")
-	// ErrNudgeSubmitUnconfirmed indicates the submit Enter was handed to tmux
-	// but the agent's busy indicator was never observed within budget: the
-	// message may be sitting drafted-but-unsubmitted in the pane. Callers
-	// that can retry (the nudge queue dispatcher, the idle-claim backstop)
-	// must treat this the same as an undelivered nudge: the queue must not
-	// ack the item, so it requeues after the normal retry delay and consumes
-	// one of its bounded attempts, exactly like any other delivery failure.
-	// ga-bwm proved that treating an unconfirmed submit as a clean success is
-	// exactly what lets a stalled nudge go undetected for many minutes.
-	ErrNudgeSubmitUnconfirmed = errors.New("nudge: submit Enter delivered to tmux but not confirmed (busy state never observed)")
+	// ErrNudgeSubmitUnconfirmed is the tmux spelling of
+	// runtime.ErrNudgeSubmitUnconfirmed. It preserves source compatibility for
+	// callers that classify the provider's delivered-but-unobserved outcome.
+	ErrNudgeSubmitUnconfirmed = runtime.ErrNudgeSubmitUnconfirmed
 	// ErrServerDegraded indicates the tmux server bound to SocketName is
 	// reachable on the filesystem but unresponsive. Creating a new session
 	// in this state would let tmux's own (very short) liveness probe time
@@ -1937,11 +1931,13 @@ func (t *Tmux) sendKeysLiteralWithRetry(target, text string, timeout time.Durati
 // dropped when it races an unfinished bracketed paste or a detached-pane wake,
 // leaving the text drafted but never submitted (ga-bwm). For providers with a
 // reliable "busy" indicator we confirm the submit landed and re-send Enter only
-// while the pane is still idle — an already-submitted turn (busy) is never
-// re-entered, so this cannot double-submit.
+// after the pane has remained idle for a full confirmation window. Once a turn
+// is observed busy it is never re-entered. Claude can accept a prompt for about
+// 3.3 seconds before rendering that indicator, so the window must outlast that
+// observed provider turn-start latency (ci-ddapcs).
 const (
 	submitEnterMaxSends       = 3
-	submitConfirmPollsPerSend = 4
+	submitConfirmPollsPerSend = 24
 	submitConfirmPollInterval = 150 * time.Millisecond
 	submitReEnterBackoff      = 200 * time.Millisecond
 )
