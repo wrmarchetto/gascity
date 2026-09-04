@@ -160,8 +160,11 @@ func excludeMailMessageBeads(items []beads.Bead) []beads.Bead {
 // the reopened work stays reachable by the controller demand query. It emits the
 // exact beads.UpdateOpts the raw release ops in releaseWorkFromClosedSessionBead
 // and unclaimWorkAssignedToRetiredSessionBead emitted (proven byte-identical by
-// the recording-fake write tests). Pass runTargetFallback="" for the close-
-// release path, which never stamps a fallback.
+// the recording-fake write tests). Every session-ending caller passes the
+// closing session's own template route: a release with no fallback lands the
+// work open, unassigned and unrouted whenever the bead carried no route of its
+// own, which is invisible to both the pool demand probe and
+// releaseOrphanedPoolAssignments.
 func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback string) error {
 	store := w.unwrapped()
 	if store == nil {

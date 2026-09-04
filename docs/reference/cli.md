@@ -3897,6 +3897,16 @@ End a conversation. Stops the runtime if active and closes the bead.
 
 Accepts a session ID (e.g., gc-42) or session alias (e.g., mayor).
 
+Work the session had CLAIMED returns to the queue: its status resets to open and
+its assignee clears, so any worker on the route can take it.
+
+Work merely ADDRESSED to the session -- assigned but never started -- is left
+alone when the assignee is one the next session in the same seat will bear again:
+a pool slot alias, or a configured named-session identity. That assignee is the
+routing decision of whoever filed the work, not this session's to discard. An
+address no future session can bear (the session bead ID, the runtime session
+name) is cleared, since nothing would ever answer to it again.
+
 ```
 gc session close <session-id-or-alias> [flags]
 ```

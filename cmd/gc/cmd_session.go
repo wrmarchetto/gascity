@@ -1771,7 +1771,17 @@ func newSessionCloseCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Close a session permanently",
 		Long: `End a conversation. Stops the runtime if active and closes the bead.
 
-Accepts a session ID (e.g., gc-42) or session alias (e.g., mayor).`,
+Accepts a session ID (e.g., gc-42) or session alias (e.g., mayor).
+
+Work the session had CLAIMED returns to the queue: its status resets to open and
+its assignee clears, so any worker on the route can take it.
+
+Work merely ADDRESSED to the session -- assigned but never started -- is left
+alone when the assignee is one the next session in the same seat will bear again:
+a pool slot alias, or a configured named-session identity. That assignee is the
+routing decision of whoever filed the work, not this session's to discard. An
+address no future session can bear (the session bead ID, the runtime session
+name) is cleared, since nothing would ever answer to it again.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if cmdSessionClose(args, stdout, stderr, jsonOutput) != 0 {
@@ -1849,7 +1859,15 @@ func cmdSessionClose(args []string, stdout, stderr io.Writer, jsonOutput ...bool
 	if cityErr == nil && cfg != nil {
 		rigStores = buildStandaloneRigStores(cfg, cityPath, stderr)
 	}
-	unclaimWorkAssignedToRetiredSessionBead(store, rigStores, closedSessionBead, "", stderr)
+	// The route fallback is the closing session's own template, as on every
+	// other session-ending caller. This call passed "" until ci-8vx85v: a claim
+	// on a bead that carried no route of its own was then released open,
+	// unassigned AND unrouted, invisible to the pool demand probe (keys on
+	// gc.routed_to) and to releaseOrphanedPoolAssignments (skips empty-routed
+	// beads). The reconciler door has stamped this fallback since ga-n2d.2; the
+	// CLI door did not, which is why the same close through the dashboard's
+	// reconciler recovered and through `gc session close` did not.
+	unclaimWorkAssignedToRetiredSessionBead(store, rigStores, closedSessionBead, retiredSessionFallbackRoute(closedSessionBead), seatSurvives, stderr)
 
 	if asJSON {
 		if err := writeSessionActionJSON(stdout, sessionActionResult{

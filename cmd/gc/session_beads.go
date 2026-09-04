@@ -757,7 +757,11 @@ func retireRemovedConfiguredNamedSessionBead(
 		fmt.Fprintf(stderr, "session beads: archiving removed named session %s: %v\n", b.ID, err) //nolint:errcheck
 		return false
 	}
-	unclaimWorkAssignedToRetiredSessionBead(store, rigStores, b, retiredSessionFallbackRoute(b), stderr)
+	// The seat itself is gone: this named session was DELETED from config, so
+	// its configured identity and alias are borne by nobody ever again and an
+	// address on one would strand the work. Every other caller passes
+	// seatSurvives.
+	unclaimWorkAssignedToRetiredSessionBead(store, rigStores, b, retiredSessionFallbackRoute(b), seatRetired, stderr)
 	cancelStateAssignedToRetiredSessionBead(store, b.ID, now, stderr)
 	return true
 }
@@ -976,6 +980,7 @@ func unclaimWorkAssignedToRetiredSessionBead(
 	rigStores map[string]beads.Store,
 	sessionBead beads.Bead,
 	fallbackRoute string,
+	retired seatRetirement,
 	stderr io.Writer,
 ) {
 	if store == nil || strings.TrimSpace(sessionBead.ID) == "" {
@@ -984,38 +989,35 @@ func unclaimWorkAssignedToRetiredSessionBead(
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	identifiers := sessionAssignmentIdentifiers(sessionBead)
+	targets := sessionReleaseTargetsForBead(sessionBead, retired)
 	seen := make(map[string]struct{})
 	for storeIndex, ownerStore := range workAssignmentStores(store, rigStores) {
 		wa := workAssignmentForStore(beads.WorkStore{Store: ownerStore})
-		for _, status := range []string{"open", "in_progress"} {
-			for _, assignee := range identifiers {
-				work, err := wa.OpenAssignedTo(assignee, status, beads.TierBoth, true)
-				if err != nil {
-					fmt.Fprintf(stderr, "session beads: listing work assigned to retired session %s via %q: %v\n", sessionBead.ID, assignee, err) //nolint:errcheck
+		for _, target := range targets {
+			work, err := wa.OpenAssignedTo(target.Assignee, target.Status, beads.TierBoth, true)
+			if err != nil {
+				fmt.Fprintf(stderr, "session beads: listing work assigned to retired session %s via %q: %v\n", sessionBead.ID, target.Assignee, err) //nolint:errcheck
+				continue
+			}
+			for _, item := range work {
+				if session.IsSessionBeadOrRepairable(item) {
 					continue
 				}
-				for _, item := range work {
-					if session.IsSessionBeadOrRepairable(item) {
-						continue
-					}
-					key := strconv.Itoa(storeIndex) + "\x00" + item.ID
-					if _, ok := seen[key]; ok {
-						continue
-					}
-					seen[key] = struct{}{}
-					// The session owning this work is retired, so the work is fully
-					// detached (not preserved to a new assignee). The release
-					// primitive clears the assignee (empty-string) and stale
-					// session-affinity metadata, resets in_progress to open
-					// (otherwise the bead stays invisible to the work_query — Tier 1
-					// needs an assignee match, Tiers 2/3 only match "ready"), and
-					// stamps fallbackRoute run_target only when the bead is otherwise
-					// unrouted — the same stale-affinity bug fixed on the retry,
-					// reopen, orphan-pool, and closed-session release paths.
-					if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
-						fmt.Fprintf(stderr, "session beads: unclaiming work %s assigned to retired session %s: %v\n", item.ID, sessionBead.ID, err) //nolint:errcheck
-					}
+				key := strconv.Itoa(storeIndex) + "\x00" + item.ID
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				// The identity this bead was found under is one the ending
+				// session takes with it, or the bead is a claim it held. Either
+				// way the work is fully detached: ReleaseWorkBead clears the
+				// assignee (empty-string) and stale session-affinity metadata,
+				// resets in_progress to open (otherwise the bead stays invisible
+				// to the work_query -- Tier 1 needs an assignee match, Tiers 2/3
+				// only match "ready"), and stamps fallbackRoute run_target only
+				// when the bead is otherwise unrouted.
+				if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
+					fmt.Fprintf(stderr, "session beads: unclaiming work %s assigned to retired session %s: %v\n", item.ID, sessionBead.ID, err) //nolint:errcheck
 				}
 			}
 		}
@@ -1122,6 +1124,7 @@ func unclaimWorkAssignedToRetiredSessionInfo(
 	rigStores map[string]beads.Store,
 	retiredSession session.Info,
 	fallbackRoute string,
+	retired seatRetirement,
 	stderr io.Writer,
 ) unclaimResult {
 	var res unclaimResult
@@ -1131,37 +1134,32 @@ func unclaimWorkAssignedToRetiredSessionInfo(
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	identifiers := sessionAssignmentIdentifiersInfo(retiredSession)
+	targets := sessionReleaseTargetsForInfo(retiredSession, retired)
 	seen := make(map[string]struct{})
 	for storeIndex, ownerStore := range workAssignmentStores(store, rigStores) {
 		wa := workAssignmentForStore(beads.WorkStore{Store: ownerStore})
-		for _, status := range []string{"open", "in_progress"} {
-			for _, assignee := range identifiers {
-				work, err := wa.OpenAssignedTo(assignee, status, beads.TierBoth, true)
-				if err != nil {
-					fmt.Fprintf(stderr, "session beads: listing work assigned to retired session %s via %q: %v\n", retiredSession.ID, assignee, err) //nolint:errcheck
+		for _, target := range targets {
+			work, err := wa.OpenAssignedTo(target.Assignee, target.Status, beads.TierBoth, true)
+			if err != nil {
+				fmt.Fprintf(stderr, "session beads: listing work assigned to retired session %s via %q: %v\n", retiredSession.ID, target.Assignee, err) //nolint:errcheck
+				continue
+			}
+			for _, item := range work {
+				if session.IsSessionBeadOrRepairable(item) {
 					continue
 				}
-				for _, item := range work {
-					if session.IsSessionBeadOrRepairable(item) {
-						continue
-					}
-					key := strconv.Itoa(storeIndex) + "\x00" + item.ID
-					if _, ok := seen[key]; ok {
-						continue
-					}
-					seen[key] = struct{}{}
-					// The session owning this work is retired, so the work is fully
-					// detached: ReleaseWorkBead clears the assignee, resets in_progress
-					// to open, and stamps fallbackRoute run_target only when otherwise
-					// unrouted — identical to the raw retirement path.
-					if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
-						fmt.Fprintf(stderr, "session beads: unclaiming work %s assigned to retired session %s: %v\n", item.ID, retiredSession.ID, err) //nolint:errcheck
-						res.Failed++
-						continue
-					}
-					res.Released++
+				key := strconv.Itoa(storeIndex) + "\x00" + item.ID
+				if _, ok := seen[key]; ok {
+					continue
 				}
+				seen[key] = struct{}{}
+				// Detached exactly as in the raw retirement path above.
+				if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
+					fmt.Fprintf(stderr, "session beads: unclaiming work %s assigned to retired session %s: %v\n", item.ID, retiredSession.ID, err) //nolint:errcheck
+					res.Failed++
+					continue
+				}
+				res.Released++
 			}
 		}
 	}
@@ -1244,7 +1242,7 @@ func repairStrandedPoolWorkerBead(
 	if first.IsZero() || now.Sub(first) < strandedRepairConfirmGrace {
 		return false // inside the confirmation window — defer the destructive clear
 	}
-	res := unclaimWorkAssignedToRetiredSessionInfo(store, rigStores, info, fallbackRoute, stderr)
+	res := unclaimWorkAssignedToRetiredSessionInfo(store, rigStores, info, fallbackRoute, seatSurvives, stderr)
 	if res.Failed > 0 {
 		// At least one unassign did not land. Do NOT close the session bead or
 		// report a repair: closing now would strand the still-assigned work
@@ -3053,55 +3051,41 @@ func releaseWorkFromClosedSessionBead(store beads.Store, sessionBead beads.Bead,
 	// that lost its routing mid-handoff so it stays discoverable.
 	fallbackRoute := retiredSessionFallbackRoute(sessionBead)
 
-	seenAssignees := make(map[string]struct{}, 3)
-	addAssignee := func(val string) {
-		val = strings.TrimSpace(val)
-		if val == "" {
-			return
-		}
-		seenAssignees[val] = struct{}{}
-	}
-	for _, id := range sessionBeadAssigneeIdentities(sessionBead) {
-		addAssignee(id)
-	}
-
 	seenWork := make(map[string]struct{})
 	wa := workAssignmentForStore(beads.WorkStore{Store: store})
-	for assignee := range seenAssignees {
-		for _, status := range []string{"in_progress", "open"} {
-			work, err := wa.OpenAssignedToBasic(assignee, status)
-			if err != nil {
-				fmt.Fprintf(stderr, "session beads: listing work assigned to closing session %s (%s): %v\n", sessionBead.ID, assignee, err) //nolint:errcheck
+	for _, target := range sessionReleaseTargetsForBead(sessionBead, seatSurvives) {
+		work, err := wa.OpenAssignedToBasic(target.Assignee, target.Status)
+		if err != nil {
+			fmt.Fprintf(stderr, "session beads: listing work assigned to closing session %s (%s): %v\n", sessionBead.ID, target.Assignee, err) //nolint:errcheck
+			continue
+		}
+		for _, item := range work {
+			if session.IsSessionBeadOrRepairable(item) {
 				continue
 			}
-			for _, item := range work {
-				if session.IsSessionBeadOrRepairable(item) {
-					continue
-				}
-				if _, dup := seenWork[item.ID]; dup {
-					continue
-				}
-				seenWork[item.ID] = struct{}{}
-				// The session owning this work is closing, so the work is
-				// fully detached (not preserved to a new assignee). The
-				// release primitive clears the assignee (empty-string) and
-				// stale session-affinity metadata and resets in_progress to
-				// open — the same stale-affinity bug fixed on the retry,
-				// reopen, and orphan-pool release paths.
-				//
-				// ga-n2d.2: pass the owning pool route (retiredSessionFallbackRoute,
-				// derived from the closing session's own template metadata) as the
-				// run_target fallback instead of "". A polecat that pushed its branch
-				// but died before completing the refinery handoff can leave work whose
-				// gc.routed_to was cleared; releasing it here with no route would
-				// strand it open+unassigned+unrouted — invisible to both the pool
-				// demand probe (keys on gc.routed_to) and releaseOrphanedPoolAssignments
-				// (skips empty-routed beads). ReleaseWorkBead applies the fallback only
-				// when BOTH routed_to and run_target are empty, and restoreCarriedWorkRoutes
-				// (#3421) then backfills gc.routed_to from that run_target so the work
-				// re-enters pool demand.
-				releaseWorkBeadFromClosedSession(wa, item, sessionBead.ID, fallbackRoute, stderr)
+			if _, dup := seenWork[item.ID]; dup {
+				continue
 			}
+			seenWork[item.ID] = struct{}{}
+			// The session owning this work is closing, so the work is
+			// fully detached (not preserved to a new assignee). The
+			// release primitive clears the assignee (empty-string) and
+			// stale session-affinity metadata and resets in_progress to
+			// open — the same stale-affinity bug fixed on the retry,
+			// reopen, and orphan-pool release paths.
+			//
+			// ga-n2d.2: pass the owning pool route (retiredSessionFallbackRoute,
+			// derived from the closing session's own template metadata) as the
+			// run_target fallback instead of "". A polecat that pushed its branch
+			// but died before completing the refinery handoff can leave work whose
+			// gc.routed_to was cleared; releasing it here with no route would
+			// strand it open+unassigned+unrouted — invisible to both the pool
+			// demand probe (keys on gc.routed_to) and releaseOrphanedPoolAssignments
+			// (skips empty-routed beads). ReleaseWorkBead applies the fallback only
+			// when BOTH routed_to and run_target are empty, and restoreCarriedWorkRoutes
+			// (#3421) then backfills gc.routed_to from that run_target so the work
+			// re-enters pool demand.
+			releaseWorkBeadFromClosedSession(wa, item, sessionBead.ID, fallbackRoute, stderr)
 		}
 	}
 }
