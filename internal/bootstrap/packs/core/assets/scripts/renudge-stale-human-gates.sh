@@ -40,13 +40,15 @@
 # pack-scoped). Before every repeat, the script snapshots prior open reminders
 # for that gate. It sends the fresh reminder first, then archives only the
 # snapshotted predecessors, so a delivery failure never silences a gate and a
-# successful repeat leaves one open reminder per gate. An entry is refreshed on
-# every successful re-nudge, so a live stale gate's entry never ages past the
-# retention window; a resolved gate stops being refreshed and is pruned after
-# GC_STALE_GATE_STATE_RETENTION. This retention-based prune (rather than
-# pruning to the current open set) keeps the cadence memory intact across a
-# transient per-rig enumeration failure, so a rig that briefly fails to list
-# does not trigger an early re-nudge storm.
+# successful repeat leaves one open reminder per gate. The snapshot is advisory
+# and cannot gate the send: a snapshot that fails is counted and reported, and
+# the reminder goes out regardless, leaving the predecessor open (ci-o34bax).
+# An entry is refreshed on every successful re-nudge, so a live stale gate's
+# entry never ages past the retention window; a resolved gate stops being
+# refreshed and is pruned after GC_STALE_GATE_STATE_RETENTION. This
+# retention-based prune (rather than pruning to the current open set) keeps the
+# cadence memory intact across a transient per-rig enumeration failure, so a
+# rig that briefly fails to list does not trigger an early re-nudge storm.
 #
 # Cross-rig: gates are enumerated per scope (HQ + each non-HQ rig), so the
 # owning rig is known without a prefix lookup; the re-fetch is scoped with
@@ -84,6 +86,13 @@ RETENTION="${GC_STALE_GATE_STATE_RETENTION:-24h}"
 # creation notify use the same default, keeping the "notify the human" address
 # consistent across all three.
 ESCALATION_RECIPIENT="${GC_ESCALATION_RECIPIENT:-human}"
+# Ceiling on prior open reminders snapshotted for one gate in one sweep.
+# `gc mail archive` REJECTS --limit 0 -- it has no unbounded form, unlike
+# `gc bd gate list --limit 0` above -- so this is a real bound, not a
+# formality. Steady state is one open reminder per gate, so reaching this
+# ceiling means the archive half has been failing for a hundred sweeps; the
+# leftovers are picked up next sweep, which re-selects from scratch.
+PREDECESSOR_SCAN_LIMIT=100
 
 PACK_STATE_DIR="${GC_PACK_STATE_DIR:-${GC_CITY_RUNTIME_DIR:-$CITY/.gc/runtime}/packs/core}"
 STATE_FILE="$PACK_STATE_DIR/renudge-stale-human-gates-state.json"
@@ -230,19 +239,32 @@ Resolve with: gc bd gate resolve $gate_id"
         # those IDs after the send succeeds: selecting after the send could
         # archive the just-created reminder, while archiving before it succeeds
         # would leave the gate silent if delivery fails.
+        #
+        # The snapshot is ADVISORY and must never gate the send. It exists only
+        # so a gate keeps one open reminder; the send is the whole point of the
+        # order. An earlier revision ran `continue` on a lookup failure, which
+        # put every repeat reminder behind a query that could not succeed -- it
+        # passed `--limit 0` meaning unbounded, which `gc mail archive` rejects
+        # -- so gates went silent after their opening page while the order
+        # retried forever and only the doctor check ever saw it (ci-o34bax).
+        # Losing the snapshot costs one stale open reminder. Losing the send
+        # costs the operator the notification entirely. The failure is still
+        # counted, so the sweep still exits nonzero and says so.
         PREDECESSOR_IDS=()
         if [ -n "$last_iso" ]; then
-            PREDECESSORS_JSON="$(gc mail archive --to "$ADDRESSEE" --subject-prefix "$SUBJECT" --include-read --limit 0 --dry-run --json 2>/dev/null)" || {
-                echo "renudge-stale-human-gates: FAILED to find prior reminder for stale human gate $gate_id (will retry next sweep)" >&2
+            PREDECESSOR_IDS_TEXT=""
+            if ! PREDECESSORS_JSON="$(gc mail archive --to "$ADDRESSEE" --subject-prefix "$SUBJECT" --include-read --limit "$PREDECESSOR_SCAN_LIMIT" --dry-run --json 2>/dev/null)"; then
+                echo "renudge-stale-human-gates: FAILED to find prior reminder for stale human gate $gate_id (sending the reminder anyway; the prior one stays open)" >&2
                 FAILED=$((FAILED + 1))
-                continue
-            }
-            PREDECESSOR_IDS_TEXT="$(printf '%s' "$PREDECESSORS_JSON" \
-                | jq -r --arg subject "$SUBJECT" '.messages[]? | select(.subject == $subject) | .id' 2>/dev/null)" || {
-                echo "renudge-stale-human-gates: FAILED to parse prior reminder for stale human gate $gate_id (will retry next sweep)" >&2
+            elif ! PREDECESSOR_IDS_TEXT="$(printf '%s' "$PREDECESSORS_JSON" \
+                | jq -r --arg subject "$SUBJECT" '.messages[]? | select(.subject == $subject) | .id' 2>/dev/null)"; then
+                echo "renudge-stale-human-gates: FAILED to parse prior reminder for stale human gate $gate_id (sending the reminder anyway; the prior one stays open)" >&2
                 FAILED=$((FAILED + 1))
-                continue
-            }
+                # A failed command substitution still assigns whatever jq
+                # managed to emit. Discard it: half a list of IDs archives
+                # some predecessors and silently strands the rest.
+                PREDECESSOR_IDS_TEXT=""
+            fi
             while IFS= read -r predecessor_id; do
                 [ -n "$predecessor_id" ] && PREDECESSOR_IDS+=("$predecessor_id")
             done <<< "$PREDECESSOR_IDS_TEXT"

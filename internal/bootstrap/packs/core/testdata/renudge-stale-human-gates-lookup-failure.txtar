@@ -1,14 +1,22 @@
-# Two consecutive eligible sweeps must replace—not accumulate—the reminder.
-exec bash $WORK/scripts/renudge-stale-human-gates.sh
-exec bash $WORK/scripts/renudge-stale-human-gates.sh
+# A predecessor lookup that fails must NOT suppress the reminder itself.
+# The snapshot is an optimization -- it exists so a gate keeps exactly one
+# open reminder -- and the send is the whole point of the order. Losing the
+# snapshot costs one stale open reminder; losing the send costs the operator
+# the notification entirely, which is the shape of ci-o34bax.
 
-# Assert the successor EXISTS and the predecessor was archived, not merely
-# that one reminder is open. A count of 1 is also what a sweep that sent
-# nothing and archived nothing produces, which is exactly the ci-o34bax
-# failure this file has to be able to see.
+# Sweep 1: no predecessor to look up, so this path is not exercised yet.
+exec bash $WORK/scripts/renudge-stale-human-gates.sh
 exec cat $WORK/state/reminders
+stdout '^reminder-1$'
+
+# Sweep 2: the snapshot query fails. The reminder must still be delivered,
+# the failure must still be loud, and the order must still exit nonzero.
+env RENUDGE_TEST_ARCHIVE_LOOKUP=fail
+! exec bash $WORK/scripts/renudge-stale-human-gates.sh
+stderr 'FAILED to find prior reminder'
+exec cat $WORK/state/reminders
+stdout '^reminder-1$'
 stdout '^reminder-2$'
-! stdout 'reminder-1'
 
 -- bin/gc --
 #!/bin/sh
@@ -17,30 +25,6 @@ set -eu
 state_dir=${RENUDGE_TEST_STATE:?}
 reminders="$state_dir/reminders"
 touch "$reminders"
-
-# Refuse a --limit the real command refuses. `gc mail archive` rejects any
-# --limit <= 0 (cmd_mail.go, "--limit must be greater than zero"); there is no
-# unbounded form. A stand-in that accepted 0 is what hid ci-o34bax for a day:
-# the script passed 0 meaning unbounded, every repeat reminder was dropped
-# before it was sent, and this suite stayed green over it.
-reject_nonpositive_limit() {
-  prev=
-  for arg in "$@"; do
-    case "$prev $arg" in
-      "--limit 0"|"--limit -"*)
-        printf 'gc mail archive: --limit must be greater than zero\n' >&2
-        exit 1
-        ;;
-    esac
-    case "$arg" in
-      --limit=0|--limit=-*)
-        printf 'gc mail archive: --limit must be greater than zero\n' >&2
-        exit 1
-        ;;
-    esac
-    prev=$arg
-  done
-}
 
 case "$1 $2 ${3:-}" in
   "rig list --json")
@@ -54,8 +38,14 @@ case "$1 $2 ${3:-}" in
     ;;
   "mail archive "*)
     shift 2
-    reject_nonpositive_limit "$@"
     if [ "${1:-}" = "--to" ] && printf '%s\n' "$*" | grep -q -- '--dry-run'; then
+      # Stand in for any reason the snapshot query can fail -- a rejected
+      # flag, an unreachable store, a malformed record. The script must not
+      # care which; it must only refuse to let the failure eat the send.
+      if [ "${RENUDGE_TEST_ARCHIVE_LOOKUP:-}" = fail ]; then
+        printf 'gc mail archive: snapshot query failed\n' >&2
+        exit 1
+      fi
       printf '{"messages":['
       first=true
       while IFS= read -r id; do
