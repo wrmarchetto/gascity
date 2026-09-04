@@ -7765,7 +7765,7 @@ func TestUnclaimResetsInProgressStatus(t *testing.T) {
 	}
 
 	var stderr bytes.Buffer
-	unclaimWorkAssignedToRetiredSessionBead(store, nil, sessionBead, "myrig/codex-max", &stderr)
+	unclaimWorkAssignedToRetiredSessionBead(store, nil, sessionBead, "myrig/codex-max", seatSurvives, &stderr)
 
 	gotInProgress, err := store.Get(work.ID)
 	if err != nil {
@@ -7821,7 +7821,7 @@ func TestUnclaimWorkAssignedToRetiredSessionBeadPreservesRunTargetRoute(t *testi
 	}
 
 	var stderr bytes.Buffer
-	unclaimWorkAssignedToRetiredSessionBead(store, nil, sessionBead, "fallback/worker", &stderr)
+	unclaimWorkAssignedToRetiredSessionBead(store, nil, sessionBead, "fallback/worker", seatSurvives, &stderr)
 
 	got, err := store.Get(work.ID)
 	if err != nil {
@@ -7881,7 +7881,7 @@ func TestUnclaimWorkAssignedToRetiredSessionBeadClearsSessionAffinity(t *testing
 	}
 
 	var stderr bytes.Buffer
-	unclaimWorkAssignedToRetiredSessionBead(store, nil, sessionBead, "fallback/worker", &stderr)
+	unclaimWorkAssignedToRetiredSessionBead(store, nil, sessionBead, "fallback/worker", seatSurvives, &stderr)
 
 	got, err := store.Get(work.ID)
 	if err != nil {
@@ -8245,6 +8245,11 @@ func TestCloseSessionBeadIfUnassignedRefusesWhenRigStoreWorkAssignedBySessionNam
 	}
 }
 
+// The seat is retired, not merely vacated: this is the config-removal case,
+// where the [[named_session]] backing configured_named_identity is gone. The
+// OPEN bead addressed to the identity must therefore clear too, since no future
+// session bears it. The seatSurvives half of that table -- an open address that
+// outlives its session -- is pinned in cmd_session_close_addressed_work_test.go.
 func TestUnclaimWorkAssignedToRetiredSessionBeadClearsRigStoreSessionIdentifiers(t *testing.T) {
 	store := beads.NewMemStore()
 	rigStore := beads.NewMemStore()
@@ -8291,6 +8296,7 @@ func TestUnclaimWorkAssignedToRetiredSessionBeadClearsRigStoreSessionIdentifiers
 		map[string]beads.Store{"frontend": rigStore},
 		sessionBead,
 		"frontend/codex-max",
+		seatRetired,
 		&stderr,
 	)
 
