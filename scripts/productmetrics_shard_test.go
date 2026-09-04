@@ -128,6 +128,30 @@ func TestProductmetricsShardsRunInEveryModeThatSweptThePackage(t *testing.T) {
 	}
 }
 
+// TestProductmetricsShardsRegisterOncePerMode keeps a second registration
+// from running every shard twice. The full and fast lanes own this package;
+// the other modes must not register its shard fan-out.
+func TestProductmetricsShardsRegisterOncePerMode(t *testing.T) {
+	script := localParallelScript(t)
+
+	for _, test := range []struct {
+		mode string
+		want int
+	}{
+		{mode: "fast", want: 1},
+		{mode: "cmd-gc-process", want: 0},
+		{mode: "integration", want: 0},
+		{mode: "full", want: 1},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			arm := shellCaseArmBody(t, script, test.mode)
+			if got := strings.Count(arm, "add_productmetrics_shards"); got != test.want {
+				t.Errorf("%s mode registers productmetrics shards %d times, want %d:\n%s", test.mode, got, test.want, arm)
+			}
+		})
+	}
+}
+
 // TestFastRunQueuesProductmetricsBeforeCmdGCShards keeps the productmetrics
 // fan-out from being accidentally throttled when LOCAL_TEST_JOBS permits a
 // wider run. With a ten-job cap, the unit-core job plus six cmd/gc shards
