@@ -3691,9 +3691,17 @@ gc runtime drain <name> [flags]
 Acknowledge a drain signal — tell the controller to stop this session.
 
 Sets GC_DRAIN_ACK metadata on the session, then pokes the controller
-socket so the reconciler stops the session immediately rather than on
-its next patrol tick. Call this after the session has finished its
-current work in response to a drain signal.
+socket so the reconciler considers the acknowledgement immediately
+rather than on its next patrol tick. Call this after the session has
+finished its current work in response to a drain signal.
+
+Recording an acknowledgement is not the same as having it honored, and
+this command reports only the former. The controller REFUSES an
+acknowledgement from a session that still owns assigned work, leaving
+that session active with state_reason=drain-ack-assigned-work and still
+holding its pool slot. That decision is made afterwards, in a reconciler
+tick, so read the session's state with "gc session list" to learn what
+happened rather than treating this command's success as the outcome.
 
 The acknowledgement records the session itself as the actor, so its
 closed bead reads "agent retired itself" rather than naming the
