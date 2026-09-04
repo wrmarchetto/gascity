@@ -1917,21 +1917,23 @@ const (
 	// DefaultDoltMaxConnections is the managed Dolt listener connection cap.
 	DefaultDoltMaxConnections = 256
 	// DefaultDoltReadTimeoutMillis is the managed Dolt listener read timeout.
-	// Managed multi-agent cities open a short-lived bd/dolt-sql client
-	// connection per operation and frequently SIGKILL it on a client-side
-	// deadline (e.g. agents wrap `gc hook` in `timeout 10`), so the server
-	// orphans the socket in Sleep until read_timeout fires. Lowering this from
-	// the former 30s reaps those dead per-call connections sooner, before they
-	// accumulate into a store-wide read collapse under load. read_timeout is the
-	// listener socket idle/produce timeout: it reaps idle (Sleep) connections
-	// and bounds the inter-row produce gap (go-mysql-server ErrRowTimeout
-	// re-arms per row), not total query wall-clock — so it does not cut a long
-	// but steadily-producing query. Do NOT drop it to/below the client kill
-	// budget (`timeout 10`) on the assumption it is purely idle-reaping. Cities
-	// with slower live operations raise it via city.toml [dolt]
-	// read_timeout_millis. See #3022 (5m->30s) and the scale_check storm RCA
-	// (30s->15s).
-	DefaultDoltReadTimeoutMillis = 15000
+	// read_timeout is go-mysql-server's ONLY idle-connection reaper:
+	// wait_timeout (DefaultDoltWaitTimeoutSeconds) is accepted, stored, and
+	// reported by the server, but reaps nothing on dolt 2.2.3. In code
+	// ErrRowTimeout re-arms per row, but plan shapes that produce no rows until
+	// they finish — recursive CTEs, aggregates, large UPDATEs — never re-arm
+	// it, so in practice read_timeout behaves as a wall-clock cap on the whole
+	// result-production phase, not merely an inter-row gap bound. It is fixed
+	// at handler construction: neither SET SESSION nor SET GLOBAL changes the
+	// effective value at runtime, only the server config file plus a restart.
+	//
+	// Raised from 15000 to 120000 because the old 15s bound killed a
+	// maintenance query mid-production. It stays below half of
+	// DefaultDoltWriteTimeoutMillis (300000) so the independent outer
+	// wall-clock deadline retains headroom to catch a genuine connection pile-up
+	// first. Cities with slower live operations can raise it further via
+	// city.toml [dolt] read_timeout_millis.
+	DefaultDoltReadTimeoutMillis = 120000
 	// DefaultDoltWriteTimeoutMillis is the managed Dolt listener write timeout.
 	DefaultDoltWriteTimeoutMillis = 300000
 )
@@ -1959,15 +1961,14 @@ type DoltConfig struct {
 	MaxConnections int `toml:"max_connections,omitempty" jsonschema:"default=256"`
 	// ReadTimeoutMillis overrides the managed Dolt listener read_timeout_millis.
 	// 0 means use the managed default.
-	ReadTimeoutMillis int `toml:"read_timeout_millis,omitempty" jsonschema:"default=15000"`
+	ReadTimeoutMillis int `toml:"read_timeout_millis,omitempty" jsonschema:"default=120000"`
 	// WriteTimeoutMillis overrides the managed Dolt listener write_timeout_millis.
 	// 0 means use the managed default.
 	WriteTimeoutMillis int `toml:"write_timeout_millis,omitempty" jsonschema:"default=300000"`
 	// WaitTimeoutSeconds overrides the managed server's wait_timeout system
-	// variable, which is how long Dolt keeps an idle connection before reaping
-	// it. Cities that raise ReadTimeoutMillis above the reconcile tick gap
-	// generally need this raised with it, or the controller's long-lived
-	// dispatch-pool connections are still reaped between ticks. Before this
+	// variable. Despite the name, wait_timeout does not currently reap idle
+	// connections; read_timeout is the only reaper. The knob is still emitted
+	// so it becomes effective when Dolt implements that behavior. Before this
 	// field existed the only way to set it was GC_DOLT_WAIT_TIMEOUT in the
 	// supervisor's process environment, which no city.toml could express and
 	// no shell-invoked restart inherited — so a restart from an operator shell
@@ -2045,8 +2046,11 @@ func (d DoltConfig) EffectiveWriteTimeoutMillis() int {
 	return DefaultDoltWriteTimeoutMillis
 }
 
-// DefaultDoltWaitTimeoutSeconds is the managed server's idle-connection reap
-// window when neither city.toml nor the environment configures one.
+// DefaultDoltWaitTimeoutSeconds is the managed default for the server's
+// wait_timeout system variable when neither city.toml nor the environment
+// configures one. It is not an idle-connection reap window: read_timeout is
+// the active reaper. It remains emitted for compatibility with a future Dolt
+// implementation that honors wait_timeout.
 //
 // Deliberately not paired with an Effective* accessor like the other [dolt]
 // fields: wait_timeout resolves three ways, not two. An unset field must fall

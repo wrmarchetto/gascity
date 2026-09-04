@@ -8389,3 +8389,15 @@ func TestDurationFloorOr(t *testing.T) {
 		})
 	}
 }
+
+// TestDefaultDoltReadTimeoutMillisPreservesOuterDeadlineHeadroom guards the
+// managed-server trade-off: the timeout must leave the outer deadline enough
+// headroom to detect a genuinely stuck connection before the listener does.
+func TestDefaultDoltReadTimeoutMillisPreservesOuterDeadlineHeadroom(t *testing.T) {
+	if DefaultDoltReadTimeoutMillis != 120000 {
+		t.Fatalf("DefaultDoltReadTimeoutMillis = %d, want 120000", DefaultDoltReadTimeoutMillis)
+	}
+	if DefaultDoltReadTimeoutMillis*2 > DefaultDoltWriteTimeoutMillis {
+		t.Fatalf("DefaultDoltReadTimeoutMillis (%d) leaves less than half of DefaultDoltWriteTimeoutMillis (%d) as headroom for the outer wall-clock deadline", DefaultDoltReadTimeoutMillis, DefaultDoltWriteTimeoutMillis)
+	}
+}
