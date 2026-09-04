@@ -37,12 +37,16 @@
 #
 # Dedup / cadence: per-gate last-re-nudge state lives in
 # $GC_PACK_STATE_DIR/renudge-stale-human-gates-state.json (city- and
-# pack-scoped). An entry is refreshed on every successful re-nudge, so a live
-# stale gate's entry never ages past the retention window; a resolved gate stops
-# being refreshed and is pruned after GC_STALE_GATE_STATE_RETENTION. This
-# retention-based prune (rather than pruning to the current open set) keeps the
-# cadence memory intact across a transient per-rig enumeration failure, so a
-# rig that briefly fails to list does not trigger an early re-nudge storm.
+# pack-scoped). Before every repeat, the script snapshots prior open reminders
+# for that gate. It sends the fresh reminder first, then archives only the
+# snapshotted predecessors, so a delivery failure never silences a gate and a
+# successful repeat leaves one open reminder per gate. An entry is refreshed on
+# every successful re-nudge, so a live stale gate's entry never ages past the
+# retention window; a resolved gate stops being refreshed and is pruned after
+# GC_STALE_GATE_STATE_RETENTION. This retention-based prune (rather than
+# pruning to the current open set) keeps the cadence memory intact across a
+# transient per-rig enumeration failure, so a rig that briefly fails to list
+# does not trigger an early re-nudge storm.
 #
 # Cross-rig: gates are enumerated per scope (HQ + each non-HQ rig), so the
 # owning rig is known without a prefix lookup; the re-fetch is scoped with
@@ -221,9 +225,39 @@ $DESC"
         BODY="$BODY
 Resolve with: gc bd gate resolve $gate_id"
 
+        # A first re-nudge has no predecessor. For every repeat, snapshot the
+        # matching open reminders before sending the successor. Archive only
+        # those IDs after the send succeeds: selecting after the send could
+        # archive the just-created reminder, while archiving before it succeeds
+        # would leave the gate silent if delivery fails.
+        PREDECESSOR_IDS=()
+        if [ -n "$last_iso" ]; then
+            PREDECESSORS_JSON="$(gc mail archive --to "$ADDRESSEE" --subject-prefix "$SUBJECT" --include-read --limit 0 --dry-run --json 2>/dev/null)" || {
+                echo "renudge-stale-human-gates: FAILED to find prior reminder for stale human gate $gate_id (will retry next sweep)" >&2
+                FAILED=$((FAILED + 1))
+                continue
+            }
+            PREDECESSOR_IDS_TEXT="$(printf '%s' "$PREDECESSORS_JSON" \
+                | jq -r --arg subject "$SUBJECT" '.messages[]? | select(.subject == $subject) | .id' 2>/dev/null)" || {
+                echo "renudge-stale-human-gates: FAILED to parse prior reminder for stale human gate $gate_id (will retry next sweep)" >&2
+                FAILED=$((FAILED + 1))
+                continue
+            }
+            while IFS= read -r predecessor_id; do
+                [ -n "$predecessor_id" ] && PREDECESSOR_IDS+=("$predecessor_id")
+            done <<< "$PREDECESSOR_IDS_TEXT"
+        fi
+
         # Loud-fail: record the re-nudge only on a delivered send, so an
         # undeliverable one surfaces and retries next sweep.
         if gc mail send "$ADDRESSEE" -s "$SUBJECT" -m "$BODY" --notify >/dev/null 2>&1; then
+            # The new reminder is already durable. A failed archival is loud,
+            # but does not undo that delivery or turn an unresolved gate into
+            # silence.
+            if [ "${#PREDECESSOR_IDS[@]}" -gt 0 ] && ! gc mail archive "${PREDECESSOR_IDS[@]}" >/dev/null 2>&1; then
+                echo "renudge-stale-human-gates: FAILED to replace prior reminder for stale human gate $gate_id (new reminder was delivered)" >&2
+                FAILED=$((FAILED + 1))
+            fi
             STATE="$(echo "$STATE" | jq --arg k "$gate_id" --arg now "$NOW_ISO" '.[$k] = $now')"
             write_state
             RENUDGED=$((RENUDGED + 1))
