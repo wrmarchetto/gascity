@@ -1,0 +1,51 @@
+# Two consecutive eligible sweeps must replace—not accumulate—the reminder.
+exec bash $WORK/scripts/renudge-stale-human-gates.sh
+exec bash $WORK/scripts/renudge-stale-human-gates.sh
+exec wc -l $WORK/state/reminders
+stdout '^1 '
+
+-- bin/gc --
+#!/bin/sh
+set -eu
+
+state_dir=${RENUDGE_TEST_STATE:?}
+reminders="$state_dir/reminders"
+touch "$reminders"
+
+case "$1 $2 ${3:-}" in
+  "rig list --json")
+    printf '%s\n' '{"rigs":[]}'
+    ;;
+  "bd gate list")
+    printf '%s\n' '[{"id":"gate-1","await_type":"human","status":"open","created_at":"2000-01-01T00:00:00Z"}]'
+    ;;
+  "bd show gate-1")
+    printf '%s\n' '{"id":"gate-1","await_type":"human","status":"open","assignee":"mayor","title":"Unplug ethernet","description":"Observe the probe"}'
+    ;;
+  "mail archive "*)
+    shift 2
+    if [ "${1:-}" = "--to" ] && printf '%s\n' "$*" | grep -q -- '--dry-run'; then
+      printf '{"messages":['
+      first=true
+      while IFS= read -r id; do
+        [ -n "$id" ] || continue
+        if [ "$first" = true ]; then first=false; else printf ','; fi
+        printf '{"id":"%s","subject":"Reminder — human gate still open: gate-1"}' "$id"
+      done < "$reminders"
+      printf ']}\n'
+      exit 0
+    fi
+    for id in "$@"; do
+      case "$id" in -*) continue ;; esac
+      grep -vxF "$id" "$reminders" > "$reminders.next" || true
+      mv -f "$reminders.next" "$reminders"
+    done
+    ;;
+  "mail send "*)
+    printf 'reminder-%s\n' "$(( $(wc -l < "$reminders") + 1 ))" >> "$reminders"
+    ;;
+  *)
+    printf 'unexpected gc command: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac
