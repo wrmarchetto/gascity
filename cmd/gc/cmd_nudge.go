@@ -96,6 +96,7 @@ var (
 	nudgeObserveTarget                       = workerObserveNudgeTarget
 	nudgeWithdrawQueuedWaitNudges            = withdrawQueuedWaitNudges
 	nudgeWarningWriter             io.Writer = os.Stderr
+	nudgePollerExecutable                    = os.Executable
 )
 
 type nudgeDeliveryMode string
@@ -754,6 +755,22 @@ func cmdNudgePoll(args []string, sessionName string, interval, quiescence time.D
 	// nudges store keeps flowing to the queue-delivery path. Identity today.
 	sessStore := cliSessionStore(store.Store, target.cfg, target.cityPath)
 	var missingSince time.Time
+	lastDecision := ""
+	recordDecision := func(reason string, cause error) {
+		fingerprint := reason
+		if cause != nil {
+			fingerprint += ":" + cause.Error()
+		}
+		if fingerprint == lastDecision {
+			return
+		}
+		lastDecision = fingerprint
+		if cause == nil {
+			fmt.Fprintf(stderr, "gc nudge poll: decision=declined reason=%s session=%q session_id=%q\n", reason, target.sessionName, target.sessionID) //nolint:errcheck
+			return
+		}
+		fmt.Fprintf(stderr, "gc nudge poll: decision=declined reason=%s session=%q session_id=%q error=%v\n", reason, target.sessionName, target.sessionID, cause) //nolint:errcheck
+	}
 	var lastFreeOS time.Time
 	for {
 		// Each tick that observes a changed beads.json re-parses the whole-file
@@ -796,11 +813,12 @@ func cmdNudgePoll(args []string, sessionName string, interval, quiescence time.D
 			return 0
 		}
 		missingSince = time.Time{}
-		delivered, pollErr := tryDeliverQueuedNudgesByPoller(target, store.Store, cliSessionStore(store.Store, target.cfg, target.cityPath), sp, quiescence, obs)
+		delivered, pollErr := tryDeliverQueuedNudgesByPollerWithDecision(target, store.Store, cliSessionStore(store.Store, target.cfg, target.cityPath), sp, quiescence, obs, recordDecision)
 		if pollErr != nil {
 			fmt.Fprintf(stderr, "gc nudge poll: %v\n", pollErr) //nolint:errcheck
 		}
 		if delivered {
+			lastDecision = ""
 			continue
 		}
 		time.Sleep(interval)
@@ -1382,12 +1400,24 @@ func parseNudgeDeliveryMode(raw string) (nudgeDeliveryMode, error) {
 	}
 }
 
-func tryDeliverQueuedNudgesByPoller(target nudgeTarget, store, sessStore beads.Store, sp runtime.Provider, quiescence time.Duration, obs worker.LiveObservation) (bool, error) {
+type nudgePollDecisionRecorder func(reason string, cause error)
+
+func tryDeliverQueuedNudgesByPoller(target nudgeTarget, store, sessStore beads.Store, sp runtime.Provider, obs worker.LiveObservation) (bool, error) {
+	return tryDeliverQueuedNudgesByPollerWithDecision(target, store, sessStore, sp, defaultNudgePollQuiescence, obs, nil)
+}
+
+func tryDeliverQueuedNudgesByPollerWithDecision(target nudgeTarget, store, sessStore beads.Store, sp runtime.Provider, quiescence time.Duration, obs worker.LiveObservation, recordDecision nudgePollDecisionRecorder) (bool, error) {
 	matches, err := nudgeTargetLiveGenerationMatches(target, obs, sp)
-	if err != nil || !matches {
+	if err != nil {
+		recordNudgePollDecision(recordDecision, "session-generation-check-failed", err)
+		return false, err
+	}
+	if !matches {
+		recordNudgePollDecision(recordDecision, "session-generation-mismatch", nil)
 		return false, err
 	}
 	if !pollerSessionIdleEnough(target, sp, quiescence, obs) {
+		recordNudgePollDecision(recordDecision, "session-not-idle", nil)
 		return false, nil
 	}
 	items, err := claimDueQueuedNudgesForTarget(target.cityPath, target, time.Now())
@@ -1440,6 +1470,7 @@ func tryDeliverQueuedNudgesByPoller(target nudgeTarget, store, sessStore beads.S
 		}
 	}
 	if len(items) == 0 {
+		recordNudgePollDecision(recordDecision, "queue-items-blocked", nil)
 		return false, bookkeepErr
 	}
 	var msg string
@@ -1450,6 +1481,7 @@ func tryDeliverQueuedNudgesByPoller(target nudgeTarget, store, sessStore beads.S
 	}
 	handle, err := workerHandleForNudgeTarget(target, handleSessStore, sp)
 	if err != nil {
+		recordNudgePollDecision(recordDecision, "worker-handle-unavailable", err)
 		relErr := releaseQueuedNudgeClaims(target.cityPath, queuedNudgeIDs(items))
 		return false, errors.Join(bookkeepErr, err, relErr)
 	}
@@ -1471,17 +1503,20 @@ func tryDeliverQueuedNudgesByPoller(target nudgeTarget, store, sessStore beads.S
 		}
 		telemetry.RecordNudge(context.Background(), target.agentKey(), err)
 		if errors.Is(err, runtime.ErrSessionNotFound) {
+			recordNudgePollDecision(recordDecision, "runtime-session-not-found", err)
 			if recErr := releaseQueuedNudgeClaims(target.cityPath, queuedNudgeIDs(items)); recErr != nil {
 				return false, errors.Join(bookkeepErr, recErr)
 			}
 			return false, bookkeepErr
 		}
+		recordNudgePollDecision(recordDecision, "runtime-nudge-failed", err)
 		if recErr := recordQueuedNudgeFailureWithStore(target.cityPath, beads.NudgesStore{Store: deliveryStore}, queuedNudgeIDs(items), err, time.Now()); recErr != nil {
 			return false, errors.Join(bookkeepErr, recErr)
 		}
 		return false, bookkeepErr
 	}
 	if !result.Delivered {
+		recordNudgePollDecision(recordDecision, "runtime-declined", nil)
 		// The runtime declined without an error (e.g. the session stopped
 		// between observation and delivery). Release the claims so the next
 		// pass retries promptly instead of waiting out the in-flight lease.
@@ -1491,6 +1526,12 @@ func tryDeliverQueuedNudgesByPoller(target nudgeTarget, store, sessStore beads.S
 	telemetry.RecordNudge(context.Background(), target.agentKey(), nil)
 	stampLastNudgeDeliveredAt(deliverySessFront, target.sessionID, time.Now())
 	return true, errors.Join(bookkeepErr, ackQueuedNudges(target.cityPath, queuedNudgeIDs(items)))
+}
+
+func recordNudgePollDecision(record nudgePollDecisionRecorder, reason string, cause error) {
+	if record != nil {
+		record(reason, cause)
+	}
 }
 
 func stampLastNudgeDeliveredAt(sessFront *session.Store, sessionID string, t time.Time) {
@@ -1700,14 +1741,19 @@ func ensureNudgePoller(cityPath, agentName, sessionName string) error {
 		if running, _ := existingPollerPID(pidPath, cityPath, sessionName, agentName); running {
 			return nil
 		}
-		exe, err := os.Executable()
+		exe, err := nudgePollerExecutable()
 		if err != nil {
 			return err
 		}
 		cmd := exec.Command(exe, nudgepoller.CommandArgs(cityPath, sessionName, agentName)...)
 		cmd.Env = os.Environ()
-		cmd.Stdout = io.Discard
-		cmd.Stderr = io.Discard
+		logFile, err := os.OpenFile(nudgePollerLogPath(cityPath, sessionName, agentName), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		if err != nil {
+			return err
+		}
+		defer logFile.Close() //nolint:errcheck
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		disableProductMetricsForChild(cmd)
 		if err := cmd.Start(); err != nil {
@@ -2577,6 +2623,10 @@ func withNudgeQueueState(cityPath string, fn func(*nudgeQueueState) error) error
 
 func nudgePollerPIDPath(cityPath, sessionName, agentName string) string {
 	return citylayout.RuntimePath(cityPath, "nudges", "pollers", nudgepoller.PollerFileStem(sessionName, agentName)+".pid")
+}
+
+func nudgePollerLogPath(cityPath, sessionName, agentName string) string {
+	return citylayout.RuntimePath(cityPath, "nudges", "pollers", nudgepoller.PollerFileStem(sessionName, agentName)+".log")
 }
 
 // reapStaleNudgePollers removes orphaned nudge poller PID files left behind by

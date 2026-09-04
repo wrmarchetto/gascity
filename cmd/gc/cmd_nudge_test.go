@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/nudgepoller"
@@ -2505,7 +2506,7 @@ func TestTryDeliverQueuedNudgesByPollerDeliversAndAcks(t *testing.T) {
 	}
 	obs := worker.LiveObservation{Running: true, LastActivity: &idleSince}
 
-	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, 3*time.Second, obs)
+	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, obs)
 	if err != nil {
 		t.Fatalf("tryDeliverQueuedNudgesByPoller: %v", err)
 	}
@@ -2573,7 +2574,7 @@ func TestTryDeliverQueuedNudgesByPollerDeliversActivitylessTimedOnlySession(t *t
 	}
 	obs := worker.LiveObservation{Running: true}
 
-	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, 3*time.Second, obs)
+	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, obs)
 	if err != nil {
 		t.Fatalf("tryDeliverQueuedNudgesByPoller: %v", err)
 	}
@@ -2679,7 +2680,7 @@ func TestTryDeliverQueuedNudgesByPollerSkipsStaleSessionGeneration(t *testing.T)
 		t.Fatalf("workerObserveNudgeTarget: %v", err)
 	}
 	if obs.Running {
-		delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, 3*time.Second, obs)
+		delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, obs)
 		if err != nil {
 			t.Fatalf("tryDeliverQueuedNudgesByPoller: %v", err)
 		}
@@ -2724,7 +2725,7 @@ func TestTryDeliverQueuedNudgesByPollerLeavesACPDeliveryUnwrapped(t *testing.T) 
 	}
 	obs := worker.LiveObservation{Running: true, LastActivity: &idleSince}
 
-	delivered, err := tryDeliverQueuedNudgesByPoller(target, openNudgeBeadStore(dir).Store, openNudgeBeadStore(dir).Store, fake, 3*time.Second, obs)
+	delivered, err := tryDeliverQueuedNudgesByPoller(target, openNudgeBeadStore(dir).Store, openNudgeBeadStore(dir).Store, fake, obs)
 	if err != nil {
 		t.Fatalf("tryDeliverQueuedNudgesByPoller: %v", err)
 	}
@@ -2774,7 +2775,7 @@ func TestTryDeliverQueuedNudgesByPollerKeepsACPProviderMissRecoverable(t *testin
 	obs := worker.LiveObservation{Running: true, LastActivity: &idleSince}
 
 	for i := 0; i < defaultQueuedNudgeMaxAttempts; i++ {
-		delivered, err := tryDeliverQueuedNudgesByPoller(target, openNudgeBeadStore(dir).Store, openNudgeBeadStore(dir).Store, fake, 3*time.Second, obs)
+		delivered, err := tryDeliverQueuedNudgesByPoller(target, openNudgeBeadStore(dir).Store, openNudgeBeadStore(dir).Store, fake, obs)
 		if err != nil {
 			t.Fatalf("tryDeliverQueuedNudgesByPoller tick %d: %v", i+1, err)
 		}
@@ -2853,7 +2854,7 @@ func TestTryDeliverQueuedNudgesByPollerReleasesClaimsWhenDeliveryDeclined(t *tes
 	}
 	obs := worker.LiveObservation{Running: true, LastActivity: &idleSince}
 
-	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, 3*time.Second, obs)
+	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, obs)
 	if err != nil {
 		t.Fatalf("tryDeliverQueuedNudgesByPoller: %v", err)
 	}
@@ -2930,7 +2931,7 @@ func TestTryDeliverQueuedNudgesByPollerDeliversDespiteStaleFenceBeadMarkFailure(
 	}
 	obs := worker.LiveObservation{Running: true, LastActivity: &idleSince}
 
-	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, 3*time.Second, obs)
+	delivered, err := tryDeliverQueuedNudgesByPoller(target, store, store, fake, obs)
 	if err != nil {
 		t.Fatalf("tryDeliverQueuedNudgesByPoller: %v", err)
 	}
@@ -3084,6 +3085,66 @@ func TestCmdNudgePollSurvivesTransientObserveErrors(t *testing.T) {
 	}
 	if observeCalls < 2 {
 		t.Fatalf("observe calls = %d, want the poller to retry past the transient error", observeCalls)
+	}
+}
+
+func TestCmdNudgePollRecordsQuiescenceDeclineForDueNudge(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+	t.Setenv("GC_BEADS", "file")
+
+	cityDir := t.TempDir()
+	writeNamedSessionCityTOML(t, cityDir)
+	t.Setenv("GC_CITY", cityDir)
+
+	store, err := openCityStoreAt(cityDir)
+	if err != nil {
+		t.Fatalf("openCityStoreAt: %v", err)
+	}
+	created, err := store.Create(beads.Bead{
+		Title:  "Session: worker",
+		Type:   session.BeadType,
+		Status: "open",
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"session_name": "worker-session",
+			"agent_name":   "worker",
+			"template":     "worker",
+			"state":        string(session.StateActive),
+		},
+	})
+	if err != nil {
+		t.Fatalf("store.Create session: %v", err)
+	}
+	item := newQueuedNudgeWithOptions("worker", "resume your patrol wisp", "session", time.Now().Add(-time.Minute), queuedNudgeOptions{
+		SessionID: created.ID,
+	})
+	if err := enqueueQueuedNudgeWithStore(cityDir, beads.NudgesStore{Store: store}, item); err != nil {
+		t.Fatalf("enqueueQueuedNudgeWithStore: %v", err)
+	}
+
+	observeCalls := 0
+	origObserve := nudgeObserveTarget
+	nudgeObserveTarget = func(_ nudgeTarget, _ beads.Store, _ runtime.Provider) (worker.LiveObservation, error) {
+		observeCalls++
+		if observeCalls == 1 {
+			now := time.Now()
+			return worker.LiveObservation{Running: true, SessionID: created.ID, RuntimeSessionID: created.ID, LastActivity: &now}, nil
+		}
+		if err := ackQueuedNudges(cityDir, []string{item.ID}); err != nil {
+			t.Errorf("ackQueuedNudges: %v", err)
+		}
+		return worker.LiveObservation{Running: false}, nil
+	}
+	t.Cleanup(func() { nudgeObserveTarget = origObserve })
+
+	var stdout, stderr bytes.Buffer
+	code := cmdNudgePoll([]string{created.ID}, "worker-session", time.Millisecond, time.Hour, true, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("cmdNudgePoll = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "decision=declined") || !strings.Contains(stderr.String(), "reason=session-not-idle") {
+		t.Fatalf("poller stderr = %q, want a declined session-not-idle decision record", stderr.String())
 	}
 }
 
@@ -3587,6 +3648,63 @@ func TestAcquireNudgePollerLeaseAllowsBootstrapPID(t *testing.T) {
 	_, err = os.Stat(pidPath)
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pid file still exists after release: %v", err)
+	}
+}
+
+func TestEnsureNudgePollerCapturesChildDecisionLog(t *testing.T) {
+	cityPath := t.TempDir()
+	spy := filepath.Join(t.TempDir(), "gc-poller-spy")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' 'gc nudge poll: decision=declined reason=session-not-idle' >&2\n"
+	if err := os.WriteFile(spy, []byte(script), 0o700); err != nil {
+		t.Fatalf("write poller spy: %v", err)
+	}
+	logPath := nudgePollerLogPath(cityPath, "session-worker", "session-id")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatalf("create poller log directory: %v", err)
+	}
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("new poller log watcher: %v", err)
+	}
+	t.Cleanup(func() { _ = watcher.Close() })
+	if err := watcher.Add(filepath.Dir(logPath)); err != nil {
+		t.Fatalf("watch poller log directory: %v", err)
+	}
+
+	previous := nudgePollerExecutable
+	nudgePollerExecutable = func() (string, error) { return spy, nil }
+	t.Cleanup(func() { nudgePollerExecutable = previous })
+
+	if err := ensureNudgePoller(cityPath, "session-id", "session-worker"); err != nil {
+		t.Fatalf("ensureNudgePoller: %v", err)
+	}
+
+	var data []byte
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				t.Fatal("poller log watcher closed before the child wrote its decision")
+			}
+			if event.Name != logPath || event.Op&fsnotify.Write == 0 {
+				continue
+			}
+			var err error
+			data, err = os.ReadFile(logPath)
+			if err != nil {
+				t.Fatalf("read poller log: %v", err)
+			}
+		case err := <-watcher.Errors:
+			t.Fatalf("watch poller log: %v", err)
+		case <-deadline:
+			t.Fatal("poller child did not write its decision log")
+		}
+		break
+	}
+	if got := string(data); !strings.Contains(got, "decision=declined") || !strings.Contains(got, "reason=session-not-idle") {
+		t.Fatalf("poller log = %q, want declined session-not-idle decision", got)
 	}
 }
 
