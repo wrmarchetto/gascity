@@ -204,7 +204,7 @@ func dispatchAllQueuedNudges(cityPath string, cfg *config.City, store, sessStore
 		if !obs.Running {
 			continue
 		}
-		ok, err := tryDeliverQueuedNudgesByPoller(target, store, sessStore, sp, defaultNudgePollQuiescence, obs)
+		ok, err := tryDeliverQueuedNudgesByPoller(target, store, sessStore, sp, obs)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
