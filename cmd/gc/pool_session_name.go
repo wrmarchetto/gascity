@@ -170,11 +170,25 @@ func releaseOrphanedPoolAssignments(
 				continue
 			}
 		} else {
-			// A bare pool template in Assignee is intentional cold-pool demand,
-			// not ownership by a concrete session. Its absence from the open
-			// session snapshot is therefore expected: reaping it would erase the
-			// very demand that must create a pool slot to claim the bead.
-			if agentTemplateIdentitiesEquivalent(cfg, assignee, template) {
+			// A bare pool name in Assignee is an ADDRESS, not ownership by a
+			// concrete session. Its absence from the open session snapshot is
+			// therefore expected -- there is no session to be absent -- and
+			// reaping it erases the very demand that must create a pool slot to
+			// claim the bead.
+			//
+			// This asks whether the assignee names a configured pool AT ALL. It
+			// used to ask whether the assignee matched THIS bead's route, which
+			// silently deleted the address of every bead addressed to one pool
+			// and routed to another: as-7uha, addressed to a rig pool and routed
+			// to a suspended agent, was stripped on every tick for as long as
+			// anyone kept re-assigning it, and the rig stopped with nothing red
+			// (ci-vcornx). Whether that shape should also RAISE demand is a
+			// separate policy owned by controllerDemandPoolAliasTarget, which
+			// reads it as a concrete handoff and declines; declining to count an
+			// address is not a license to delete it, and the same file names
+			// discarding the operator's recorded addressee as a cost worth
+			// avoiding.
+			if assigneeNamesConfiguredPool(cfg, assignee) {
 				continue
 			}
 			workStoreRef := ""
@@ -218,6 +232,28 @@ func releaseOrphanedPoolAssignments(
 		released = append(released, releasedPoolAssignment{ID: wb.ID, Index: i})
 	}
 	return released
+}
+
+// assigneeNamesConfiguredPool reports whether a work bead's assignee is an
+// agent's own configured name rather than a concrete session identity.
+//
+// The distinction is the one the orphan sweep exists to make: it releases
+// assignments whose owning SESSION is gone. A slot alias ("worker-2") and a
+// runtime session name are session identities, match no configured agent, and
+// still release when nothing bears them. An agent name matches one, and no
+// session was ever supposed to bear it, so its absence from the session snapshot
+// proves nothing.
+//
+// isKnownPoolTemplate is the narrower predicate next door and is deliberately
+// NOT used: it excludes suspended agents and agents that cannot run generic
+// ephemeral sessions. Excluding suspended ones would delete the address of every
+// bead parked on a pool for the duration of a suspension -- which is how the
+// ci-vcornx beads got into this state, since the 2026-09-04 xhigh brake
+// suspended a whole agent family. A suspension is a pause, not a retirement, and
+// the address has to survive it. An agent REMOVED from config matches nothing
+// here and is released, which is the genuinely unreachable case.
+func assigneeNamesConfiguredPool(cfg *config.City, assignee string) bool {
+	return findAgentByTemplate(cfg, strings.TrimSpace(assignee)) != nil
 }
 
 func detachedProbeAllowsOrphanRelease(wb beads.Bead) (bool, bool) {
