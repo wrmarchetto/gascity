@@ -109,9 +109,12 @@ who has to move next, so that actor reaching its own held work is the mechanism
 working, not leaking. The consequence to plan around: for an agent whose own
 identity IS the recorded owner (a singleton pool, or a `[[named_session]]`
 holder addressed by its bare name), a hold stops a session from being *spawned*
-for the bead but not a live one from *claiming* it. Multi-slot pools are
-unaffected, because a slot's identity is its suffixed name and the bare pool
-name is only ever reached through the route-scoped tier, which excludes holds.
+for the bead but not a live one from *claiming* it. `poolDesiredRequestIdentity`
+(`cmd/gc/build_desired_state.go`) is where that turns: it hands a singleton pool
+its bare qualified name as `GC_ALIAS`, and above one slot the same call returns
+a suffixed slot name instead, after which the bare pool name is reachable only
+through the route-scoped tier, which excludes holds. So raising
+`max_active_sessions` past 1 silently changes this behavior.
 
 **The sibling lever, and when to prefer it.** bd's status-based indefinite
 deferral (`bd update <id> --status deferred`, no `defer_until`) also holds a
