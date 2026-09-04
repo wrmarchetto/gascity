@@ -33,8 +33,16 @@ type backstopPredicate interface {
 	// observe to (re)start the grace clock instead of consulting attempts.
 	state(s beads.Bead, target backstopTarget) (same bool, attempts int, last time.Time)
 
-	// content resolves the text to nudge with, or "" to skip silently.
+	// content resolves the text to nudge with, or "" when this session cannot
+	// be nudged at all. An empty result is REPORTED, not skipped silently:
+	// contentAbsenceReason supplies the operator-facing explanation.
 	content(s beads.Bead) string
+
+	// contentAbsenceReason explains, for a reader who has to fix it, why
+	// content returned "". It is consulted only on that branch. Returning ""
+	// restores the silent skip and should be reserved for a cause the operator
+	// cannot act on.
+	contentAbsenceReason(s beads.Bead) string
 
 	// revalidate checks the exact target immediately before attempt reservation
 	// and delivery. It closes the desired-state-snapshot race without treating
@@ -178,10 +186,6 @@ func runNudgeBackstop(
 			pred.exhausted(store, s, stdout)
 			continue
 		case backstopActionNudge:
-			content := pred.content(*s)
-			if content == "" {
-				continue
-			}
 			switch pred.revalidate(target) {
 			case backstopResolutionHold:
 				continue
@@ -197,6 +201,28 @@ func runNudgeBackstop(
 			// after this point, an attempt may be consumed without delivery,
 			// but a crash or store failure can never replay an unbounded nudge.
 			if !pred.reserve(store, s, target, attempts+1, now, stdout) {
+				continue
+			}
+			// The content check sits AFTER the reservation, and the order is
+			// the whole fix for ci-a0tquz. A session whose agent carries no
+			// nudge text has no working backstop at all, and this branch used
+			// to return before reserving -- so it neither delivered nor
+			// consumed an attempt, leaving the state machine to re-decide
+			// "nudge" on every patrol tick forever while logging nothing. That
+			// is why a switched-off backstop read as a healthy one: the mayor
+			// hand-cleared the same wedge twelve times in one morning without
+			// suspecting a rescue path existed. Reserving first makes the
+			// report inherit the same bounded budget as a delivery, so the
+			// operator gets a handful of actionable lines instead of one every
+			// 30 seconds, and the "bounded per assignment" invariant this file
+			// advertises becomes true for this branch too.
+			content := pred.content(*s)
+			if content == "" {
+				if reason := pred.contentAbsenceReason(*s); reason != "" {
+					//nolint:errcheck // best-effort diagnostic
+					fmt.Fprintf(stdout, "%s: %s holds %s but %s; the claim backstop cannot rescue it (attempt %d/%d)\n",
+						label, sessName, target.ID, reason, attempts+1, idleClaimNudgeMaxAttempts)
+				}
 				continue
 			}
 			if err := sp.Nudge(sessName, runtime.TextContent(content)); err != nil {

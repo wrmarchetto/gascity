@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -255,5 +256,66 @@ func TestNudgeStalledPoolClaims_SkipsNonPool(t *testing.T) {
 	session = mustGetTestBead(t, store, session.ID)
 	if got := session.Metadata[idleClaimNudgeTriggerKey]; got != "" {
 		t.Fatalf("non-pool marker trigger = %q, want empty", got)
+	}
+}
+
+// TestNudgeStalledPoolClaims_ReportsMissingNudgeText pins the ci-a0tquz
+// observability contract: an agent whose config carries no nudge text has NO
+// working claim backstop, and until this line existed that was indistinguishable
+// from a healthy one at every surface an operator has. The mayor cleared the
+// same wedge by hand twelve times in one morning without suspecting a rescue
+// path existed, because the skip returned silently.
+//
+// The assertions are split deliberately. Naming the SESSION is not enough --
+// the remedy is an edit to the agent's config, so the line has to name the
+// agent template a reader would go and edit, and say what to add. And the line
+// has to be BOUNDED: this branch is reached on every patrol tick (30s by
+// default) for as long as the misconfiguration lasts, so an unbounded line is a
+// log flood rather than a signal. Bounding it on the backstop's own attempt
+// budget is what the production change buys, and the second half of this test
+// is the only thing that proves the budget is actually consumed.
+func TestNudgeStalledPoolClaims_ReportsMissingNudgeText(t *testing.T) {
+	sp := runningIdleClaimFake(t, "session-a")
+	cfg := idleClaimTestCfg()
+	cfg.Agents[0].Nudge = "" // the whole subject: a configured agent with no nudge text
+	session := idleClaimPoolSession()
+	work := []beads.Bead{{ID: "work-a", Status: "open"}}
+	store := beads.NewMemStoreFrom(0, []beads.Bead{session}, nil)
+	clk := &clock.Fake{Time: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
+	var out bytes.Buffer
+
+	// Grace tick: still silent, because nothing is wrong yet -- a normal claim
+	// usually lands inside the window and the backstop would never have fired.
+	nudgeStalledPoolClaims(sp, cfg, store, []beads.Bead{session}, work, nil, clk.Now(), &out)
+	if out.Len() != 0 {
+		t.Fatalf("grace tick logged %q, want silence — reporting before the backstop would have acted turns every healthy claim into a warning", out.String())
+	}
+
+	clk.Advance(idleClaimNudgeGrace + time.Second)
+	session = mustGetTestBead(t, store, session.ID)
+	nudgeStalledPoolClaims(sp, cfg, store, []beads.Bead{session}, work, nil, clk.Now(), &out)
+
+	line := out.String()
+	for _, want := range []string{"session-a", "work-a", "agent-a", "nudge"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log = %q, missing %q — the line has to name the session, the work it is stuck on, the agent to edit, and the field to set", line, want)
+		}
+	}
+	if got := sp.CountCalls("Nudge", "session-a"); got != 0 {
+		t.Errorf("Nudge calls = %d, want 0 — there is no text to deliver", got)
+	}
+
+	// Bounded: the attempt budget must be consumed, or this line repeats every
+	// patrol tick forever. Drive past the cap and require the log to stop.
+	for i := 0; i < idleClaimNudgeMaxAttempts+2; i++ {
+		clk.Advance(idleClaimNudgeBackoff + time.Second)
+		session = mustGetTestBead(t, store, session.ID)
+		nudgeStalledPoolClaims(sp, cfg, store, []beads.Bead{session}, work, nil, clk.Now(), &out)
+	}
+	if got := strings.Count(out.String(), "no nudge text"); got > idleClaimNudgeMaxAttempts {
+		t.Errorf("reported %d times, want at most %d — an unbounded line on a 30s patrol tick is a flood, not a signal", got, idleClaimNudgeMaxAttempts)
+	}
+	if got := strings.Count(out.String(), "no nudge text"); got == 0 {
+		t.Errorf("reported 0 times, want at least 1")
 	}
 }
