@@ -396,6 +396,38 @@ func (e *reconcilerTestEnv) setSessionMetadata(session *beads.Bead, kvs map[stri
 	}
 }
 
+// createWorkBead creates a work bead and forces its status, because
+// beads.MemStore.Create hardcodes `b.Status = "open"` and silently discards the
+// status the caller asked for. A fixture that passes Status:"in_progress" to
+// Create is therefore stored OPEN, which is not the same bead for any predicate
+// that distinguishes a claim from queued work -- two drain-ack tests asserted an
+// in-progress invariant against an open bead for exactly that reason (ci-fx4duc).
+//
+// The post-write read-back is the point of the helper, not defensive noise: it
+// is what makes the discard impossible to reintroduce silently. It panics
+// rather than taking a *testing.T to match createSessionBead's fail-fast style.
+func (e *reconcilerTestEnv) createWorkBead(b beads.Bead) beads.Bead {
+	status := strings.TrimSpace(b.Status)
+	created, err := e.store.Create(b)
+	if err != nil {
+		panic("reconcilerTestEnv.createWorkBead: " + err.Error())
+	}
+	if status == "" || created.Status == status {
+		return created
+	}
+	if err := e.store.Update(created.ID, beads.UpdateOpts{Status: &status}); err != nil {
+		panic("reconcilerTestEnv.createWorkBead: setting status: " + err.Error())
+	}
+	got, err := e.store.Get(created.ID)
+	if err != nil {
+		panic("reconcilerTestEnv.createWorkBead: re-reading status: " + err.Error())
+	}
+	if got.Status != status {
+		panic("reconcilerTestEnv.createWorkBead: status did not stick: got " + got.Status + ", want " + status)
+	}
+	return got
+}
+
 func (e *reconcilerTestEnv) markSessionCreating(session *beads.Bead) {
 	e.setSessionMetadata(session, map[string]string{"state": "creating"})
 }
@@ -1733,6 +1765,20 @@ func TestConfirmDrainAckRuntimeDeadTokenFenceStopsOnReplacement(t *testing.T) {
 	}
 }
 
+// TestReconcileSessionBeads_AgentDrainAckWithAliasAssignedOpenWorkStaysActive
+// pins that a drain acknowledgement is refused while the session still holds
+// open work reached through its configured_named_identity -- the
+// alias-assignment path from ci-00hcfv. The bead is open rather than
+// in_progress because preassignHookContinuationGroup hands a session its
+// continuation siblings at status open, so refusing only on in_progress would
+// let an agent stop with its group unfinished (the case 18691002b installed
+// this guard for).
+//
+// Scope worth knowing before reusing this fixture: configured_named_identity is
+// NOT a pool queue address, so the ci-fx4duc queue-work exclusion never applies
+// here and this test says nothing about it either way. The pool-alias cases are
+// TestReconcileSessionBeads_AgentDrainAckWithUnpinnedAliasQueueWorkReleasesSlot
+// and ...AgentDrainAckPoolAliasWorkClassification.
 func TestReconcileSessionBeads_AgentDrainAckWithAliasAssignedOpenWorkStaysActive(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{
@@ -1805,6 +1851,264 @@ func TestReconcileSessionBeads_AgentDrainAckWithAliasAssignedOpenWorkStaysActive
 	}
 }
 
+// TestReconcileSessionBeads_AgentDrainAckWithUnpinnedAliasQueueWorkReleasesSlot
+// pins the ci-fx4duc invariant: an open bead assigned to a pool alias but
+// carrying NO session pin is queue work no instance holds, so it must not
+// refuse the occupant's drain acknowledgement.
+//
+// The distinction is not cosmetic. A canonical singleton pool mints no `-N`
+// suffix, so its slot alias IS the queue address, and city automation files
+// work pre-assigned to that name (five such beads were queued on
+// astoria-zephyr/lab.pm when this was measured). Counting them as held work
+// makes the refusal unsatisfiable by construction: the session can only
+// release the alias by draining, and draining is refused because work is
+// addressed to the alias. Six sessions wedged that way on 2026-09-04, each
+// needing `gc session close` by hand.
+//
+// Asserting on state_reason rather than on the session bead being closed is
+// deliberate: an alive runtime takes the async stop-pending path, so
+// stop-pending IS the honored outcome here. The negative assertion on
+// DrainAckAssignedWorkReason is the one that fails before the fix; without it
+// a future refusal that merely renamed its reason would pass.
+func TestReconcileSessionBeads_AgentDrainAckWithUnpinnedAliasQueueWorkReleasesSlot(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{
+		Agents: []config.Agent{{Name: "worker"}},
+	}
+	env.addDesired("worker", "worker", true)
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+	const poolAlias = "worker"
+	// The measured shape: a pool-managed ephemeral session whose alias is the
+	// unsuffixed template name.
+	env.setSessionMetadata(&session, map[string]string{
+		"alias":          poolAlias,
+		"pool_managed":   "true",
+		"session_origin": "ephemeral",
+	})
+	// Queue work: pre-assigned to the alias, never claimed, no continuation
+	// group and no session affinity. Metadata is left nil rather than set to
+	// empty strings so the fixture matches what `bd create --assignee <pool>`
+	// actually writes.
+	if _, err := env.store.Create(beads.Bead{
+		Title:    "queued epic-close summons",
+		Type:     "task",
+		Status:   "open",
+		Assignee: poolAlias,
+	}); err != nil {
+		t.Fatalf("Create(queued work): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAck("worker"); err != nil {
+		t.Fatalf("setDrainAck: %v", err)
+	}
+
+	woken := reconcileSessionBeads(
+		context.Background(),
+		[]beads.Bead{session},
+		env.desiredState,
+		map[string]bool{"worker": true},
+		env.cfg,
+		env.sp,
+		env.store,
+		dops,
+		nil,
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+	if woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session after drain-ack: %v", err)
+	}
+	if got.Metadata["state_reason"] == sessionpkg.DrainAckAssignedWorkReason {
+		t.Fatalf("state_reason = %q: unpinned queue work assigned to the pool alias must not refuse the drain-ack -- this is the ci-fx4duc wedge", got.Metadata["state_reason"])
+	}
+	if got.Metadata["state_reason"] != sessionpkg.DrainAckStopPendingReason {
+		t.Fatalf("state_reason = %q, want %q: an honored ack on a live runtime queues the async stop", got.Metadata["state_reason"], sessionpkg.DrainAckStopPendingReason)
+	}
+	if !dops.acked["worker"] {
+		t.Fatal("drain acknowledgement was cleared: the ack was honored, so it must survive for the async stop to complete")
+	}
+}
+
+// TestReconcileSessionBeads_AgentDrainAckWithNamedHolderAliasOpenWorkStaysActive
+// pins the pool-managed gate in poolQueueAliasIdentities: the queue-work
+// exclusion applies to a POOL slot alias only, so a named (non-pool) session
+// keeps refusing an ack while unpinned open work is assigned to its alias.
+//
+// A named holder has one permanent occupant and no queue behind it, so its
+// alias names that occupant rather than a slot the next session inherits --
+// there is nobody else for the work to fall through to. Without this test the
+// gate is unpinned: dropping isPoolManagedSessionInfo kills no other test,
+// because every other alias fixture in this file is pool-managed.
+func TestReconcileSessionBeads_AgentDrainAckWithNamedHolderAliasOpenWorkStaysActive(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{
+		Agents: []config.Agent{{Name: "worker"}},
+	}
+	env.addDesired("worker", "worker", true)
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+	const namedAlias = "named-holder"
+	// Alias set, but NONE of the three markers isPoolManagedSessionInfo reads
+	// (session_origin=ephemeral, pool_managed, pool_slot). This is the shape
+	// the gate exists to leave alone.
+	env.setSessionMetadata(&session, map[string]string{"alias": namedAlias})
+	if _, err := env.store.Create(beads.Bead{
+		Title:    "work assigned to the named holder",
+		Type:     "task",
+		Status:   "open",
+		Assignee: namedAlias,
+	}); err != nil {
+		t.Fatalf("Create(named holder work): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAck("worker"); err != nil {
+		t.Fatalf("setDrainAck: %v", err)
+	}
+
+	woken := reconcileSessionBeads(
+		context.Background(),
+		[]beads.Bead{session},
+		env.desiredState,
+		map[string]bool{"worker": true},
+		env.cfg,
+		env.sp,
+		env.store,
+		dops,
+		nil,
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+	if woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get session after rejecting drain-ack: %v", err)
+	}
+	if got.Metadata["state"] != "active" {
+		t.Fatalf("state = %q, want active: a named holder's alias is not a pool queue address", got.Metadata["state"])
+	}
+	if got.Metadata["state_reason"] != sessionpkg.DrainAckAssignedWorkReason {
+		t.Fatalf("state_reason = %q, want %q", got.Metadata["state_reason"], sessionpkg.DrainAckAssignedWorkReason)
+	}
+}
+
+// TestReconcileSessionBeads_AgentDrainAckPoolAliasWorkClassification pins the
+// rest of the pool-alias classification matrix: which work assigned to a
+// pool-managed session's alias still refuses its drain acknowledgement.
+//
+// The honored case -- open and unpinned -- is
+// TestReconcileSessionBeads_AgentDrainAckWithUnpinnedAliasQueueWorkReleasesSlot,
+// kept separate because it is the ci-fx4duc regression itself. The three cases
+// here are the ones that must keep refusing, and each is load-bearing against a
+// specific way of over-applying the exclusion: an in-progress claim made UNDER
+// the alias (dropping the open-status check), and either pin key on open work
+// (dropping the pin check). Every other alias fixture in this file assigns to
+// an instance identity, so without these three a mutation that widens the
+// exclusion to any alias-assigned work kills no test.
+//
+// Both pin keys get a case because beadmeta.SessionAffinityMetadataKeys holds
+// two, and only the continuation group is read by the routing path today --
+// testing that one alone would let the advisory key silently stop pinning.
+func TestReconcileSessionBeads_AgentDrainAckPoolAliasWorkClassification(t *testing.T) {
+	const poolAlias = "worker"
+	cases := []struct {
+		name     string
+		status   string
+		metadata map[string]string
+	}{
+		{
+			name:   "in-progress claim made under the alias",
+			status: "in_progress",
+		},
+		{
+			name:   "open work pinned by continuation group",
+			status: "open",
+			metadata: map[string]string{
+				beadmeta.RootBeadIDMetadataKey:        "root-1",
+				beadmeta.ContinuationGroupMetadataKey: "group-1",
+			},
+		},
+		{
+			name:   "open work pinned by session affinity",
+			status: "open",
+			metadata: map[string]string{
+				beadmeta.SessionAffinityMetadataKey: "require",
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newReconcilerTestEnv()
+			env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+			env.addDesired("worker", "worker", true)
+			session := env.createSessionBead("worker", "worker")
+			env.markSessionActive(&session)
+			env.setSessionMetadata(&session, map[string]string{
+				"alias":          poolAlias,
+				"pool_managed":   "true",
+				"session_origin": "ephemeral",
+			})
+			env.createWorkBead(beads.Bead{
+				Title:    "alias work",
+				Type:     "task",
+				Status:   tc.status,
+				Assignee: poolAlias,
+				Metadata: tc.metadata,
+			})
+
+			dops := newFakeDrainOps()
+			if err := dops.setDrainAck("worker"); err != nil {
+				t.Fatalf("setDrainAck: %v", err)
+			}
+
+			if woken := env.reconcileWithPoolDesiredAndDrainOps([]beads.Bead{session}, map[string]int{"worker": 1}, dops); woken != 0 {
+				t.Fatalf("woken = %d, want 0", woken)
+			}
+			got, err := env.store.Get(session.ID)
+			if err != nil {
+				t.Fatalf("Get session: %v", err)
+			}
+			if got.Metadata["state"] != "active" {
+				t.Fatalf("state = %q, want active: this work is held by the session, not queued to its slot", got.Metadata["state"])
+			}
+			if got.Metadata["state_reason"] != sessionpkg.DrainAckAssignedWorkReason {
+				t.Fatalf("state_reason = %q, want %q", got.Metadata["state_reason"], sessionpkg.DrainAckAssignedWorkReason)
+			}
+		})
+	}
+}
+
 // TestReconcileSessionBeads_AgentDrainAckMidPhaseStaysAwake pins the close
 // contract at the destructive boundary: an agent cannot terminate its own
 // session while it still holds an in-progress work bead. A Stop hook is only
@@ -1821,15 +2125,12 @@ func TestReconcileSessionBeads_AgentDrainAckMidPhaseStaysAwake(t *testing.T) {
 	session := env.createSessionBead("worker", "worker")
 	env.markSessionActive(&session)
 
-	stranded, err := env.store.Create(beads.Bead{
+	stranded := env.createWorkBead(beads.Bead{
 		Title:    "implement phase work",
 		Type:     "task",
 		Status:   "in_progress",
 		Assignee: session.ID,
 	})
-	if err != nil {
-		t.Fatalf("Create(stranded bead): %v", err)
-	}
 
 	dops := newFakeDrainOps()
 	if err := dops.setDrainAck("worker"); err != nil {
@@ -2029,7 +2330,7 @@ func TestReconcileSessionBeads_AgentDrainAckStepNamedDrainInOtherFormulaStaysAct
 	if err != nil {
 		t.Fatalf("Create(root): %v", err)
 	}
-	decoyStep, err := env.store.Create(beads.Bead{
+	decoyStep := env.createWorkBead(beads.Bead{
 		Title:    "drain the widget queue",
 		Type:     "task",
 		Status:   "in_progress",
@@ -2039,9 +2340,6 @@ func TestReconcileSessionBeads_AgentDrainAckStepNamedDrainInOtherFormulaStaysAct
 			beadmeta.RootBeadIDMetadataKey: root.ID,
 		},
 	})
-	if err != nil {
-		t.Fatalf("Create(decoyStep): %v", err)
-	}
 
 	dops := newFakeDrainOps()
 	if err := dops.setDrainAck("worker"); err != nil {
