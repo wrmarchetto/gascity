@@ -272,9 +272,50 @@ func TestPoolAliasWorkStaysClaimableRegardlessOfRoute(t *testing.T) {
 // and the wrong choice is a wake/drain spawn storm (PR #1516) across every pool
 // in the city -- so it is filed as its own bead rather than decided here.
 //
-// This test asserts what the code does TODAY. It is a tripwire, NOT an
-// endorsement: when that bead is worked, this is the test that should go red and
-// be rewritten, and a green run here means the gap is still open.
+// WHAT THAT BEAD (ci-77oav9) CONCLUDED, so nobody re-derives it: neither half
+// is the gap it looked like, and the own half is the opposite of unintended.
+//
+// The OWN-route zero is #2527's invariant, reached by deliberate reversal.
+// TestDefaultScaleCheckCountsDoesNotTreatTemplateAssigneeAsDemand
+// (build_desired_state_test.go) pins this exact fixture -- assignee == route ==
+// template -- at demand 0, and it REPLACED a #1991 test that asserted 1 for the
+// identical bead. dispatch.md states the residual as policy: the shell form
+// counts that bead where this reader counts zero, and #2527 wins for the shape.
+// The wisp carve-out is the one narrow exception, added when a producer of that
+// shape appeared.
+//
+// Generalizing the carve-out was measured and is worse than the status quo, not
+// merely disallowed. The wake-known-identity tier in pool_desired_state.go
+// ALREADY serves the own-route shape: with routed == assignee == template the
+// bead survives that tier's routedTo != template gate, normalizes onto the
+// template and emits a request. New-tier demand and wake requests are added,
+// never max'd (see the note there that resume requests "must not be deducted"),
+// so admitting the bead here yields TWO sessions for ONE bead -- measured over
+// a cold city with `go test -overlay`, sessions 1 -> 2 -- of which one wins the
+// compare-and-swap claim and the other drains. That is the PR #1516 wake/drain
+// shape this file's editing constraint names. The no-route case needs this tier
+// precisely because it does NOT survive that gate.
+//
+// There is also a live non-wisp producer that must keep raising zero:
+// cmd_sling_test.go's polecat->refinery done sequence writes assignee == route
+// == "saitoc/refinery", where refinery is a PLAIN POOL agent with no
+// [[named_sessions]] entry -- so poolAliasDemandEligible's named-session
+// exclusion does not catch it. The rule those three places state together is:
+// a caller that wants pool demand clears Assignee and sets gc.routed_to.
+//
+// The remaining real gap is a READINESS-capture asymmetry, not a routing one,
+// and it is filed separately. An orphaned in_progress bead is always recovered
+// (appendInProgressWorkUnique marks it ready); an orphaned OPEN bead assigned to
+// a dead slot is captured only by appendOpenRoutedWorkUnique, which never calls
+// markReadyAssigned, so filterAssignedWorkBeadsForPoolDemand drops it and it
+// reaches the wake tier only through the fully-cold-city Ready() fallback.
+// Normalizing the assignee here is NOT the fix for it: ci-rdbw's objection
+// stands, and a respawned slot finds such a bead through its own identity
+// (standardAssignedReadyWorkQueryScript probes bd ready --assignee=$GC_ALIAS).
+//
+// This test asserts what the code does today, and both routed rows are an
+// ENDORSEMENT rather than a tripwire: they pin #2527's boundary. A green run
+// here no longer means "the gap is still open".
 func TestPoolAliasDemandStillIgnoresAssignedRoutedWork(t *testing.T) {
 	cfg := &config.City{Agents: []config.Agent{
 		{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3)},
@@ -291,10 +332,10 @@ func TestPoolAliasDemandStillIgnoresAssignedRoutedWork(t *testing.T) {
 	}
 
 	if got := controllerDemandPoolAliasTarget(cfg, mk("other-agent"), templates); got != "" {
-		t.Errorf("foreign-routed pool work demand target = %q, want %q today; if this now returns the pool, the divergence bead landed and this tripwire needs rewriting", got, "")
+		t.Errorf("foreign-routed pool work demand target = %q, want %q; a bead routed elsewhere has left this pool (#2527)", got, "")
 	}
 	if got := controllerDemandPoolAliasTarget(cfg, mk("worker"), templates); got != "" {
-		t.Errorf("own-routed pool work demand target = %q, want %q today (the wisp carve-out does not apply to a plain task)", got, "")
+		t.Errorf("own-routed pool work demand target = %q, want %q; this is #2527's invariant, not an accident of the wisp carve-out -- see the header before changing it", got, "")
 	}
 	// The unrouted address is the one shape that does raise demand, which is why
 	// unsetting the route on as-7uha took its pool from 0 sizings to 9.
