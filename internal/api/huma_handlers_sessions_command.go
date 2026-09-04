@@ -982,9 +982,15 @@ func (s *Server) humaHandleSessionClose(ctx context.Context, input *SessionClose
 	if err != nil {
 		return nil, humaSessionManagerError(err)
 	}
+	// Read before the close, for the reason given on the REST twin in
+	// handler_sessions.go.
+	closingSessionBead, sessionBeadErr := store.Get(id)
 	closeResult, err := handle.CloseDetailed(ctx)
 	if err != nil {
 		return nil, humaSessionManagerError(err)
+	}
+	if sessionBeadErr == nil {
+		releaseWorkFromClosedSession(store.Store, closingSessionBead)
 	}
 	// Nudge withdrawal reads the nudges class, so it sources the typed
 	// NudgesBeadStore (identity to the work store until that class relocates).
