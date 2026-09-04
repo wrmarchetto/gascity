@@ -234,15 +234,14 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	return b.String()
 }
 
-// stopGateDrainAckReason renders the block text for an ephemeral session that
-// finished its work but never released its slot.
+// stopGateDrainAckReason renders the block text for an ephemeral session with
+// no remaining active closing work that has not released its slot.
 //
-// This is the second observed shape of the bug and it is NOT covered by the
-// outstanding-work branch: the bead was closed correctly and the turn still
-// ended one command early. The session then holds its agent's concurrency
-// slot with nothing left to do.
+// This is not covered by the outstanding-work branch. The session may have
+// closed work, or it may simply have no active closing work, but it still
+// holds its agent's concurrency slot until it acknowledges the drain.
 func stopGateDrainAckReason() string {
-	return "Stop blocked: this session closed its work but has not released" +
+	return "Stop blocked: this session has no remaining active closing work but has not released" +
 		" its slot. The controller keeps the session -- and the agent" +
 		" concurrency slot behind it -- alive until the drain is" +
 		" acknowledged.\n\nRun your final closing action now:\n" +
