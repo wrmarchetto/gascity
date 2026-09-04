@@ -22,6 +22,12 @@ import (
 // dial to fail fast.
 const pingNudgeWakeSocketDialTimeout = 200 * time.Millisecond
 
+// maxFencedNudgeTerminalizationsPerDispatch bounds the work a controller tick
+// spends retiring nudges whose target session generation has gone away. A later
+// tick continues a larger backlog; no stale fenced item is ever eligible for a
+// replacement generation in the meantime.
+const maxFencedNudgeTerminalizationsPerDispatch = 32
+
 // pingNudgeWakeSocket sends a best-effort wake signal to the supervisor's
 // nudge dispatcher. Callers invoke this after enqueueing a queued nudge so
 // the supervisor delivers within sub-second latency instead of waiting for
@@ -110,11 +116,15 @@ func startNudgeWakeListener(ctx context.Context, cityPath string, wakeCh chan<- 
 // sessionBeads, and try delivery. Returns the number of targets that
 // successfully delivered at least one item.
 //
-// This is a no-op when the dispatcher is configured for "legacy" mode —
-// the per-session `gc nudge poll` processes own delivery in that case.
+// In legacy mode, the per-session `gc nudge poll` processes own delivery.
+// The controller still retires fenced entries whose session generation is no
+// longer open, because no replacement poller may claim those entries.
 func dispatchAllQueuedNudges(cityPath string, cfg *config.City, store, sessStore beads.Store, sp runtime.Provider, sessionBeads *sessionBeadSnapshot) (int, error) {
 	if cfg == nil || sessionBeads == nil || cityPath == "" {
 		return 0, nil
+	}
+	if _, err := terminalizeStaleFencedQueuedNudges(cityPath, sessionBeads, time.Now()); err != nil {
+		return 0, fmt.Errorf("terminalizing stale fenced nudges: %w", err)
 	}
 	if !nudgeDispatcherIsSupervisor(cfg) {
 		return 0, nil
@@ -203,4 +213,93 @@ func dispatchAllQueuedNudges(cityPath string, cfg *config.City, store, sessStore
 		}
 	}
 	return delivered, firstErr
+}
+
+// terminalizeStaleFencedQueuedNudges retires a bounded batch of queued nudges
+// whose explicit session fence no longer identifies an open generation. The
+// queue's agent key intentionally survives a replacement so status remains
+// queryable through the replacement's supported `gc nudge status` surface;
+// its session fence must not. This runs from the controller in both dispatch
+// modes because a legacy sidecar belongs to one concrete generation and cannot
+// observe an older generation after replacement.
+func terminalizeStaleFencedQueuedNudges(cityPath string, sessionBeads *sessionBeadSnapshot, now time.Time) (int, error) {
+	if sessionBeads == nil {
+		return 0, nil
+	}
+	if err := sessionBeads.LoadError(); err != nil {
+		return 0, fmt.Errorf("loading session generation snapshot: %w", err)
+	}
+	openEpochBySessionID := make(map[string]string)
+	for _, info := range sessionBeads.OpenInfos() {
+		openEpochBySessionID[info.ID] = info.ContinuationEpoch
+	}
+	stale := func(item queuedNudge) bool {
+		if item.SessionID == "" {
+			return false
+		}
+		currentEpoch, open := openEpochBySessionID[item.SessionID]
+		return !open || (item.ContinuationEpoch != "" && item.ContinuationEpoch != currentEpoch)
+	}
+
+	// Avoid taking the queue lock or opening the nudge store on the common
+	// no-work tick. The locked pass below re-evaluates this predicate so the
+	// preflight is only an optimization, never the transition authority.
+	state, err := nudgequeue.LoadState(cityPath)
+	if err != nil {
+		return 0, err
+	}
+	hasStale := false
+	for _, item := range state.Pending {
+		hasStale = stale(item)
+		if hasStale {
+			break
+		}
+	}
+	if !hasStale {
+		for _, item := range state.InFlight {
+			hasStale = stale(item)
+			if hasStale {
+				break
+			}
+		}
+	}
+	if !hasStale {
+		return 0, nil
+	}
+
+	maint := nudgeMaintenanceStore{cityPath: cityPath}
+	defer maint.close() //nolint:errcheck // best-effort
+	var terminalized []queuedNudge
+	err = withNudgeQueueState(cityPath, func(state *nudgeQueueState) error {
+		terminalize := func(items []queuedNudge) []queuedNudge {
+			kept := items[:0]
+			for _, item := range items {
+				if len(terminalized) >= maxFencedNudgeTerminalizationsPerDispatch || !stale(item) {
+					kept = append(kept, item)
+					continue
+				}
+				updated, _ := failedQueuedNudge(item, errNudgeSessionFenceMismatch, now)
+				terminalized = append(terminalized, updated)
+				state.Dead = append(state.Dead, updated)
+			}
+			return kept
+		}
+		state.Pending = terminalize(state.Pending)
+		state.InFlight = terminalize(state.InFlight)
+		sortQueuedNudges(state)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	// The queue transition is authoritative. Shadow writes are best-effort so a
+	// transient bead-store failure cannot return a fenced item to Pending where a
+	// later generation might observe it.
+	for _, item := range terminalized {
+		if err := markQueuedNudgeTerminal(maint.ensureOpen(), item, "failed", item.LastError, "", now); err != nil && nudgeWarningWriter != nil {
+			fmt.Fprintf(nudgeWarningWriter, "gc nudge: warning: marking fenced nudge %q terminal: %v\n", item.ID, err) //nolint:errcheck
+		}
+	}
+	return len(terminalized), nil
 }

@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"strings"
 	"testing"
@@ -124,6 +127,163 @@ func TestDispatchAllQueuedNudgesNoOpInLegacyMode(t *testing.T) {
 	}
 	if delivered != 0 {
 		t.Fatalf("delivered = %d, want 0 in legacy mode", delivered)
+	}
+}
+
+func TestNudgeDispatchTickTerminalizesStaleFenceInLegacyMode(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+	clearInheritedCityRoutingEnv(t)
+	t.Setenv("GC_BEADS", "file")
+
+	dir := t.TempDir()
+	store := openNudgeBeadStore(dir)
+	oldSession, err := store.Create(beads.Bead{
+		Title:  "Old worker",
+		Type:   session.BeadType,
+		Status: "closed",
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"alias":              "worker",
+			"session_name":       "worker-session",
+			"continuation_epoch": "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create old session: %v", err)
+	}
+	if err := store.Update(oldSession.ID, beads.UpdateOpts{Status: stringPtr("closed")}); err != nil {
+		t.Fatalf("close old session: %v", err)
+	}
+	newSession, err := store.Create(beads.Bead{
+		Title:  "Replacement worker",
+		Type:   session.BeadType,
+		Status: "open",
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"alias":              "worker",
+			"session_name":       "worker-session",
+			"continuation_epoch": "2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create replacement session: %v", err)
+	}
+	item := newQueuedNudgeWithOptions("worker", "stale reminder", "session", time.Now().Add(-time.Minute), queuedNudgeOptions{
+		SessionID:         oldSession.ID,
+		ContinuationEpoch: "1",
+	})
+	if err := enqueueQueuedNudgeWithStore(dir, store, item); err != nil {
+		t.Fatalf("enqueue stale fenced nudge: %v", err)
+	}
+
+	cr := &CityRuntime{
+		cityPath:            dir,
+		cfg:                 &config.City{}, // legacy mode
+		standaloneCityStore: store.Store,
+		stderr:              io.Discard,
+	}
+	cr.nudgeDispatchTick(context.Background())
+
+	state, err := nudgequeue.LoadState(dir)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if len(state.Pending) != 0 || len(state.InFlight) != 0 {
+		t.Fatalf("pending/inFlight = %d/%d, want 0/0", len(state.Pending), len(state.InFlight))
+	}
+	if len(state.Dead) != 1 || state.Dead[0].ID != item.ID {
+		t.Fatalf("dead = %+v, want only stale nudge %q", state.Dead, item.ID)
+	}
+	if state.Dead[0].LastError != errNudgeSessionFenceMismatch.Error() {
+		t.Fatalf("dead terminal reason = %q, want %q", state.Dead[0].LastError, errNudgeSessionFenceMismatch)
+	}
+	replacement := resolveNudgeTargetFromSessionInfo(dir, &config.City{}, newSessionBeadSnapshot([]beads.Bead{newSession}).OpenInfos()[0])
+	pending, inFlight, dead, err := listQueuedNudgesForTarget(dir, replacement, time.Now())
+	if err != nil {
+		t.Fatalf("listQueuedNudgesForTarget: %v", err)
+	}
+	if len(pending) != 0 || len(inFlight) != 0 || len(dead) != 1 || dead[0].ID != item.ID {
+		t.Fatalf("status pending/inFlight/dead = %d/%d/%+v, want 0/0/only %q", len(pending), len(inFlight), dead, item.ID)
+	}
+
+	shadow, ok, err := nudgeFrontDoor(store).FindIncludingTerminal(item.ID)
+	if err != nil || !ok {
+		t.Fatalf("FindIncludingTerminal(%q) = (%+v, %v, %v)", item.ID, shadow, ok, err)
+	}
+	if shadow.State != "failed" || shadow.TerminalReason != errNudgeSessionFenceMismatch.Error() {
+		t.Fatalf("terminal shadow = state=%q reason=%q, want failed/%q", shadow.State, shadow.TerminalReason, errNudgeSessionFenceMismatch)
+	}
+}
+
+func TestTerminalizeStaleFencedQueuedNudgesIsBoundedPerDispatch(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+	clearInheritedCityRoutingEnv(t)
+	t.Setenv("GC_BEADS", "file")
+
+	dir := t.TempDir()
+	now := time.Now().Add(-time.Minute)
+	for i := 0; i <= maxFencedNudgeTerminalizationsPerDispatch; i++ {
+		item := newQueuedNudgeWithOptions("worker", "stale reminder", "session", now, queuedNudgeOptions{
+			ID:        fmt.Sprintf("nudge-stale-%d", i),
+			SessionID: fmt.Sprintf("closed-session-%d", i),
+		})
+		if err := enqueueQueuedNudge(dir, item); err != nil {
+			t.Fatalf("enqueue queued nudge %d: %v", i, err)
+		}
+	}
+
+	terminalized, err := terminalizeStaleFencedQueuedNudges(dir, newSessionBeadSnapshot(nil), time.Now())
+	if err != nil {
+		t.Fatalf("terminalize stale fenced nudges: %v", err)
+	}
+	if terminalized != maxFencedNudgeTerminalizationsPerDispatch {
+		t.Fatalf("terminalized = %d, want dispatch cap %d", terminalized, maxFencedNudgeTerminalizationsPerDispatch)
+	}
+	state, err := nudgequeue.LoadState(dir)
+	if err != nil {
+		t.Fatalf("LoadState after bounded sweep: %v", err)
+	}
+	if len(state.Pending) != 1 || len(state.Dead) != maxFencedNudgeTerminalizationsPerDispatch {
+		t.Fatalf("pending/dead after bounded sweep = %d/%d, want 1/%d", len(state.Pending), len(state.Dead), maxFencedNudgeTerminalizationsPerDispatch)
+	}
+
+	terminalized, err = terminalizeStaleFencedQueuedNudges(dir, newSessionBeadSnapshot(nil), time.Now())
+	if err != nil {
+		t.Fatalf("terminalize remainder: %v", err)
+	}
+	if terminalized != 1 {
+		t.Fatalf("terminalized remainder = %d, want 1", terminalized)
+	}
+	state, err = nudgequeue.LoadState(dir)
+	if err != nil {
+		t.Fatalf("LoadState after remainder: %v", err)
+	}
+	if len(state.Pending) != 0 || len(state.Dead) != maxFencedNudgeTerminalizationsPerDispatch+1 {
+		t.Fatalf("pending/dead after remainder = %d/%d, want 0/%d", len(state.Pending), len(state.Dead), maxFencedNudgeTerminalizationsPerDispatch+1)
+	}
+}
+
+func TestTerminalizeStaleFencedQueuedNudgesRejectsDegradedSessionSnapshot(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+	t.Setenv("GC_BEADS", "file")
+
+	dir := t.TempDir()
+	item := newQueuedNudgeWithOptions("worker", "stale reminder", "session", time.Now().Add(-time.Minute), queuedNudgeOptions{SessionID: "closed-session"})
+	if err := enqueueQueuedNudge(dir, item); err != nil {
+		t.Fatalf("enqueue queued nudge: %v", err)
+	}
+	if _, err := terminalizeStaleFencedQueuedNudges(dir, newSessionBeadSnapshotWithError(errors.New("session store unavailable")), time.Now()); err == nil {
+		t.Fatal("terminalize stale fenced nudges error = nil, want degraded snapshot error")
+	}
+	state, err := nudgequeue.LoadState(dir)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if len(state.Pending) != 1 || state.Pending[0].ID != item.ID || len(state.Dead) != 0 {
+		t.Fatalf("pending/dead = %+v/%+v, want original pending item only", state.Pending, state.Dead)
 	}
 }
 

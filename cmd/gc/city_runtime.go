@@ -3125,12 +3125,19 @@ func parseRFC3339Metadata(v string) (time.Time, bool) {
 	return t, true
 }
 
-// nudgeDispatchTick runs one supervisor-side nudge dispatch pass. Called
-// from the main run loop on wake-socket signal and (belt-and-suspenders)
-// at the end of each patrol tick so a missed wake doesn't strand a queue
-// item past the patrol interval.
+// nudgeDispatchTick runs one nudge-queue maintenance or supervisor-delivery
+// pass. Called from the main run loop on wake-socket signal and
+// (belt-and-suspenders) at the end of each patrol tick so a missed wake does
+// not strand a queue item past the patrol interval.
 func (cr *CityRuntime) nudgeDispatchTick(_ context.Context) {
 	if !nudgeDispatcherIsSupervisor(cr.cfg) {
+		sessionBeads := cr.loadSessionBeadSnapshot()
+		if sessionBeads == nil {
+			return
+		}
+		if _, err := terminalizeStaleFencedQueuedNudges(cr.cityPath, sessionBeads, time.Now()); err != nil {
+			fmt.Fprintf(cr.stderr, "%s: nudge fence maintenance: %v\n", cr.logPrefix, err) //nolint:errcheck
+		}
 		return
 	}
 	// Nudge ops route through the nudges accessor; the session snapshot it pairs
