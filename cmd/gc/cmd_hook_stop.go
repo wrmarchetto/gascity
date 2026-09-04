@@ -103,10 +103,11 @@ type stopGateFacts struct {
 	sessionOrigin    string
 	restartRequested bool
 	drainAcked       bool
-	// outstanding holds the beads still on this session's hook:
-	// in_progress, assigned to one of this session's identities, and not
-	// dependency-blocked. The query that produces it already excludes mail and
-	// blocked steps, so anything here is work this session can act on right now.
+	// outstanding holds the beads still on this session's hook: assigned to one
+	// of this session's identities and not dependency-blocked, at in_progress or
+	// at open with a session-affinity pin (stopGateHeldClaims). The query that
+	// produces it already excludes mail and blocked steps, so anything here is
+	// work this session can act on right now.
 	outstanding []beads.Bead
 	// unknownWork records that the outstanding-work query could not be
 	// answered. Distinct from an empty outstanding list, because "no work" and
@@ -512,13 +513,25 @@ func stopGateHasOnlyParkedClaims(stores []hookStore) bool {
 	return known && len(held) > 0 && stopGateClaimsAreAllParked(held, stores)
 }
 
-// stopGateHeldClaims reads all claimed, in-progress beads without the regular
-// work query's dependency readiness filtering. known is false when the store
-// cannot establish that list, preserving the Stop gate's fail-open policy for
-// infrastructure faults.
+// stopGateHeldClaims reads every bead this session holds, without the regular
+// work query's dependency readiness filtering. "Holds" is the reconciler's
+// definition, not a looser one: in_progress on any identity, plus OPEN work
+// carrying a session-affinity pin -- the shape preassignHookContinuationGroup
+// creates when it hands a session its continuation siblings.
+//
+// The open half is why this exists in its current form. Reading in_progress
+// alone made this gate and the drain-ack refusal disagree on exactly one
+// variable, and this gate is the side that ORDERS the ack the refusal then
+// punishes: a session holding only open siblings was told its turn was over,
+// ran `gc runtime drain-ack`, and was refused, keeping its slot with nothing to
+// re-engage it (ci-eqtxc0).
+//
+// known is false when the store cannot establish that list, preserving the Stop
+// gate's fail-open policy for infrastructure faults.
 func stopGateHeldClaims(stores []hookStore) ([]beads.Bead, bool) {
 	seen := make(map[string]struct{})
 	held := make([]beads.Bead, 0)
+	queueAlias := stopGateQueueAliasIdentity()
 	for _, store := range stores {
 		output, err := shellWorkQueryWithEnv(stopGateHeldClaimsQuery, store.dir, store.env)
 		if err != nil {
@@ -536,6 +549,13 @@ func stopGateHeldClaims(stores []hookStore) ([]beads.Bead, bool) {
 				continue
 			}
 			seen[claim.ID] = struct{}{}
+			// The reconciler's own classifier decides this, not a second copy:
+			// open work parked on the slot alias with no session pin is the
+			// next occupant's queue, and holding the turn open for it would
+			// move ci-fx4duc's wedge from the drain-ack refusal to this gate.
+			if queueAlias != "" && strings.TrimSpace(claim.Assignee) == queueAlias && isUnpinnedQueuedWorkBead(claim) {
+				continue
+			}
 			held = append(held, claim)
 		}
 	}
@@ -570,7 +590,44 @@ func stopGateClaimIsParkedOnAnyStore(claim beads.Bead, stores []hookStore) bool 
 	return false
 }
 
-const stopGateHeldClaimsQuery = `for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] || bd list --status in_progress --assignee="$id" --exclude-type=message --json --limit=0 2>/dev/null; done | jq -s 'add // []'`
+// stopGateHeldClaimsQuery lists every bead assigned to one of this session's
+// identities in either status the drain-ack refusal counts.
+//
+// The OPEN half is what makes the two gates answer the same question, and it
+// is deliberately unfiltered here: the query cannot tell a pinned continuation
+// sibling from pool queue work parked on the same alias, so it returns both and
+// stopGateHeldClaims applies the reconciler's own classifier to the rows. Doing
+// the split in jq instead would put a second copy of that predicate on the far
+// side of a shell boundary, which is the divergence this whole bead is about.
+//
+// Nothing here short-circuits: every identity and both statuses are listed and
+// `jq -s add` unions the lot, so the status order is cosmetic. The gate needs
+// the whole set rather than the first hit, because stopGateClaimsAreAllParked
+// has to see EVERY held bead to conclude the session is parked rather than
+// abandoning work.
+const stopGateHeldClaimsQuery = `for id in "$GC_SESSION_ID" "$GC_SESSION_NAME" "$GC_ALIAS"; do [ -z "$id" ] || for st in in_progress open; do bd list --status "$st" --assignee="$id" --exclude-type=message --json --limit=0 2>/dev/null; done; done | jq -s 'add // []'`
+
+// stopGateQueueAliasIdentity returns the assignee string that addresses this
+// session's pool SLOT rather than this instance, or "" when the session has no
+// such address.
+//
+// It is the Stop-gate mirror of poolQueueAliasIdentities (session_reconciler.go)
+// and must stay one: an alias outlives its occupant, so open work merely parked
+// on it belongs to the next session in the slot, not to the one ending its turn.
+// GC_SESSION_ID and GC_SESSION_NAME are deliberately ABSENT -- they name one
+// instance and can never be inherited.
+//
+// Scoped to ephemeral origin for the reason poolQueueAliasIdentities scopes to
+// pool-managed sessions: a named holder's alias is its permanent identity with
+// no queue behind it, so treating it as a slot address would hide work that
+// holder genuinely owes. Returning "" then makes every exclusion keyed on it
+// inert, which is the same deliberate no-op.
+func stopGateQueueAliasIdentity() string {
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv("GC_SESSION_ORIGIN")), sessionOriginEphemeral) {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv("GC_ALIAS"))
+}
 
 func stopGateClaimIsParkedOnOpenAssignedQuestion(claim beads.Bead, store hookStore) bool {
 	questionID := strings.TrimSpace(claim.Metadata[beadmeta.WaitingOnQuestionMetadataKey])

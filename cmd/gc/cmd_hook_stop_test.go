@@ -528,3 +528,127 @@ func TestCmdHookStopHonorsStopHookActiveWithoutTouchingTheStore(t *testing.T) {
 		t.Errorf("re-entry path reached the store: %q", stderr.String())
 	}
 }
+
+// stopGateContinuationSiblingBd writes a fake bd that serves ONE row, and only
+// to a query that actually asks for that row's status and assignee.
+//
+// Honoring --status is what makes this a stand-in rather than a rubber stamp.
+// An earlier version ignored it and answered every list, which turned the
+// pinned-open row green against a production query that still asked for
+// in_progress alone -- the assertion passed while the defect was untouched.
+// Every unrecognized verb exits 71 for the same reason: a query that grew a
+// second bd call must fail loudly, not read an empty list and conclude the
+// session holds nothing.
+func stopGateContinuationSiblingBd(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	script := `#!/bin/sh
+case "$1" in
+list)
+  want_status=""
+  want_assignee=""
+  for arg in "$@"; do
+    case "$arg" in
+      --status=*)   want_status="${arg#--status=}" ;;
+      --status)     want_status="__next__" ;;
+      --assignee=*) want_assignee="${arg#--assignee=}" ;;
+      *)
+        if [ "$want_status" = "__next__" ]; then want_status="$arg"; fi
+        ;;
+    esac
+  done
+  if [ "$want_status" = "$STOP_GATE_ROW_STATUS" ] && [ "$want_assignee" = "$STOP_GATE_MATCH_ASSIGNEE" ]; then
+    printf '%s\n' "$STOP_GATE_ROW"
+  else
+    printf '%s\n' '[]'
+  fi
+  ;;
+*)
+  exit 71
+  ;;
+esac
+`
+	bd := filepath.Join(bin, "bd")
+	if err := os.WriteFile(bd, []byte(script), 0o700); err != nil {
+		t.Fatalf("writing fake bd: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// TestStopGateSeesPinnedOpenContinuationWork is the ci-eqtxc0 statement. The
+// Stop gate and the reconciler's drain-ack refusal must agree about what work a
+// session holds, because the gate is the side that ORDERS the drain-ack the
+// refusal then punishes: a session holding only open continuation siblings was
+// told its turn was over, ran `gc runtime drain-ack`, and had the ack refused,
+// leaving state=awake with the slot held and nothing to re-engage it.
+//
+// The rows are the close gate's own classification, so this asserts agreement
+// rather than merely that something blocks:
+//
+//   - in_progress on any identity: held by both, and always was.
+//   - open + a session-affinity pin: held by both. preassignHookContinuationGroup
+//     hands a session its siblings at status open with gc.continuation_group set,
+//     so this is the shape the contradiction survived on.
+//   - open + no pin, matched through the pool alias: queue work, held by
+//     NEITHER. Counting it here would move ci-fx4duc's wedge from the refusal to
+//     this gate -- the turn could never end instead of the slot never releasing --
+//     which is why the unpinned row is a control and not an omission.
+//   - the same unpinned open bead on a NON-ephemeral session: held. A named
+//     holder's alias is its permanent identity with no queue behind it, so the
+//     slot-address exclusion must not reach it. Without this row the origin scope
+//     is pinned by nothing, and dropping it would silently hide work such a
+//     holder genuinely owes -- the one direction this gate must never be wrong in.
+func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
+	for name, tc := range map[string]struct {
+		status string
+		origin string
+		row    string
+		want   bool
+	}{
+		"named holder's own open work on its bare identity": {
+			status: "open",
+			origin: "named",
+			row:    `[{"id":"ci-owed","status":"open","assignee":"pool-1"}]`,
+			want:   true,
+		},
+		"in_progress": {
+			status: "in_progress",
+			row:    `[{"id":"ci-held","status":"in_progress","assignee":"pool-1"}]`,
+			want:   true,
+		},
+		"open pinned to a continuation group": {
+			status: "open",
+			row:    `[{"id":"ci-sib","status":"open","assignee":"pool-1","metadata":{"gc.continuation_group":"g1","gc.root_bead_id":"ci-root"}}]`,
+			want:   true,
+		},
+		"open unpinned queue work on the pool alias": {
+			status: "open",
+			row:    `[{"id":"ci-queued","status":"open","assignee":"pool-1"}]`,
+			want:   false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			stopGateContinuationSiblingBd(t)
+			t.Setenv("GC_SESSION_ID", "")
+			t.Setenv("GC_SESSION_NAME", "")
+			t.Setenv("GC_ALIAS", "pool-1")
+			origin := tc.origin
+			if origin == "" {
+				origin = sessionOriginEphemeral
+			}
+			t.Setenv("GC_SESSION_ORIGIN", origin)
+			t.Setenv("STOP_GATE_MATCH_ASSIGNEE", "pool-1")
+			t.Setenv("STOP_GATE_ROW_STATUS", tc.status)
+			t.Setenv("STOP_GATE_ROW", tc.row)
+
+			held, known := stopGateHeldClaims([]hookStore{{dir: t.TempDir()}})
+			if !known {
+				t.Fatalf("stopGateHeldClaims() could not answer; the gate would fail open and never block")
+			}
+			if got := len(held) > 0; got != tc.want {
+				t.Fatalf("held = %v (%d beads), want %v — the Stop gate must hold exactly what the drain-ack refusal holds, or it orders an ack that is then refused",
+					got, len(held), tc.want)
+			}
+		})
+	}
+}
