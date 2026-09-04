@@ -64,6 +64,68 @@ new one, and files an audit event bead. It does **not** touch `status`,
 `owner`, or `metadata` — update those separately (or add a dependency edge)
 if they also need to change.
 
+## What a hold label does to dispatch
+
+Reach for this section when the need is "record who should eventually own this
+bead, without that record being an instruction to start it now." A hold label
+is the only one of the three mechanisms above that expresses it: it removes the
+bead from automatic dispatch while leaving `assignee`, `gc.routed_to` and the
+audit trail exactly as written.
+
+That distinction matters because for everything else in this system, addressing
+a bead IS starting it. The reconciler sizes a pool from the same `assignee` and
+`gc.routed_to` fields a filer uses to say who the work belongs to, and the
+`unclaimable-work` doctor check reports a ready bead carrying neither. So a
+decomposition that proposes beads for a verdict has no unlabelled way to sit
+still: filed unaddressed it is reported as stranded, filed addressed it is
+picked up before the verdict lands. `ci-t98zgv` was opened on the belief that
+no lever existed at all.
+
+```bash
+bd set-state <id> hold=mayor --reason "awaiting DECOMP verdict; mayor clears"
+```
+
+Both directions of the guarantee are enforced, and both are pinned by
+`TestRecordedOwnerWithHoldRaisesNoSpawn` in
+`cmd/gc/build_desired_state_recorded_owner_test.go`, which runs each held case
+beside an identical unheld control so a change that suppressed *all* demand
+fails there rather than in production:
+
+- A held bead raises no pool demand and produces no desired session, whether it
+  records its owner by assignee or by route. Enforced in the in-process
+  controller reader (`hasDispatchHoldLabel`, `cmd/gc/pool_alias_demand.go`) and
+  independently in every generated shell predicate
+  (`excludeHoldLabelsShellArgs` / `excludeHoldLabelsJQClause`,
+  `internal/config/workquery.go`). Both halves are required: the reconciler
+  counts in Go for a default probe and shells out for a custom `scale_check`,
+  and dispatch.md invariant 11 forbids the two disagreeing.
+- An ordinary addressed bead still sizes its pool. Nothing about the hold path
+  narrows what an unlabelled assignee means.
+
+**The limit, which is deliberate and must not be read as a gap.** The
+assignee-scoped work tiers — Tier 1 crash recovery and Tier 2 assigned-ready —
+are hold-transparent and must never filter on this list. A hold names the actor
+who has to move next, so that actor reaching its own held work is the mechanism
+working, not leaking. The consequence to plan around: for an agent whose own
+identity IS the recorded owner (a singleton pool, or a `[[named_session]]`
+holder addressed by its bare name), a hold stops a session from being *spawned*
+for the bead but not a live one from *claiming* it. `poolDesiredRequestIdentity`
+(`cmd/gc/build_desired_state.go`) is where that turns: it hands a singleton pool
+its bare qualified name as `GC_ALIAS`, and above one slot the same call returns
+a suffixed slot name instead, after which the bare pool name is reachable only
+through the route-scoped tier, which excludes holds. So raising
+`max_active_sessions` past 1 silently changes this behavior.
+
+**The sibling lever, and when to prefer it.** bd's status-based indefinite
+deferral (`bd update <id> --status deferred`, no `defer_until`) also holds a
+bead without touching its assignee, and `Ready()` drops it outright — see the
+`StatusDeferred` branch in `internal/beads/native_dolt_store.go`, which
+resurfaces only a deferral whose `defer_until` has expired. It is the blunter
+of the two: the bead leaves every ready and queue view rather than staying
+visible as paused-on-a-named-actor, and nothing records who is expected to
+clear it. Prefer a hold label when the pause has an owner; prefer deferral when
+the bead should be out of sight until someone deliberately goes looking.
+
 ## Retired labels
 
 These labels are legacy. If you see one on a live bead, treat it as drift
@@ -94,14 +156,20 @@ different:**
   `ready-to-build`), not a pause-state label. It may legitimately co-occur
   with `hold:mayor`.
 
-## This is a data convention, not SDK behavior
+## This is a data convention, and the SDK reads it role-neutrally
 
-Nothing in this page requires or implies special-casing any role name in Go.
-`hold:mayor` and `hold:external` are plain label values in this project's own
-bd data, chosen and enforced by convention — this document, PR review, and
-`bd set-state`'s dimension semantics — not by SDK code. Gas City's "ZERO
-hardcoded roles" invariant is unaffected: nothing under `internal/` or
-`cmd/gc/` branches on the literal label value `hold:mayor` or `hold:external`.
+Nothing on this page requires special-casing any role name in Go. Which value
+to reach for, and what counts as cleared, are settled by this document, PR
+review, and `bd set-state`'s dimension semantics — never by SDK code.
+
+The two literals do appear in Go, in exactly one place:
+`internal/beadmeta/hold_labels.go` declares them and `DispatchHoldLabels`
+collects them, and every enforcement point named in the section above reads
+that list rather than a literal of its own. Gas City's "ZERO hardcoded roles"
+invariant is unaffected, because the dispatcher tests for the label's
+*presence* and never for who "mayor" is — it cannot tell the two values apart
+and does not try (ga-5736js). Adding a third value would be a data change plus
+one line in `beadmeta`; it would not teach any dispatch path a new role.
 
 ## See also
 
@@ -111,3 +179,6 @@ hardcoded roles" invariant is unaffected: nothing under `internal/` or
   beads intentionally skipped (bare `human` used for an unrelated reason).
 - [Beads architecture](../architecture/beads.md) — the generic `Label` and
   `Store` mechanism this convention is built on.
+- `cmd/gc/build_desired_state_recorded_owner_test.go` — the both-directions
+  gate behind "What a hold label does to dispatch", and the pin on the
+  singleton-pool limit that section warns about.
