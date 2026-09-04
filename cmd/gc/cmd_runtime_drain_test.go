@@ -708,8 +708,14 @@ func TestDoRuntimeDrainAck(t *testing.T) {
 	if !dops.acked["worker"] {
 		t.Error("drain ack flag not set")
 	}
-	if got := stdout.String(); got != "Drain acknowledged. Controller poked for immediate stop.\n" {
-		t.Errorf("stdout = %q", got)
+	// The expectation is spelled out rather than built from the string the
+	// command prints: an expectation assembled from the same source cannot
+	// catch the honesty clause being dropped, which is the whole of ci-20ilrq.
+	want := "Drain acknowledgement recorded and the controller was poked; its verdict is not confirmed here. " +
+		"The controller stops this session UNLESS it still owns assigned work, in which case the session stays " +
+		"active with state_reason=drain-ack-assigned-work and keeps its pool slot. Check with `gc session list`.\n"
+	if got := stdout.String(); got != want {
+		t.Errorf("stdout = %q, want %q", got, want)
 	}
 }
 
@@ -824,8 +830,8 @@ func TestDoRuntimeDrainAckPokeFailureWarns(t *testing.T) {
 	if got, want := stderr.String(), "gc runtime drain-ack: warning: poke failed: dial failed\n"; got != want {
 		t.Errorf("stderr = %q, want %q", got, want)
 	}
-	if !strings.Contains(stdout.String(), "Drain acknowledged.") {
-		t.Errorf("stdout = %q, want it to contain %q", stdout.String(), "Drain acknowledged.")
+	if !strings.Contains(stdout.String(), "acknowledgement recorded") {
+		t.Errorf("stdout = %q, want the acknowledgement still reported after a best-effort poke failure", stdout.String())
 	}
 }
 
@@ -1435,7 +1441,7 @@ func TestDrainAckNoArgsFallsBackToCityPathEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("drain-ack should succeed with GC_CITY_PATH fallback: %v; stderr=%q", err, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "Drain acknowledged") {
+	if !strings.Contains(stdout.String(), "acknowledgement recorded") {
 		t.Fatalf("stdout = %q, want drain acknowledgement", stdout.String())
 	}
 }
@@ -1726,5 +1732,46 @@ func TestFindAgentByNameNoMatch(t *testing.T) {
 	_, ok := findAgentByName(cfg, "nobody")
 	if ok {
 		t.Error("expected no match for nonexistent agent")
+	}
+}
+
+// TestDoRuntimeDrainAckDoesNotClaimTheControllerActed is the ci-20ilrq
+// regression. The verdict on an acknowledgement is reached later, in a
+// reconciler tick, in another process, and this command never observes it -- so
+// its output must describe what it recorded and name the refusal it cannot rule
+// out, not assert an outcome.
+//
+// The negative assertions are the load-bearing half. Six sessions on 2026-09-04
+// ended their final turn printing "slot released" while the controller was
+// refusing them, echoing this command's own "Controller poked for immediate
+// stop." A test that only checked for the new sentence would still pass if that
+// claim were added back alongside it.
+func TestDoRuntimeDrainAckDoesNotClaimTheControllerActed(t *testing.T) {
+	old := drainAckPokeController
+	drainAckPokeController = func(string) error { return nil }
+	t.Cleanup(func() { drainAckPokeController = old })
+
+	dops := newFakeDrainOps()
+	var stdout, stderr bytes.Buffer
+	if code := doRuntimeDrainAck(dops, "", "worker", "worker", "", false, &stdout, &stderr); code != 0 {
+		t.Fatalf("code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	got := stdout.String()
+	for _, claim := range []string{
+		"Controller poked for immediate stop",
+		"slot released",
+		"Drain acknowledged.",
+	} {
+		if strings.Contains(got, claim) {
+			t.Errorf("stdout = %q, must not assert %q: this command does not observe the controller's verdict", got, claim)
+		}
+	}
+	// The refusal has to be NAMED, not merely hinted at: state_reason is the
+	// string a reader greps for in `gc session list` to find a wedged session.
+	if !strings.Contains(got, session.DrainAckAssignedWorkReason) {
+		t.Errorf("stdout = %q, want it to name %q as the outcome it cannot rule out", got, session.DrainAckAssignedWorkReason)
+	}
+	if !strings.Contains(got, "recorded") {
+		t.Errorf("stdout = %q, want it to say the acknowledgement was recorded", got)
 	}
 }

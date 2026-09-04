@@ -29,7 +29,8 @@
       "type": "string"
     },
     "status": {
-      "const": "acknowledged"
+      "const": "acknowledged",
+      "description": "The acknowledgement was RECORDED and the controller poked -- not that the controller acted on it. The verdict is reached later, in a reconciler tick, in another process, and this command does not observe it: the controller refuses an acknowledgement from a session that still owns assigned work, leaving that session active with state_reason=drain-ack-assigned-work and still holding its pool slot. Read the session's state to learn what happened; do not treat this value as the outcome (ci-20ilrq)."
     }
   },
   "additionalProperties": true

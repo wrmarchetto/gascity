@@ -506,9 +506,17 @@ func newRuntimeDrainAckCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `Acknowledge a drain signal — tell the controller to stop this session.
 
 Sets GC_DRAIN_ACK metadata on the session, then pokes the controller
-socket so the reconciler stops the session immediately rather than on
-its next patrol tick. Call this after the session has finished its
-current work in response to a drain signal.
+socket so the reconciler considers the acknowledgement immediately
+rather than on its next patrol tick. Call this after the session has
+finished its current work in response to a drain signal.
+
+Recording an acknowledgement is not the same as having it honored, and
+this command reports only the former. The controller REFUSES an
+acknowledgement from a session that still owns assigned work, leaving
+that session active with state_reason=drain-ack-assigned-work and still
+holding its pool slot. That decision is made afterwards, in a reconciler
+tick, so read the session's state with "gc session list" to learn what
+happened rather than treating this command's success as the outcome.
 
 The acknowledgement records the session itself as the actor, so its
 closed bead reads "agent retired itself" rather than naming the
@@ -757,6 +765,36 @@ var drainAckPokeController = pokeController
 // doRuntimeDrainAck sets the drain-ack flag on the session, then pokes the
 // controller so the reconciler observes the drained state immediately instead
 // of waiting for its next patrol tick.
+//
+// It reports what it DID, never what the controller will decide. The verdict is
+// reached later, in a reconciler tick, in another process: the controller
+// refuses an acknowledgement from a session that still owns assigned work,
+// leaving it active with state_reason=drain-ack-assigned-work and still holding
+// its pool slot. This command cannot see that, so it must not imply otherwise.
+//
+// It said "Controller poked for immediate stop." until ci-20ilrq. That reads as
+// an outcome, and agents echoed it as "slot released" in their final turn while
+// the controller was refusing them -- the false success that made the ci-fx4duc
+// wedge present as a routing fault. ci-00hcfv records the same shape taking
+// three separate investigations to see, because the tell was in the pane and
+// nowhere else.
+//
+// Two rejected alternatives, both of which would let it report a real verdict:
+//
+//   - Poll the session bead for state_reason after poking. Measured cost: this
+//     command runs at the end of EVERY session, and opening the city store here
+//     provisions a managed Dolt server -- caught by cmd/gc's dolt leak guard
+//     when TestDrainAckNoArgsFallsBackToCityPathEnv started leaking one. It
+//     also blocks a closing turn on a store that this city does not auto-start.
+//   - Pre-evaluate the reconciler's assigned-work predicate before setting the
+//     marker. That duplicates the predicate in a second place, where it can
+//     silently disagree with the one that actually decides.
+//
+// Both wait on the interaction ci-eqtxc0 is deciding: the Stop gate counts
+// in_progress work only, so it ORDERS this acknowledgement in exactly the case
+// the reconciler's {open, in_progress} predicate then refuses. Reporting
+// honestly is correct regardless of how that is settled; verifying is not, so
+// it waits.
 func doRuntimeDrainAck(dops drainOps, cityPath, targetName, sn, reason string, jsonOutput bool, stdout, stderr io.Writer) int {
 	if err := dops.setDrainAckWithReason(sn, reason); err != nil {
 		fmt.Fprintf(stderr, "gc runtime drain-ack: %v\n", err) //nolint:errcheck // best-effort stderr
@@ -780,6 +818,8 @@ func doRuntimeDrainAck(dops drainOps, cityPath, targetName, sn, reason string, j
 		}
 		return 0
 	}
-	fmt.Fprintln(stdout, "Drain acknowledged. Controller poked for immediate stop.") //nolint:errcheck // best-effort stdout
+	notConfirmed := fmt.Sprintf("Drain acknowledgement recorded and the controller was poked; its verdict is not confirmed here. The controller stops this session UNLESS it still owns assigned work, in which case the session stays active with state_reason=%s and keeps its pool slot. Check with `gc session list`.",
+		session.DrainAckAssignedWorkReason)
+	fmt.Fprintln(stdout, notConfirmed) //nolint:errcheck // best-effort stdout
 	return 0
 }
