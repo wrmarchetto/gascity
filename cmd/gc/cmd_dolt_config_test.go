@@ -47,6 +47,7 @@ func TestDoltConfigWriteManagedCmd(t *testing.T) {
 		`dolt_stats_memory_only: "ON"`,
 		`dolt_stats_paused: "ON"`,
 		`wait_timeout: "30"`,
+		"read_timeout_millis: 120000",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("config missing %q:\n%s", want, text)
