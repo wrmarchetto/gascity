@@ -389,10 +389,23 @@ func (s *Server) handleSessionClose(w http.ResponseWriter, r *http.Request) {
 		writeSessionManagerError(w, err)
 		return
 	}
+	// Read before the close, matching cmd/gc. The close does retire identities
+	// (it blanks alias and session_name), but that is NOT why the read is here:
+	// the retirement moves the alias into alias_history, which the assignee
+	// vocabulary also reads, so a post-close read yields the same identity set --
+	// verified by mutation. The pre-close read is defensive about that retention
+	// rather than dependent on losing it, and
+	// TestClosedSessionKeepsItsAliasReachableViaHistory guards the retention.
+	// Best-effort: a missing session bead means there is nothing to sweep, not a
+	// failed close.
+	closingSessionBead, sessionBeadErr := store.Get(id)
 	closeResult, err := handle.CloseDetailed(r.Context())
 	if err != nil {
 		writeSessionManagerError(w, err)
 		return
+	}
+	if sessionBeadErr == nil {
+		releaseWorkFromClosedSession(store.Store, closingSessionBead)
 	}
 	// Nudge withdrawal reads the nudges class, so it sources the typed
 	// NudgesBeadStore (identity to the work store until that class relocates).
