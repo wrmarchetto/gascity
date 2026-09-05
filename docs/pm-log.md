@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ugx 2026-09-05T19:25Z
+last_seen: gs-3sy 2026-09-05T22:11Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -298,5 +298,38 @@ worth the next session's glance. Still a patrol/mayor matter rather than a
 PM edit. Residuals in pm-log #5 stand: no scheduled wake has yet run WITH
 the assessment layer, and a governor that assesses then reports something
 else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 13. pm-idle gs-3sy: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-05)
+
+Ninth ruling of this shape (pm-log #5 gs-8iv, #6 gs-ewi, #7 gs-wli, #8
+gs-ps7, #9 gs-5k6, #10 gs-b53, #11 gs-cp7, #12 gs-ugx), re-verified live
+rather than recalled. The closed set under epic:governor is unchanged
+(gs-x0k, gs-xeh, gs-o9i, gs-nun -- criteria 1-6 verified in their close
+reasons, pm-log #5). This sitting was paused mid-turn by a usage limit, so
+the criterion-7 chain was checked twice, and the two checks bracket a
+change: at 19:36Z ci-waw3o7 (P1, assignee human) was open as in #5-#12; at
+22:11Z it is deferred (status DEFERRED, date 2026-09-07), with gate
+ci-gbhkpa still open and operator-paged. bench-alerts.log is still
+untracked in the rig root. Willie's say-so has still not landed -- the
+deferral postpones the question rather than answering it -- so per pm-log
+#4 governor stays in-progress, and the bead that puts motion back remains
+ci-waw3o7, now carrying an earliest-revisit date of 2026-09-07.
+
+No epic promoted -- governor is the roadmap's only epic -- and no DECOMP
+sent. What gascity builds next is already recorded as pm-open #2; no new
+entry. The gs-hph stall trend #7-#12 tracked ended during the pause: the
+bead is closed by lab.engineer-codex-1 (version-check verdicts restored
+via gc.formula_name metadata resolution, visible diagnostics, a JSON
+result schema; regression tests, full cmd/gc suite, vet, pre-commit and
+make test green; pushed 35839700e to origin/main). The summons's idle
+premise lapsed the same way: gs-c6f is open and gs-z39 in_progress, both
+unlabeled, and the sweep filed gs-22c and gs-8zd (both assigned to this
+PM) to place them -- one unit each for the next sessions, alongside the
+still-open gs-qzm (pm-epic-close:governor). Residuals in pm-log #5 stand:
+no scheduled wake has yet run WITH the assessment layer, and a governor
+that assesses then reports something else is mechanically unobservable
+today.
 
 Source: roadmap governor
