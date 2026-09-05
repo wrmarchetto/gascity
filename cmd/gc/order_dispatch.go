@@ -1630,13 +1630,7 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 		if err != nil {
 			errMsg := fmt.Sprintf("reading event cursor: %v", err)
 			logDispatchError(m.stderr, "gc: order dispatch: reading event cursor for %s: %v", scoped, err)
-			m.rec.Record(events.Event{
-				Type:    events.OrderFailed,
-				Actor:   "controller",
-				Subject: scoped,
-				Message: errMsg,
-			})
-			m.markTrackingFailure(store, trackingID, scoped, a, 0)
+			m.failWispDispatch(store, trackingID, scoped, errMsg, a, 0)
 			return
 		}
 	}
@@ -1647,23 +1641,11 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 	}
 	recipe, err := prepareOrderWispRecipe(ctx, store, a, searchPaths, vars)
 	if err != nil {
-		m.rec.Record(events.Event{
-			Type:    events.OrderFailed,
-			Actor:   "controller",
-			Subject: scoped,
-			Message: err.Error(),
-		})
-		m.markTrackingFailure(store, trackingID, scoped, a, headSeq)
+		m.failWispDispatch(store, trackingID, scoped, err.Error(), a, headSeq)
 		return
 	}
 	if err := molecule.ValidateRecipeRuntimeVars(recipe, molecule.Options{}); err != nil {
-		m.rec.Record(events.Event{
-			Type:    events.OrderFailed,
-			Actor:   "controller",
-			Subject: scoped,
-			Message: err.Error(),
-		})
-		m.markTrackingFailure(store, trackingID, scoped, a, headSeq)
+		m.failWispDispatch(store, trackingID, scoped, err.Error(), a, headSeq)
 		return
 	}
 	if warning := poolOrderRouteVisibilityWarning(a, recipe); warning != "" {
@@ -1675,13 +1657,7 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 		pool, err = qualifyOrderPool(a, m.cfg)
 		if err != nil {
 			logDispatchError(m.stderr, "gc: order %s: %v", scoped, err)
-			m.rec.Record(events.Event{
-				Type:    events.OrderFailed,
-				Actor:   "controller",
-				Subject: scoped,
-				Message: err.Error(),
-			})
-			m.markTrackingFailure(store, trackingID, scoped, a, headSeq)
+			m.failWispDispatch(store, trackingID, scoped, err.Error(), a, headSeq)
 			return
 		}
 	}
@@ -1695,25 +1671,13 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 	// unreachable graph in the store while reporting the order as completed.
 	if err := applyOrderRecipeRouting(recipe, pool, vars, target, graphStore, m.cityName, cityPath, m.cfg); err != nil {
 		logDispatchError(m.stderr, "gc: order %s: routing decoration failed: %v", scoped, err)
-		m.rec.Record(events.Event{
-			Type:    events.OrderFailed,
-			Actor:   "controller",
-			Subject: scoped,
-			Message: err.Error(),
-		})
-		m.markTrackingFailure(store, trackingID, scoped, a, headSeq)
+		m.failWispDispatch(store, trackingID, scoped, err.Error(), a, headSeq)
 		return
 	}
 
 	cookResult, err := molecule.Instantiate(ctx, graphStore, recipe, molecule.Options{})
 	if err != nil {
-		m.rec.Record(events.Event{
-			Type:    events.OrderFailed,
-			Actor:   "controller",
-			Subject: scoped,
-			Message: err.Error(),
-		})
-		m.markTrackingFailure(store, trackingID, scoped, a, headSeq)
+		m.failWispDispatch(store, trackingID, scoped, err.Error(), a, headSeq)
 		return
 	}
 	rootID := cookResult.RootID
@@ -1745,13 +1709,8 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 		// Label failure is critical for duplicate-dispatch prevention.
 		// Log and emit an event so operators can investigate.
 		logDispatchError(m.stderr, "gc: order %s: failed to label wisp %s: %v", scoped, rootID, err)
-		m.rec.Record(events.Event{
-			Type:    events.OrderFailed,
-			Actor:   "controller",
-			Subject: scoped,
-			Message: fmt.Sprintf("wisp %s created but label failed: %v", rootID, err),
-		})
-		m.markTrackingFailure(store, trackingID, scoped, a, headSeq)
+		reason := fmt.Sprintf("wisp %s created but label failed: %v", rootID, err)
+		m.failWispDispatch(store, trackingID, scoped, reason, a, headSeq)
 		return
 	}
 
@@ -1784,13 +1743,58 @@ func (m *memoryOrderDispatcher) orderRigSuspended(a orders.Order) bool {
 	return m.rigSuspendedByName(rigName)
 }
 
-func (m *memoryOrderDispatcher) markTrackingFailure(store beads.Store, trackingID, scoped string, a orders.Order, headSeq uint64) {
+// failWispDispatch reports a pre-cook wisp dispatch failure to BOTH of its
+// homes: the event stream, for anything watching live, and the tracking bead,
+// for anyone reading after the fact. The pair lives in one helper so a later
+// edit cannot add a failure path that emits the event and forgets the bead --
+// which is exactly the shape ci-pserre found, where a governor-wake formula
+// holding git conflict markers failed to parse, cooked nothing, and left the
+// city unwoken for 90 minutes with the reason recoverable only from
+// events.jsonl.
+//
+// The exec path is deliberately NOT routed through here. It reports a command
+// failure, not a dispatch failure: its diagnostic is the command's redacted
+// output under OrderExecFailureOutputMetadataKey and its outcome label is
+// exec-failed, so folding the two would conflate two vocabularies for one
+// call site saved.
+func (m *memoryOrderDispatcher) failWispDispatch(store beads.Store, trackingID, scoped, reason string, a orders.Order, headSeq uint64) {
+	m.rec.Record(events.Event{
+		Type:    events.OrderFailed,
+		Actor:   "controller",
+		Subject: scoped,
+		Message: reason,
+	})
+	m.markTrackingFailure(store, trackingID, scoped, reason, a, headSeq)
+}
+
+// markTrackingFailure records a pre-cook wisp failure on the tracking bead:
+// first the operator-readable reason, then the wisp-failed outcome.
+//
+// The reason is written FIRST and as its own store call, not folded into
+// MarkFailed's single Update, for two independent reasons. MarkFailed's one
+// Update is byte-equivalence-guarded against the dispatcher's original label
+// write, and metadata does not ride an Update anyway. And ordering the writes
+// reason-then-verdict means the only shape a crash between them can produce is
+// a reason with no verdict; the reverse order reproduces ci-pserre exactly --
+// a wisp-failed label whose cause exists nowhere durable, leaving the event
+// stream as the sole record of why the city stopped being woken.
+//
+// The reason is bounded but NOT redacted. Redaction takes an environment, and
+// the wisp path has none: unlike an exec order it runs no command and exports
+// no env. The strings that reach here are formula parse errors, pool
+// resolution failures and routing refusals, all of them config text.
+func (m *memoryOrderDispatcher) markTrackingFailure(store beads.Store, trackingID, scoped, reason string, a orders.Order, headSeq uint64) {
 	var cursor *orders.EventCursor
 	if a.Trigger == "event" && headSeq > 0 {
 		c := orders.EventCursor(headSeq)
 		cursor = &c
 	}
 	front := orders.NewStore(beads.OrdersStore{Store: store})
+	if reason != "" {
+		if err := front.SetDispatchFailure(trackingID, tailForOrderFailureOutput(reason)); err != nil {
+			logDispatchError(m.stderr, "gc: order %s: failed to store dispatch failure on tracking bead %s: %v", scoped, trackingID, err)
+		}
+	}
 	if err := front.MarkFailed(trackingID, scoped, orders.RunOutcomeWispFailed, cursor); err != nil {
 		logDispatchError(m.stderr, "gc: order %s: failed to mark tracking bead %s as failed: %v", scoped, trackingID, err)
 	}
