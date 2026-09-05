@@ -1420,6 +1420,10 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 	var output []byte
 	var execErrMsg string
 	var redactedOutput string
+	// incompleteMsg is set instead of execErrMsg when the command reported
+	// unfinished work rather than a fault. The two are kept apart rather than
+	// sharing one string so no later branch can treat one as the other.
+	var incompleteMsg string
 	if err != nil {
 		redactionEnv := append(os.Environ(), env...)
 		redacted := redactOrderEnvError(err, redactionEnv)
@@ -1430,12 +1434,21 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 		output, err = m.execRun(ctx, a.Exec, target.ScopeRoot, env)
 		if err != nil {
 			redactionEnv := append(os.Environ(), env...)
-			execErrMsg = execenv.RedactText(err.Error(), redactionEnv)
-			outcome = orders.RunOutcomeExecFailed
-			logDispatchError(m.stderr, "gc: order exec %s failed: %s", scoped, execErrMsg)
+			redacted := execenv.RedactText(err.Error(), redactionEnv)
 			if len(output) > 0 {
 				redactedOutput = execenv.RedactText(string(output), redactionEnv)
-				logDispatchError(m.stderr, "gc: order exec %s output: %s", scoped, redactedOutput)
+			}
+			if declaredIncompleteExit(ctx, a, err) {
+				incompleteMsg = redacted
+				outcome = orders.RunOutcomeExecIncomplete
+				log.Printf("gc: order exec %s incomplete: %s", scoped, redacted)
+			} else {
+				execErrMsg = redacted
+				outcome = orders.RunOutcomeExecFailed
+				logDispatchError(m.stderr, "gc: order exec %s failed: %s", scoped, execErrMsg)
+				if redactedOutput != "" {
+					logDispatchError(m.stderr, "gc: order exec %s output: %s", scoped, redactedOutput)
+				}
 			}
 		}
 	}
@@ -1456,7 +1469,10 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 		})
 		return
 	}
-	if execErrMsg != "" && redactedOutput != "" {
+	// Retained for an incomplete run as well as a failed one. The command's
+	// own report is the only durable record of WHAT is still outstanding, and
+	// the event log it would otherwise live in rotates (ci-iv9asy).
+	if (execErrMsg != "" || incompleteMsg != "") && redactedOutput != "" {
 		if err := front.SetExecFailureOutput(trackingID, tailForOrderFailureOutput(redactedOutput)); err != nil {
 			logDispatchError(m.stderr, "gc: order %s: failed to store exec output on tracking bead %s: %v", scoped, trackingID, err)
 		}
@@ -1473,11 +1489,50 @@ func (m *memoryOrderDispatcher) dispatchExec(ctx context.Context, front *orders.
 		})
 		return
 	}
+	completedMsg := incompleteMsg
+	if completedMsg != "" {
+		completedMsg = "incomplete: " + completedMsg
+		if hasEventCursor {
+			completedMsg = fmt.Sprintf("seq=%d: %s", headSeq, completedMsg)
+		}
+	}
 	m.rec.Record(events.Event{
 		Type:    events.OrderCompleted,
 		Actor:   "controller",
 		Subject: scoped,
+		Message: completedMsg,
 	})
+}
+
+// declaredIncompleteExit reports whether a failed exec run ended in an exit
+// status the order declared as "ran to completion, work outstanding".
+//
+// Three conditions, and each rules out a way a fault could be misread as
+// ordinary unfinished work:
+//
+//   - The dispatch context must still be live. A run killed at its timeout is
+//     the fault this order class already suffered 22 times in a row, and the
+//     kill must never be reclassified as a tidy stop -- the signal path gives
+//     ExitCode() -1 today, but the guard must not depend on that holding.
+//   - The error must carry a real process exit status. A start failure, an env
+//     failure, or a runner error carries none and stays a fault.
+//   - The order must name the status. Nothing is inferred from the exit value
+//     alone, so an order that declares nothing behaves exactly as before.
+//
+// Membership is asked of the order and NOT short-circuited here on an empty
+// declaration list. A `len(a.IncompleteExitCodes) == 0` early return reads as a
+// fourth guard and is not one -- Order.IsIncompleteExit already answers false
+// for it -- so the duplicate would survive being deleted with every test green
+// and leave two places deciding the same question.
+func declaredIncompleteExit(ctx context.Context, a orders.Order, err error) bool {
+	if err == nil || ctx.Err() != nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	return a.IsIncompleteExit(exitErr.ExitCode())
 }
 
 func prepareOrderWispRecipe(ctx context.Context, store beads.Store, a orders.Order, searchPaths []string, vars map[string]string) (*formula.Recipe, error) {

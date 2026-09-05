@@ -43,6 +43,7 @@ const (
 
 	labelExec           = "exec"
 	labelExecFailed     = "exec-failed"
+	labelExecIncomplete = "exec-incomplete"
 	labelExecEnvFailed  = "exec-env-failed"
 	labelWisp           = "wisp"
 	labelWispFailed     = "wisp-failed"
@@ -73,6 +74,18 @@ const (
 	RunOutcomeWispCanceled
 	// RunOutcomeTriggerEnvFailed — pre-dispatch trigger env build failed.
 	RunOutcomeTriggerEnvFailed
+	// RunOutcomeExecIncomplete — synchronous trigger ran to completion and
+	// exited with a status the order declared in incomplete_exit_codes,
+	// meaning work is still outstanding. It is NOT a failure: a recurring
+	// sweep whose queue needs several passes reports this every pass, and
+	// counting it as a failure is what made the order-firing doctor check red
+	// against a sweep that was merging branches (ci-iv9asy).
+	//
+	// Appended at the end of the block on purpose. The values are ordinals
+	// with no persisted meaning -- labels are what the tracking bead carries --
+	// but renumbering them would silently reinterpret any in-flight value a
+	// caller happened to hold across the change.
+	RunOutcomeExecIncomplete
 )
 
 // Labels returns the exact label set the dispatcher stamps for this outcome,
@@ -83,6 +96,8 @@ func (o RunOutcome) Labels() []string {
 		return []string{labelExec}
 	case RunOutcomeExecFailed:
 		return []string{labelExecFailed}
+	case RunOutcomeExecIncomplete:
+		return []string{labelExecIncomplete}
 	case RunOutcomeExecEnvFailed:
 		return []string{labelExecEnvFailed}
 	case RunOutcomeWisp:
@@ -104,7 +119,7 @@ func (o RunOutcome) Labels() []string {
 // target/type for a run whose order definition is no longer registered.
 func (o RunOutcome) IsExec() bool {
 	switch o {
-	case RunOutcomeExec, RunOutcomeExecFailed, RunOutcomeExecEnvFailed:
+	case RunOutcomeExec, RunOutcomeExecFailed, RunOutcomeExecEnvFailed, RunOutcomeExecIncomplete:
 		return true
 	default:
 		return false
@@ -124,6 +139,8 @@ func (o RunOutcome) Display() string {
 		return "failed"
 	case RunOutcomeWispCanceled:
 		return "canceled"
+	case RunOutcomeExecIncomplete:
+		return "incomplete"
 	default:
 		return ""
 	}
@@ -578,6 +595,8 @@ func outcomeFromLabels(labels []string) RunOutcome {
 		return RunOutcomeWisp
 	case beadLabelsContain(labels, labelExecEnvFailed):
 		return RunOutcomeExecEnvFailed
+	case beadLabelsContain(labels, labelExecIncomplete):
+		return RunOutcomeExecIncomplete
 	case beadLabelsContain(labels, labelExecFailed):
 		return RunOutcomeExecFailed
 	case beadLabelsContain(labels, labelExec):
