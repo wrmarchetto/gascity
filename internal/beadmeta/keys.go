@@ -146,40 +146,49 @@ const (
 	OnExhaustedMetadataKey               = "gc.on_exhausted"
 	OnFailMetadataKey                    = "gc.on_fail"
 	OriginalKindMetadataKey              = "gc.original_kind"
-	OrderExecFailureOutputMetadataKey    = "gc.order_exec_failure_output"
-	OutcomeBeadIDMetadataKey             = "gc.outcome_bead_id"
-	OutcomeMetadataKey                   = "gc.outcome"
-	OutputJSONMetadataKey                = "gc.output_json"
-	OutputJSONRequiredMetadataKey        = "gc.output_json_required"
-	ParentBeadIDMetadataKey              = "gc.parent_bead_id"
-	ParentConvoyIDMetadataKey            = "gc.parent_convoy_id"
-	PartialFragmentMetadataKey           = "gc.partial_fragment"
-	PartialRetryMetadataKey              = "gc.partial_retry"
-	PackMetadataKey                      = "gc.pack"
-	PackRootMetadataKey                  = "gc.pack_root"
-	PackWorkspaceMetadataKey             = "gc.pack_workspace"
-	PerDispatchModelMetadataKey          = "gc.per_dispatch_model"
-	RalphStepIDMetadataKey               = "gc.ralph_step_id"
-	ReasoningMetadataKey                 = "gc.reasoning"
-	RequiredArtifactMetadataKey          = "gc.required_artifact"
-	RequiredArtifactsMetadataKey         = "gc.required_artifacts"
-	ReviewGateMetadataKey                = "gc.review_gate"
-	RetryCountMetadataKey                = "gc.retry_count"
-	RetryFromMetadataKey                 = "gc.retry_from"
-	RetrySessionRecycledMetadataKey      = "gc.retry_session_recycled"
-	RetryStateMetadataKey                = "gc.retry_state"
-	RigRootMetadataKey                   = "gc.rig_root"
-	RootBeadIDMetadataKey                = "gc.root_bead_id"
-	RootStoreRefMetadataKey              = "gc.root_store_ref"
-	RoutedToMetadataKey                  = "gc.routed_to"
-	RunTargetMetadataKey                 = "gc.run_target"
-	RuntimeVarsMetadataKey               = "gc.graphv2_vars.v1"
-	ScopeKindMetadataKey                 = "gc.scope_kind"
-	ScopeNameMetadataKey                 = "gc.scope_name"
-	ScopeRefMetadataKey                  = "gc.scope_ref"
-	ScopeRoleMetadataKey                 = "gc.scope_role"
-	SessionAffinityMetadataKey           = "gc.session_affinity"
-	SessionIDMetadataKey                 = "gc.session_id"
+	// OrderDispatchFailureMetadataKey holds the verbatim reason an order run
+	// failed before it could cook anything -- a formula that would not parse, a
+	// bad pool, a routing refusal. Deliberately NOT FailureReasonMetadataKey:
+	// that key carries the control dispatcher's short enum vocabulary
+	// ("limit_exceeded", "missing_workflow_root"), and free error text in it
+	// would be read as a class. Also NOT OrderExecFailureOutputMetadataKey,
+	// which is a command's captured stdout and is parsed for the compact
+	// integrity marker by internal/doctor.
+	OrderDispatchFailureMetadataKey   = "gc.order_dispatch_failure"
+	OrderExecFailureOutputMetadataKey = "gc.order_exec_failure_output"
+	OutcomeBeadIDMetadataKey          = "gc.outcome_bead_id"
+	OutcomeMetadataKey                = "gc.outcome"
+	OutputJSONMetadataKey             = "gc.output_json"
+	OutputJSONRequiredMetadataKey     = "gc.output_json_required"
+	ParentBeadIDMetadataKey           = "gc.parent_bead_id"
+	ParentConvoyIDMetadataKey         = "gc.parent_convoy_id"
+	PartialFragmentMetadataKey        = "gc.partial_fragment"
+	PartialRetryMetadataKey           = "gc.partial_retry"
+	PackMetadataKey                   = "gc.pack"
+	PackRootMetadataKey               = "gc.pack_root"
+	PackWorkspaceMetadataKey          = "gc.pack_workspace"
+	PerDispatchModelMetadataKey       = "gc.per_dispatch_model"
+	RalphStepIDMetadataKey            = "gc.ralph_step_id"
+	ReasoningMetadataKey              = "gc.reasoning"
+	RequiredArtifactMetadataKey       = "gc.required_artifact"
+	RequiredArtifactsMetadataKey      = "gc.required_artifacts"
+	ReviewGateMetadataKey             = "gc.review_gate"
+	RetryCountMetadataKey             = "gc.retry_count"
+	RetryFromMetadataKey              = "gc.retry_from"
+	RetrySessionRecycledMetadataKey   = "gc.retry_session_recycled"
+	RetryStateMetadataKey             = "gc.retry_state"
+	RigRootMetadataKey                = "gc.rig_root"
+	RootBeadIDMetadataKey             = "gc.root_bead_id"
+	RootStoreRefMetadataKey           = "gc.root_store_ref"
+	RoutedToMetadataKey               = "gc.routed_to"
+	RunTargetMetadataKey              = "gc.run_target"
+	RuntimeVarsMetadataKey            = "gc.graphv2_vars.v1"
+	ScopeKindMetadataKey              = "gc.scope_kind"
+	ScopeNameMetadataKey              = "gc.scope_name"
+	ScopeRefMetadataKey               = "gc.scope_ref"
+	ScopeRoleMetadataKey              = "gc.scope_role"
+	SessionAffinityMetadataKey        = "gc.session_affinity"
+	SessionIDMetadataKey              = "gc.session_id"
 	// SessionIDCamelMetadataKey is the camelCase variant some bead writers stamp
 	// alongside the snake_case SessionIDMetadataKey; both are read when resolving a
 	// bead's session link.
@@ -409,6 +418,7 @@ var KnownMetadataKeys = []string{
 	OnExhaustedMetadataKey,
 	OnFailMetadataKey,
 	OriginalKindMetadataKey,
+	OrderDispatchFailureMetadataKey,
 	OrderExecFailureOutputMetadataKey,
 	OutcomeBeadIDMetadataKey,
 	OutcomeMetadataKey,

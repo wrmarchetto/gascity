@@ -11,6 +11,12 @@ type OrderHistoryView struct {
 	ScopedName string
 	Rig        string
 	CreatedAt  string
+	// Status is the run's lifecycle state as OrderRun.State() reports it.
+	Status string
+	// DispatchFailure is the reason a wisp run failed before cooking, empty
+	// when there is none. The pointer the wire uses is flattened here so the
+	// renderers treat a missing field and an empty one identically.
+	DispatchFailure string
 }
 
 // orderHistoryViewFromGen translates one genclient.OrderHistoryEntry into an
@@ -21,9 +27,13 @@ func orderHistoryViewFromGen(g genclient.OrderHistoryEntry) OrderHistoryView {
 		Name:       g.Name,
 		ScopedName: g.ScopedName,
 		CreatedAt:  g.CreatedAt,
+		Status:     g.Status,
 	}
 	if g.Rig != nil {
 		out.Rig = *g.Rig
+	}
+	if g.DispatchFailure != nil {
+		out.DispatchFailure = *g.DispatchFailure
 	}
 	return out
 }

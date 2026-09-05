@@ -201,7 +201,13 @@ name. Use --rig to filter by rig.
 The read is bounded by default: only the most recent runs are fetched.
 Widen it with --limit (0 fetches every retained run) or bound it by time
 with --since. On a city with a long order-run history an unbounded read
-costs tens of seconds, so prefer keeping a bound when triaging.`,
+costs tens of seconds, so prefer keeping a bound when triaging.
+
+The STATUS column reports each run's lifecycle state -- failed, active or
+completed. A run whose wisp dispatch failed before cooking anything prints
+the reason underneath its row. A failed exec order's captured output is NOT
+shown here; it is served per run by the supervisor's order-history detail
+endpoint.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			name := ""
@@ -1484,11 +1490,13 @@ func renderOrderHistoryFromAPI(cr api.CachedRead[[]api.OrderHistoryView], name, 
 				return 1
 			}
 			payload.Entries = append(payload.Entries, orderHistoryJSONEntry{
-				Order:     e.Name,
-				Rig:       e.Rig,
-				BeadID:    e.BeadID,
-				Executed:  createdAt.Format(time.RFC3339),
-				CreatedAt: createdAt,
+				Order:           e.Name,
+				Rig:             e.Rig,
+				BeadID:          e.BeadID,
+				Status:          e.Status,
+				Executed:        createdAt.Format(time.RFC3339),
+				DispatchFailure: e.DispatchFailure,
+				CreatedAt:       createdAt,
 			})
 		}
 		return writeCLIJSONLineOrExit(stdout, stderr, "gc order history", payload)
@@ -1503,18 +1511,20 @@ func renderOrderHistoryFromAPI(cr api.CachedRead[[]api.OrderHistoryView], name, 
 	}
 
 	if hasRig {
-		fmt.Fprintf(stdout, "%-20s %-15s %-15s %s\n", "ORDER", "RIG", "BEAD", "EXECUTED") //nolint:errcheck
+		fmt.Fprintf(stdout, orderHistoryRigRowFormat, "ORDER", "RIG", "BEAD", "STATUS", "EXECUTED") //nolint:errcheck
 		for _, e := range entries {
 			rig := e.Rig
 			if rig == "" {
 				rig = "-"
 			}
-			fmt.Fprintf(stdout, "%-20s %-15s %-15s %s\n", e.Name, rig, e.BeadID, e.CreatedAt) //nolint:errcheck
+			fmt.Fprintf(stdout, orderHistoryRigRowFormat, e.Name, rig, e.BeadID, e.Status, e.CreatedAt) //nolint:errcheck
+			writeOrderDispatchFailure(stdout, e.DispatchFailure)
 		}
 	} else {
-		fmt.Fprintf(stdout, "%-20s %-15s %s\n", "ORDER", "BEAD", "EXECUTED") //nolint:errcheck
+		fmt.Fprintf(stdout, orderHistoryRowFormat, "ORDER", "BEAD", "STATUS", "EXECUTED") //nolint:errcheck
 		for _, e := range entries {
-			fmt.Fprintf(stdout, "%-20s %-15s %s\n", e.Name, e.BeadID, e.CreatedAt) //nolint:errcheck
+			fmt.Fprintf(stdout, orderHistoryRowFormat, e.Name, e.BeadID, e.Status, e.CreatedAt) //nolint:errcheck
+			writeOrderDispatchFailure(stdout, e.DispatchFailure)
 		}
 	}
 
@@ -1572,10 +1582,12 @@ func doOrderHistoryBounded(name, rig string, aa []orders.Order, resolveStores or
 	}
 
 	type historyEntry struct {
-		order     string
-		rig       string
-		id        string
-		createdAt time.Time
+		order           string
+		rig             string
+		id              string
+		status          string
+		dispatchFailure string
+		createdAt       time.Time
 	}
 	var entries []historyEntry
 	seenEntries := make(map[string]bool)
@@ -1611,10 +1623,16 @@ func doOrderHistoryBounded(name, rig string, aa []orders.Order, resolveStores or
 				}
 				seenEntries[key] = true
 				entries = append(entries, historyEntry{
-					order:     a.Name,
-					rig:       a.Rig,
-					id:        r.ID,
-					createdAt: r.CreatedAt,
+					order: a.Name,
+					rig:   a.Rig,
+					id:    r.ID,
+					// State() is the same truth table the orders feed reads,
+					// so a run the feed calls failed cannot read as completed
+					// here. Recomputing it from r.Outcome would be a second
+					// copy of that table.
+					status:          r.State(),
+					dispatchFailure: r.DispatchFailure,
+					createdAt:       r.CreatedAt,
 				})
 			}
 		}
@@ -1661,11 +1679,13 @@ func doOrderHistoryBounded(name, rig string, aa []orders.Order, resolveStores or
 		}
 		for _, e := range entries {
 			payload.Entries = append(payload.Entries, orderHistoryJSONEntry{
-				Order:     e.order,
-				Rig:       e.rig,
-				BeadID:    e.id,
-				Executed:  e.createdAt.Format(time.RFC3339),
-				CreatedAt: e.createdAt,
+				Order:           e.order,
+				Rig:             e.rig,
+				BeadID:          e.id,
+				Status:          e.status,
+				Executed:        e.createdAt.Format(time.RFC3339),
+				DispatchFailure: e.dispatchFailure,
+				CreatedAt:       e.createdAt,
 			})
 		}
 		return writeCLIJSONLineOrExit(stdout, stderr, "gc order history", payload)
@@ -1680,21 +1700,53 @@ func doOrderHistoryBounded(name, rig string, aa []orders.Order, resolveStores or
 	}
 
 	if hasRig {
-		fmt.Fprintf(stdout, "%-20s %-15s %-15s %s\n", "ORDER", "RIG", "BEAD", "EXECUTED") //nolint:errcheck
+		fmt.Fprintf(stdout, orderHistoryRigRowFormat, "ORDER", "RIG", "BEAD", "STATUS", "EXECUTED") //nolint:errcheck
 		for _, e := range entries {
 			rig := e.rig
 			if rig == "" {
 				rig = "-"
 			}
-			fmt.Fprintf(stdout, "%-20s %-15s %-15s %s\n", e.order, rig, e.id, e.createdAt.Format(time.RFC3339)) //nolint:errcheck
+			fmt.Fprintf(stdout, orderHistoryRigRowFormat, e.order, rig, e.id, e.status, e.createdAt.Format(time.RFC3339)) //nolint:errcheck
+			writeOrderDispatchFailure(stdout, e.dispatchFailure)
 		}
 	} else {
-		fmt.Fprintf(stdout, "%-20s %-15s %s\n", "ORDER", "BEAD", "EXECUTED") //nolint:errcheck
+		fmt.Fprintf(stdout, orderHistoryRowFormat, "ORDER", "BEAD", "STATUS", "EXECUTED") //nolint:errcheck
 		for _, e := range entries {
-			fmt.Fprintf(stdout, "%-20s %-15s %s\n", e.order, e.id, e.createdAt.Format(time.RFC3339)) //nolint:errcheck
+			fmt.Fprintf(stdout, orderHistoryRowFormat, e.order, e.id, e.status, e.createdAt.Format(time.RFC3339)) //nolint:errcheck
+			writeOrderDispatchFailure(stdout, e.dispatchFailure)
 		}
 	}
 	return 0
+}
+
+// The two order-history renderers -- this one over the local store and
+// renderOrderHistoryFromAPI over the supervisor -- must produce the same table,
+// so the row shapes are shared constants rather than a format string repeated
+// at each of the four print sites. STATUS sits before EXECUTED so it is a
+// fixed-width column an operator can scan down; the timestamp stays last
+// because it is the only field whose width is not this file's to choose.
+const (
+	orderHistoryRowFormat    = "%-20s %-15s %-10s %s\n"
+	orderHistoryRigRowFormat = "%-20s %-15s %-15s %-10s %s\n"
+	// orderDispatchFailureIndent aligns the reason under its own row. The
+	// reason is a bounded tail and may hold several lines, so each is indented
+	// rather than the block being printed as one wrapped line.
+	orderDispatchFailureIndent = "    "
+)
+
+// writeOrderDispatchFailure prints the reason a wisp run failed before cooking,
+// indented under its table row. It writes nothing when there is no reason:
+// every successful run and every tracking bead written before ci-pserre has
+// none, so an unconditional line would double the table's height to say
+// nothing. Exec failures also land here empty -- their diagnostic is the
+// captured output `gc order history <bead>` serves, not this field.
+func writeOrderDispatchFailure(stdout io.Writer, reason string) {
+	if reason == "" {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimRight(reason, "\n"), "\n") {
+		fmt.Fprintf(stdout, "%s%s\n", orderDispatchFailureIndent, line) //nolint:errcheck
+	}
 }
 
 type orderHistoryJSONResult struct {
@@ -1707,11 +1759,17 @@ type orderHistoryJSONResult struct {
 }
 
 type orderHistoryJSONEntry struct {
-	Order     string    `json:"order"`
-	Rig       string    `json:"rig,omitempty"`
-	BeadID    string    `json:"bead_id"`
-	Executed  string    `json:"executed"`
-	CreatedAt time.Time `json:"created_at"`
+	Order  string `json:"order"`
+	Rig    string `json:"rig,omitempty"`
+	BeadID string `json:"bead_id"`
+	// Status is OrderRun.State(): "failed", "active" or "completed".
+	Status   string `json:"status"`
+	Executed string `json:"executed"`
+	// DispatchFailure is omitted rather than emitted empty, so a consumer
+	// testing for the key's presence gets the same answer as the human table
+	// gets from the reason line it prints only when there is one.
+	DispatchFailure string    `json:"dispatch_failure,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type orderHistoryJSONSummary struct {

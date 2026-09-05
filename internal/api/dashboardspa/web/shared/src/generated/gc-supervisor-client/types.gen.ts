@@ -1999,6 +1999,7 @@ export type OrderHistoryEntry = {
     bead_id: string;
     capture_output: boolean;
     created_at: string;
+    dispatch_failure?: string;
     duration_ms?: string;
     error?: string;
     exit_code?: string;
@@ -2008,6 +2009,7 @@ export type OrderHistoryEntry = {
     rig?: string;
     scoped_name: string;
     signal?: string;
+    status: string;
     store_ref: string;
     wisp_root_id?: string;
 };

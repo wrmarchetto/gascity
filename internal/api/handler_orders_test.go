@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/orders"
 )
@@ -1766,5 +1767,80 @@ func TestHandleOrderDisable_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+}
+
+// TestHandleOrderHistoryReportsRunStateAndDispatchFailure pins the wire half of
+// ci-7gg9ra. `gc order history` renders from this response when the controller
+// is up, so a status the CLI can print has to cross the typed wire -- deriving
+// it in the CLI from the entry's labels would put the order feed's label crack
+// back in a second place. The expectations come from OrderRun.State() over the
+// same beads the store holds, so a handler that stopped consulting it fails
+// here rather than agreeing with a stale literal.
+func TestHandleOrderHistoryReportsRunStateAndDispatchFailure(t *testing.T) {
+	fs := newFakeState(t)
+	fs.cityBeadStore = beads.NewMemStore()
+	fs.autos = []orders.Order{{Name: "governor-wake", Formula: "mol-wake"}}
+
+	const reason = "formula \"mol-wake\" not found"
+	failed, err := fs.cityBeadStore.Create(beads.Bead{
+		Title:    "order:governor-wake",
+		Status:   "closed",
+		Labels:   []string{"order-run:governor-wake", "order-tracking", "wisp", "wisp-failed"},
+		Metadata: beads.StringMap{beadmeta.OrderDispatchFailureMetadataKey: reason},
+	})
+	if err != nil {
+		t.Fatalf("create failed run: %v", err)
+	}
+	ok, err := fs.cityBeadStore.Create(beads.Bead{
+		Title:  "order:governor-wake",
+		Status: "closed",
+		Labels: []string{"order-run:governor-wake", "order-tracking", "wisp"},
+	})
+	if err != nil {
+		t.Fatalf("create completed run: %v", err)
+	}
+
+	h := newTestCityHandler(t, fs)
+	req := httptest.NewRequest(http.MethodGet, cityURL(fs, "/orders/history?scoped_name=governor-wake"), nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp struct {
+		Entries []struct {
+			BeadID          string `json:"bead_id"`
+			Status          string `json:"status"`
+			DispatchFailure string `json:"dispatch_failure"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	byID := map[string]string{}
+	failureByID := map[string]string{}
+	for _, e := range resp.Entries {
+		byID[e.BeadID] = e.Status
+		failureByID[e.BeadID] = e.DispatchFailure
+	}
+	for _, b := range []beads.Bead{failed, ok} {
+		run, decoded := orders.RunFromTrackingBead(b)
+		if !decoded {
+			t.Fatalf("fixture bead %s is not an order run; the assertions below would be vacuous", b.ID)
+		}
+		if got := byID[b.ID]; got != run.State() {
+			t.Fatalf("entry %s status = %q, want %q", b.ID, got, run.State())
+		}
+		if got := failureByID[b.ID]; got != run.DispatchFailure {
+			t.Fatalf("entry %s dispatch_failure = %q, want %q", b.ID, got, run.DispatchFailure)
+		}
+	}
+	if byID[failed.ID] == byID[ok.ID] {
+		t.Fatalf("failed and completed runs both report %q; the response cannot tell them apart", byID[failed.ID])
+	}
+	if failureByID[ok.ID] != "" {
+		t.Fatalf("completed run carries dispatch_failure %q, want none", failureByID[ok.ID])
 	}
 }
