@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ewi 2026-09-05T18:46Z
+last_seen: gs-wli 2026-09-05T18:50Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -141,5 +141,31 @@ new pm-open entry. While gate ci-gbhkpa stays open the trace sweep keeps
 filing pm-epic-close:governor summonses by design; each is answered by
 re-checking ci-waw3o7, and the first session that finds it resolved rules
 on the epic from Willie's close reason. Residuals in pm-log #5 stand.
+
+Source: roadmap governor
+
+## 7. pm-idle gs-wli: governor stays in-progress, ruling still pending (2026-09-05)
+
+Third ruling of this shape (pm-log #5 gs-8iv, #6 gs-ewi), re-verified live
+rather than recalled. The closed set under epic:governor is unchanged
+(gs-x0k, gs-xeh, gs-o9i, gs-nun -- criteria 1-6 verified in their close
+reasons, pm-log #5). Criterion-7 chain re-checked in the city store this
+turn: ci-waw3o7 (P1, assignee human) still open, gate ci-gbhkpa still
+open. The untracked bench-alerts.log that bead names as operator action 2
+is still present in the rig root, corroborating that no operator action
+has landed. Per pm-log #4 the epic closes on Willie's recorded say-so; it
+has not landed, so governor stays in-progress and the bead that puts
+motion back remains ci-waw3o7.
+
+No epic promoted -- governor is the roadmap's only epic -- and no DECOMP
+sent. The waiting-on-external condition is already recorded as pm-open #2;
+no new entry. The summons's idle premise was stale at answer time: gs-hph
+(P2 formula version-check bug, pm-log #5) shows in_progress with
+lab.engineer-2 but its lease is expired, heartbeat ~20 minutes back -- a
+worker-health matter for patrol and the mayor, not a PM edit, noted here
+because a stalled P2 is exactly the class of fault the governor epic
+exists to catch. gs-ps7 (pm-epic-close:governor) is open for the next
+session -- same decision from opposite evidence, answered by re-checking
+ci-waw3o7. Residuals in pm-log #5 stand.
 
 Source: roadmap governor
