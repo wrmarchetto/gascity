@@ -40,3 +40,26 @@ Would settle it: Willie resolving gate ci-gbhkpa -- a "not yet" should name
 what he still checks by hand, which per that bead becomes the next thing the
 governor is taught -- and a `gc city pm plan gascity '<epic>'` sitting
 for (b).
+
+## 3. Substrate maintenance beads have no epic home; gs-z39 ruled standalone (2026-09-05)
+
+gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or
+delete) was labeled `standalone` by summons gs-8zd: it descends from gs-hph,
+a gc bug the governor soak FOUND, but no epic:governor acceptance criterion
+closes over branch cleanup, and the roadmap holds no other epic. Forcing it
+into governor would be orphan scope by the same standard pm-log #4 applied
+to the DECOMP review. It was already closed at ruling time (engineer-codex-1
+salvaged the JSON coverage test, 992fe4f33).
+
+The pattern behind it is the real question: this rig's substrate work --
+bugs found in gc, branch hygiene, tooling fixes like gs-hph/gs-c6f/gs-z39 --
+has no roadmap home, so every such bead re-raises this per-bead placement
+question. This is pm-open #2(b) seen from below.
+
+Question: should the roadmap carry a standing epic (or an explicit
+standalone policy line) for gc substrate maintenance, so off-roadmap fixes
+have a declared home?
+
+Would settle it: Willie's call in a `gc city pm plan` or `gc city pm chat`
+sitting -- either a maintenance epic with acceptance criteria, or a recorded
+policy that substrate fixes stay `standalone` by default.

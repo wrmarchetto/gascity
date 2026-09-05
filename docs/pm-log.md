@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-qzm 2026-09-05T22:15Z
+last_seen: gs-8zd 2026-09-05T22:18Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -358,5 +358,34 @@ gs-z39, both assigned to this PM) -- one unit each for the next sessions,
 not this one. Residuals in pm-log #5 stand: no scheduled wake has yet run
 WITH the assessment layer, and a governor that assesses then reports
 something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 15. Placement summons gs-8zd: gs-z39 ruled standalone (2026-09-05)
+
+gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or
+delete) carries no epic label and the sweep summoned this PM to place it.
+Ruling: `standalone`, applied this turn with
+`bd update gs-z39 --add-label standalone`. Grounds: it descends from gs-hph,
+a gc bug the governor soak FOUND, but finding a bug is not owning its
+cleanup -- no epic:governor acceptance criterion closes over branch hygiene,
+gs-hph itself was never labeled epic:governor, and the roadmap holds no
+other epic. Forcing it into governor would be orphan scope by the same
+standard pm-log #4 applied at DECOMP review, and would have re-armed the
+epic-close sweep against a bead the epic does not need.
+
+The summons premise had half-lapsed at ruling time: gs-z39 was already
+CLOSED by lab.engineer-codex-1 -- the branch's duplicate version-check fix
+ruled do-not-merge, and the one salvageable artifact (the JSON flag/result-
+schema coverage test) ported as cmd/gc/json_flag_schema_coverage_test.go,
+verified fail-first, committed 992fe4f33 and pushed. The label still
+matters: it is the durable record that no epic's acceptance was ever meant
+to close over this bead.
+
+The recurring shape -- substrate fixes with no roadmap home, gs-hph then
+gs-c6f then gs-z39 -- is recorded as pm-open #3 (standing maintenance epic
+vs a declared standalone-by-default policy, Willie's call), courtesy ping
+delivered (exit 0). gs-22c (placing gs-c6f) stays one unit for the next
+session; nothing in this entry pre-decides it.
 
 Source: roadmap governor
