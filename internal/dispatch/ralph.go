@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -825,4 +826,157 @@ func formatGateExitCode(code *int) string {
 		return "<nil>"
 	}
 	return strconv.Itoa(*code)
+}
+
+// --- exhausted-control close reason ---
+
+// ralphExhaustedConditionCap bounds one iteration's refusal condition inside a
+// synthesized close reason. The condition is the check gate's stderr, which is
+// unbounded; the untruncated text stays on gc.attempt_log and on the iteration
+// bead, so clipping here loses nothing a reader cannot reach.
+const ralphExhaustedConditionCap = 120
+
+// ralphExhaustedCloseReasonCap bounds the whole synthesized reason. A close
+// reason is prose a human reads at the top of `bd show`, not a log: past this
+// length the entries are dropped from the tail and the reader is pointed at
+// gc.attempt_log for the rest. Chosen against a 5-iteration loop with
+// full-length conditions, the common shape, which lands well under it.
+const ralphExhaustedCloseReasonCap = 1000
+
+// ralphExhaustedCloseReason renders why an exhausted ralph control closed,
+// naming each iteration bead and the condition that refused it.
+//
+// It exists because the exhaust closure records gc.outcome=fail and NO failure
+// reason -- unlike the hard-fail and retry-exhaustion closures, which stamp
+// gc.failure_reason -- so before this the only trace of why was gc.attempt_log,
+// a JSON string in metadata pointing at beads the reader then had to fetch.
+// The resulting shape (fail, no reason) is indistinguishable from an agent that
+// closed a bead without saying why, and that misreading cost a mayor handoff a
+// session's first instruction (ci-ae1ob2).
+//
+// Deliberately does NOT duplicate the iterations' full refusal text. The
+// iteration beads own it; this is a pointer, and a close reason that grows with
+// the loop's output stops being readable at exactly the moment it matters.
+func ralphExhaustedCloseReason(store beads.Store, control beads.Bead, iterations int, attemptLog string) string {
+	head := fmt.Sprintf("ralph control exhausted gc.max_attempts (%d) without a passing check", iterations)
+	ids := ralphIterationRootsByAttempt(store, control)
+	conditions := attemptLogConditionsByAttempt(attemptLog)
+
+	var entries []string
+	for n := 1; n <= iterations; n++ {
+		id := ids[n]
+		if id == "" {
+			continue
+		}
+		entry := "iteration " + strconv.Itoa(n) + " " + id
+		if cond := collapseWhitespace(conditions[n]); cond != "" {
+			entry += ": " + traceClipString(cond, ralphExhaustedConditionCap)
+		}
+		entries = append(entries, entry)
+	}
+	if len(entries) == 0 {
+		return head + "; no iteration bead id could be resolved -- see " +
+			beadmeta.AttemptLogMetadataKey + " on this bead for the per-iteration record"
+	}
+
+	const lead = "; refusal reasons are on the iteration beads, not here -- "
+	dropped := 0
+	for len(head)+len(lead)+len(strings.Join(entries, "; ")) > ralphExhaustedCloseReasonCap && len(entries) > 1 {
+		entries = entries[:len(entries)-1]
+		dropped++
+	}
+	reason := head + lead + strings.Join(entries, "; ")
+	if dropped > 0 {
+		reason += fmt.Sprintf(" (+%d more in %s)", dropped, beadmeta.AttemptLogMetadataKey)
+	}
+	return reason
+}
+
+// ralphIterationRootsByAttempt maps a ralph control's iteration roots to their
+// attempt numbers via the durable gc.control_for lineage stamp -- the same
+// primary path latestAttemptFromCandidates matches on.
+//
+// The pre-S38 ref-string cascade that selector falls back to is deliberately
+// NOT reproduced. That cascade keeps an in-flight molecule converging, where a
+// near-miss still beats stalling; this function only decorates prose, and a
+// wrong id there is worse than an absent one because it sends the reader to a
+// bead holding someone else's refusal. An unstamped lineage yields no ids and
+// the caller says so instead of guessing.
+func ralphIterationRootsByAttempt(store beads.Store, control beads.Bead) map[int]string {
+	rootID := control.Metadata[beadmeta.RootBeadIDMetadataKey]
+	if rootID == "" {
+		rootID = control.ID
+	}
+	candidates, err := listByWorkflowRoot(store, rootID)
+	if err != nil || len(candidates) == 0 {
+		candidates = ralphControlDependencyBeads(store, control.ID)
+	}
+
+	identity := controlIdentitySet(control)
+	out := make(map[int]string, len(candidates))
+	for _, candidate := range candidates {
+		if isFailedPartialMolecule(candidate) {
+			continue
+		}
+		if latestAttemptCandidateIsControlInfrastructure(candidate.Metadata[beadmeta.KindMetadataKey]) {
+			continue
+		}
+		if !identity[strings.TrimSpace(candidate.Metadata[beadmeta.ControlForMetadataKey])] {
+			continue
+		}
+		attemptNum, convErr := strconv.Atoi(strings.TrimSpace(candidate.Metadata[beadmeta.AttemptMetadataKey]))
+		if convErr != nil || attemptNum < 1 {
+			continue
+		}
+		out[attemptNum] = candidate.ID
+	}
+	return out
+}
+
+// ralphControlDependencyBeads is the store fallback for enumerating a
+// control's iteration roots when the workflow-root listing is unavailable.
+// Errors are swallowed rather than propagated: this feeds a close reason, and
+// a store hiccup must degrade the prose, never block the close it decorates.
+func ralphControlDependencyBeads(store beads.Store, controlID string) []beads.Bead {
+	deps, err := store.DepList(controlID, "down")
+	if err != nil {
+		return nil
+	}
+	out := make([]beads.Bead, 0, len(deps))
+	for _, dep := range deps {
+		candidate, getErr := store.Get(dep.DependsOnID)
+		if getErr != nil {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+// attemptLogConditionsByAttempt reads the per-attempt refusal text out of a
+// gc.attempt_log value. A malformed log yields no conditions rather than an
+// error, for the same reason as above.
+func attemptLogConditionsByAttempt(attemptLog string) map[int]string {
+	var log []map[string]string
+	if err := json.Unmarshal([]byte(attemptLog), &log); err != nil {
+		return nil
+	}
+	out := make(map[int]string, len(log))
+	for _, entry := range log {
+		attemptNum, convErr := strconv.Atoi(strings.TrimSpace(entry["attempt"]))
+		if convErr != nil {
+			continue
+		}
+		if reason := strings.TrimSpace(entry["reason"]); reason != "" {
+			out[attemptNum] = reason
+		}
+	}
+	return out
+}
+
+// collapseWhitespace folds runs of whitespace to single spaces so a multi-line
+// stderr does not break a close reason across lines. bd renders a close reason
+// as a single prose field.
+func collapseWhitespace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
