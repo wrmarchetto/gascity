@@ -2712,6 +2712,12 @@ Widen it with --limit (0 fetches every retained run) or bound it by time
 with --since. On a city with a long order-run history an unbounded read
 costs tens of seconds, so prefer keeping a bound when triaging.
 
+The STATUS column reports each run's lifecycle state -- failed, active or
+completed. A run whose wisp dispatch failed before cooking anything prints
+the reason underneath its row. A failed exec order's captured output is NOT
+shown here; it is served per run by the supervisor's order-history detail
+endpoint.
+
 ```
 gc order history [name] [flags]
 ```

@@ -866,6 +866,7 @@ export const zOrderHistoryEntry = z.object({
     bead_id: z.string(),
     capture_output: z.boolean(),
     created_at: z.string(),
+    dispatch_failure: z.string().optional(),
     duration_ms: z.string().optional(),
     error: z.string().optional(),
     exit_code: z.string().optional(),
@@ -875,6 +876,7 @@ export const zOrderHistoryEntry = z.object({
     rig: z.string().optional(),
     scoped_name: z.string(),
     signal: z.string().optional(),
+    status: z.string(),
     store_ref: z.string(),
     wisp_root_id: z.string().optional()
 });

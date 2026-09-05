@@ -256,6 +256,19 @@ func (s *Server) humaHandleOrderHistory(_ context.Context, input *OrderHistoryIn
 			CaptureOutput: auto != nil && auto.IsExec(),
 		}
 
+		// State and the dispatch reason are decoded through the orders front
+		// door rather than cracked out of entry.Labels here. The labels ride
+		// the wire too, but a consumer deriving a verdict from them is exactly
+		// the duplicated truth table OrderRun.State() replaced -- and the CLI
+		// is a second consumer that would have to reimplement it.
+		if run, decoded := orders.RunFromTrackingBead(b); decoded {
+			entry.Status = run.State()
+			if run.DispatchFailure != "" {
+				reason := run.DispatchFailure
+				entry.DispatchFailure = &reason
+			}
+		}
+
 		gate := convergence.GateOutputFromMetadata(b.Metadata)
 		if gate.DurationMs != "" {
 			entry.DurationMs = &gate.DurationMs
@@ -294,6 +307,14 @@ type orderHistoryEntry struct {
 	WispRootID    *string  `json:"wisp_root_id,omitempty"`
 	CaptureOutput bool     `json:"capture_output"`
 	HasOutput     bool     `json:"has_output"`
+	// Status is OrderRun.State(): "failed", "active" or "completed". Empty
+	// only for a row carrying no order-run label, which the history query
+	// cannot return -- it selects on that label.
+	Status string `json:"status"`
+	// DispatchFailure is the reason a wisp run failed before cooking. Absent
+	// for exec runs, whose diagnostic is the captured output the detail
+	// endpoint serves, and absent for tracking beads written before ci-pserre.
+	DispatchFailure *string `json:"dispatch_failure,omitempty"`
 }
 
 // humaHandleOrderHistoryDetail is the Huma-typed handler for GET /v0/order/history/{bead_id}.
