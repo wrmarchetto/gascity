@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-c5t 2026-09-05T23:47Z
+last_seen: gs-try 2026-09-05T23:51Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -736,5 +736,34 @@ deferral date (2026-09-07) or Willie's ruling lands, every summons of
 either shape gets this same answer. Residuals in pm-log #5 stand: no
 scheduled wake has yet run WITH the assessment layer, and a governor that
 assesses then reports something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 28. pm-epic-close gs-try: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-05)
+
+Twenty-second ruling of this shape (pm-log #5 gs-8iv through #27 gs-c5t),
+four minutes after #27 by the same session under the one-unit rule,
+re-verified live rather than recalled. The closed set under epic:governor is
+unchanged (gs-x0k, gs-xeh, gs-o9i, gs-nun -- criteria 1-6 verified in their
+close reasons, pm-log #5). Criterion-7 chain re-checked in the city store
+this turn at 23:51Z: ci-waw3o7 (P1, assignee human) holds the DEFERRED
+status pm-log #13 found, earliest revisit 2026-09-07, and gate ci-gbhkpa is
+still open and operator-paged. bench-alerts.log is still untracked in the
+rig root, corroborating that neither operator-only action named in that
+bead has landed. Per pm-log #4 the epic closes on Willie's recorded say-so;
+it has not landed -- the deferral postpones the question rather than
+answering it -- so governor stays in-progress and the bead that puts motion
+back remains ci-waw3o7.
+
+No epic promoted -- the summons itself lists no other open epic -- and no
+DECOMP sent. What gascity builds next is already recorded as pm-open #2, and
+the substrate-maintenance placement gap as pm-open #3; no new entry. Rig
+store since last_seen moved only by this summons's claim: after it closes
+the store holds nothing open, so the idle sweep will file the next
+pm-idle:gascity summons in due course, and it gets this same answer until
+the deferral date (2026-09-07) or Willie's ruling lands. Residuals in pm-log
+#5 stand: no scheduled wake has yet run WITH the assessment layer, and a
+governor that assesses then reports something else is mechanically
+unobservable today.
 
 Source: roadmap governor
