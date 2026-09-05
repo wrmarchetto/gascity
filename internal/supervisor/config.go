@@ -51,6 +51,16 @@ type Section struct {
 	// network front); without it that combination is a fail-closed boot error
 	// (gate G10). See config.APIConfig for the full semantics.
 	WriteAuthAllowUnverified bool `toml:"write_auth_allow_unverified,omitempty"`
+	// FormulaRef pins the formula source to a committed git ref instead of the
+	// live working tree: the supervisor exports it as GC_FORMULA_REF, which
+	// internal/formula.SourceFromEnv reads. Empty (the default) leaves formula
+	// resolution on the working tree, so an existing install is unaffected.
+	//
+	// Absent on purpose: any per-city spelling. The supervisor is one process
+	// for every registered city, and a ref name resolves inside whichever
+	// repository holds the formula file, so one branch name covers them all.
+	// A per-city pin would need per-city processes.
+	FormulaRef string `toml:"formula_ref,omitempty"`
 	// ReadAuthVerifyKey / ReadAuthRequired require a signed read grant on every
 	// read (GET/HEAD) of an already-registered city (the per-city routes under
 	// /v0/city/{cityName}); supervisor-scope reads (/v0/cities, /health) stay
