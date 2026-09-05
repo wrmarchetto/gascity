@@ -40,9 +40,10 @@ around active work instead of doing it blindly.
 
 Acceptance:
 
-- The governor exists as configuration only (agent definition plus a
-  schedule/order): no governor-named logic in Go, per the ZERO hardcoded
-  roles rule.
+- The governor is its own agent definition, separate from any rig PM
+  (decided over the merge-into-PM alternative in the init sitting), and
+  exists as configuration only (agent definition plus a schedule/order): no
+  governor-named logic in Go, per the ZERO hardcoded roles rule.
 - It wakes every 90 minutes unattended and each wake sends a "checking in"
   message to the mayor.
 - Each wake it assesses city state itself -- stalled or quarantined workers,

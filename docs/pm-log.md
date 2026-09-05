@@ -48,3 +48,17 @@ Decisions from the sitting's second round:
   defined agent or a duty carried by the gascity PM itself.
 
 Source: Willie, pm-init sitting gs-4gs
+
+## 3. Roadmap accepted, governor is a separate agent (2026-09-05)
+
+Willie accepted the roadmap and confirmed the governor is its own agent
+definition, separate from any rig PM. Grounds from the sitting discussion:
+the governor's beat is the whole city while a PM is rig-scoped, restart
+permissions belong on the narrowest identity, and merging would put a
+90-minute operational sweep in the same queue and failure domain as
+PM question answering. The governor is the judgment layer above Health
+Patrol: patrol detects mechanically, the governor weighs priorities and
+timing. Roadmap criterion updated in the same turn; DECOMP for epic
+governor sent to the mayor per the decomposition procedure.
+
+Source: Willie, pm-init sitting gs-4gs
