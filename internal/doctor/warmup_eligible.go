@@ -172,6 +172,13 @@ func (c *SkillCollisionCheck) WarmupEligible() bool { return false }
 // `gc start` warm-up scan.
 func (c *SupervisorHTTPCheck) WarmupEligible() bool { return false }
 
+// WarmupEligible returns false. The drift is real at `gc start` -- that is
+// when a mixed-version deploy happens -- but the remedy is a supervisor
+// restart, which stops every managed city and is exactly what an operator
+// mid-start is not going to do. It stays on the periodic `gc doctor`, where
+// it is actionable.
+func (c *SupervisorPackDriftCheck) WarmupEligible() bool { return false }
+
 // WarmupEligible returns false; this check is not part of the
 // `gc start` warm-up scan.
 func (c *WorktreeCheck) WarmupEligible() bool { return false }

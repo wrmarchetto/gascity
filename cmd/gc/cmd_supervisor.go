@@ -22,6 +22,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/builtinpacks"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/convergence"
 	"github.com/gastownhall/gascity/internal/events"
@@ -695,6 +696,13 @@ func handleSupervisorConn(conn net.Conn, requestShutdown func(supervisorShutdown
 			return
 		case "ping":
 			fmt.Fprintf(conn, "%d\n", os.Getpid()) //nolint:errcheck
+		case "packhash":
+			// Answers with the bundled-pack content hash embedded in the
+			// RUNNING image, which is the only way to learn it: the packs
+			// live in the binary, the supervisor outlives `go install`, and
+			// os.Executable() names a path whose contents have since moved
+			// on. Read by doctor's supervisor-pack-drift check.
+			fmt.Fprintf(conn, "%s\n", builtinpacks.SyntheticCacheKeyComponent()) //nolint:errcheck
 		case "reload":
 			req := reconcileRequest{done: make(chan struct{})}
 			select {
@@ -767,6 +775,72 @@ func supervisorAliveAtPathUntil(sockPath string, deadline time.Time) int {
 		return 0
 	}
 	return pid
+}
+
+// supervisorBundledPackHash asks the running supervisor for the
+// bundled-pack content hash of its own image. Returns ok=false when no
+// supervisor answers, when it answers nothing (a build predating the
+// "packhash" command), or when the answer is not a hash.
+//
+// A supervisor that predates the command is reported the same way as one
+// that is unreachable, and the caller distinguishes them: doctor probes
+// only after the socket ping has already established liveness, so a silent
+// answer there means an older binary and nothing else.
+func supervisorBundledPackHash() (string, bool) {
+	sockPath, _ := runningSupervisorSocket()
+	if sockPath == "" {
+		return "", false
+	}
+	return supervisorBundledPackHashAtPath(sockPath, 3*time.Second)
+}
+
+func supervisorBundledPackHashAtPath(sockPath string, budget time.Duration) (string, bool) {
+	conn, err := net.DialTimeout("unix", sockPath, budget)
+	if err != nil {
+		return "", false
+	}
+	defer conn.Close() //nolint:errcheck
+	return supervisorBundledPackHashOverConn(conn, budget)
+}
+
+// supervisorBundledPackHashOverConn is the round trip itself, split from the
+// dial so its tests need no listener. test/test-resources.toml ratchets the
+// untagged net.Listen count down and forbids growth, and the answers worth
+// testing here -- silence, a truncated read, a non-hash line -- are all
+// properties of what comes back over an established connection.
+func supervisorBundledPackHashOverConn(conn net.Conn, budget time.Duration) (string, bool) {
+	conn.Write([]byte("packhash\n"))             //nolint:errcheck
+	conn.SetReadDeadline(time.Now().Add(budget)) //nolint:errcheck
+	// 128 leaves room for a longer digest without letting a wedged socket
+	// stream unboundedly.
+	buf := make([]byte, 128)
+	n, _ := conn.Read(buf)
+	hash := strings.TrimSpace(string(buf[:n]))
+	// Checked for exact shape, not just the prefix: a short read of a valid
+	// hash still starts with "sha256:", and a truncated hash would be
+	// reported as pack drift the operator cannot reproduce. A read error is
+	// not inspected separately because every one of them -- closed
+	// connection, timeout, partial answer -- lands here as a value that is
+	// not a whole hash.
+	if !isBundledPackHash(hash) {
+		return "", false
+	}
+	return hash, true
+}
+
+// isBundledPackHash reports whether s is a whole "sha256:" + 64 hex digest,
+// the form builtinpacks.SyntheticContentHash emits.
+func isBundledPackHash(s string) bool {
+	const prefix = "sha256:"
+	if len(s) != len(prefix)+64 || !strings.HasPrefix(s, prefix) {
+		return false
+	}
+	for _, r := range s[len(prefix):] {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // stopSupervisor sends a stop command to the running supervisor and returns
