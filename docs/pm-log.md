@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-8iv 2026-09-05T18:35Z
+last_seen: gs-ewi 2026-09-05T18:46Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -119,5 +119,27 @@ Residuals the next session should keep in view, from gs-nun: no scheduled
 wake has yet run WITH the assessment layer (both recorded wakes predate
 it), and a governor that assesses then reports something else is
 mechanically unobservable today.
+
+Source: roadmap governor
+
+## 6. pm-epic-close gs-ewi: governor stays in-progress, ruling still pending (2026-09-05)
+
+Epic-close summons gs-ewi answered -- the same decision as pm-idle gs-8iv
+(pm-log #5) from opposite evidence, re-verified rather than recalled. The
+closed set under epic:governor is unchanged (gs-x0k, gs-xeh, gs-o9i,
+gs-nun; criteria 1-6 verified in their close reasons, pm-log #5), and
+nothing in this rig's store moved since last_seen except the summons
+itself. Re-checked the criterion-7 chain live in the city store:
+ci-waw3o7 (P1, assignee human) still open, gate ci-gbhkpa still open and
+operator-paged. Per pm-log #4 the epic closes on Willie's recorded
+say-so, which has not landed, so governor stays in-progress and the bead
+that puts motion back remains ci-waw3o7.
+
+No epic promoted -- governor is the roadmap's only epic -- and no DECOMP
+sent. What gascity builds next is already recorded as pm-open #2, so no
+new pm-open entry. While gate ci-gbhkpa stays open the trace sweep keeps
+filing pm-epic-close:governor summonses by design; each is answered by
+re-checking ci-waw3o7, and the first session that finds it resolved rules
+on the epic from Willie's close reason. Residuals in pm-log #5 stand.
 
 Source: roadmap governor
