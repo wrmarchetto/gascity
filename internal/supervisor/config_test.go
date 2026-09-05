@@ -408,3 +408,51 @@ func TestRegistryRegisterPanicsOnHostPath(t *testing.T) {
 	}()
 	_ = reg.Register(t.TempDir(), "test-city")
 }
+
+// TestLoadConfigFormulaRef pins the TOML spelling of the formula-source
+// pin, `formula_ref` under [supervisor].
+//
+// The key name is the whole contract: cmd/gc reads this field to decide
+// whether the supervisor resolves formulas from a committed git ref
+// instead of the live working tree. A rename that compiled would leave
+// every existing supervisor.toml silently on the working tree -- the
+// exact failure the pin exists to prevent -- so the literal is asserted
+// here rather than derived from the struct tag.
+func TestLoadConfigFormulaRef(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supervisor.toml")
+	if err := os.WriteFile(path, []byte(`
+[supervisor]
+formula_ref = "main"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Supervisor.FormulaRef; got != "main" {
+		t.Fatalf("Supervisor.FormulaRef = %q, want %q", got, "main")
+	}
+}
+
+// TestLoadConfigFormulaRefAbsent pins the default: no pin at all, which
+// leaves formula.SourceFromEnv on its FSSource (working-tree) default.
+// Stated as its own test because the absence is the compatibility
+// guarantee -- an existing supervisor.toml must not change behavior.
+func TestLoadConfigFormulaRefAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supervisor.toml")
+	if err := os.WriteFile(path, []byte("[supervisor]\nport = 9090\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Supervisor.FormulaRef; got != "" {
+		t.Fatalf("Supervisor.FormulaRef = %q, want empty", got)
+	}
+}

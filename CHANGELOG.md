@@ -72,6 +72,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`formula_ref` in `~/.gc/supervisor.toml` pins the supervisor's formula
+  source to a committed git ref.** The supervisor exports it as
+  `GC_FORMULA_REF`, so every formula the controller compiles -- and every
+  session it spawns -- resolves from that ref instead of the live working
+  tree. Order dispatch was previously breakable for the duration of any
+  merge, rebase or half-written save: a conflicted `formulas/*.toml` in the
+  working tree makes the order that names it fail to parse when it fires.
+  Unset (the default) keeps working-tree resolution, and a `GC_FORMULA_REF`
+  already in the supervisor's environment still wins, so
+  `GC_FORMULA_REF=working-tree gc supervisor start` is the no-edit escape
+  hatch. The cost is deliberate: a formula edit does not take effect until it
+  is committed to the pinned ref.
 - **A run-centered dashboard and API.** Run detail now combines the formula
   stage ladder, structured transcripts, token rate, and estimated burn rate.
   Session and run reads use typed, paginated API surfaces backed by warm

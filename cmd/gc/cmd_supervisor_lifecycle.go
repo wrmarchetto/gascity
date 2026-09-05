@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -460,7 +461,83 @@ var runSupervisorFunc = runSupervisor
 
 func doSupervisorRun(stdout, stderr io.Writer) int {
 	defaultSupervisorBeadsActor()
+	applySupervisorFormulaRef()
 	return runSupervisorFunc(stdout, stderr)
+}
+
+// supervisorFormulaRefEnv is the variable internal/formula.SourceFromEnv
+// reads to choose between the live working tree and a committed git ref.
+const supervisorFormulaRefEnv = "GC_FORMULA_REF"
+
+// supervisorConfiguredFormulaRef returns the [supervisor] formula_ref value
+// from supervisor.toml, or "" when it is unset.
+//
+// A load error yields "" rather than a diagnostic: runSupervisor loads the
+// same file moments later and refuses to start on an error, so reporting it
+// here would print the same failure twice and the pin cannot be silently
+// lost -- an unreadable config means no supervisor at all.
+func supervisorConfiguredFormulaRef() string {
+	cfg, err := supervisorLoadConfig(supervisor.ConfigPath())
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Supervisor.FormulaRef)
+}
+
+// applySupervisorFormulaRef exports the configured formula_ref into this
+// process's environment before the run loop starts.
+//
+// It runs pre-loop because the loop is what dispatches orders, and an order
+// dispatched before the pin lands would parse its formula off the working
+// tree -- which is breakable for the duration of any merge, rebase or
+// half-written save.
+//
+// An environment value beats the config file, and PRESENCE is the test, not
+// non-emptiness: an operator who exports the key at all has made a choice,
+// and SourceFromEnv reads an empty value as a real one (the working tree)
+// rather than as an omission. That is the no-edit escape hatch --
+// `GC_FORMULA_REF=working-tree gc supervisor start` -- and the reason this
+// helper does not follow defaultSupervisorBeadsActor's trim-to-unset rule.
+//
+// This is the guarantee for every launch path (systemd, launchd, a bare
+// `gc supervisor run`); supervisorChildEnv covers the `gc supervisor start`
+// fork for a different reason, documented there.
+func applySupervisorFormulaRef() {
+	if _, present := os.LookupEnv(supervisorFormulaRefEnv); present {
+		return
+	}
+	ref := supervisorConfiguredFormulaRef()
+	if ref == "" {
+		return
+	}
+	_ = os.Setenv(supervisorFormulaRefEnv, ref)
+}
+
+// supervisorChildEnv returns base with GC_FORMULA_REF=ref appended, unless
+// base already carries the key or ref is empty.
+//
+// This duplicates what applySupervisorFormulaRef does inside the child, and
+// the duplication is deliberate: os.Setenv does NOT rewrite /proc/<pid>/environ
+// on Linux, because Go keeps its own copy of the environment and the kernel's
+// block is a snapshot taken at exec. A supervisor pinned only by the child's
+// own Setenv therefore behaves correctly while reading as unpinned to the one
+// check an operator makes against a live process. Seeding the fork's env makes
+// that check truthful on the path a human actually uses.
+//
+// The simpler alternative -- rely on the child's Setenv and tell operators to
+// verify some other way -- was rejected: the failure this pin prevents is
+// silent, so a verification that reads false is worse than no verification.
+func supervisorChildEnv(base []string, ref string) []string {
+	if ref == "" {
+		return base
+	}
+	prefix := supervisorFormulaRefEnv + "="
+	for _, entry := range base {
+		if strings.HasPrefix(entry, prefix) {
+			return base
+		}
+	}
+	return append(slices.Clone(base), prefix+ref)
 }
 
 // defaultSupervisorBeadsActor sets BEADS_ACTOR=controller in this
@@ -540,7 +617,7 @@ func doSupervisorStartJSON(stdout, stderr io.Writer, jsonOut bool) int {
 	child.Stdin = nil
 	child.Stdout = logFile
 	child.Stderr = logFile
-	child.Env = os.Environ()
+	child.Env = supervisorChildEnv(os.Environ(), supervisorConfiguredFormulaRef())
 	disableProductMetricsForChild(child)
 
 	if err := child.Start(); err != nil {
