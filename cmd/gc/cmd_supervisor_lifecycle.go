@@ -510,8 +510,15 @@ func applySupervisorFormulaRef() {
 	if ref == "" {
 		return
 	}
-	_ = os.Setenv(supervisorFormulaRefEnv, ref)
+	_ = supervisorFormulaRefSetenv(supervisorFormulaRefEnv, ref)
 }
+
+// supervisorFormulaRefSetenv follows the package's test-double convention;
+// tests that replace it must not run in parallel. The seam exists so a test
+// can observe the pin without mutating the real process environment -- an
+// os.Setenv here would outlive the test, and the escaping value would change
+// how every later test in the package resolves formulas.
+var supervisorFormulaRefSetenv = os.Setenv
 
 // supervisorChildEnv returns base with GC_FORMULA_REF=ref appended, unless
 // base already carries the key or ref is empty.
