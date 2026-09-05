@@ -49,7 +49,9 @@ a gc bug the governor soak FOUND, but no epic:governor acceptance criterion
 closes over branch cleanup, and the roadmap holds no other epic. Forcing it
 into governor would be orphan scope by the same standard pm-log #4 applied
 to the DECOMP review. It was already closed at ruling time (engineer-codex-1
-salvaged the JSON coverage test, 992fe4f33).
+salvaged the JSON coverage test, 992fe4f33). Summons gs-22c then ruled
+gs-c6f (the slot-unwedge/salvage sibling) standalone on the same grounds
+(pm-log #16); it too was already closed at ruling time.
 
 The pattern behind it is the real question: this rig's substrate work --
 bugs found in gc, branch hygiene, tooling fixes like gs-hph/gs-c6f/gs-z39 --

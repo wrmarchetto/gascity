@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-8zd 2026-09-05T22:18Z
+last_seen: gs-22c 2026-09-05T22:21Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -389,3 +389,41 @@ delivered (exit 0). gs-22c (placing gs-c6f) stays one unit for the next
 session; nothing in this entry pre-decides it.
 
 Source: roadmap governor
+
+## 16. Placement summons gs-22c: gs-c6f ruled standalone (2026-09-05)
+
+gs-c6f (salvage the stranded json_flag_schema_coverage test and unwedge
+gascity/lab.engineer-1) carries no epic label and the sweep summoned this
+PM to place it. Ruling: `standalone`, applied this turn with
+`bd update gs-c6f --add-label standalone` and verified on the bead. Grounds
+are pm-log #15's, which ruled the sibling bead gs-z39 standalone one entry
+ago: gs-c6f is the same substrate-maintenance lineage (slot unwedging and
+test salvage descending from the gs-hph fix churn), no epic:governor
+acceptance criterion closes over slot hygiene or test salvage, gs-hph
+itself was never labeled epic:governor, and the roadmap holds no other
+epic. Forcing it into governor would be orphan scope by the pm-log #4
+standard.
+
+The summons premise had lapsed at ruling time, the same shape as gs-8zd:
+gs-c6f was already CLOSED pass by lab__engineer-ci-i5bzxj. Its close reason,
+read this turn: the mayor did the salvage half at 21:42Z (02c043b66
+preserves cmd/gc/json_flag_schema_coverage_test.go, 109 lines, on local
+branch salvage/lab.engineer-1-20260905; marker removed after the commit
+existed; slot green per gc doctor), and the engineer discharged the rest --
+suite run at 02c043b66 (PASS, paired=125 unpaired=11, allowlist reconcile a
+no-op), three mutations all died (recorded as c17578834 on the salvage
+branch), duplicate-coverage finding left on gs-z39 (the fix/gs-hph branch's
+100-line draft is superseded, so deleting that branch costs no coverage).
+The label still matters for the same reason it did for gs-z39: it is the
+durable record that no epic's acceptance was ever meant to close over this
+bead.
+
+No new pm-open entry: the pattern is already pm-open #3, which names gs-c6f
+in its body, and its courtesy ping was delivered at pm-log #15 -- a second
+ping for the same question would page Willie twice. Amended pm-open #3 this
+turn to record this ruling, so that entry stays the single record of the
+class awaiting his call. Rig store since last_seen moved only by the gs-c6f
+close and this summons; the placement backlog pm-log #13 recorded is now
+drained (gs-8zd done at #15, gs-22c here). Residuals in pm-log #5 stand.
+
+Source: pm-log #15
