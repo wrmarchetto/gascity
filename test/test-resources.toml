@@ -10,7 +10,11 @@ version = 2
 [[audit_baseline]]
 scope = "all"
 resource = "subprocess"
-baseline_calls = 611
+# 611 -> 612 (ci-7gg9ra): TestWithGoTmpPropagatesChildExitStatus runs
+# scripts/with-go-tmp as a real subprocess, which it must -- the defect it pins
+# lives in that script's own exit path. baseline_files is unchanged because the
+# call joins existing exec.Command sites in scripts/go_owned_tmp_test.go.
+baseline_calls = 612
 baseline_files = 178
 reported_calls = 495
 reported_files = 135
