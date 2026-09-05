@@ -2291,7 +2291,7 @@ gc mail archive <id>... [flags]
 | `--from` | string |  | archive matching unread messages from this exact sender |
 | `--include-read` | bool |  | include read-but-open messages when selecting by filter |
 | `--json` | bool |  | emit JSONL result |
-| `--limit` | int | `100` | maximum matching messages to archive in this run |
+| `--limit` | int | `100` | maximum matching messages to archive in this run (must be &gt; 0; there is no unbounded form) |
 | `--subject-contains` | string |  | archive matching unread messages whose subject contains this text |
 | `--subject-prefix` | string |  | archive matching unread messages whose subject starts with this text |
 | `--to` | string |  | archive matching unread messages addressed to this recipient |
