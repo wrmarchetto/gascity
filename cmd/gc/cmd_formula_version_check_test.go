@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/formula"
 )
@@ -100,6 +101,30 @@ func createVersionCheckBead(t *testing.T, cityDir, formulaName, hash string) str
 		if err := store.SetMetadata(created.ID, "gc.formula_hash", hash); err != nil {
 			t.Fatalf("SetMetadata(gc.formula_hash): %v", err)
 		}
+	}
+	return created.ID
+}
+
+func createVersionCheckBeadNamedByMetadata(t *testing.T, cityDir, formulaName, hash string) string {
+	t.Helper()
+
+	store, err := openStoreAtForCity(cityDir, cityDir)
+	if err != nil {
+		t.Fatalf("openStoreAtForCity: %v", err)
+	}
+	created, err := store.Create(beads.Bead{
+		Title:  "metadata-named version-check fixture",
+		Type:   "molecule",
+		Status: "open",
+	})
+	if err != nil {
+		t.Fatalf("store.Create: %v", err)
+	}
+	if err := store.SetMetadata(created.ID, beadmeta.FormulaNameMetadataKey, formulaName); err != nil {
+		t.Fatalf("SetMetadata(%s): %v", beadmeta.FormulaNameMetadataKey, err)
+	}
+	if err := store.SetMetadata(created.ID, beadmeta.FormulaHashMetadataKey, hash); err != nil {
+		t.Fatalf("SetMetadata(%s): %v", beadmeta.FormulaHashMetadataKey, err)
 	}
 	return created.ID
 }
@@ -227,27 +252,22 @@ func TestFormulaVersionCheck_MissingFormulaHashErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd := newFormulaVersionCheckCmd(&stdout, &stderr)
 	cmd.SetArgs([]string{beadID})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("Execute on missing hash: err = nil, want a 'no gc.formula_hash metadata' error")
+	if err := cmd.Execute(); !errors.Is(err, errExit) {
+		t.Fatalf("Execute on missing hash: err = %v, want errExit; stderr=%s", err, stderr.String())
 	}
-	if !strings.Contains(err.Error(), "gc.formula_hash") {
-		t.Errorf("err = %q, want it to mention gc.formula_hash", err)
+	if !strings.Contains(stderr.String(), "gc.formula_hash") {
+		t.Errorf("stderr = %q, want it to mention gc.formula_hash", stderr.String())
 	}
 }
 
-// TestFormulaVersionCheck_MissingRefErrors covers the bead-has-no-Ref
-// guard. Without this branch under test, operators creating beads
-// without a formula reference would see a generic compile error
-// instead of the targeted "no Ref (formula name)" diagnostic.
-func TestFormulaVersionCheck_MissingRefErrors(t *testing.T) {
+func TestFormulaVersionCheck_UnnamedFormulaErrors(t *testing.T) {
 	cityDir, _ := writeVersionCheckCity(t)
 	store, err := openStoreAtForCity(cityDir, cityDir)
 	if err != nil {
 		t.Fatalf("openStoreAtForCity: %v", err)
 	}
 	created, err := store.Create(beads.Bead{
-		Title:  "no-ref fixture",
+		Title:  "unnamed-formula fixture",
 		Type:   "molecule",
 		Status: "open",
 		// Ref deliberately empty.
@@ -264,12 +284,11 @@ func TestFormulaVersionCheck_MissingRefErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd := newFormulaVersionCheckCmd(&stdout, &stderr)
 	cmd.SetArgs([]string{created.ID})
-	execErr := cmd.Execute()
-	if execErr == nil {
-		t.Fatalf("Execute on missing Ref: err = nil, want a 'no Ref (formula name)' error")
+	if err := cmd.Execute(); !errors.Is(err, errExit) {
+		t.Fatalf("Execute on a bead naming no formula: err = %v, want errExit; stderr=%s", err, stderr.String())
 	}
-	if !strings.Contains(execErr.Error(), "Ref") || !strings.Contains(execErr.Error(), "formula name") {
-		t.Errorf("err = %q, want it to mention missing Ref / formula name", execErr)
+	if !strings.Contains(stderr.String(), "Ref") || !strings.Contains(stderr.String(), beadmeta.FormulaNameMetadataKey) {
+		t.Errorf("stderr = %q, want both places a formula name could have been recorded", stderr.String())
 	}
 }
 
@@ -284,12 +303,11 @@ func TestFormulaVersionCheck_BeadNotFoundErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd := newFormulaVersionCheckCmd(&stdout, &stderr)
 	cmd.SetArgs([]string{"does-not-exist-1234"})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("Execute on missing bead: err = nil, want a 'reading bead' error")
+	if err := cmd.Execute(); !errors.Is(err, errExit) {
+		t.Fatalf("Execute on missing bead: err = %v, want errExit; stderr=%s", err, stderr.String())
 	}
-	if !strings.Contains(err.Error(), "reading bead") || !strings.Contains(err.Error(), "does-not-exist-1234") {
-		t.Errorf("err = %q, want it to wrap the missing bead id", err)
+	if !strings.Contains(stderr.String(), "reading bead") || !strings.Contains(stderr.String(), "does-not-exist-1234") {
+		t.Errorf("stderr = %q, want it to name the missing bead id", stderr.String())
 	}
 }
 
@@ -306,12 +324,11 @@ func TestFormulaVersionCheck_FormulaNotOnDiskErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd := newFormulaVersionCheckCmd(&stdout, &stderr)
 	cmd.SetArgs([]string{beadID})
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("Execute with bead referring to absent formula: err = nil, want a compile error")
+	if err := cmd.Execute(); !errors.Is(err, errExit) {
+		t.Fatalf("Execute with bead referring to absent formula: err = %v, want errExit; stderr=%s", err, stderr.String())
 	}
-	if !strings.Contains(err.Error(), "ghost-formula") {
-		t.Errorf("err = %q, want it to name ghost-formula so operators can correlate", err)
+	if !strings.Contains(stderr.String(), "ghost-formula") {
+		t.Errorf("stderr = %q, want it to name ghost-formula so operators can correlate", stderr.String())
 	}
 }
 
@@ -336,5 +353,72 @@ func TestNewFormulaCmd_RegistersVersionCheckSubcommand(t *testing.T) {
 			names = append(names, sub.Name())
 		}
 		t.Fatalf("newFormulaCmd subcommands = %v, want one named %q", names, "version-check")
+	}
+}
+
+// These tests exercise run rather than the command constructor because the
+// assembled tree owns the terminal writers, JSON contract gate, and exit code.
+func TestFormulaVersionCheckReportsMatchThroughAssembledCLI(t *testing.T) {
+	cityDir, diskHash := writeVersionCheckCity(t)
+	beadID := createVersionCheckBead(t, cityDir, versionCheckFormulaName, diskHash)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--city", cityDir, "formula", "version-check", beadID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run(version-check match) = %d, want 0; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "matches on-disk version") {
+		t.Errorf("stdout = %q, want a visible match verdict", stdout.String())
+	}
+}
+
+func TestFormulaVersionCheckReportsDivergenceThroughAssembledCLI(t *testing.T) {
+	cityDir, _ := writeVersionCheckCity(t)
+	beadID := createVersionCheckBead(t, cityDir, versionCheckFormulaName, "deadbeefdeadbeefdeadbeefdeadbeef")
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--city", cityDir, "formula", "version-check", beadID}, &stdout, &stderr); code != 1 {
+		t.Fatalf("run(version-check divergence) = %d, want 1; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if got := stdout.String(); !strings.Contains(got, "DIVERGES") || !strings.Contains(got, "bead hash") || !strings.Contains(got, "disk hash") {
+		t.Errorf("stdout = %q, want divergence verdict and both hashes", got)
+	}
+}
+
+func TestFormulaVersionCheckMakesErrorsVisibleThroughAssembledCLI(t *testing.T) {
+	cityDir, _ := writeVersionCheckCity(t)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--city", cityDir, "formula", "version-check", "does-not-exist-1234"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("run(version-check missing bead) = 0, want failure; stdout=%q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "does-not-exist-1234") {
+		t.Errorf("stderr = %q, want visible diagnostic naming the unreadable bead", stderr.String())
+	}
+}
+
+func TestFormulaVersionCheckUsesMetadataFormulaNameWhenRefIsEmpty(t *testing.T) {
+	cityDir, diskHash := writeVersionCheckCity(t)
+	beadID := createVersionCheckBeadNamedByMetadata(t, cityDir, versionCheckFormulaName, diskHash)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--city", cityDir, "formula", "version-check", beadID}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run(version-check metadata name) = %d, want 0; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), versionCheckFormulaName) {
+		t.Errorf("stdout = %q, want formula name from metadata", stdout.String())
+	}
+}
+
+func TestFormulaVersionCheckJSONPassesContractGate(t *testing.T) {
+	cityDir, diskHash := writeVersionCheckCity(t)
+	beadID := createVersionCheckBead(t, cityDir, versionCheckFormulaName, diskHash)
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--city", cityDir, "formula", "version-check", beadID, "--json"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run(version-check --json) = %d, want 0; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	payload := validateManagementJSONPayload(t, []string{"formula", "version-check"}, &stdout)
+	if payload["match"] != true || payload["disk_hash"] != diskHash {
+		t.Errorf("payload = %v, want a matching verdict and disk hash %q", payload, diskHash)
 	}
 }

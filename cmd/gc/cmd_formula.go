@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1273,12 +1272,22 @@ func rigFormulaVarsForScope(cfg *config.City, cityPath string) map[string]string
 
 // formulaVersionCheckResult holds the output for --json mode.
 type formulaVersionCheckResult struct {
-	BeadID      string `json:"bead_id"`
-	FormulaName string `json:"formula_name"`
-	BeadHash    string `json:"bead_hash"`
-	DiskHash    string `json:"disk_hash"`
-	Match       bool   `json:"match"`
-	FormulaPath string `json:"formula_path,omitempty"`
+	SchemaVersion string `json:"schema_version"`
+	BeadID        string `json:"bead_id"`
+	FormulaName   string `json:"formula_name"`
+	BeadHash      string `json:"bead_hash"`
+	DiskHash      string `json:"disk_hash"`
+	Match         bool   `json:"match"`
+	FormulaPath   string `json:"formula_path,omitempty"`
+}
+
+// beadFormulaName resolves the formula a bead was cooked from. The durable
+// metadata fallback is required for stores that do not round-trip Bead.Ref.
+func beadFormulaName(bead beads.Bead) string {
+	if name := strings.TrimSpace(bead.Ref); name != "" {
+		return name
+	}
+	return strings.TrimSpace(bead.Metadata[beadmeta.FormulaNameMetadataKey])
 }
 
 func newFormulaVersionCheckCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -1291,7 +1300,8 @@ against the current on-disk formula file. Exits 0 if they match, 1 if
 they diverge.
 
 The bead must have gc.formula_hash metadata (set during instantiation).
-The formula is located via the bead's Ref field and the current formula
+The formula is named by the bead's Ref field, falling back to its
+gc.formula_name metadata, and is then located in the current formula
 search paths.
 
 Use this to detect whether a running session's formula has been updated
@@ -1299,63 +1309,66 @@ since it was spawned.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			beadID := args[0]
+			const command = "gc formula version-check"
 
 			cityPath, err := resolveCity()
 			if err != nil {
-				return err
+				return formulaCommandError(stderr, command, jsonOutput, err)
 			}
 			cfg, err := loadCityConfig(cityPath, stderr)
 			if err != nil {
-				return err
+				return formulaCommandError(stderr, command, jsonOutput, err)
 			}
 			scope, err := resolveFormulaScope(cfg, cityPath, stderr)
 			if err != nil {
-				return err
+				return formulaCommandError(stderr, command, jsonOutput, err)
 			}
 
 			store, err := openStoreAtForCity(scope.storeRoot, cityPath)
 			if err != nil {
-				return err
+				return formulaCommandError(stderr, command, jsonOutput, err)
 			}
 
 			bead, err := store.Get(beadID)
 			if err != nil {
-				return fmt.Errorf("reading bead %s: %w", beadID, err)
+				return formulaCommandError(stderr, command, jsonOutput, fmt.Errorf("reading bead %s: %w", beadID, err))
 			}
 
 			beadHash := bead.Metadata[beadmeta.FormulaHashMetadataKey]
 			if beadHash == "" {
-				return fmt.Errorf("bead %s has no gc.formula_hash metadata (created before hash tracking)", beadID)
+				return formulaCommandError(stderr, command, jsonOutput,
+					fmt.Errorf("bead %s has no gc.formula_hash metadata (created before hash tracking)", beadID))
 			}
 
-			formulaName := bead.Ref
+			formulaName := beadFormulaName(bead)
 			if formulaName == "" {
-				return fmt.Errorf("bead %s has no Ref (formula name)", beadID)
+				return formulaCommandError(stderr, command, jsonOutput,
+					fmt.Errorf("bead %s records no formula name (neither Ref nor %s)", beadID, beadmeta.FormulaNameMetadataKey))
 			}
 
 			recipe, err := formula.Compile(cmd.Context(), formulaName, scope.searchPaths, nil)
 			if err != nil {
-				return fmt.Errorf("compiling formula %q from disk: %w", formulaName, err)
+				return formulaCommandError(stderr, command, jsonOutput,
+					fmt.Errorf("compiling formula %q from disk: %w", formulaName, err))
 			}
 
 			diskHash := recipe.ContentHash
 			match := beadHash == diskHash
 
 			result := formulaVersionCheckResult{
-				BeadID:      beadID,
-				FormulaName: formulaName,
-				BeadHash:    beadHash,
-				DiskHash:    diskHash,
-				Match:       match,
-				FormulaPath: recipe.FormulaSource,
+				SchemaVersion: "1",
+				BeadID:        beadID,
+				FormulaName:   formulaName,
+				BeadHash:      beadHash,
+				DiskHash:      diskHash,
+				Match:         match,
+				FormulaPath:   recipe.FormulaSource,
 			}
 
 			switch {
 			case jsonOutput:
-				enc := json.NewEncoder(stdout)
-				enc.SetIndent("", "  ")
-				if err := enc.Encode(result); err != nil {
-					return err
+				if err := writeCLIJSONLine(stdout, result); err != nil {
+					return formulaCommandError(stderr, command, jsonOutput, err)
 				}
 			case match:
 				_, _ = fmt.Fprintf(stdout, "✓ formula %s: bead %s matches on-disk version (hash %s)\n", formulaName, beadID, beadHash[:12])
