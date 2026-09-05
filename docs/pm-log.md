@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-wli 2026-09-05T18:50Z
+last_seen: gs-ps7 2026-09-05T18:54Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -167,5 +167,30 @@ because a stalled P2 is exactly the class of fault the governor epic
 exists to catch. gs-ps7 (pm-epic-close:governor) is open for the next
 session -- same decision from opposite evidence, answered by re-checking
 ci-waw3o7. Residuals in pm-log #5 stand.
+
+Source: roadmap governor
+
+## 8. pm-epic-close gs-ps7: governor stays in-progress, ruling still pending (2026-09-05)
+
+Fourth ruling of this shape (pm-log #5 gs-8iv, #6 gs-ewi, #7 gs-wli),
+re-verified live rather than recalled. The closed set under epic:governor is
+unchanged (gs-x0k, gs-xeh, gs-o9i, gs-nun -- criteria 1-6 verified in their
+close reasons, pm-log #5). Criterion-7 chain re-checked in the city store
+this turn: ci-waw3o7 (P1, assignee human) still open, gate ci-gbhkpa still
+open and operator-paged. bench-alerts.log is still untracked in the rig
+root, corroborating that neither operator-only action named in that bead
+has landed. Per pm-log #4 the epic closes on Willie's recorded say-so; it
+has not landed, so governor stays in-progress and the bead that puts motion
+back remains ci-waw3o7.
+
+No epic promoted -- governor is the roadmap's only epic -- and no DECOMP
+sent. What gascity builds next is already recorded as pm-open #2; no new
+entry. gs-hph (P2, pm-log #7) is still stalled: in_progress with
+lab.engineer-2, lease expired, heartbeat 24 minutes back -- four minutes
+worse than #7's observation, still a patrol/mayor matter rather than a PM
+edit, and still the class of fault the governor epic exists to catch.
+Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
+assessment layer, and a governor that assesses then reports something else
+is mechanically unobservable today.
 
 Source: roadmap governor
