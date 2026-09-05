@@ -1348,6 +1348,7 @@ func collectAssignedWorkBeadsWithStores(
 	skipReadyAssignees := readyCapturedAssigneeSet(result, resultStoreRefs, readyAssigned)
 	expandSkipAssigneesWithSessionIdentities(skipReadyAssignees, sessionBeads)
 	assignees := readyAssignedWorkAssignees(cfg, sessionBeads, skipReadyAssignees)
+	assignees = appendBarePoolAssignees(assignees, cfg, result, skipReadyAssignees)
 	if len(skipReadyAssignees) > 0 && len(assignees) == 0 {
 		return result, resultStores, resultStoreRefs, readyAssigned, partial
 	}
@@ -1385,10 +1386,40 @@ func collectAssignedWorkBeadsWithStores(
 		}()
 	}
 	wg.Wait()
+	// Each probe goroutine dedups within its own store with a fresh `seen`
+	// map, so a bead already captured by the passes above arrives here a
+	// second time. Only the readiness VERDICT is new; the row is not. Merging
+	// both copies puts one bead twice into AssignedWorkBeads, which reaches an
+	// operator as a doubled line under "assignedWorkBeads: N beads found"
+	// (printed unconditionally every tick) and doubles the awake work-bead
+	// trace counts, whose consumer does no dedup of its own.
+	//
+	// Nothing downstream currently miscounts sessions over it -- the
+	// wake-known-identity tier in pool_desired_state.go keys its requests by
+	// (template, assignee) and collapses the pair -- but that dedup is the
+	// only thing standing between a duplicated row and the PR #1516
+	// spawn-storm shape, it lives in a different file, and it is keyed on
+	// something this pass does not control. Deduping here removes the reliance
+	// rather than documenting it.
+	//
+	// The verdict is recorded for every returned ID regardless of whether its
+	// row is appended, so suppressing a duplicate row can never suppress a
+	// readiness verdict -- which is the whole reason this pass runs.
+	seenCaptured := make(map[storeScopedBeadKey]struct{}, len(result))
+	for i, b := range result {
+		seenCaptured[storeScopedBeadKey{StoreRef: resultStoreRefs[i], ID: b.ID}] = struct{}{}
+	}
 	for _, r := range readyResults {
-		result = append(result, r.beads...)
-		resultStores = append(resultStores, r.stores...)
-		resultStoreRefs = append(resultStoreRefs, r.storeRefs...)
+		for i, b := range r.beads {
+			key := storeScopedBeadKey{StoreRef: r.storeRefs[i], ID: b.ID}
+			if _, dup := seenCaptured[key]; dup {
+				continue
+			}
+			seenCaptured[key] = struct{}{}
+			result = append(result, b)
+			resultStores = append(resultStores, r.stores[i])
+			resultStoreRefs = append(resultStoreRefs, r.storeRefs[i])
+		}
 		for id := range r.readyIDs {
 			readyAssigned[storeScopedBeadKey{StoreRef: r.ref, ID: id}] = true
 		}
@@ -1462,6 +1493,68 @@ func expandSkipAssigneesWithSessionIdentities(skip map[string]struct{}, sessionB
 			skip[id] = struct{}{}
 		}
 	}
+}
+
+// appendBarePoolAssignees adds assignees that name a configured pool outright
+// ("worker", not "worker-2") and appear on already-captured work, so the
+// Ready(assignee=...) probe below issues a query for them.
+//
+// Without this the shape has no door at all. readyAssignedWorkAssignees seeds
+// the probe from live session beads plus on_demand named sessions, so a COLD
+// pool contributes no assignee, its open work never gets a readiness verdict,
+// and filterAssignedWorkBeadsForPoolDemand drops it with a bare continue --
+// while the worker's own claim tier (hookCandidatePoolAlias) would claim that
+// same bead the moment a session existed. dispatch.md invariant 11 forbids the
+// controller and the worker disagreeing about what is claimable. Measured in
+// production (ci-ulltnb): a P1 addressed this way sat unserved for an hour,
+// emitting no scaleCheck, poolDesired, start or failure line of any kind.
+//
+// The rejected alternative is stamping readiness directly in
+// appendOpenRoutedWorkUnique, which is what a reader reaches for first because
+// it is one markReadyAssigned call. It re-opens the gc-ft31x/EB-42o8 hole that
+// the pass split exists to close: that pass applies no dependency gate, so a
+// BLOCKED open bead would be stamped ready and would repeatedly start a session
+// that cannot claim it. Routing through Ready() keeps the dependency gate as the
+// single authority on readiness rather than adding a second one here.
+//
+// The orphan sweep is deliberately NOT the fix either. It skips a bare pool name
+// on purpose (db2fee2a0, bead ci-vcornx) because that name is a LIVE address,
+// not a dead slot; clearing it would reintroduce the cross-store failure that
+// commit closed.
+//
+// Cost is bounded by captured work rather than by pool count: an assignee is
+// probed only when a bead already names it, so a city with many idle pools
+// issues no extra queries at all. What it costs when it DOES fire is one
+// Ready(assignee=...) per store per added assignee, since the probe loop
+// below fans out over every active store. The figure that grows is distinct
+// pool-assigned assignees -- a busy city pays for every pool holding open
+// work, not merely for the ones with running sessions.
+func appendBarePoolAssignees(assignees []string, cfg *config.City, work []beads.Bead, skip map[string]struct{}) []string {
+	if cfg == nil {
+		return assignees
+	}
+	seen := make(map[string]struct{}, len(assignees))
+	for _, a := range assignees {
+		seen[a] = struct{}{}
+	}
+	for _, wb := range work {
+		assignee := strings.TrimSpace(wb.Assignee)
+		if assignee == "" {
+			continue
+		}
+		if _, ok := skip[assignee]; ok {
+			continue
+		}
+		if _, ok := seen[assignee]; ok {
+			continue
+		}
+		if !assigneeNamesConfiguredPool(cfg, assignee) {
+			continue
+		}
+		seen[assignee] = struct{}{}
+		assignees = append(assignees, assignee)
+	}
+	return assignees
 }
 
 func readyAssignedWorkAssignees(cfg *config.City, sessionBeads *sessionBeadSnapshot, skip map[string]struct{}) []string {
