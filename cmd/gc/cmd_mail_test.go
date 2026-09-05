@@ -5001,3 +5001,99 @@ func TestCmdMailSendAllFlagBodyWinsOverPositional(t *testing.T) {
 		t.Errorf("Description = %q, want %q (--all -m flag body should win over positional)", msg.Description, "flag body")
 	}
 }
+
+// TestMailArchiveSelectedRefusesNonPositiveLimitWithoutArchiving pins the
+// absence of an unbounded form on the one gc command where it would be
+// destructive. `gc bd gate list --limit 0` means unlimited, but `gc bd` is a
+// flag-parsing passthrough, so that spelling is bd's contract and not this
+// command's; a caller who carries the idiom across gets a refusal instead.
+// The refusal is a safety property, not an oversight -- 0 here would archive
+// every match -- and until this test it was pinned nowhere in Go, so adopting
+// the bd spelling would have gone green (ci-ajtsh1, ci-o34bax).
+//
+// The mailbox holds a message the filter DOES match and the assertion is that
+// it stays open, not merely that the command exits 1. Exit status alone passes
+// over a filter that matched nothing, which is indistinguishable from the
+// refusal being enforced. The positive-limit leg archives that same message
+// from that same mailbox, so the refusal legs are known to have had something
+// to archive and declined.
+func TestMailArchiveSelectedRefusesNonPositiveLimitWithoutArchiving(t *testing.T) {
+	newMailbox := func(t *testing.T) (*beads.MemStore, *beadmail.Provider, string) {
+		t.Helper()
+		store := beads.NewMemStore()
+		mp := beadmail.New(store)
+		msg, err := mp.Send("human", "operator", "Reminder gate still open", "supersede me")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store, mp, msg.ID
+	}
+	statusOf := func(t *testing.T, store *beads.MemStore, id string) string {
+		t.Helper()
+		b, err := store.Get(id)
+		if err != nil {
+			t.Fatalf("Get(%s): %v", id, err)
+		}
+		return b.Status
+	}
+
+	for _, limit := range []int{0, -1} {
+		t.Run(fmt.Sprintf("limit%d", limit), func(t *testing.T) {
+			store, mp, id := newMailbox(t)
+			var stdout, stderr bytes.Buffer
+			code := doMailArchiveSelected(mp, events.Discard, mailArchiveSelectOptions{
+				Recipient:       "operator",
+				SubjectPrefix:   "Reminder",
+				Limit:           limit,
+				CaseInsensitive: true,
+			}, &stdout, &stderr)
+			if code != 1 {
+				t.Fatalf("doMailArchiveSelected(--limit %d) = %d, want 1; stderr: %s", limit, code, stderr.String())
+			}
+			if got := statusOf(t, store, id); got != "open" {
+				t.Fatalf("matching message %s status = %q, want open: a refused --limit must archive nothing", id, got)
+			}
+			// The remedy has to be in the message. The caller who tripped
+			// this reached for --limit 0 from the sibling bd command and had
+			// nothing telling them this one has no unbounded form.
+			for _, want := range []string{"no unbounded form", "--limit 100"} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Errorf("stderr = %q, want it to name %q", stderr.String(), want)
+				}
+			}
+		})
+	}
+
+	t.Run("positiveLimitArchivesTheSameMessage", func(t *testing.T) {
+		store, mp, id := newMailbox(t)
+		var stdout, stderr bytes.Buffer
+		code := doMailArchiveSelected(mp, events.Discard, mailArchiveSelectOptions{
+			Recipient:       "operator",
+			SubjectPrefix:   "Reminder",
+			Limit:           1,
+			CaseInsensitive: true,
+		}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("doMailArchiveSelected(--limit 1) = %d, want 0; stderr: %s", code, stderr.String())
+		}
+		if got := statusOf(t, store, id); got != "closed" {
+			t.Fatalf("matching message %s status = %q, want closed: the refusal legs above must have had something to archive", id, got)
+		}
+	})
+}
+
+// TestMailArchiveLimitHelpDocumentsAbsentUnboundedForm keeps the refusal
+// discoverable before it is hit. The reader who reaches for --limit 0 reads
+// the flag help, not cmd_mail.go, and the sibling `gc bd gate list --limit 0`
+// spelling is what they are carrying across.
+func TestMailArchiveLimitHelpDocumentsAbsentUnboundedForm(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	cmd := newMailArchiveCmd(&stdout, &stderr)
+	limit := cmd.Flags().Lookup("limit")
+	if limit == nil {
+		t.Fatal("--limit flag is missing")
+	}
+	if !strings.Contains(limit.Usage, "no unbounded form") {
+		t.Fatalf("--limit help = %q, want it to name the absent unbounded form", limit.Usage)
+	}
+}

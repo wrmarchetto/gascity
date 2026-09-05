@@ -202,7 +202,7 @@ slice without enumerating IDs by hand.`,
 	cmd.Flags().StringVar(&opts.SubjectPrefix, "subject-prefix", "", "archive matching unread messages whose subject starts with this text")
 	cmd.Flags().StringVar(&opts.SubjectContains, "subject-contains", "", "archive matching unread messages whose subject contains this text")
 	cmd.Flags().BoolVar(&opts.EmptyBody, "empty-body", false, "only archive matching messages whose body is empty")
-	cmd.Flags().IntVar(&opts.Limit, "limit", opts.Limit, "maximum matching messages to archive in this run")
+	cmd.Flags().IntVar(&opts.Limit, "limit", opts.Limit, "maximum matching messages to archive in this run (must be > 0; there is no unbounded form)")
 	cmd.Flags().BoolVar(&opts.IncludeRead, "include-read", false, "include read-but-open messages when selecting by filter")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", false, "list matching messages without archiving them")
 	return cmd
@@ -282,8 +282,14 @@ func doMailArchiveSelectedJSON(mp mail.Provider, rec events.Recorder, args []str
 		fmt.Fprintln(stderr, "gc mail archive: use --from, --subject-prefix, or --subject-contains to avoid archiving unrelated mail") //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	// No unbounded form, deliberately. `gc bd gate list --limit 0` means
+	// unlimited, but `gc bd` is a flag-parsing passthrough, so that spelling
+	// belongs to bd and not to this command -- and here 0 would archive every
+	// match rather than list it. A caller carrying the bd idiom across is the
+	// failure this refusal exists to catch, so the message hands them the
+	// remedy instead of only the rule (ci-o34bax, ci-ajtsh1).
 	if opts.Limit <= 0 {
-		fmt.Fprintln(stderr, "gc mail archive: --limit must be greater than zero") //nolint:errcheck // best-effort stderr
+		fmt.Fprintln(stderr, "gc mail archive: --limit must be greater than zero. There is no unbounded form: --limit 0 would archive every match. Pass an explicit ceiling, e.g. --limit 100") //nolint:errcheck // best-effort stderr
 		return 1
 	}
 	archiver, ok := mp.(archiveMatchingProvider)
