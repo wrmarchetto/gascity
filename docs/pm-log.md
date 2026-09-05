@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-kg2 2026-09-05T15:23Z
+last_seen: gs-8iv 2026-09-05T18:35Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -86,5 +86,38 @@ quiet-day-shaped metric would be trivially satisfiable, as the bead
 itself records. At close-report time this entry is the precedent that the
 epic may close on Willie's recorded say-so plus the injected-corpus soak
 evidence.
+
+Source: roadmap governor
+
+## 5. pm-idle gs-8iv: governor stays in-progress pending Willie's ruling (2026-09-05)
+
+pm-idle:gascity summons gs-8iv answered. All four governor beads closed
+pass with verification in their close reasons: gs-x0k carries criteria
+1/2/6 (config-only skeleton, one real unattended wake driven end to end,
+Slack leg confirmed at the transport, 22/22 suite with 12/12 mutants
+killed); gs-xeh carries 3 (assessor verified against the live city, 17/17
+mutants on the second sweep, one real finding corroborated three ways);
+gs-o9i carries 4/5 (handoff-gated rebuild authority, fail-closed
+preflight); gs-nun the soak (caught wake 1's 74-minute silent park, a
+stale supervisor, and an unstaged starved pool; 29 mutants die).
+
+Criterion 7 is deliberately ASKED, not asserted: ci-waw3o7 (city store,
+P1, assignee human) behind gate ci-gbhkpa, both open. Per pm-log #4 the
+epic closes on Willie's recorded say-so, which has not landed, so the
+epic stays in-progress. The bead that puts motion back is ci-waw3o7 --
+outside this rig's store, which is exactly why the sweep read the rig as
+idle. Recorded with the after-governor gap as pm-open #2.
+
+No epic promoted: none is open (governor is the roadmap's only epic). No
+DECOMP sent. The idle condition lapsed before this sitting anyway: gs-hph
+(P2 formula version-check bug, filed by gs-nun) went in_progress with
+lab.engineer-2 at 18:31Z. gs-ewi (pm-epic-close:governor) is open for the
+next PM session -- same decision from opposite evidence; it should
+re-check ci-waw3o7 and may find Willie's ruling there.
+
+Residuals the next session should keep in view, from gs-nun: no scheduled
+wake has yet run WITH the assessment layer (both recorded wakes predate
+it), and a governor that assesses then reports something else is
+mechanically unobservable today.
 
 Source: roadmap governor
