@@ -663,6 +663,15 @@ func TestMintNavigationPagesExist(t *testing.T) {
 // docs/ at all — move them under engdocs/ instead of adding an exemption.
 var docsPublishExemptions = map[string]bool{
 	"README.md": true, // contributor README for the docs workspace itself
+
+	// PM state files. The city's PM tooling (roadmap sweeps, status page,
+	// the PM agent prompt) reads these at docs/<name> by path contract, so
+	// they cannot move under engdocs/, and they are rig-internal state, not
+	// published pages. Approved as a one-time PM bootstrap edit in the init
+	// sitting (gs-4gs, 2026-09-05); recorded in docs/pm-log.md entry 2.
+	"pm-log.md":  true,
+	"pm-open.md": true,
+	"roadmap.md": true,
 }
 
 // collectDocsMarkdownFiles returns every .md/.mdx file under docs/, as paths
