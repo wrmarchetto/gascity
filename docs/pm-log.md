@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-4gs 2026-09-05T14:44Z
+last_seen: gs-kg2 2026-09-05T15:23Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -62,3 +62,29 @@ timing. Roadmap criterion updated in the same turn; DECOMP for epic
 governor sent to the mayor per the decomposition procedure.
 
 Source: Willie, pm-init sitting gs-4gs
+
+## 4. DECOMP governor accepted as filed (2026-09-05)
+
+Verdict on the mayor's decomp summons gs-kg2: ACCEPT governor. The four
+proposed beads cover all seven acceptance criteria with no orphan scope --
+gs-x0k carries criteria 1, 2 and 6 (agent definition, 90-minute wake,
+Slack summary per check-in), gs-xeh carries 3 (assessment and specific
+direction to the mayor), gs-o9i carries 4 and 5 (unbuilt-change detection,
+judged restart with mayor handoff), gs-nun carries the soak. The rig has
+no hardware or upstream-rig dependencies for them to miss. The mayor's
+three flagged additions (recording the reversed supervisor prohibition in
+the artifact, cadence as configuration with a recorded per-wake cost
+against the unmetered Fable usage-credits pool, the 2026-09-05 failure
+corpus as the assessment test set) are constraints in service of the
+criteria, not added scope.
+
+Ruling the mayor asked for on the soak: gs-nun stands as filed, closing
+by ASKING Willie whether his manual check-in ritual has stopped being
+necessary rather than asserting an objective proxy. Criterion 7 names his
+ritual stopping as the measure, so his word is the criterion; a
+quiet-day-shaped metric would be trivially satisfiable, as the bead
+itself records. At close-report time this entry is the precedent that the
+epic may close on Willie's recorded say-so plus the injected-corpus soak
+evidence.
+
+Source: roadmap governor
