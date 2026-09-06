@@ -128,8 +128,8 @@ var bootstrapPolicy = Ledger{
 			// hermetic -- the defect it pins is how bash scores a compound
 			// statement in that script's own exit path, so a stand-in for the
 			// script would test the stand-in. No new file: the call joins
-			// existing exec.Command sites in scripts/go_owned_tmp_test.go,
-			// which is why BaselineFiles is unchanged at 178.
+			// existing exec.Command sites in scripts/go_owned_tmp_test.go, so
+			// that bump moved calls only.
 			//
 			// 612 -> 613 (ci-sg490p): cmd/gc/order_dispatch_incomplete_test.go
 			// spawns `sh -c "exit N"` to obtain a genuine *exec.ExitError. The
@@ -148,12 +148,20 @@ var bootstrapPolicy = Ledger{
 			// banked here because it is real.
 			// +1 call / 1 file (ci-ewyqum): the GC_DIR clobber guard execs the
 			// provider script with a stub gc, because the property under test is
-			// what a CHILD PROCESS inherits. Merged against ci-87655r, which
-			// raised the same row, so the ceiling is the SUM of both deltas over
-			// the 613/179 base -- taking either side alone drops the other side's
-			// new file and the census then reports growth.
-			BaselineCalls:   617,
-			BaselineFiles:   181,
+			// what a CHILD PROCESS inherits.
+			// +2 calls / 1 file (ci-sptsk3): the idle-scope reap tests exec a
+			// process that stands in the scope and the watchdog helper that
+			// supervises a fake server. Neither can be a stand-in -- the claimant
+			// scan they exercise reads /proc/<pid>/cwd and /proc/<pid>/environ,
+			// which only a real child populates. The one new file is
+			// cmd/gc/dolt_scope_idle_test.go.
+			//
+			// Three beads raised this one row from the same 613/179 base, so the
+			// ceiling is the SUM of all three deltas. Every side moved the file
+			// count to 180 for its OWN new file, which git merges to 180 without
+			// a marker -- two files short of the three the merged tree holds.
+			BaselineCalls:   619,
+			BaselineFiles:   182,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -172,8 +180,15 @@ var bootstrapPolicy = Ledger{
 			// Medium owner above, which clears Small debt; source ratchets
 			// are not test-size entries and do not exempt, so the debt is
 			// banked here because it is real.
-			BaselineCalls:   441,
-			BaselineFiles:   164,
+			// +4 calls / 1 file (ci-sptsk3): three are the idle-reap control
+			// windows, which assert a server STAYS alive across several windows
+			// and so cannot be replaced by a lifecycle signal -- there is no
+			// event to wait for, elapsed time is the claim. The fourth is the
+			// poll step inside the shared deadline loop
+			// waitForScopeIdleCondition. Summed with ci-87655r's delta over the
+			// 440/163 base; both sides moved files to 164 for their own file.
+			BaselineCalls:   445,
+			BaselineFiles:   165,
 			ReportedCalls:   447,
 			ReportedFiles:   157,
 			OwnerBead:       "ga-80po0c.2",
@@ -202,18 +217,12 @@ var bootstrapPolicy = Ledger{
 			Resource: ResourceSubprocess,
 			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
 			// spawn recorded on the all-source audit row above.
-			// +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
-			// ONE real tmux server, orphans it and asserts the PROCESS is
-			// gone -- a fake executor cannot show that deleting a socket
-			// leaves a server alive, which is the whole defect. Declared a
-			// Medium owner above, which clears Small debt; source ratchets
-			// are not test-size entries and do not exempt, so the debt is
-			// banked here because it is real.
-			// +1 call / 1 file (ci-ewyqum): the same GC_DIR clobber guard spawn
-			// recorded on the all-source audit row above, summed with ci-87655r's
-			// delta over the 414/121 base.
-			BaselineCalls:   418,
-			BaselineFiles:   123,
+			// +3 calls / 1 file (ci-87655r), +1 call / 1 file (ci-ewyqum) and
+			// +2 calls / 1 file (ci-sptsk3): the same three spawn sets recorded
+			// on the all-source audit row above, counted again in the untagged
+			// scope and summed over the same 414/121 base.
+			BaselineCalls:   420,
+			BaselineFiles:   124,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -225,15 +234,12 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:    ScopeUntagged,
 			Resource: ResourceFixedSleep,
-			// +1 call / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
-			// ONE real tmux server, orphans it and asserts the PROCESS is
-			// gone -- a fake executor cannot show that deleting a socket
-			// leaves a server alive, which is the whole defect. Declared a
-			// Medium owner above, which clears Small debt; source ratchets
-			// are not test-size entries and do not exempt, so the debt is
-			// banked here because it is real.
-			BaselineCalls:   291,
-			BaselineFiles:   117,
+			// +1 call / 1 file (ci-87655r) and +4 calls / 1 file (ci-sptsk3):
+			// the same sleeps recorded on the all-source audit row above,
+			// counted again in the untagged scope and summed over the 290/116
+			// base.
+			BaselineCalls:   295,
+			BaselineFiles:   118,
 			ReportedCalls:   295,
 			ReportedFiles:   114,
 			OwnerBead:       "ga-80po0c.2",
@@ -310,8 +316,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceNetListen,
-			BaselineCalls:   95,
-			BaselineFiles:   36,
+			BaselineCalls:   97,
+			BaselineFiles:   37,
 			ReportedCalls:   92,
 			ReportedFiles:   34,
 			OwnerBead:       "ga-80po0c.2.2.2",
@@ -574,8 +580,11 @@ var bootstrapPolicy = Ledger{
 			// this row's 406 sites, so an undeclared helper-hosted spawn is the
 			// population this ratchet exists to track, not an anomaly it
 			// forbids.
-			BaselineCalls:   407,
-			BaselineFiles:   117,
+			// +1 call / 1 file (ci-ewyqum) and +2 calls / 1 file (ci-sptsk3),
+			// summed over the 406/116 base. ci-87655r contributes nothing here:
+			// it declares a Medium owner, which clears Small debt.
+			BaselineCalls:   409,
+			BaselineFiles:   118,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
@@ -587,8 +596,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceFixedSleep,
-			BaselineCalls:   290,
-			BaselineFiles:   116,
+			BaselineCalls:   294,
+			BaselineFiles:   117,
 			ReportedCalls:   287,
 			ReportedFiles:   113,
 			OwnerBead:       "ga-80po0c.2.1",
@@ -665,8 +674,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceNetListen,
-			BaselineCalls:   93,
-			BaselineFiles:   35,
+			BaselineCalls:   95,
+			BaselineFiles:   36,
 			ReportedCalls:   92,
 			ReportedFiles:   34,
 			OwnerBead:       "ga-80po0c.2.2.2",

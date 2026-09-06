@@ -26,11 +26,18 @@ resource = "subprocess"
 # are not test-size entries and do not exempt, so it is banked here.
 # +1 call / 1 file (ci-ewyqum): the GC_DIR clobber guard execs the provider
 # script with a stub gc, because the property under test is what a CHILD
-# PROCESS inherits. Merged against ci-87655r, which raised the same row, so the
-# ceiling is the SUM of both deltas over the 613/179 base -- taking either side
-# alone drops the other side's new file and the census then reports growth.
-baseline_calls = 617
-baseline_files = 181
+# PROCESS inherits.
+# +2 calls / 1 file (ci-sptsk3): the idle-scope reap tests exec a process
+# standing in the scope and the watchdog helper supervising a fake server.
+# Neither can be a stand-in -- the claimant scan reads /proc/<pid>/cwd and
+# /proc/<pid>/environ, which only a real child populates. One new file,
+# cmd/gc/dolt_scope_idle_test.go.
+#
+# Three beads raised this one row from the same 613/179 base, so the ceiling is
+# the SUM of all three deltas. Every side moved the file count to 180 for its
+# OWN new file, which git merges to 180 with no marker -- two files short.
+baseline_calls = 619
+baseline_files = 182
 reported_calls = 495
 reported_files = 135
 owner_bead = "ga-80po0c.2"
@@ -47,8 +54,13 @@ resource = "fixed_sleep"
 # show that deleting a socket leaves a server alive, which is the whole defect.
 # Declared a [[medium]] owner above, which clears Small debt; source ratchets
 # are not test-size entries and do not exempt, so it is banked here.
-baseline_calls = 441
-baseline_files = 164
+# +4 calls / 1 file (ci-sptsk3): three are the idle-reap control windows, which
+# assert a server STAYS alive across several windows and so cannot be replaced
+# by a lifecycle signal -- there is no event to wait for, elapsed time is the
+# claim. The fourth is the poll step inside waitForScopeIdleCondition. Summed
+# with ci-87655r's delta over the 440/163 base.
+baseline_calls = 445
+baseline_files = 165
 reported_calls = 447
 reported_files = 157
 owner_bead = "ga-80po0c.2"
@@ -77,16 +89,12 @@ scope = "untagged"
 resource = "subprocess"
 # 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError spawn recorded
 # on the all-source audit row above.
-# +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts ONE real tmux
-# server, orphans it and asserts the PROCESS is gone -- a fake executor cannot
-# show that deleting a socket leaves a server alive, which is the whole defect.
-# Declared a [[medium]] owner above, which clears Small debt; source ratchets
-# are not test-size entries and do not exempt, so it is banked here.
-# +1 call / 1 file (ci-ewyqum): the same GC_DIR clobber guard spawn recorded on
-# the all-source audit row above, summed with ci-87655r's delta over the
+# +3 calls / 1 file (ci-87655r), +1 call / 1 file (ci-ewyqum) and +2 calls /
+# 1 file (ci-sptsk3): the same three spawn sets recorded on the all-source
+# audit row above, counted again in the untagged scope and summed over the same
 # 414/121 base.
-baseline_calls = 418
-baseline_files = 123
+baseline_calls = 420
+baseline_files = 124
 reported_calls = 380
 reported_files = 98
 owner_bead = "ga-80po0c.2"
@@ -98,13 +106,11 @@ expires = "2026-10-01"
 [[debt]]
 scope = "untagged"
 resource = "fixed_sleep"
-# +1 call / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts ONE real tmux
-# server, orphans it and asserts the PROCESS is gone -- a fake executor cannot
-# show that deleting a socket leaves a server alive, which is the whole defect.
-# Declared a [[medium]] owner above, which clears Small debt; source ratchets
-# are not test-size entries and do not exempt, so it is banked here.
-baseline_calls = 291
-baseline_files = 117
+# +1 call / 1 file (ci-87655r) and +4 calls / 1 file (ci-sptsk3): the same
+# sleeps recorded on the all-source audit row above, counted again in the
+# untagged scope and summed over the 290/116 base.
+baseline_calls = 295
+baseline_files = 118
 reported_calls = 295
 reported_files = 114
 owner_bead = "ga-80po0c.2"
@@ -181,8 +187,8 @@ expires = "2026-10-01"
 [[debt]]
 scope = "untagged"
 resource = "net_listen"
-baseline_calls = 95
-baseline_files = 36
+baseline_calls = 97
+baseline_files = 37
 reported_calls = 92
 reported_files = 34
 owner_bead = "ga-80po0c.2.2.2"
@@ -441,8 +447,11 @@ resource = "subprocess"
 # exitErrorWithCode, and a resource inside a helper stays Small debt however
 # Medium its callers are; declaring it Medium would cost four new raw-ratchet
 # calls to save this one. See census.go for the full reasoning.
-baseline_calls = 407
-baseline_files = 117
+# +1 call / 1 file (ci-ewyqum) and +2 calls / 1 file (ci-sptsk3), summed over
+# the 406/116 base. ci-87655r contributes nothing here: it declares a [[medium]]
+# owner, which clears Small debt.
+baseline_calls = 409
+baseline_files = 118
 reported_calls = 394
 reported_files = 105
 owner_bead = "ga-80po0c.2.1"
@@ -454,8 +463,8 @@ expires = "2026-10-01"
 [[small_debt]]
 scope = "untagged"
 resource = "fixed_sleep"
-baseline_calls = 290
-baseline_files = 116
+baseline_calls = 294
+baseline_files = 117
 reported_calls = 287
 reported_files = 113
 owner_bead = "ga-80po0c.2.1"
@@ -532,8 +541,8 @@ expires = "2026-10-01"
 [[small_debt]]
 scope = "untagged"
 resource = "net_listen"
-baseline_calls = 93
-baseline_files = 35
+baseline_calls = 95
+baseline_files = 36
 reported_calls = 92
 reported_files = 34
 owner_bead = "ga-80po0c.2.2.2"
