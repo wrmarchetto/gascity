@@ -77,6 +77,11 @@ issues.jsonl
 # `git add -A` would sweep into a commit.
 /generated-docs-freshness.patch
 
+# PM-alert side log the city's alerting writes into the rig root. Left
+# untracked, it makes the governor's rebuild preflight refuse on a dirty
+# checkout (see /home/willie/projects/city/docs/governor-soak.md).
+bench-alerts.log
+
 # Python bytecode from script tests
 __pycache__/
 
