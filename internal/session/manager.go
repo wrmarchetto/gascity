@@ -1268,6 +1268,14 @@ func (m *Manager) Suspend(id string) error {
 			if strings.TrimSpace(sessName) != "" {
 				_ = m.sp.Stop(sessName) // best-effort: tear down any leaked runtime
 			}
+			// The rollback released this bead's explicit name, so the line
+			// above just reaped the synthetic fallback -- a name no runtime
+			// ever had. Stop the one the runtime actually has too. Both run:
+			// Stop is idempotent for a session that is not there, and which
+			// of the two is live depends on how far the create got.
+			if released := m.releasedRuntimeName(id, b); released != "" {
+				_ = m.sp.Stop(released)
+			}
 			return nil
 		}
 		// Normalize legacy/aliased states (empty and awake both mean active)
@@ -2042,6 +2050,54 @@ func (m *Manager) PersistInvocationUsageCursor(id, cursor string) error {
 		}
 		return nil
 	})
+}
+
+// RolledBackSessionNameKey holds the explicit session name a pending-create
+// rollback released. The rollback clears session_name so the name can be
+// claimed again (rollbackPendingCreateClears in cmd/gc), which leaves
+// sessionName() resolving the bead to the synthetic sessionNameFor(id) -- a
+// name no runtime ever had. Teardown of a leaked failed-create runtime needs
+// the name it actually has, so the rollback records it here.
+//
+// It is deliberately NOT consulted by sessionName(). Releasing the name is
+// the point of clearing it, so a later reader may find the name legitimately
+// owned by a different, live session; resolving to it generally would let a
+// stale bead's teardown kill that sibling. Only the failed-create branch of
+// Suspend reads it, and only after confirming no open session bead claims it.
+const RolledBackSessionNameKey = "rolled_back_session_name"
+
+// releasedRuntimeName returns the name a pending-create rollback released for
+// this bead, but only while reaping it cannot hit anything else.
+//
+// Empty in three cases, each a refusal rather than an oversight: nothing was
+// recorded; the recorded name is what the bead already resolves to, so the
+// ordinary Stop covers it; or some OPEN session bead currently carries that
+// name in session_name, which is the reuse the clear exists to permit. That
+// last one is the whole reason this is a lookup and not a metadata read --
+// killing a live sibling is a worse fault than the leak this repairs, so an
+// unreadable store also refuses, degrading to the pre-existing leak.
+//
+// Closed beads are deliberately not claimants: a closed session's name is
+// free, and treating it as held would make the leak permanent for exactly the
+// beads most likely to have one.
+func (m *Manager) releasedRuntimeName(id string, b beads.Bead) string {
+	released := strings.TrimSpace(b.Metadata[RolledBackSessionNameKey])
+	if released == "" || released == sessionName(id, b) {
+		return ""
+	}
+	all, err := m.store.List(beads.ListQuery{Label: LabelSession})
+	if err != nil {
+		return ""
+	}
+	for _, other := range all {
+		if other.ID == id || other.Status == "closed" {
+			continue
+		}
+		if strings.TrimSpace(other.Metadata["session_name"]) == released {
+			return ""
+		}
+	}
+	return released
 }
 
 // sessionNameFor derives the tmux session name from a bead ID.
