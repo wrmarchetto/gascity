@@ -804,11 +804,69 @@ func resolveRigPaths(cityPath string, rigs []config.Rig) {
 // for new call sites. These remain exported for tests that need to verify
 // individual operations.
 
+// beadsScopeRedirectsElsewhere reports whether cityPath's bead store lives in
+// a different scope, as declared by a .beads/redirect file naming the store
+// directory to use instead.
+//
+// The file is a single bare path -- that is the shape worktree-setup.sh
+// writes, and cmd/gc/rig_scope_resolution.go already reads the same file for
+// cwd-to-rig resolution. It is read here rather than through that function
+// because that one answers a different question: it maps a redirect onto a
+// DECLARED RIG and errors when the target is not one. A city worktree
+// redirects to the CITY's own store, which is not a rig, so reusing it would
+// turn the ordinary case into an error.
+//
+// NEITHER AN ABSENT NOR AN EMPTY FILE IS A REDIRECT, and a self-redirect is
+// not one either. All three mean the scope owns its store, and treating any
+// of them as a redirect would refuse to start a store that is really needed
+// -- a city with no bead store at all, which is a far worse failure than one
+// idle server.
+func beadsScopeRedirectsElsewhere(cityPath string) bool {
+	cityPath = strings.TrimSpace(cityPath)
+	if cityPath == "" {
+		return false
+	}
+	own := normalizePathForCompare(filepath.Join(cityPath, ".beads"))
+	raw, err := os.ReadFile(filepath.Join(own, "redirect"))
+	if err != nil {
+		return false
+	}
+	target := strings.TrimSpace(string(raw))
+	if target == "" {
+		return false
+	}
+	return normalizePathForCompare(target) != own
+}
+
 // ensureBeadsProvider starts the bead store's backing service if needed.
 // For exec providers, fires "start". For file providers, always available.
 // Acquires a per-city semaphore to prevent concurrent start operations
 // from causing spawn storms.
 func ensureBeadsProvider(cityPath string) error {
+	// A scope whose store lives elsewhere has nothing here to back. A city
+	// worktree is the case that made this matter: `git worktree add` of the
+	// city repo reproduces city.toml at the worktree root, so findCity reads
+	// the worktree as its own city and this function would start it a private
+	// dolt sql-server against <worktree>/.beads/dolt -- a directory holding
+	// only .dolt/ and .doltcfg/ and no databases at all. Measured 2026-09-06:
+	// five such worktrees, one server up 14h07m having never accepted a single
+	// connection (ci-8sk9am).
+	//
+	// THE CHECK IS HERE, at the start decision, and NOT in
+	// resolveManagedDoltRuntimeLayout, which is where the report first pointed.
+	// That function cannot fix this: by the time it runs, every path is already
+	// pinned by an explicit GC_DOLT_DATA_DIR / GC_PACK_STATE_DIR in the process
+	// environment, so its filepath.Join(cityPath, ...) fallbacks are never
+	// reached. Verified by reading the environ of a leaked watchdog.
+	//
+	// REJECTED: redirecting the layout's DataDir at the real store instead.
+	// That would leave the worktree starting its OWN server against the same
+	// dolt directory the real city's server already owns -- two servers, one
+	// data dir, which trades an idle process for lock contention on the store
+	// every agent depends on. Not starting is the whole remedy.
+	if beadsScopeRedirectsElsewhere(cityPath) {
+		return nil
+	}
 	if cityUsesBdStoreContract(cityPath) && gcDoltSkip() {
 		return nil
 	}
@@ -1195,6 +1253,14 @@ func healthBeadsProvider(cityPath string) error {
 func healthBeadsProviderContext(ctx context.Context, cityPath string, waitForScopes bool) error {
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	// Same refusal as ensureBeadsProvider, and it is NOT redundant with it:
+	// this is a second door into a server start. resolvedRuntimeCityDoltTarget
+	// reaches here under allowRecovery, and the provider script's recover op
+	// runs gc dolt-state recover-managed, which starts a server without ever
+	// passing through ensureBeadsProvider (ci-8sk9am).
+	if beadsScopeRedirectsElsewhere(cityPath) {
+		return nil
 	}
 	if cityUsesBdStoreContract(cityPath) && gcDoltSkip() {
 		return nil
