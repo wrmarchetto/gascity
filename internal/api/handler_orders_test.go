@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1629,6 +1630,105 @@ func TestHandleOrderHistoryDetailUsesRigStore(t *testing.T) {
 	}
 	if resp.Output != "done" {
 		t.Fatalf("output = %q, want done", resp.Output)
+	}
+}
+
+// TestHandleOrderHistoryDetailServesExecFailureOutput pins that a failed exec
+// order run's captured output reaches the detail endpoint.
+//
+// An exec run and a convergence gate write their diagnostic under different
+// metadata families and never both: a gate writes convergence.gate_stdout /
+// gate_stderr, an exec run writes beadmeta.OrderExecFailureOutputMetadataKey.
+// The handler read only the gate family, so every exec run served
+// `"output": ""` -- not an error, so a reader concludes the run captured
+// nothing and stops. `gc order history --help` sends that reader here by
+// name, which is how five failed merge-sweep passes read as outputless while
+// their reports sat in bead metadata (ci-arhoji, ci-fo5bsv).
+//
+// The gate cases above cannot express this: they assert the family the
+// handler already read. This asserts the other one, on a bead carrying no
+// gate metadata at all, which is the shape an exec run actually has.
+func TestHandleOrderHistoryDetailServesExecFailureOutput(t *testing.T) {
+	fs := newFakeState(t)
+	fs.cityBeadStore = beads.NewMemStore()
+
+	// Salted so a stale store or a hard-coded fixture cannot satisfy it.
+	captured := fmt.Sprintf("merge-closed-features: stranded-slot-branch=1 (%d)", os.Getpid())
+	run, err := fs.cityBeadStore.Create(beads.Bead{
+		Title:  "merge-closed-features wisp",
+		Status: "closed",
+		Labels: []string{"order-run:merge-closed-features", "exec-failed"},
+		Metadata: map[string]string{
+			beadmeta.OrderExecFailureOutputMetadataKey: captured,
+		},
+	})
+	if err != nil {
+		t.Fatalf("create city history bead: %v", err)
+	}
+
+	h := newTestCityHandler(t, fs)
+	req := httptest.NewRequest(http.MethodGet, cityURL(fs, "/order/history/"+run.ID), nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp struct {
+		BeadID string `json:"bead_id"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Output != captured {
+		t.Fatalf("output = %q, want %q", resp.Output, captured)
+	}
+}
+
+// TestHandleOrderHistoryDetailPrefersGateOutputOverExecFailure pins which
+// family wins if a bead somehow carries both.
+//
+// The two are disjoint by construction, so this case is unreachable in the
+// field -- and that is why it is pinned rather than left to whichever branch
+// happens to run first. A fix written as an unconditional fallthrough to the
+// exec key would silently change what every gate bead serves, and the gate
+// cases above would not notice because they carry no exec key.
+func TestHandleOrderHistoryDetailPrefersGateOutputOverExecFailure(t *testing.T) {
+	fs := newFakeState(t)
+	fs.cityBeadStore = beads.NewMemStore()
+
+	run, err := fs.cityBeadStore.Create(beads.Bead{
+		Title:  "both families",
+		Status: "closed",
+		Labels: []string{"order-run:nightly-review", "wisp"},
+		Metadata: map[string]string{
+			"convergence.gate_stdout":                  "gate output",
+			beadmeta.OrderExecFailureOutputMetadataKey: "exec output",
+		},
+	})
+	if err != nil {
+		t.Fatalf("create city history bead: %v", err)
+	}
+
+	h := newTestCityHandler(t, fs)
+	req := httptest.NewRequest(http.MethodGet, cityURL(fs, "/order/history/"+run.ID), nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var resp struct {
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Output != "gate output" {
+		t.Fatalf("output = %q, want gate output", resp.Output)
 	}
 }
 
