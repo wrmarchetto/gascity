@@ -189,3 +189,31 @@ func TestPoolSessionAliasHandoverRefusesAHolderOfAnotherIdentity(t *testing.T) {
 		t.Fatalf("alias = %q, want empty: %s holds this alias but is not this identity", info.Alias, holder.ID)
 	}
 }
+
+// TestPoolSessionAliasHandoverRefusesWhenTheHolderCannotBeProbed pins the
+// half of the liveness condition the other tests cannot reach. They all seed a
+// holder the probe can answer for, so the predicate passes its mutation with
+// the error arm of `if err != nil || running` deleted -- the arm that decides
+// what to do when nobody knows whether the holder is running.
+//
+// A holder with no session_name is that shape, and it is reachable rather than
+// theoretical: a bead-only create records the identity before any pane exists,
+// so the alias is held by a session the runtime cannot be asked about. Absence
+// of evidence is not evidence of absence, and the failure is asymmetric --
+// declining leaves a slot alias-less for one reconcile pass, while proceeding
+// can hand a live process's alias to a second one claiming under the same name.
+func TestPoolSessionAliasHandoverRefusesWhenTheHolderCannotBeProbed(t *testing.T) {
+	bp, cfg, store, _ := poolSessionAliasRefusalFixture(t)
+	holder := outgoingPoolIncarnation(t, store, "city-stop", "1")
+	if err := store.Update(holder.ID, beads.UpdateOpts{Metadata: map[string]string{"session_name": ""}}); err != nil {
+		t.Fatalf("store.Update(clear session_name): %v", err)
+	}
+
+	info, err := createPoolSessionBeadWithGuardedAlias(bp, &cfg.Agents[0], "worker", "worker-1", 1, nil)
+	if err != nil {
+		t.Fatalf("createPoolSessionBeadWithGuardedAlias: %v", err)
+	}
+	if info.Alias != "" {
+		t.Fatalf("alias = %q, want empty: %s cannot be probed, so it is unaccounted for rather than gone", info.Alias, holder.ID)
+	}
+}
