@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -313,5 +314,123 @@ func setPoolSessionActive(t *testing.T, store beads.Store, id string) {
 		if err := store.SetMetadata(id, k, v); err != nil {
 			t.Fatalf("SetMetadata(%s=%s): %v", k, v, err)
 		}
+	}
+}
+
+// TestReconcile_StaleWorktreeQuarantineHoldsPoolSlotAcrossTicks pins the
+// invariant that a stale-worktree quarantine holds its pool slot for as long as
+// the marker is on disk, across an arbitrary number of ticks.
+//
+// The test spans TWO planner ticks with the real state heal between them
+// because the defect is invisible on one. Tick 1 already reuses the quarantined
+// bead; it is the heal in that same tick that rewrites the state, and only tick
+// 2 sees the rewritten value and mints a replacement. A single-tick test goes
+// green over the bug (ci-v1yc5x: 17 beads minted for one slot in 25 minutes,
+// one mint every second tick).
+//
+// The heal is driven through healStateWithRollbackInfo rather than a hand-built
+// patch so the test cannot agree with a wrong projection: the assertion is on
+// the planner's observable output (no new session bead for the held slot), not
+// on the metadata the projection happens to write.
+func TestReconcile_StaleWorktreeQuarantineHoldsPoolSlotAcrossTicks(t *testing.T) {
+	now := time.Date(2026, 9, 5, 19, 57, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	cityDir := t.TempDir()
+	writeCityTOML(t, cityDir, "quarantine-town", "toolsmith")
+
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=fix/ci-sptsk3\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale worktree marker: %v", err)
+	}
+
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "quarantine-town"},
+		Session:   config.SessionConfig{Provider: "fake"},
+		Agents: []config.Agent{{
+			Name:              "toolsmith",
+			Dir:               "repo",
+			StartCommand:      "true",
+			MinActiveSessions: intPtr(3),
+			MaxActiveSessions: intPtr(3),
+		}},
+	}
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+
+	// Ready work routed at the pool. Without it the planner has no demand to
+	// satisfy and would not mint even against a demoted bead, so the test would
+	// pass for the wrong reason.
+	createRoutedReadyBeadForReplacement(t, store, "repo/toolsmith", "queued toolsmith work")
+
+	held := createCanonicalPoolSession(t, store, &cfg.Agents[0], now, 1)
+	quarantinePendingCreateForStaleWorktree(
+		sessiontest.SeedBead(t, held), sessionFrontDoor(store), workDir, now, time.Hour, io.Discard,
+	)
+	heldAgent := held.Metadata["agent_name"]
+	if heldAgent == "" {
+		t.Fatal("held pool session has no agent_name, want the canonical slot identity")
+	}
+
+	for _, slot := range []int{2, 3} {
+		busy := createCanonicalPoolSession(t, store, &cfg.Agents[0], now, slot)
+		setPoolSessionActive(t, store, busy.ID)
+		reloaded, err := store.Get(busy.ID)
+		if err != nil {
+			t.Fatalf("reload busy slot %d: %v", slot, err)
+		}
+		if err := sp.Start(context.Background(), reloaded.Metadata["session_name"], runtime.Config{}); err != nil {
+			t.Fatalf("start busy slot %d runtime: %v", slot, err)
+		}
+	}
+
+	countSessionBeads := func(t *testing.T) (open int, forHeldSlot int) {
+		t.Helper()
+		all, err := store.List(beads.ListQuery{Type: sessionBeadType})
+		if err != nil {
+			t.Fatalf("list session beads: %v", err)
+		}
+		for _, b := range all {
+			if b.Status == "closed" {
+				continue
+			}
+			open++
+			if b.Metadata["agent_name"] == heldAgent {
+				forHeldSlot++
+			}
+		}
+		return open, forHeldSlot
+	}
+
+	if open, _ := countSessionBeads(t); open != 3 {
+		t.Fatalf("seeded open session beads = %d, want 3", open)
+	}
+
+	for tick := 1; tick <= 2; tick++ {
+		buildDesiredState("quarantine-town", cityDir, now, cfg, sp, store, io.Discard)
+		open, forHeldSlot := countSessionBeads(t)
+		if forHeldSlot != 1 {
+			t.Fatalf("tick %d: session beads for %s = %d, want 1 (a second bead lands in the same marked worktree and is refused again)", tick, heldAgent, forHeldSlot)
+		}
+		if open != 3 {
+			t.Fatalf("tick %d: open session beads = %d, want 3 (pool_desired is 3 and the held slot is still the canonical occupant)", tick, open)
+		}
+
+		// The reconciler heals advisory state in the same tick it plans, with
+		// the runtime observed dead for the quarantined slot.
+		current, err := store.Get(held.ID)
+		if err != nil {
+			t.Fatalf("tick %d: reload held slot: %v", tick, err)
+		}
+		if _, err := healStateWithRollbackInfo(seedSessionInfo(current), false, sessionFrontDoor(store), clk, 0, true); err != nil {
+			t.Fatalf("tick %d: heal held slot: %v", tick, err)
+		}
+	}
+
+	final, err := store.Get(held.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := final.Metadata["quarantined_until"]; got == "" {
+		t.Fatal("quarantined_until was cleared while the marker is still on disk; the slot would be woken straight back into the refusal")
 	}
 }

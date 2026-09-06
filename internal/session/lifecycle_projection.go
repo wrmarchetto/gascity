@@ -580,8 +580,11 @@ func ProjectLifecycle(input LifecycleInput) LifecycleView {
 	identity := projectIdentity(input, namedIdentity, baseState, continuityEligible)
 
 	wakeCauses := projectWakeCauses(input)
-	runtimeProjection, reconciledState, resetContinuation := projectRuntimeProjection(input, baseState, compatState, sleepReason, wakeCauses)
+	// Blockers are computed before the runtime projection because the projection
+	// needs to know whether the quarantine timer is still live -- an expired one
+	// must be allowed to fall through to asleep.
 	blockers, heldUntil, quarantinedUntil := projectBlockers(input, now, baseState, identity)
+	runtimeProjection, reconciledState, resetContinuation := projectRuntimeProjection(input, baseState, compatState, sleepReason, wakeCauses, hasBlocker(blockers, BlockerQuarantined))
 	desired := projectDesiredState(input, terminal, blockers, wakeCauses)
 
 	return LifecycleView{
@@ -746,7 +749,7 @@ func projectBlockers(input LifecycleInput, now time.Time, base BaseState, identi
 	return blockers, heldUntil, quarantinedUntil
 }
 
-func projectRuntimeProjection(input LifecycleInput, base BaseState, compat State, sleepReason string, wakeCauses []WakeCause) (RuntimeProjection, State, bool) {
+func projectRuntimeProjection(input LifecycleInput, base BaseState, compat State, sleepReason string, wakeCauses []WakeCause, quarantineLive bool) (RuntimeProjection, State, bool) {
 	if !input.Runtime.Observed {
 		return RuntimeProjectionUnknown, compat, false
 	}
@@ -782,7 +785,33 @@ func projectRuntimeProjection(input LifecycleInput, base BaseState, compat State
 	if hasWakeCause(wakeCauses, WakeCausePendingCreate) {
 		return RuntimeProjectionStartRequested, StateStartPending, false
 	}
+	// A quarantine whose timer has not expired survives the runtime-dead heal.
+	// Without this case the fallthrough below rewrites state to asleep on the
+	// tick right after the quarantine, which reads as harmless (the blocker and
+	// quarantined_until are untouched, so nothing wakes) but is not: the pool
+	// planner's reuse filter drops asleep beads, so the next tick mints a
+	// replacement for the same slot and re-runs whatever the quarantine was
+	// protecting against. For a stale-worktree refusal that is an unbounded
+	// mint-refuse loop, one bead every second tick (ci-v1yc5x).
+	//
+	// The gate is the LIVE blocker, not the base state: an expired quarantine
+	// must still fall through to asleep, because ClearExpiredQuarantinePatch
+	// only clears quarantined_until and leaves state=quarantined for this heal
+	// to retire. Keying on base == BaseStateQuarantined alone would strand the
+	// bead in quarantined forever.
+	if quarantineLive && base == BaseStateQuarantined {
+		return RuntimeProjectionMissing, StateQuarantined, false
+	}
 	return RuntimeProjectionMissing, StateAsleep, shouldResetContinuation(base, input, sleepReason)
+}
+
+func hasBlocker(blockers []LifecycleBlocker, want LifecycleBlocker) bool {
+	for _, blocker := range blockers {
+		if blocker == want {
+			return true
+		}
+	}
+	return false
 }
 
 func creatingStateIsStale(input LifecycleInput) bool {
