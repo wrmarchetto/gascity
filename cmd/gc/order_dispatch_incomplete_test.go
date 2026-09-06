@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
@@ -217,5 +216,4 @@ func TestOrderDispatchExecKilledRunIsNeverIncomplete(t *testing.T) {
 	if !rec.hasType(events.OrderFailed) || rec.hasType(events.OrderCompleted) {
 		t.Fatalf("events = %+v, want failed without completed", rec.events)
 	}
-	_ = time.Second
 }
