@@ -346,7 +346,9 @@ func (p *Provider) runPodPostLaunchSetup(ctx context.Context, podName string, cf
 // it does NOT recreate the pod here). Staging, city/beads init, and PreStart are
 // NOT re-run here (k8s treats PreStart as provision-half); env is provision-half
 // too (set in the pod spec at create time, not re-injected — respawn-pane carries
-// no env). NOTE: tmux diverges — as of the relaunch pre_start fix it re-runs
+// no env), which is safe only because a config-declared env change moves the
+// provision hash since v6 and so never reaches this path (ci-yulan1).
+// NOTE: tmux diverges — as of the relaunch pre_start fix it re-runs
 // PreStart on Relaunch (launch-half), while k8s and ssh intentionally do not.
 //
 // CAVEAT (unverified on a real cluster — see the B3 design doc): for

@@ -31,6 +31,14 @@ var partitionHalfCases = []struct {
 
 	// PROVISION (box) half.
 	{"Env", "provision", func(c *Config) { c.Env = envWith(c.Env, "GC_CITY", "different-city") }},
+	// DeclaredEnvKeys rides the same half as the values it admits: an env change
+	// must force a re-provision, because the warm relaunch path applies no env
+	// values at all (tmuxStartOps.respawnAgent). A launch classification here
+	// would reinstate exactly the ci-yulan1 defect.
+	{"DeclaredEnvKeys", "provision", func(c *Config) {
+		c.Env = envWith(c.Env, "CLAUDE_ACCOUNTS", "0 4")
+		c.DeclaredEnvKeys = []string{"CLAUDE_ACCOUNTS"}
+	}},
 	{"FingerprintExtra", "provision", func(c *Config) { c.FingerprintExtra = map[string]string{"pool": "different"} }},
 	{"PreStart", "provision", func(c *Config) { c.PreStart = []string{"echo different-prestart"} }},
 	{"OverlayDir", "provision", func(c *Config) { c.OverlayDir = "/different-overlay" }},
@@ -102,6 +110,7 @@ var coreFieldHalf = map[string]string{
 	"SessionSetupScript":   "launch",
 	// PROVISION (box) half.
 	"Env":                 "provision",
+	"DeclaredEnvKeys":     "provision",
 	"FingerprintExtra":    "provision",
 	"PreStart":            "provision",
 	"OverlayDir":          "provision",

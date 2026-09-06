@@ -221,7 +221,11 @@ func (p *Provider) runPostLaunchSetup(ctx context.Context, name string, cfg runt
 // Relaunch (launch-half); ssh intentionally keeps it provision-half. Env is
 // also provision-half: respawn-pane has no -e, so the session keeps the env set
 // by the original new-session; a launch-only env change is not re-applied
-// (matching tmux B1's "does not re-inject env hints").
+// (matching tmux B1's "does not re-inject env hints"). What makes that safe
+// rather than a silent drop is the FINGERPRINT half: since v6 a change to any
+// config-declared env key moves the provision hash, so it is never classified
+// launch-only in the first place. Before v6 it moved no hash at all and this
+// carrier dropped it (ci-yulan1).
 func (p *Provider) Relaunch(ctx context.Context, name string, cfg runtime.Config) error {
 	if err := ctx.Err(); err != nil {
 		return err

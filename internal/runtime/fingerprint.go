@@ -46,7 +46,26 @@ type BreakdownCopyEntry struct {
 // longer flips every agent's fingerprint into a fleet-wide config-drift drain.
 // The bump rebaselines existing v4 hashes silently instead of draining the
 // fleet once on rollout. (#3840)
-const FingerprintVersion = "v5"
+//
+// v6: config-DECLARED env keys (Config.DeclaredEnvKeys) join
+// envFingerprintAllow as fingerprint inputs, so an edit to a
+// [providers.<name>.env] block moves the hash instead of moving nothing.
+// Before this, such an edit was invisible: paired with a Command change it
+// read as launch-only drift and took the warm-box relaunch, which applies no
+// env values, leaving the agent running on env the process had never seen
+// (ci-yulan1, root-caused in ci-vfwkdm). The bump
+// rebaselines every v5 hash silently -- without it, every session whose config
+// declares any env would take a one-time drift restart on rollout.
+//
+// WHAT THE BUMP DOES NOT DO, stated here because it is the operational half
+// and the code gives no hint of it. A rebaseline FORGIVES the drift it finds,
+// so a session already running on env its box never received is re-stamped as
+// correct rather than corrected. The mayor that motivated this stayed on
+// account5 after the fix landed, and only an operator-driven restart moves it.
+// Deploying this closes the class going forward; it repairs nothing already
+// broken, and noticing what is already broken is
+// doctor/provider-account-restriction/ in the city repo.
+const FingerprintVersion = "v6"
 
 // ConfigFingerprint returns a deterministic hash of the Config fields that
 // define an agent's behavioral identity. Changes to these fields indicate
@@ -196,10 +215,74 @@ var envFingerprintAllow = map[string]bool{
 }
 
 // envFingerprintInclude returns true if the key should contribute to the
-// config fingerprint. Uses an allow list — only explicitly listed keys
-// are included.
+// config fingerprint on the allow-list alone. Config-declared keys are the
+// other admission route; hashEnvFingerprint is what applies both, and it is
+// what every hashing site calls.
 func envFingerprintInclude(key string) bool {
 	return envFingerprintAllow[key]
+}
+
+// DeclaredEnvKeysOf returns m's keys sorted, or nil when m is empty, for a
+// caller building a Config from a single config-authored env map.
+//
+// Exists so a second construction site cannot forget the field and quietly
+// produce a hash that disagrees with the one the start path stored for the
+// same session. cmd/gc/template_resolve.go does NOT use it: that path unions
+// three layers and subtracts the upstream-written keys, so it builds its own
+// set and this would hide the difference rather than share it.
+func DeclaredEnvKeysOf(m map[string]string) []string {
+	if len(m) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// hashEnvFingerprint writes the Env contribution: the values of every key
+// admitted by the allow-list or by cfg.DeclaredEnvKeys, then the declared key
+// SET on its own.
+//
+// The set is a separate input because the values alone cannot see a withdrawn
+// declaration. Delete `[providers.claude-mayor.env] CLAUDE_ACCOUNTS` while the
+// controller's own environment also exports CLAUDE_ACCOUNTS and Env comes out
+// byte-identical -- the agent now takes an ambient value that agrees only by
+// coincidence, and would diverge the moment the controller's environment moved.
+// That is a change of behavioral identity, so it moves the hash.
+//
+// Both contributions are skipped entirely when nothing is declared, so a
+// config declaring no env hashes byte-for-byte as an older binary's
+// allow-list-only pass did. That buys stable goldens and a readable
+// cross-version diff, NOT the rollout: the version prefix moved, so every
+// stored hash rebaselines on upgrade whether or not the skip exists. Do not
+// read the skip as the thing that makes v6 safe to deploy.
+func hashEnvFingerprint(h hash.Hash, cfg Config) {
+	if len(cfg.DeclaredEnvKeys) == 0 {
+		hashSortedMapIncluded(h, cfg.Env, envFingerprintInclude)
+		return
+	}
+	declared := make(map[string]bool, len(cfg.DeclaredEnvKeys))
+	for _, k := range cfg.DeclaredEnvKeys {
+		declared[k] = true
+	}
+	hashSortedMapIncluded(h, cfg.Env, func(key string) bool {
+		return envFingerprintAllow[key] || declared[key]
+	})
+	keys := make([]string, 0, len(declared))
+	for k := range declared {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h.Write([]byte("declared-env")) //nolint:errcheck // hash.Write never errors
+	h.Write([]byte{0})              //nolint:errcheck // hash.Write never errors
+	for _, k := range keys {
+		h.Write([]byte(k)) //nolint:errcheck // hash.Write never errors
+		h.Write([]byte{0}) //nolint:errcheck // hash.Write never errors
+	}
+	h.Write([]byte{1}) //nolint:errcheck // sentinel closing the set
 }
 
 // hashCoreFields writes all config fields except SessionLive to the hash.
@@ -210,7 +293,7 @@ func hashCoreFields(h hash.Hash, cfg Config) {
 	h.Write([]byte(cfg.Lifecycle)) //nolint:errcheck // hash.Write never errors
 	h.Write([]byte{0})             //nolint:errcheck // hash.Write never errors
 
-	hashSortedMapIncluded(h, cfg.Env, envFingerprintInclude)
+	hashEnvFingerprint(h, cfg)
 	hashMCPServers(h, cfg.MCPServers)
 
 	// FingerprintExtra carries additional identity fields (pool config, etc.)
@@ -420,7 +503,7 @@ func CoreFingerprintBreakdown(cfg Config) BreakdownV1 {
 			h.Write([]byte(cfg.Lifecycle))
 		}),
 		"Env": fieldHash(func(h hash.Hash) {
-			hashSortedMapIncluded(h, cfg.Env, envFingerprintInclude)
+			hashEnvFingerprint(h, cfg)
 		}),
 		"MCPServers": fieldHash(func(h hash.Hash) {
 			hashMCPServers(h, cfg.MCPServers)
@@ -550,7 +633,7 @@ func LogCoreFingerprintDrift(w io.Writer, name string, storedJSON string, curren
 		case "Command":
 			fmt.Fprintf(w, "    Command: %q\n", current.Command) //nolint:errcheck // best-effort diag
 		case "Env":
-			fmt.Fprintf(w, "    Env: %v\n", filteredEnv(current.Env)) //nolint:errcheck // best-effort diag
+			fmt.Fprintf(w, "    Env: %v\n", filteredEnv(current.Env, current.DeclaredEnvKeys)) //nolint:errcheck // best-effort diag
 		case "MCPServers":
 			fmt.Fprintf(w, "    MCPServers: %+v\n", NormalizeMCPServerConfigs(current.MCPServers)) //nolint:errcheck // best-effort diag
 		case "FPExtra":
@@ -717,11 +800,22 @@ func renderCopyEntry(e BreakdownCopyEntry) string {
 	return fmt.Sprintf("src=%s", e.Src)
 }
 
-// filteredEnv returns only the allow-listed env keys for diagnostic output.
-func filteredEnv(env map[string]string) map[string]string {
+// filteredEnv returns the env keys that contribute to the fingerprint, for
+// diagnostic output: the allow-list plus the config-declared set.
+//
+// declared must be the same set the hash used. Filtering on the allow-list
+// alone -- which is what this did before v6 -- omits exactly the keys most
+// likely to be the reason a session drifted, so `config-drift-diag ... Env:`
+// would print a line that could not contain the answer. That is worse than no
+// diagnostic: it reads as "Env is not the problem" (ci-yulan1).
+func filteredEnv(env map[string]string, declared []string) map[string]string {
+	declaredSet := make(map[string]bool, len(declared))
+	for _, k := range declared {
+		declaredSet[k] = true
+	}
 	out := make(map[string]string)
 	for k, v := range env {
-		if envFingerprintInclude(k) {
+		if envFingerprintInclude(k) || declaredSet[k] {
 			out[k] = v
 		}
 	}

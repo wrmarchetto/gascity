@@ -1647,6 +1647,13 @@ func buildResumeCommand(cityPath string, cfg *config.City, info session.Info, se
 			EmitsPermissionWarning: resolved.EmitsPermissionWarning,
 			AcceptStartupDialogs:   resolved.AcceptStartupDialogs,
 			Env:                    resolved.Env,
+			// Set even though this config is only ever launched with, never
+			// hashed: TestResolvedProviderEnvConfigsDeclareTheirEnvKeys admits
+			// no exceptions, because "this one is not hashed" is a property of
+			// the CALLERS and a future caller that stores its hash would
+			// reintroduce ci-yulan1 silently. Costs nothing -- the field is
+			// read only by the fingerprint.
+			DeclaredEnvKeys: runtime.DeclaredEnvKeysOf(resolved.Env),
 		}
 	}
 

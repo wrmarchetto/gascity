@@ -598,16 +598,35 @@ func (s *Server) startedConfigHashProvesACPTransport(
 	if err != nil {
 		return false
 	}
+	// DeclaredEnvKeys tracks the start path's treatment of provider [env]:
+	// since v6 those keys are fingerprint inputs, and a config built here
+	// without them hashes differently from the one that produced the stored
+	// started_config_hash. Only resolved.Env is available here, while the start
+	// path unions workspace + provider + agent env, so this narrows the gap
+	// rather than closing it.
+	//
+	// The comparison is ALREADY approximate and this is not what makes it so:
+	// the stored hash covers the full merged env, which always carries the
+	// allow-listed GC_ identity keys (GC_TEMPLATE at minimum, from
+	// template_resolve.go's agentEnv), and resolved.Env carries none of them.
+	// Measured 2026-09-06 against CoreFingerprint: for a session env holding
+	// those keys the two sides are unequal both before and after v6, so this
+	// path proved nothing for a real managed session either way. Tracked as a
+	// note on ci-yulan1, not fixed here -- deciding what this function should
+	// compare is its own question, and no test covers it.
+	declaredEnv := runtime.DeclaredEnvKeysOf(resolved.Env)
 	acpHash := runtime.CoreFingerprint(runtime.Config{
-		Command:    acpCommand,
-		Lifecycle:  runtime.Lifecycle(resolved.Lifecycle),
-		Env:        resolved.Env,
-		MCPServers: mcpServers,
+		Command:         acpCommand,
+		Lifecycle:       runtime.Lifecycle(resolved.Lifecycle),
+		Env:             resolved.Env,
+		DeclaredEnvKeys: declaredEnv,
+		MCPServers:      mcpServers,
 	})
 	defaultHash := runtime.CoreFingerprint(runtime.Config{
-		Command:   defaultCommand,
-		Lifecycle: runtime.Lifecycle(resolved.Lifecycle),
-		Env:       resolved.Env,
+		Command:         defaultCommand,
+		Lifecycle:       runtime.Lifecycle(resolved.Lifecycle),
+		Env:             resolved.Env,
+		DeclaredEnvKeys: declaredEnv,
 	})
 	if acpHash == defaultHash {
 		return false
