@@ -226,7 +226,18 @@ func runNudgeBackstop(
 				continue
 			}
 			if err := sp.Nudge(sessName, runtime.TextContent(content)); err != nil {
-				fmt.Fprintf(stdout, "%s: %s failed: %v\n", label, sessName, err) //nolint:errcheck // best-effort
+				// Carries the trigger bead and the attempt counter because
+				// this is the last line before permanent silence: at the cap
+				// exhausted() is a no-op, so nothing reports this slot again.
+				// Without the counter the third line is indistinguishable
+				// from the first, and a reader cannot tell a slot that will
+				// retry from one that has just been abandoned -- which is
+				// exactly what cost 1h35m of unclaimed governor work on
+				// 2026-09-06 (ci-mdfcgs). The success line at the bottom of
+				// this block and the content-absence line above both already
+				// carry the pair; only this branch dropped them.
+				fmt.Fprintf(stdout, "%s: %s failed for %s: %v (attempt %d/%d)\n", //nolint:errcheck // best-effort
+					label, sessName, target.ID, err, attempts+1, idleClaimNudgeMaxAttempts)
 				continue
 			}
 			fmt.Fprintf(stdout, "%s: nudged %s for %s (attempt %d/%d)\n", label, sessName, target.ID, attempts+1, idleClaimNudgeMaxAttempts) //nolint:errcheck // best-effort

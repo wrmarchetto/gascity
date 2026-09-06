@@ -319,3 +319,66 @@ func TestNudgeStalledPoolClaims_ReportsMissingNudgeText(t *testing.T) {
 		t.Errorf("reported 0 times, want at least 1")
 	}
 }
+
+// The delivery-failure line must name the trigger bead and the attempt number,
+// because the operator reads it during the stall and both facts decide what to
+// do next. The sibling lines already carry them -- the success line and the
+// missing-nudge-text line both end "(attempt N/M)" and both name the bead -- so
+// this pins the one branch that dropped them.
+//
+// WHY THIS IS THE BRANCH THAT MATTERS. It is the only one that precedes
+// permanent silence: at the cap the lane stops attempting and logs nothing ever
+// again (exhausted() is a deliberate no-op). So the last of these lines is the
+// final word on that slot, and without the counter it is indistinguishable from
+// the first -- a reader cannot tell a slot that will retry from one that has
+// just been abandoned. Measured on 2026-09-06 (ci-mdfcgs): governor-ci-xbhzyp
+// emitted three of these, then held its pool slot for 1h35m with nothing
+// further logged, and the operator had to count the lines by hand to discover
+// the budget was spent.
+//
+// Asserting on the rendered line rather than on a helper's return value is
+// deliberate: the defect was that the format string omitted two arguments the
+// call site already had in scope, which no test of a helper can catch.
+func TestNudgeStalledPoolClaims_DeliveryFailureLineNamesBeadAndAttempt(t *testing.T) {
+	sp := &continuationFailingNudgeProvider{Provider: runningIdleClaimFake(t, "session-a")}
+	cfg := idleClaimTestCfg()
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	session := idleClaimPoolSession()
+	// Seeded past the observe-before-first-nudge grace, matching
+	// TestNudgeStalledPoolClaims_DeliveryFailureConsumesAttempt: without these
+	// the first tick only records the observation and this suite would assert
+	// against an empty buffer for a reason that has nothing to do with the
+	// format string under test.
+	session.Metadata[idleClaimNudgeTriggerKey] = "work-a"
+	session.Metadata[idleClaimNudgeCountKey] = "0"
+	session.Metadata[idleClaimNudgeAtKey] = base.Format(time.RFC3339)
+	work := []beads.Bead{{ID: "work-a", Status: "open"}}
+	store := beads.NewMemStoreFrom(0, []beads.Bead{session}, nil)
+	clk := &clock.Fake{Time: base.Add(idleClaimNudgeGrace + time.Second)}
+	var out bytes.Buffer
+
+	nudgeStalledPoolClaims(sp, cfg, store, []beads.Bead{session}, work, nil, clk.Now(), &out)
+
+	line := out.String()
+	if !strings.Contains(line, "session-a") {
+		t.Errorf("log = %q, missing the session name", line)
+	}
+	if !strings.Contains(line, "work-a") {
+		t.Errorf("log = %q, missing the trigger bead -- the reader cannot tell which work is stalled", line)
+	}
+	if want := "(attempt 1/" + strconv.Itoa(idleClaimNudgeMaxAttempts) + ")"; !strings.Contains(line, want) {
+		t.Errorf("log = %q, missing %q -- without the counter the last line before permanent silence reads like the first", line, want)
+	}
+
+	// Drive to the cap and require the final line to say so. This is the line
+	// that is followed by nothing, so it is the one that has to be unambiguous.
+	for want := 2; want <= idleClaimNudgeMaxAttempts; want++ {
+		session = mustGetTestBead(t, store, session.ID)
+		clk.Advance(idleClaimNudgeBackoff + time.Second)
+		nudgeStalledPoolClaims(sp, cfg, store, []beads.Bead{session}, work, nil, clk.Now(), &out)
+	}
+	last := strconv.Itoa(idleClaimNudgeMaxAttempts) + "/" + strconv.Itoa(idleClaimNudgeMaxAttempts)
+	if !strings.Contains(out.String(), "(attempt "+last+")") {
+		t.Errorf("log = %q, missing the terminal (attempt %s) -- nothing else ever reports that this slot was abandoned", out.String(), last)
+	}
+}
