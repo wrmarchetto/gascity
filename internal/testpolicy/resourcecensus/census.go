@@ -131,12 +131,25 @@ var bootstrapPolicy = Ledger{
 			// existing exec.Command sites in scripts/go_owned_tmp_test.go, so
 			// that bump moved calls only.
 			//
-			// 612 -> 614, 178 -> 179 (ci-sptsk3): the idle-scope reap tests exec
+			// 612 -> 613 (ci-sg490p): cmd/gc/order_dispatch_incomplete_test.go
+			// spawns `sh -c "exit N"` to obtain a genuine *exec.ExitError. The
+			// guard it pins, declaredIncompleteExit, walks the error chain with
+			// errors.As to the CONCRETE *exec.ExitError, and the standard
+			// library exposes no way to build an os.ProcessState carrying a
+			// chosen wait status -- so a fabricated error cannot reach the
+			// branch at all, never mind exercise the chain walk that is the
+			// part able to be wrong. New file, so BaselineFiles moves with it.
+			//
+			// 613 -> 615, 179 -> 180 (ci-sptsk3): the idle-scope reap tests exec
 			// a process that stands in the scope and the watchdog helper that
 			// supervises a fake server. Neither can be a stand-in -- the
 			// claimant scan they exercise reads /proc/<pid>/cwd and
 			// /proc/<pid>/environ, which only a real child populates. The one
 			// new file is cmd/gc/dolt_scope_idle_test.go.
+			//
+			// The ci-sptsk3 arithmetic was rebased: it was authored against a
+			// base of 612 and reads 613 here because ci-sg490p's spawn landed
+			// on main first. The DELTA is what that bead owns, not the floor.
 			BaselineCalls:   615,
 			BaselineFiles:   180,
 			ReportedCalls:   495,
@@ -182,8 +195,13 @@ var bootstrapPolicy = Ledger{
 	},
 	Debt: []Baseline{
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceSubprocess,
+			Scope:    ScopeUntagged,
+			Resource: ResourceSubprocess,
+			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
+			// spawn recorded on the all-source audit row above.
+			//
+			// 414 -> 416, 121 -> 122 (ci-sptsk3): the same idle-scope reap
+			// spawns, counted again in the untagged scope.
 			BaselineCalls:   416,
 			BaselineFiles:   122,
 			ReportedCalls:   380,
@@ -504,8 +522,14 @@ var bootstrapPolicy = Ledger{
 	},
 	SmallDebt: []Baseline{
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceSubprocess,
+			Scope:    ScopeUntagged,
+			Resource: ResourceSubprocess,
+			// 405 -> 406 (ci-sg490p): the same call site, kept as Small debt
+			// rather than moved to an exact Medium owner. The spawn sits in the
+			// shared helper exitErrorWithCode, and a resource inside a helper
+			// stays Small debt however Medium its callers are.
+			//
+			// 406 -> 408, 116 -> 117 (ci-sptsk3): the idle-scope reap spawns.
 			BaselineCalls:   408,
 			BaselineFiles:   117,
 			ReportedCalls:   394,

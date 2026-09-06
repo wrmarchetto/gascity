@@ -114,6 +114,12 @@ const PassthroughVar = "GC_TESTENV_PASSTHROUGH"
 // productmetrics test passed depended on which shell ran it, which both
 // invented merge-gate rejections of clean branches and could mask a genuine
 // misclassification regression.
+// GC_FORMULA_REF is a leak vector for the same reason as the rest, with a
+// sharper edge: a supervisor pinned via [supervisor] formula_ref exports it
+// into every session it spawns, so an agent running `go test` by hand would
+// otherwise resolve formulas from a git ref instead of the test's own temp
+// directories -- and which way a formula test went would depend on whose
+// shell ran it.
 var LeakVectorVars = []string{
 	"BEADS_DIR",
 	"BEADS_DOLT_PASSWORD",
@@ -143,6 +149,7 @@ var LeakVectorVars = []string{
 	"GC_DOLT_PASSWORD",
 	"GC_DOLT_PORT",
 	"GC_DOLT_USER",
+	"GC_FORMULA_REF",
 	"GC_HOME",
 	"GC_SESSION_ID",
 	"GC_SESSION_NAME",

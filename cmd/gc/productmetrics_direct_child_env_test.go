@@ -21,9 +21,16 @@ import (
 
 const productMetricsDirectChildEnvSpyPath = "GC_TEST_PRODUCT_METRICS_DIRECT_CHILD_ENV_SPY_PATH"
 
+// The spy records only these keys, so a test asserting on a child's
+// environment must name its key here first. GC_FORMULA_REF is not a
+// product-metrics concern: it rides along because this spy is the only
+// observer in the package of a REAL fork's environment, which is what
+// TestSupervisorStartForkCarriesFormulaRef needs. Widening the list is safe
+// -- every assertion here is per-key.
 var productMetricsDirectChildObservedKeys = []string{
 	execenv.UsageMetricsDisableEnv,
 	"BD_DISABLE_METRICS",
+	"GC_FORMULA_REF",
 	"OTEL_SERVICE_NAME",
 	"PWD",
 }

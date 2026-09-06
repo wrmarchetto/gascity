@@ -30,7 +30,7 @@ func findCityWithOptions(dir string, opts cityDiscoveryOptions) (string, error) 
 
 	var legacy string
 	for {
-		if citylayout.HasCityConfig(dir) {
+		if citylayout.HasCityConfig(dir) && !isWorktreeOfEnclosingCity(dir, opts) {
 			// Resolve symlinks so a city reached through a linked path (e.g.
 			// ~/gc -> /real/city) is identified by its real path. Otherwise
 			// cityPath-derived store scopes fail the native-store identity
@@ -62,6 +62,45 @@ func findCityWithOptions(dir string, opts cityDiscoveryOptions) (string, error) 
 		return legacy, nil
 	}
 	return "", fmt.Errorf("not in a city directory (no city.toml or .gc/ found)")
+}
+
+// isWorktreeOfEnclosingCity reports whether dir is one of an enclosing city's
+// own worktrees rather than a city in its own right.
+//
+// git worktree add of the city repo reproduces every tracked file at the
+// worktree root, city.toml included, so the marker file alone cannot tell the
+// two apart. Left undistinguished, findCity resolved a session's scope to the
+// worktree it was standing in, and resolveManagedDoltRuntimeLayout then
+// derived a DataDir from that scope -- a private, empty dolt server per
+// worktree, with the worktree's .beads/config.yaml rewritten to the
+// enclosing RIG's issue prefix on the way (bd init walks up when BEADS_DIR
+// misses).
+//
+// The test is an enclosing CITY that owns dir, not the ".gc/worktrees" path
+// segment. A blanket refusal of that segment would also disown a PR clone or a
+// standalone checkout that happens to sit at such a path, and those genuinely
+// hold their own store -- dolt_scope_watchdog.go's one-server-per-scope
+// contract counts a worktree as a real scope. Only an outer city.toml
+// establishes that the scope is already owned.
+//
+// Bounded by the same ceilings as the walk that calls it, so an unrelated city
+// above a configured ceiling cannot reach down and disown a path the
+// caller was never allowed to discover.
+func isWorktreeOfEnclosingCity(dir string, opts cityDiscoveryOptions) bool {
+	for parent := dir; ; {
+		if isCityDiscoveryCeiling(parent, opts.ceilingDirs) {
+			return false
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return false
+		}
+		parent = next
+		if citylayout.HasCityConfig(parent) &&
+			pathutil.PathWithin(citylayout.RuntimePath(parent, "worktrees"), dir) {
+			return true
+		}
+	}
 }
 
 func implicitCityDiscoveryOptions() cityDiscoveryOptions {

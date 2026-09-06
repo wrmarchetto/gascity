@@ -14,6 +14,19 @@ resource = "subprocess"
 # scripts/with-go-tmp as a real subprocess, which it must -- the defect it pins
 # lives in that script's own exit path. baseline_files is unchanged because the
 # call joins existing exec.Command sites in scripts/go_owned_tmp_test.go.
+#
+# 612 -> 613 (ci-sg490p): cmd/gc/order_dispatch_incomplete_test.go spawns
+# `sh -c "exit N"` for a genuine *exec.ExitError. declaredIncompleteExit
+# resolves the error chain with errors.As to the CONCRETE *exec.ExitError, and
+# the standard library offers no way to build an os.ProcessState with a chosen
+# wait status, so a fabricated error never reaches the branch.
+#
+# 613 -> 615, 179 -> 180 (ci-sptsk3): the idle-scope reap tests exec a process
+# standing in the scope and the watchdog helper supervising a fake server.
+# Neither can be a stand-in -- the claimant scan reads /proc/<pid>/cwd and
+# /proc/<pid>/environ, which only a real child populates. One new file,
+# cmd/gc/dolt_scope_idle_test.go. The delta is what ci-sptsk3 owns; the floor
+# reads 613 because ci-sg490p landed on main first.
 baseline_calls = 615
 baseline_files = 180
 reported_calls = 495
@@ -55,6 +68,11 @@ expires = "2026-10-01"
 [[debt]]
 scope = "untagged"
 resource = "subprocess"
+# 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError spawn recorded
+# on the all-source audit row above.
+#
+# 414 -> 416, 121 -> 122 (ci-sptsk3): the same idle-scope reap spawns, counted
+# again in the untagged scope.
 baseline_calls = 416
 baseline_files = 122
 reported_calls = 380
@@ -381,6 +399,12 @@ medium_reason = "package TestMain mutates process state"
 [[small_debt]]
 scope = "untagged"
 resource = "subprocess"
+# 405 -> 406 (ci-sg490p): the same call site, kept as Small debt rather than
+# moved to an exact Medium owner. The spawn sits in the shared helper
+# exitErrorWithCode, and a resource inside a helper stays Small debt however
+# Medium its callers are.
+#
+# 406 -> 408, 116 -> 117 (ci-sptsk3): the idle-scope reap spawns.
 baseline_calls = 408
 baseline_files = 117
 reported_calls = 394
