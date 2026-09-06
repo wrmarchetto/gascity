@@ -898,3 +898,110 @@ func TestOrderFiringCurrent_IncompleteRunDoesNotMaskAnOlderFailureStreak(t *test
 		t.Fatalf("details = %v, want the failure streak reported", result.Details)
 	}
 }
+
+// TestOrderFiringCurrent_HintNamesTheOrderTheMessageIsAbout pins that the fix
+// hint and the message describe the same condition.
+//
+// The check reports one message for the whole fleet but points the operator at
+// a single order, and those two statements used to be assembled independently:
+// the message came from the aggregate flags, the hint from the FIRST order that
+// was not OK for any reason at all. An order that is merely overdue therefore
+// captured the hint while the message reported execution failures somewhere
+// else entirely.
+//
+// Measured 2026-09-06 (ci-bpsifb): the message read "scheduled orders have
+// repeated execution failures" and the hint said
+// `gc order history dolt-health`, an order overdue by one minute whose history
+// was an unbroken run of completions. An operator ran the check's own
+// prescribed command, saw it contradict the check, and filed the check as
+// broken. It was right; only the hint was wrong, and a hint that leads to a
+// contradiction is worse than no hint because it discredits a true finding.
+//
+// The overdue order is named to sort FIRST, because queue order is exactly
+// what decided the old target -- with the failing order first the two
+// implementations agree and this case would pass against the defect.
+func TestOrderFiringCurrent_HintNamesTheOrderTheMessageIsAbout(t *testing.T) {
+	now := time.Date(2026, 9, 6, 18, 0, 0, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "aaa-overdue", "cooldown", "10m")
+	writeOrderFiringTestOrder(t, cityPath, "zzz-failing", "cooldown", "30m")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "aaa-overdue", Ts: now.Add(-1 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "zzz-failing", Ts: now.Add(-10 * time.Minute)},
+	)
+
+	check := NewOrderFiringCurrentCheck(cfg, cityPath, WithOrderFiringCurrentHistoryFunc(func(order orders.Order) ([]orders.OrderRun, error) {
+		if order.Name != "zzz-failing" {
+			return nil, nil
+		}
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-10 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-40 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-70 * time.Minute)},
+		}, nil
+	}))
+	check.clock = func() time.Time { return now }
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	if result.Message != "scheduled orders have repeated execution failures" {
+		t.Fatalf("message = %q, want the repeated-failure message", result.Message)
+	}
+	// Both halves are asserted. Requiring only the failing name would pass a
+	// hint that listed every non-OK order, which is not a runnable command.
+	if !strings.Contains(result.FixHint, "zzz-failing") {
+		t.Fatalf("hint = %q, want it to name the order that actually failed", result.FixHint)
+	}
+	if strings.Contains(result.FixHint, "aaa-overdue") {
+		t.Fatalf("hint = %q, must not name the merely-overdue order", result.FixHint)
+	}
+}
+
+// TestOrderFiringCurrent_QuarantineHintNamesTheRefusedOrder is the same
+// invariant on the sibling branch. Both conditions set their message and their
+// hint target on the same branch now, and a test for only one of them would
+// let the other drift straight back to queue order.
+func TestOrderFiringCurrent_QuarantineHintNamesTheRefusedOrder(t *testing.T) {
+	now := time.Date(2026, 9, 6, 18, 0, 0, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "aaa-overdue", "cooldown", "10m")
+	writeOrderFiringTestOrder(t, cityPath, "zzz-refused", "cooldown", "30m")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "aaa-overdue", Ts: now.Add(-1 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "zzz-refused", Ts: now.Add(-10 * time.Minute)},
+	)
+
+	marker := "/city/.gc/runtime/packs/dolt/compact-quarantine/hq"
+	// The prefix is `compact: db=`, which integrityQuarantineMarkerPath keys
+	// on literally. It is the dolt compact subcommand's own output, NOT the
+	// order's name -- a fixture that echoed the order name here parses as a
+	// plain execution failure and never reaches the branch under test.
+	refused := "compact: db=hq integrity quarantine marker exists at " + marker + " reason=review required"
+	check := NewOrderFiringCurrentCheck(cfg, cityPath, WithOrderFiringCurrentHistoryFunc(func(order orders.Order) ([]orders.OrderRun, error) {
+		if order.Name != "zzz-refused" {
+			return nil, nil
+		}
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExecFailed, FailureOutput: refused, CreatedAt: now.Add(-10 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, FailureOutput: refused, CreatedAt: now.Add(-40 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, FailureOutput: refused, CreatedAt: now.Add(-70 * time.Minute)},
+		}, nil
+	}))
+	check.clock = func() time.Time { return now }
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	// Asserted, not skipped past. If the fixture stops reaching the quarantine
+	// branch this case has to go RED -- a skip here would report a green run
+	// for an invariant nothing examined, which is the shape of the defect this
+	// whole file guards.
+	if result.Message != "scheduled orders are refused by integrity quarantine markers" {
+		t.Fatalf("message = %q, want the quarantine-refusal summary; details = %v", result.Message, result.Details)
+	}
+	if !strings.Contains(result.FixHint, "zzz-refused") {
+		t.Fatalf("hint = %q, want it to name the refused order", result.FixHint)
+	}
+	if strings.Contains(result.FixHint, "aaa-overdue") {
+		t.Fatalf("hint = %q, must not name the merely-overdue order", result.FixHint)
+	}
+}

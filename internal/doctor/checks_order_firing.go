@@ -206,6 +206,16 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 	lastRunFor := c.prefetchedLastRunFunc(c.pendingLastRunOrders(monitoredOrders, firedEvents, nil, cronIntervals, now))
 	historyFor := c.prefetchedHistoryFunc(monitoredOrders)
 	var repeatedFailures, repeatedQuarantineRefusals bool
+	// Hint targets kept per condition, not just "first order that was not OK".
+	// The message is chosen from the aggregate below, so a single target picked
+	// in queue order can name an order that has nothing to do with what the
+	// message says. Measured 2026-09-06 (ci-bpsifb): the message read "repeated
+	// execution failures" while the hint named dolt-health, which was merely
+	// overdue by a minute, and `gc order history dolt-health` duly showed an
+	// unbroken run of completions. The operator followed the check's own
+	// prescribed command, saw it contradict the check, and filed the check as
+	// broken -- it was right, and only the hint was wrong.
+	var firstFailure, firstQuarantine string
 
 	for _, order := range monitoredOrders {
 		monitored++
@@ -236,9 +246,15 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 				if refusals >= OrderFiringCurrentFailureHistoryLimit {
 					result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive executions refused by integrity quarantine marker %s", orderDisplayName(order), refusals, marker))
 					repeatedQuarantineRefusals = true
+					if firstQuarantine == "" {
+						firstQuarantine = orderHistoryHintTarget(order)
+					}
 				} else {
 					result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive execution failures", orderDisplayName(order), failures))
 					repeatedFailures = true
+					if firstFailure == "" {
+						firstFailure = orderHistoryHintTarget(order)
+					}
 				}
 				if firstNonOK == "" {
 					firstNonOK = orderHistoryHintTarget(order)
@@ -289,7 +305,11 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		result.Details = append(result.Details, formatOrderFiringHealthySummary(len(healthyDetails)))
 	}
 
+	// The message and the hint target are chosen together, in one switch, so
+	// they cannot disagree about which condition this result is reporting. Two
+	// statements assembled independently is what produced ci-bpsifb.
 	result.Status = worst
+	hintTarget := firstNonOK
 	switch worst {
 	case StatusOK:
 		result.Message = "all scheduled orders are current"
@@ -299,17 +319,27 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 		switch {
 		case repeatedFailures:
 			result.Message = "scheduled orders have repeated execution failures"
+			hintTarget = firstFailure
 		case repeatedQuarantineRefusals:
 			result.Message = "scheduled orders are refused by integrity quarantine markers"
+			hintTarget = firstQuarantine
 		default:
 			result.Message = "scheduled orders are stale"
 		}
 	}
+	// Falls back rather than emitting an empty target. Both conditions above
+	// set their target on the same branch that sets their flag, so an empty
+	// one here is unreachable -- but a hint reading "gc order history " with
+	// nothing after it is worse than one naming the wrong order, because it
+	// is not even a runnable command.
+	if hintTarget == "" {
+		hintTarget = firstNonOK
+	}
 	if blockingErrors == 0 && advisoryErrors > 0 {
 		result.Severity = SeverityAdvisory
 	}
-	if firstNonOK != "" {
-		result.FixHint = fmt.Sprintf(orderFiringInspectHintFmt, firstNonOK)
+	if hintTarget != "" {
+		result.FixHint = fmt.Sprintf(orderFiringInspectHintFmt, hintTarget)
 	}
 	return result
 }
