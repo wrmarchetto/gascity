@@ -62,7 +62,7 @@ if ! command -v flock >/dev/null 2>&1; then
 fi
 
 # Derived paths (set after GC_CITY_PATH validation).
-GC_DIR=""
+LEGACY_GC_DIR=""
 PACK_STATE_DIR=""
 DATA_DIR=""
 LOG_FILE=""
@@ -3196,7 +3196,19 @@ if [ -z "$GC_CITY_PATH" ]; then
 fi
 
 # Set derived paths.
-GC_DIR="$GC_CITY_PATH/.gc"
+#
+# NOT named GC_DIR, and the name is the whole point. GC_DIR is gc's own
+# session variable -- runtime.go sets it to the session work_dir and
+# resolveContext feeds it to findCity() -- and it arrives here already
+# exported, so assigning to it mutates the exported copy every descendant
+# inherits. findCity walks UP to the nearest city.toml, so a descendant
+# handed "<city>/.gc" resolves whatever directory owns that .gc, which for a
+# city-repo worktree is the worktree rather than the city. Measured
+# 2026-09-06: a managed dolt server and its scope watchdog carried the
+# corrupted value for 15 hours (ci-ewyqum). The sibling
+# dolt/assets/scripts/runtime.sh already spells this LEGACY_GC_DIR; this is
+# that name, not a new one.
+LEGACY_GC_DIR="$GC_CITY_PATH/.gc"
 BEADS_DIR_ROOT="$GC_CITY_PATH/.beads"
 
 # Prefer GC-owned runtime layout derivation when the current gc binary is
@@ -3207,7 +3219,7 @@ if ! load_runtime_layout_from_gc; then
     elif [ -n "$GC_CITY_RUNTIME_DIR" ]; then
         PACK_STATE_DIR="$GC_CITY_RUNTIME_DIR/packs/dolt"
     else
-        PACK_STATE_DIR="$GC_DIR/runtime/packs/dolt"
+        PACK_STATE_DIR="$LEGACY_GC_DIR/runtime/packs/dolt"
     fi
 
     # All data lives under .beads/dolt by default. Runtime state (logs, PID,

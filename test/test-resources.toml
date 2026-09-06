@@ -24,8 +24,13 @@ resource = "subprocess"
 # show that deleting a socket leaves a server alive, which is the whole defect.
 # Declared a [[medium]] owner above, which clears Small debt; source ratchets
 # are not test-size entries and do not exempt, so it is banked here.
-baseline_calls = 616
-baseline_files = 180
+# +1 call / 1 file (ci-ewyqum): the GC_DIR clobber guard execs the provider
+# script with a stub gc, because the property under test is what a CHILD
+# PROCESS inherits. Merged against ci-87655r, which raised the same row, so the
+# ceiling is the SUM of both deltas over the 613/179 base -- taking either side
+# alone drops the other side's new file and the census then reports growth.
+baseline_calls = 617
+baseline_files = 181
 reported_calls = 495
 reported_files = 135
 owner_bead = "ga-80po0c.2"
@@ -77,8 +82,11 @@ resource = "subprocess"
 # show that deleting a socket leaves a server alive, which is the whole defect.
 # Declared a [[medium]] owner above, which clears Small debt; source ratchets
 # are not test-size entries and do not exempt, so it is banked here.
-baseline_calls = 417
-baseline_files = 122
+# +1 call / 1 file (ci-ewyqum): the same GC_DIR clobber guard spawn recorded on
+# the all-source audit row above, summed with ci-87655r's delta over the
+# 414/121 base.
+baseline_calls = 418
+baseline_files = 123
 reported_calls = 380
 reported_files = 98
 owner_bead = "ga-80po0c.2"
@@ -433,8 +441,8 @@ resource = "subprocess"
 # exitErrorWithCode, and a resource inside a helper stays Small debt however
 # Medium its callers are; declaring it Medium would cost four new raw-ratchet
 # calls to save this one. See census.go for the full reasoning.
-baseline_calls = 406
-baseline_files = 116
+baseline_calls = 407
+baseline_files = 117
 reported_calls = 394
 reported_files = 105
 owner_bead = "ga-80po0c.2.1"

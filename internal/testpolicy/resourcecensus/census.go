@@ -146,8 +146,14 @@ var bootstrapPolicy = Ledger{
 			// Medium owner above, which clears Small debt; source ratchets
 			// are not test-size entries and do not exempt, so the debt is
 			// banked here because it is real.
-			BaselineCalls:   616,
-			BaselineFiles:   180,
+			// +1 call / 1 file (ci-ewyqum): the GC_DIR clobber guard execs the
+			// provider script with a stub gc, because the property under test is
+			// what a CHILD PROCESS inherits. Merged against ci-87655r, which
+			// raised the same row, so the ceiling is the SUM of both deltas over
+			// the 613/179 base -- taking either side alone drops the other side's
+			// new file and the census then reports growth.
+			BaselineCalls:   617,
+			BaselineFiles:   181,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -203,8 +209,11 @@ var bootstrapPolicy = Ledger{
 			// Medium owner above, which clears Small debt; source ratchets
 			// are not test-size entries and do not exempt, so the debt is
 			// banked here because it is real.
-			BaselineCalls:   417,
-			BaselineFiles:   122,
+			// +1 call / 1 file (ci-ewyqum): the same GC_DIR clobber guard spawn
+			// recorded on the all-source audit row above, summed with ci-87655r's
+			// delta over the 414/121 base.
+			BaselineCalls:   418,
+			BaselineFiles:   123,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -565,8 +574,8 @@ var bootstrapPolicy = Ledger{
 			// this row's 406 sites, so an undeclared helper-hosted spawn is the
 			// population this ratchet exists to track, not an anomaly it
 			// forbids.
-			BaselineCalls:   406,
-			BaselineFiles:   116,
+			BaselineCalls:   407,
+			BaselineFiles:   117,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
