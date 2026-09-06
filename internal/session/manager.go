@@ -892,7 +892,7 @@ func (m *Manager) createStarted(ctx context.Context, spec CreateOptions) (Info, 
 	}
 	var info Info
 	err = withSessionIdentifierReservationLocks([]string{alias, explicitName}, func() error {
-		if err := ensureSessionAliasAvailable(m.store, nil, alias, "", aliasOwner); err != nil {
+		if err := ensureSessionAliasAvailable(m.store, nil, alias, "", aliasOwner, nil); err != nil {
 			return err
 		}
 		if err := ensureSessionNameAvailableForSelfAndOwner(m.store, explicitName, "", aliasOwner); err != nil {
@@ -1132,7 +1132,7 @@ func (m *Manager) createBeadOnly(spec CreateOptions) (Info, error) {
 	}
 	var info Info
 	err = withSessionIdentifierReservationLocks([]string{alias, explicitName}, func() error {
-		if err := ensureSessionAliasAvailable(m.store, nil, alias, "", aliasOwner); err != nil {
+		if err := ensureSessionAliasAvailable(m.store, nil, alias, "", aliasOwner, nil); err != nil {
 			return err
 		}
 		if err := ensureSessionNameAvailableForSelfAndOwner(m.store, explicitName, "", aliasOwner); err != nil {
@@ -1611,7 +1611,7 @@ func (m *Manager) UpdatePresentation(id string, title *string, alias *string) er
 		if alias != nil {
 			return withSessionAliasReservationLock(nextAlias, func() error {
 				if nextAlias != currentAlias {
-					if err := ensureSessionAliasAvailable(m.store, nil, nextAlias, id, ""); err != nil {
+					if err := ensureSessionAliasAvailable(m.store, nil, nextAlias, id, "", nil); err != nil {
 						return err
 					}
 				}

@@ -1189,14 +1189,14 @@ func TestEnsureSessionAliasAvailable_DrainedNamedPredecessorBlocksLiveSelfOwnerC
 
 	// The live session, claiming its own canonical alias, is not blocked by
 	// its own drained predecessor.
-	if err := ensureSessionAliasAvailable(store, nil, "perrin", live.ID, "perrin"); err != nil {
+	if err := ensureSessionAliasAvailable(store, nil, "perrin", live.ID, "perrin", nil); err != nil {
 		t.Fatalf("ensureSessionAliasAvailable(live self-owner vs drained predecessor) = %v, want nil", err)
 	}
 
 	// A third party (different selfOwner) must still be refused the alias:
 	// the drained bead still legitimately reserves the identity against
 	// anyone who is not that identity's own live holder.
-	if err := ensureSessionAliasAvailable(store, nil, "perrin", "gc-stranger", "siuan"); !errors.Is(err, ErrSessionAliasExists) {
+	if err := ensureSessionAliasAvailable(store, nil, "perrin", "gc-stranger", "siuan", nil); !errors.Is(err, ErrSessionAliasExists) {
 		t.Fatalf("ensureSessionAliasAvailable(different owner vs drained predecessor) = %v, want ErrSessionAliasExists", err)
 	}
 }
@@ -1282,9 +1282,56 @@ func TestEnsureSessionAliasAvailable_SelfOwnerExceptionRefusesUnqualifiedHolders
 				t.Fatalf("Create(live typed session): %v", err)
 			}
 
-			if err := ensureSessionAliasAvailable(store, nil, "perrin", live.ID, "perrin"); !errors.Is(err, ErrSessionAliasExists) {
+			if err := ensureSessionAliasAvailable(store, nil, "perrin", live.ID, "perrin", nil); !errors.Is(err, ErrSessionAliasExists) {
 				t.Fatalf("ensureSessionAliasAvailable(self-owner vs %s) = %v, want ErrSessionAliasExists", tc.name, err)
 			}
 		})
+	}
+}
+
+// TestEnsureAliasAvailableSuperseding_HandsOverALiveHolder pins that the
+// caller-supplied exception actually reaches the live-identifier branches. It
+// asserts against a holder carrying alias AND agent_name, because a real
+// outgoing incarnation carries both and being waved past one branch only to be
+// refused by the next is a refusal with no reachable remedy.
+func TestEnsureAliasAvailableSuperseding_HandsOverALiveHolder(t *testing.T) {
+	store := beads.NewMemStore()
+	holder, err := store.Create(beads.Bead{
+		Type:   BeadType,
+		Labels: []string{LabelSession},
+		Metadata: map[string]string{
+			"alias":      "worker-1",
+			"agent_name": "worker-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if err := EnsureAliasAvailableWithConfig(store, nil, "worker-1", ""); !errors.Is(err, ErrSessionAliasExists) {
+		t.Fatalf("EnsureAliasAvailableWithConfig = %v, want %v: without an exception this holder must block, or the test below proves nothing", err, ErrSessionAliasExists)
+	}
+	superseded := func(b beads.Bead) bool { return b.ID == holder.ID }
+	if err := EnsureAliasAvailableSuperseding(store, nil, "worker-1", "", "", superseded); err != nil {
+		t.Fatalf("EnsureAliasAvailableSuperseding(superseded holder) = %v, want nil", err)
+	}
+}
+
+// TestEnsureAliasAvailableSuperseding_KeepsConfiguredNamedSessionReservation
+// pins the documented absence: the exception covers bead holders only. A
+// configured named-session reservation is a statement in city config about an
+// identity no bead has claimed yet, so no observation about any bead can retire
+// it -- a predicate that says yes to everything must still be refused here.
+// Without this test the carve-out is prose, and prose expires silently.
+func TestEnsureAliasAvailableSuperseding_KeepsConfiguredNamedSessionReservation(t *testing.T) {
+	store := beads.NewMemStore()
+	cfg := &config.City{
+		NamedSessions: []config.NamedSession{{Template: "polecat", Dir: "myrig"}},
+	}
+	supersedeEverything := func(beads.Bead) bool { return true }
+
+	err := EnsureAliasAvailableSuperseding(store, cfg, "myrig/polecat", "", "", supersedeEverything)
+	if !errors.Is(err, ErrSessionAliasExists) {
+		t.Fatalf("EnsureAliasAvailableSuperseding(reserved singleton) error = %v, want %v", err, ErrSessionAliasExists)
 	}
 }
