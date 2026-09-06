@@ -137,8 +137,8 @@ var bootstrapPolicy = Ledger{
 			// claimant scan they exercise reads /proc/<pid>/cwd and
 			// /proc/<pid>/environ, which only a real child populates. The one
 			// new file is cmd/gc/dolt_scope_idle_test.go.
-			BaselineCalls:   614,
-			BaselineFiles:   179,
+			BaselineCalls:   615,
+			BaselineFiles:   180,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -184,8 +184,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceSubprocess,
-			BaselineCalls:   415,
-			BaselineFiles:   121,
+			BaselineCalls:   416,
+			BaselineFiles:   122,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -506,8 +506,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceSubprocess,
-			BaselineCalls:   407,
-			BaselineFiles:   116,
+			BaselineCalls:   408,
+			BaselineFiles:   117,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
