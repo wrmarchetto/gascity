@@ -139,8 +139,8 @@ var bootstrapPolicy = Ledger{
 			// chosen wait status -- so a fabricated error cannot reach the
 			// branch at all, never mind exercise the chain walk that is the
 			// part able to be wrong. New file, so BaselineFiles moves with it.
-			BaselineCalls:   613,
-			BaselineFiles:   179,
+			BaselineCalls:   614,
+			BaselineFiles:   180,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -182,8 +182,8 @@ var bootstrapPolicy = Ledger{
 			Resource: ResourceSubprocess,
 			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
 			// spawn recorded on the all-source audit row above.
-			BaselineCalls:   414,
-			BaselineFiles:   121,
+			BaselineCalls:   415,
+			BaselineFiles:   122,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -515,8 +515,8 @@ var bootstrapPolicy = Ledger{
 			// this row's 406 sites, so an undeclared helper-hosted spawn is the
 			// population this ratchet exists to track, not an anomaly it
 			// forbids.
-			BaselineCalls:   406,
-			BaselineFiles:   116,
+			BaselineCalls:   407,
+			BaselineFiles:   117,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
