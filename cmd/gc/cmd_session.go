@@ -1079,17 +1079,42 @@ type sessionListJSONRow struct {
 	// legacy work_dir is stamped at create/dispatch and is often the agent
 	// home (depth-1) or empty, which is why the worktree reaper's liveness
 	// gate needs the canonical value (gastownhall/gascity#4492 accept-crit #1).
-	WorkerDir            string     `json:"worker_dir,omitempty"`
-	SessionName          string     `json:"session_name,omitempty"`
-	SessionKey           string     `json:"session_key,omitempty"`
-	ResumeFlag           string     `json:"resume_flag,omitempty"`
-	ResumeStyle          string     `json:"resume_style,omitempty"`
-	ResumeCommand        string     `json:"resume_command,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	LastActive           time.Time  `json:"last_active"`
-	LastNudgeDeliveredAt *time.Time `json:"last_nudge_delivered_at,omitempty"`
-	Attached             bool       `json:"attached"`
-	Closed               bool       `json:"closed"`
+	WorkerDir   string `json:"worker_dir,omitempty"`
+	SessionName string `json:"session_name,omitempty"`
+	// ConfiguredNamedIdentity and AliasHistory are two of the five rungs
+	// session.AssigneeIdentities enumerates, and until ci-yfuh3a neither was a
+	// column here: a claim written under either resolved to no session for any
+	// consumer of this command, which reads as an unheld claim rather than as a
+	// failed lookup.
+	ConfiguredNamedIdentity string   `json:"configured_named_identity,omitempty"`
+	AliasHistory            []string `json:"alias_history,omitempty"`
+	// ClaimIdentities is every assignee value a claim by this session could
+	// carry, straight from session.AssigneeIdentities. It is here so no consumer
+	// has to reassemble the ladder from the columns: the city's own
+	// governor-assess.py did reassemble it, joined on the agent name alone, and
+	// lost three of eight governor claims to the session-name spelling
+	// (ci-reqb5f). A derived field cannot drift from the ladder; a
+	// column-by-column rebuild in each consumer drifts at the next rung added.
+	//
+	// It carries the RAW session_name (Info.SessionNameMetadata), which is why
+	// no raw session_name column joins it: the published session_name is
+	// Info.SessionName, whose sessionNameFor(ID) fallback would match work the
+	// session was never assigned.
+	ClaimIdentities []string `json:"claim_identities,omitempty"`
+	// AliasReservationRefused* explain a session whose claim_identities carry no
+	// alias rung: its create-time reservation was refused and it therefore
+	// claims under its session name. Absent on a session that won its alias.
+	AliasReservationRefused       string     `json:"alias_reservation_refused,omitempty"`
+	AliasReservationRefusedReason string     `json:"alias_reservation_refused_reason,omitempty"`
+	SessionKey                    string     `json:"session_key,omitempty"`
+	ResumeFlag                    string     `json:"resume_flag,omitempty"`
+	ResumeStyle                   string     `json:"resume_style,omitempty"`
+	ResumeCommand                 string     `json:"resume_command,omitempty"`
+	CreatedAt                     time.Time  `json:"created_at"`
+	LastActive                    time.Time  `json:"last_active"`
+	LastNudgeDeliveredAt          *time.Time `json:"last_nudge_delivered_at,omitempty"`
+	Attached                      bool       `json:"attached"`
+	Closed                        bool       `json:"closed"`
 }
 
 type sessionListJSON struct {
@@ -1162,21 +1187,29 @@ func sessionListJSONRows(sessions []session.Info) []sessionListJSONRow {
 	rows := make([]sessionListJSONRow, len(sessions))
 	for i, s := range sessions {
 		rows[i] = sessionListJSONRow{
-			ID:            s.ID,
-			Name:          sessionListJSONName(s),
-			Template:      s.Template,
-			State:         s.State,
-			Closed:        s.Closed,
-			Title:         s.Title,
-			Rig:           sessionListJSONRig(s),
-			Alias:         s.Alias,
-			AgentName:     s.AgentName,
-			Provider:      s.Provider,
-			Transport:     s.Transport,
-			Command:       s.Command,
-			WorkDir:       s.WorkDir,
-			WorkerDir:     strings.TrimSpace(s.WorkerDir),
-			SessionName:   s.SessionName,
+			ID:          s.ID,
+			Name:        sessionListJSONName(s),
+			Template:    s.Template,
+			State:       s.State,
+			Closed:      s.Closed,
+			Title:       s.Title,
+			Rig:         sessionListJSONRig(s),
+			Alias:       s.Alias,
+			AgentName:   s.AgentName,
+			Provider:    s.Provider,
+			Transport:   s.Transport,
+			Command:     s.Command,
+			WorkDir:     s.WorkDir,
+			WorkerDir:   strings.TrimSpace(s.WorkerDir),
+			SessionName: s.SessionName,
+
+			ConfiguredNamedIdentity: s.ConfiguredNamedIdentity,
+			AliasHistory:            s.AliasHistory,
+			ClaimIdentities:         sessionBeadAssigneeIdentitiesInfo(s),
+
+			AliasReservationRefused:       s.AliasReservationRefused,
+			AliasReservationRefusedReason: s.AliasReservationRefusedReason,
+
 			SessionKey:    s.SessionKey,
 			ResumeFlag:    s.ResumeFlag,
 			ResumeStyle:   s.ResumeStyle,

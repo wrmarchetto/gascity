@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -28,6 +29,21 @@ const sessionBeadLabel = "gc:session"
 const sessionBeadType = "session"
 
 const (
+	// aliasReservationRefused* record a create-time alias reservation that was
+	// REFUSED, and are absent on every session that won its alias. They exist
+	// because the refusal decides which assignee spelling the session writes
+	// for its whole life -- alias-less means AssigneeIdentifier falls through
+	// to the session name -- and left no trace of any kind until ci-yfuh3a.
+	//
+	// Deliberately NOT the pool_alias_conflict trio below: that one records a
+	// DEFERRED canonical alias the reconciler intends to back-fill, and it
+	// carries a count it increments per pass. Overloading it would make
+	// "refused once at create" and "still waiting after N passes" the same
+	// value. No _at key: the refusal happens at create, so the bead's own
+	// created_at is the timestamp.
+	aliasReservationRefusedMetadataKey       = "alias_reservation_refused"
+	aliasReservationRefusedReasonMetadataKey = "alias_reservation_refused_reason"
+
 	poolAliasConflictMetadataKey      = "pool_alias_conflict"
 	poolAliasConflictCountMetadataKey = "pool_alias_conflict_count"
 	poolAliasConflictAtMetadataKey    = "pool_alias_conflict_at"
@@ -3256,4 +3272,19 @@ func resolvePoolSlot(agentName, template string) int {
 		return slot
 	}
 	return 0
+}
+
+// recordAliasReservationRefusal returns metadata carrying the refused alias and
+// the reason, copying rather than mutating: the caller's map is the shared
+// poolSessionCreateIdentity metadata, reused by the fallback create paths that
+// run when the identifier lock fails, and stamping a refusal into it there
+// would attribute this refusal to a create that never attempted a reservation.
+func recordAliasReservationRefusal(metadata map[string]string, alias string, err error) map[string]string {
+	out := make(map[string]string, len(metadata)+2)
+	maps.Copy(out, metadata)
+	out[aliasReservationRefusedMetadataKey] = alias
+	if err != nil {
+		out[aliasReservationRefusedReasonMetadataKey] = err.Error()
+	}
+	return out
 }
