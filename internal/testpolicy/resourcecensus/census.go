@@ -130,8 +130,17 @@ var bootstrapPolicy = Ledger{
 			// script would test the stand-in. No new file: the call joins
 			// existing exec.Command sites in scripts/go_owned_tmp_test.go,
 			// which is why BaselineFiles is unchanged at 178.
-			BaselineCalls:   612,
-			BaselineFiles:   178,
+			//
+			// 612 -> 613 (ci-sg490p): cmd/gc/order_dispatch_incomplete_test.go
+			// spawns `sh -c "exit N"` to obtain a genuine *exec.ExitError. The
+			// guard it pins, declaredIncompleteExit, walks the error chain with
+			// errors.As to the CONCRETE *exec.ExitError, and the standard
+			// library exposes no way to build an os.ProcessState carrying a
+			// chosen wait status -- so a fabricated error cannot reach the
+			// branch at all, never mind exercise the chain walk that is the
+			// part able to be wrong. New file, so BaselineFiles moves with it.
+			BaselineCalls:   613,
+			BaselineFiles:   179,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -169,10 +178,12 @@ var bootstrapPolicy = Ledger{
 	},
 	Debt: []Baseline{
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceSubprocess,
-			BaselineCalls:   413,
-			BaselineFiles:   120,
+			Scope:    ScopeUntagged,
+			Resource: ResourceSubprocess,
+			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
+			// spawn recorded on the all-source audit row above.
+			BaselineCalls:   414,
+			BaselineFiles:   121,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -491,10 +502,21 @@ var bootstrapPolicy = Ledger{
 	},
 	SmallDebt: []Baseline{
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceSubprocess,
-			BaselineCalls:   405,
-			BaselineFiles:   115,
+			Scope:    ScopeUntagged,
+			Resource: ResourceSubprocess,
+			// 405 -> 406 (ci-sg490p): the same call site, and it stays Small
+			// debt rather than moving to an exact Medium owner. The spawn lives
+			// in the shared helper exitErrorWithCode, and a resource inside a
+			// helper keeps its Small debt however Medium its callers are.
+			// Declaring it Medium would mean either collapsing four
+			// separately-named invariant tests into one runnable or inlining
+			// the spawn into each of them -- four new calls on the raw ratchets
+			// to save one here. Eight Medium subprocess owners stand against
+			// this row's 406 sites, so an undeclared helper-hosted spawn is the
+			// population this ratchet exists to track, not an anomaly it
+			// forbids.
+			BaselineCalls:   406,
+			BaselineFiles:   116,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
