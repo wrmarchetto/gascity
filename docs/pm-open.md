@@ -65,6 +65,13 @@ bugs found in gc, branch hygiene, tooling fixes like gs-hph/gs-c6f/gs-z39 --
 has no roadmap home, so every such bead re-raises this per-bead placement
 question. This is pm-open #2(b) seen from below.
 
+Update 2026-09-06 (pm-log #38): summons gs-jv1 ruled gs-eep standalone on
+the same grounds. gs-eep is the mayor's durable ruling bead for the wedged
+rig root (repair deferred to the operator, resolved by abort and closed
+2026-09-06) -- an operational incident carrier, not feature work, so no
+epic's acceptance closes over it. Incident-management beads join the class
+alongside substrate fixes; the standing question below is unchanged.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?

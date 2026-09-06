@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-3pr 2026-09-06T14:24Z
+last_seen: gs-eep 2026-09-06T14:30Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1062,3 +1062,39 @@ WITH the assessment layer, and a governor that assesses then reports
 something else is mechanically unobservable today.
 
 Source: roadmap governor
+
+## 38. Placement summons gs-jv1: gs-eep ruled standalone (2026-09-06)
+
+gs-eep (gascity rig root repair is deferred to the operator -- abort is
+verified safe, do not reset blind) carries no epic label and the sweep
+summoned this PM to place it. Ruling: `standalone`, applied this turn with
+`bd update gs-eep --add-label standalone` and verified on the bead. Grounds
+are the pm-log #15/#16 standard, one step further from the roadmap: gs-eep
+is the mayor's durable ruling carrier for the wedged shared checkout --
+operational incident management, not feature work and not even substrate
+fix work. No epic:governor acceptance criterion closes over rig-root git
+repair, the roadmap holds no other epic, and forcing it into governor would
+be orphan scope by the pm-log #4 standard.
+
+The summons premise had lapsed at ruling time, the same shape as #15 and
+#16: gs-eep was already CLOSED by its owner (the mayor). Its close reason,
+read this turn: the operator aborted the rebase exactly as the ruling said
+was safe, main restored to 01a2b9b11 and pushed (origin/main now equal),
+the three must-preserve pm-log commits verified as ancestors, nothing lost,
+root writable again -- matching what pm-log #37 verified against the repo
+itself. The label still matters for the same reason it did for gs-z39 and
+gs-c6f: it is the durable record that no epic's acceptance was ever meant
+to close over this bead, so no future epic-close review reads it as a gap.
+
+No new pm-open entry and no ping: the class question (maintenance epic vs
+standalone-by-default policy) is already pm-open #3, amended this turn to
+add gs-eep as an incident-carrier member of the class, and its courtesy
+ping was delivered at pm-log #15 -- the pm-log #16 precedent against paging
+Willie twice for the same standing question. Rig store since last_seen
+moved only by this summons's claim and the gs-eep label edit; after gs-jv1
+closes the store holds nothing open, so the idle sweep will file the next
+pm-idle:gascity summons in due course, and it gets the #37 standing answer
+until the deferral date (2026-09-07) or Willie's ruling on ci-waw3o7 lands.
+Residuals in pm-log #5 stand.
+
+Source: pm-log #15
