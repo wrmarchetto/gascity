@@ -41,6 +41,13 @@ what he still checks by hand, which per that bead becomes the next thing the
 governor is taught -- and a `gc city pm plan gascity '<epic>'` sitting
 for (b).
 
+Update 2026-09-06 (pm-log #29): both operator-only actions have lapsed.
+bench-alerts.log is git-ignored by 6deeededa, so the rebuild preflight no
+longer refuses on it, and stale supervisor PID 3926095 is gone from the
+process table (a supervisor now runs as PID 978187). What remains open is
+(a) the ruling itself -- ci-waw3o7, DEFERRED, earliest revisit 2026-09-07 --
+and (b), unchanged.
+
 ## 3. Substrate maintenance beads have no epic home; gs-z39 ruled standalone (2026-09-05)
 
 gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or
