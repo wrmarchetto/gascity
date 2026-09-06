@@ -342,7 +342,19 @@ func (s *Server) humaHandleOrderHistoryDetail(_ context.Context, input *OrderHis
 	}
 	b := result.bead
 
-	output := convergence.GateOutputFromMetadata(b.Metadata).CombinedOutput()
+	// Two producers, two metadata families, never both on one bead: a
+	// convergence gate writes convergence.gate_stdout / gate_stderr, and a
+	// failed exec order run writes OrderExecFailureOutputMetadataKey. Reading
+	// only the gate family served every exec run an empty string -- not an
+	// error, so a reader concludes the run captured nothing and stops, which
+	// is exactly what `gc order history --help` sends them here to avoid
+	// (ci-arhoji). The gate family stays FIRST so a bead carrying both, which
+	// nothing writes today, cannot change what a gate run has always served.
+	gate := convergence.GateOutputFromMetadata(b.Metadata)
+	output := gate.CombinedOutput()
+	if !gate.HasOutput() {
+		output = b.Metadata[beadmeta.OrderExecFailureOutputMetadataKey]
+	}
 
 	return &struct {
 		Body orderHistoryDetailResponse
