@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-eep 2026-09-06T14:30Z
+last_seen: gs-mxa 2026-09-06T14:42Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1098,3 +1098,31 @@ until the deferral date (2026-09-07) or Willie's ruling on ci-waw3o7 lands.
 Residuals in pm-log #5 stand.
 
 Source: pm-log #15
+
+## 39. pm-idle gs-drw: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-06)
+
+Thirty-second ruling of this shape (pm-log #5 gs-8iv through #37 gs-3pr),
+re-verified live rather than recalled -- this is the summons pm-log #38
+predicted. The closed set under epic:governor was re-listed this turn and is
+unchanged (gs-x0k, gs-xeh, gs-o9i, gs-nun -- criteria 1-6 verified in their
+close reasons, pm-log #5). Criterion-7 chain re-checked in the city store
+this turn at 14:41Z: ci-waw3o7 (P1, assignee human) holds the DEFERRED status
+pm-log #13 found, earliest revisit 2026-09-07 and last updated 2026-09-05,
+and gate ci-gbhkpa reads open on that bead's DEPENDS ON line. Per pm-log #4
+the epic closes on Willie's recorded say-so; it has not landed -- the
+deferral postpones the question rather than answering it -- so governor stays
+in-progress and the bead that puts motion back remains ci-waw3o7. The
+deferral expires tomorrow, and nobody re-asks before it does, per that bead's
+notes.
+
+No epic promoted -- the roadmap holds no other epic -- and no DECOMP sent.
+The summons's third option is the answer: the rig waits on a decision outside
+it, already recorded as pm-open #2 (amended at #29), with the placement gap
+as pm-open #3; no new entry and no ping. Rig store since last_seen moved only
+by this summons's claim and gs-mxa (pm-epic-close:governor, open, filed
+2026-09-06) -- same decision from opposite evidence, one unit for the next
+session, answered by re-checking ci-waw3o7. Residuals in pm-log #5 stand: no
+scheduled wake has yet run WITH the assessment layer, and a governor that
+assesses then reports something else is mechanically unobservable today.
+
+Source: roadmap governor
