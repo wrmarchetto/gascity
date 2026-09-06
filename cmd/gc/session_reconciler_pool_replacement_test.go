@@ -321,12 +321,16 @@ func setPoolSessionActive(t *testing.T, store beads.Store, id string) {
 // invariant that a stale-worktree quarantine holds its pool slot for as long as
 // the marker is on disk, across an arbitrary number of ticks.
 //
-// The test spans TWO planner ticks with the real state heal between them
-// because the defect is invisible on one. Tick 1 already reuses the quarantined
-// bead; it is the heal in that same tick that rewrites the state, and only tick
-// 2 sees the rewritten value and mints a replacement. A single-tick test goes
-// green over the bug (ci-v1yc5x: 17 beads minted for one slot in 25 minutes,
-// one mint every second tick).
+// The test spans the whole quarantine hold, with the real state heal between
+// ticks, because the defect is invisible on one. Tick 1 already reuses the
+// quarantined bead; it is the heal in that same tick that rewrites the state,
+// and only tick 2 sees the rewritten value and mints a replacement. A
+// single-tick test goes green over the bug (ci-v1yc5x: 17 beads minted for one
+// slot in 25 minutes, one mint every second tick).
+//
+// The tick COUNT is derived rather than chosen -- see quarantineHold below.
+// Two ticks caught the original period-2 defect and nothing longer, which is
+// the hole ci-s83v7p was filed for.
 //
 // The heal is driven through healStateWithRollbackInfo rather than a hand-built
 // patch so the test cannot agree with a wrong projection: the assertion is on
@@ -362,9 +366,24 @@ func TestReconcile_StaleWorktreeQuarantineHoldsPoolSlotAcrossTicks(t *testing.T)
 	// pass for the wrong reason.
 	createRoutedReadyBeadForReplacement(t, store, "repo/toolsmith", "queued toolsmith work")
 
+	// THE WINDOW IS COMPUTED AGAINST THE CADENCE, NOT PICKED. Two ticks is the
+	// MINIMUM that can observe a period-2 defect, so a two-tick test cannot
+	// tell "the quarantine holds while the marker is on disk" from "it holds
+	// one cycle and then demotes" -- a regression to any longer period
+	// restores the ci-v1yc5x treadmill at a lower rate with this test still
+	// green. The span is the quarantine hold over the interval the patrol
+	// actually runs at, read through the same accessor production reads, so
+	// changing either default moves this window with it instead of leaving a
+	// literal behind.
+	const quarantineHold = time.Hour
+	ticks := int(quarantineHold / cfg.Daemon.PatrolIntervalDuration())
+	if ticks < 2 {
+		t.Fatalf("observation window is %d ticks, want at least 2: a window shorter than the defect's period cannot observe it, and this assertion would be vacuous", ticks)
+	}
+
 	held := createCanonicalPoolSession(t, store, &cfg.Agents[0], now, 1)
 	quarantinePendingCreateForStaleWorktree(
-		sessiontest.SeedBead(t, held), sessionFrontDoor(store), workDir, now, time.Hour, io.Discard,
+		sessiontest.SeedBead(t, held), sessionFrontDoor(store), workDir, now, quarantineHold, io.Discard,
 	)
 	heldAgent := held.Metadata["agent_name"]
 	if heldAgent == "" {
@@ -405,7 +424,7 @@ func TestReconcile_StaleWorktreeQuarantineHoldsPoolSlotAcrossTicks(t *testing.T)
 		t.Fatalf("seeded open session beads = %d, want 3", open)
 	}
 
-	for tick := 1; tick <= 2; tick++ {
+	for tick := 1; tick <= ticks; tick++ {
 		buildDesiredState("quarantine-town", cityDir, now, cfg, sp, store, io.Discard)
 		open, forHeldSlot := countSessionBeads(t)
 		if forHeldSlot != 1 {
@@ -432,5 +451,190 @@ func TestReconcile_StaleWorktreeQuarantineHoldsPoolSlotAcrossTicks(t *testing.T)
 	}
 	if got := final.Metadata["quarantined_until"]; got == "" {
 		t.Fatal("quarantined_until was cleared while the marker is still on disk; the slot would be woken straight back into the refusal")
+	}
+}
+
+// TestReconcile_ClearingTheStaleMarkerReactivatesTheSameBead pins the unwedge
+// remedy: when an operator removes a .worktree-stale marker, the quarantined
+// slot is reactivated IN PLACE rather than replaced.
+//
+// WHY IDENTITY IS THE ASSERTION, and not the state fields. A replacement bead
+// would satisfy every state check here -- it too would read asleep with an
+// empty quarantined_until -- while restoring exactly the treadmill ci-v1yc5x
+// fixed, on a slot an operator had just correctly repaired. instance_token and
+// generation are what distinguish reactivation from replacement, so they are
+// what this asserts, alongside the count of session beads the planner mints
+// afterwards.
+//
+// The expected transition was captured by hand on 2026-09-06 while unwedging
+// city/bench-engineer (bead ci-tcvde5, instance_token 46b26d86..., generation 2
+// unchanged across it). A live observation is not a test: it does not run
+// again, which is why ci-s83v7p asked for this.
+//
+// doctor/slot-wedged-by-marker prints this remedy verbatim, so a regression
+// here silently turns a documented repair into a no-op.
+func TestReconcile_ClearingTheStaleMarkerReactivatesTheSameBead(t *testing.T) {
+	now := time.Date(2026, 9, 6, 5, 0, 4, 0, time.UTC)
+	cityDir := t.TempDir()
+	writeCityTOML(t, cityDir, "quarantine-town", "toolsmith")
+
+	workDir := t.TempDir()
+	marker := filepath.Join(workDir, worktreeStaleFileName)
+	if err := os.WriteFile(marker, []byte("branch=fix/ci-tcvde5\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale worktree marker: %v", err)
+	}
+
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "quarantine-town"},
+		Session:   config.SessionConfig{Provider: "fake"},
+		Agents: []config.Agent{{
+			Name:              "toolsmith",
+			Dir:               "repo",
+			StartCommand:      "true",
+			MinActiveSessions: intPtr(3),
+			MaxActiveSessions: intPtr(3),
+		}},
+	}
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+
+	// Ready work routed at the pool, for the reason the sibling case above
+	// carries it: with no demand the planner would not mint even against a
+	// released bead, so the final assertion would hold for the wrong reason.
+	createRoutedReadyBeadForReplacement(t, store, "repo/toolsmith", "queued toolsmith work")
+
+	// Same derivation as the sibling case: the observation window comes from
+	// the cadence the patrol actually runs at, never a picked sample count.
+	const quarantineHold = time.Hour
+	ticks := int(quarantineHold / cfg.Daemon.PatrolIntervalDuration())
+	if ticks < 2 {
+		t.Fatalf("observation window is %d ticks, want at least 2", ticks)
+	}
+
+	held := createCanonicalPoolSession(t, store, &cfg.Agents[0], now, 1)
+	if err := store.SetMetadata(held.ID, "work_dir", workDir); err != nil {
+		t.Fatalf("set work_dir: %v", err)
+	}
+	reloaded, err := store.Get(held.ID)
+	if err != nil {
+		t.Fatalf("reload held slot: %v", err)
+	}
+	quarantinePendingCreateForStaleWorktree(
+		sessiontest.SeedBead(t, reloaded), sessionFrontDoor(store), workDir, now, quarantineHold, io.Discard,
+	)
+	heldAgent := held.Metadata["agent_name"]
+
+	for _, slot := range []int{2, 3} {
+		busy := createCanonicalPoolSession(t, store, &cfg.Agents[0], now, slot)
+		setPoolSessionActive(t, store, busy.ID)
+		live, err := store.Get(busy.ID)
+		if err != nil {
+			t.Fatalf("reload busy slot %d: %v", slot, err)
+		}
+		if err := sp.Start(context.Background(), live.Metadata["session_name"], runtime.Config{}); err != nil {
+			t.Fatalf("start busy slot %d runtime: %v", slot, err)
+		}
+	}
+
+	before, err := store.Get(held.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Metadata["state"] != "quarantined" {
+		t.Fatalf("precondition: state = %q, want quarantined", before.Metadata["state"])
+	}
+	if before.Metadata["quarantined_until"] == "" {
+		t.Fatal("precondition: quarantined_until is empty, want the hold that the marker created")
+	}
+	if before.Metadata[worktreeStaleMarkerFingerprintKey] == "" {
+		t.Fatalf("precondition: %s is empty, want the marker fingerprint", worktreeStaleMarkerFingerprintKey)
+	}
+	tokenBefore, genBefore := before.Metadata["instance_token"], before.Metadata["generation"]
+	if tokenBefore == "" || genBefore == "" {
+		t.Fatalf("precondition: instance_token=%q generation=%q, want both set -- they are the identity this case asserts on", tokenBefore, genBefore)
+	}
+
+	// THE OPERATOR'S ACTION, and the only input that changes.
+	if err := os.Remove(marker); err != nil {
+		t.Fatalf("remove stale worktree marker: %v", err)
+	}
+
+	next := clearResolvedStaleWorktreeQuarantineInfo(seedSessionInfo(before), sessionFrontDoor(store))
+
+	after, err := store.Get(held.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct{ key, value string }{
+		{"state", "asleep"},
+		{"state_reason", "reactivated"},
+		{"quarantined_until", ""},
+		{"sleep_reason", ""},
+		{worktreeStaleMarkerFingerprintKey, ""},
+	} {
+		if got := after.Metadata[want.key]; got != want.value {
+			t.Errorf("after clearing the marker, %s = %q, want %q", want.key, got, want.value)
+		}
+	}
+	if next.ID != held.ID {
+		t.Errorf("returned Info.ID = %q, want the same bead %q", next.ID, held.ID)
+	}
+
+	// REACTIVATION IN PLACE, NOT REPLACEMENT. A new bead would pass every
+	// state assertion above and still be the defect.
+	if got := after.Metadata["instance_token"]; got != tokenBefore {
+		t.Errorf("instance_token = %q, want %q unchanged: a new token is a replacement bead, which is the treadmill returning on a repaired slot", got, tokenBefore)
+	}
+	if got := after.Metadata["generation"]; got != genBefore {
+		t.Errorf("generation = %q, want %q unchanged: a bumped generation is a replacement, not a reactivation", got, genBefore)
+	}
+
+	// AND THE PLANNER SETTLES. This is the observable consequence, and the
+	// assertion is STABILITY rather than a count of one.
+	//
+	// THE COUNT IS DELIBERATELY NOT PINNED AT 1, and the reason is a design
+	// choice one line of reusablePoolSessionInfo makes explicitly: an asleep
+	// bead does NOT occupy its pool slot. A reactivated slot is asleep, so the
+	// planner mints one live occupant beside it and the steady state is two
+	// open beads for the slot -- measured here across the same window, 2 on
+	// every tick. Asserting 1 would pin a behavior the code intentionally does
+	// not have and would fail against a correct implementation.
+	//
+	// What ci-v1yc5x was about is GROWTH, and that is what this refuses: a
+	// count that climbs tick after tick is the mint-refuse treadmill, and it
+	// is invisible to any single-tick sample.
+	openForSlot := func() int {
+		t.Helper()
+		all, err := store.List(beads.ListQuery{Type: sessionBeadType})
+		if err != nil {
+			t.Fatalf("list session beads: %v", err)
+		}
+		n := 0
+		for _, b := range all {
+			if b.Status != "closed" && b.Metadata["agent_name"] == heldAgent {
+				n++
+			}
+		}
+		return n
+	}
+	buildDesiredState("quarantine-town", cityDir, now, cfg, sp, store, io.Discard)
+	settled := openForSlot()
+	for tick := 2; tick <= ticks; tick++ {
+		buildDesiredState("quarantine-town", cityDir, now, cfg, sp, store, io.Discard)
+		if got := openForSlot(); got != settled {
+			t.Fatalf("tick %d: open session beads for %s = %d, want %d unchanged: a count that grows after the marker is cleared is the ci-v1yc5x treadmill returning on a slot an operator had just repaired", tick, heldAgent, got, settled)
+		}
+	}
+
+	// The reactivated bead itself must survive all of it, still the same one.
+	final, err := store.Get(held.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Status == "closed" {
+		t.Error("the reactivated bead was closed by a later tick; the slot was replaced, not repaired")
+	}
+	if got := final.Metadata["instance_token"]; got != tokenBefore {
+		t.Errorf("after %d ticks instance_token = %q, want %q unchanged", ticks, got, tokenBefore)
 	}
 }
