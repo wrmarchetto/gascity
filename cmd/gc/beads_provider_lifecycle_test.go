@@ -12151,3 +12151,178 @@ func TestDefaultScopeDoltDatabase(t *testing.T) {
 		})
 	}
 }
+
+// TestEnsureBeadsProvider_RedirectedScopeStartsNothing pins that a scope whose
+// bead store lives somewhere else does not get a backing service started for
+// it.
+//
+// THE DEFECT (ci-8sk9am). `git worktree add` of the city repo reproduces
+// city.toml at the worktree root, so findCity treats the worktree as its own
+// city and a gc/bd run inside it started a whole second dolt sql-server. Those
+// servers back nothing: the private <worktree>/.beads/dolt/ holds only .dolt/
+// and .doltcfg/ with no database directories, while <worktree>/.beads/redirect
+// names the real store. One measured on 2026-09-06 had been up 14h07m with
+// zero established connections, ever.
+//
+// THE ASSERTION IS THAT THE PROVIDER SCRIPT NEVER RAN, not merely that the
+// call returned nil. ensureBeadsProvider returns nil down several paths --
+// exit 2 from the script is also success -- so a test that only checked the
+// error would pass against an implementation that started the server anyway,
+// which is the entire defect.
+func TestEnsureBeadsProvider_RedirectedScopeStartsNothing(t *testing.T) {
+	realCity := t.TempDir()
+	worktree := t.TempDir()
+
+	if err := os.MkdirAll(filepath.Join(worktree, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The exact shape worktree-setup.sh writes: one bare path, no key.
+	redirect := filepath.Join(realCity, ".beads")
+	if err := os.WriteFile(filepath.Join(worktree, ".beads", "redirect"), []byte(redirect+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A provider that RECORDS being run, so the assertion is on what the
+	// process actually did rather than on a return value.
+	marker := filepath.Join(t.TempDir(), "provider-ran")
+	script := writeNamedTestScript(t, "test-beads.sh",
+		"#!/bin/sh\ntouch "+marker+"\nexit 0\n")
+	setScopedBeadsProviderForTest(t, worktree, "exec:"+script)
+
+	if err := ensureBeadsProvider(worktree); err != nil {
+		t.Fatalf("ensureBeadsProvider on a redirected scope: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the provider script ran for a scope whose store lives elsewhere: that is the second dolt sql-server ci-8sk9am is about, backing a directory with no databases in it")
+	}
+
+	// THE OTHER SIDE OF THE BOUNDARY, without which the case above is
+	// satisfied by an ensureBeadsProvider that never starts anything.
+	plain := t.TempDir()
+	plainMarker := filepath.Join(t.TempDir(), "plain-ran")
+	plainScript := writeNamedTestScript(t, "test-beads.sh",
+		"#!/bin/sh\ntouch "+plainMarker+"\nexit 0\n")
+	setScopedBeadsProviderForTest(t, plain, "exec:"+plainScript)
+	if err := ensureBeadsProvider(plain); err != nil {
+		t.Fatalf("ensureBeadsProvider on a scope with no redirect: %v", err)
+	}
+	if _, err := os.Stat(plainMarker); err != nil {
+		t.Fatalf("a scope with no redirect did not start its provider (%v); the redirect check is refusing scopes it must not", err)
+	}
+}
+
+// TestBeadsScopeRedirectsElsewhere pins the redirect predicate itself,
+// including the two shapes that must NOT count as a redirect.
+func TestBeadsScopeRedirectsElsewhere(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, ".beads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if body != "" {
+			if err := os.WriteFile(filepath.Join(dir, ".beads", "redirect"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+
+	elsewhere := write(t, "/somewhere/else/.beads\n")
+	if !beadsScopeRedirectsElsewhere(elsewhere) {
+		t.Error("a redirect naming another store was not recognized")
+	}
+
+	// NO FILE is the ordinary city: it owns its store and must start it.
+	if beadsScopeRedirectsElsewhere(write(t, "")) {
+		t.Error("a scope with no redirect file was treated as redirected")
+	}
+
+	// AN EMPTY OR WHITESPACE FILE is not a destination. Treating it as one
+	// would refuse to start a store the scope really does own, which fails
+	// closed in the wrong direction -- the city would have no bead store at
+	// all rather than one extra idle server.
+	if beadsScopeRedirectsElsewhere(write(t, "   \n")) {
+		t.Error("an empty redirect file was treated as a redirect")
+	}
+
+	// A SELF-REDIRECT is not elsewhere. Some setups write the scope's own
+	// .beads path; refusing to start on that would be the same failure.
+	self := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(self, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(self, ".beads", "redirect"), []byte(filepath.Join(self, ".beads")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if beadsScopeRedirectsElsewhere(self) {
+		t.Error("a redirect pointing at the scope's own store was treated as elsewhere")
+	}
+}
+
+// TestRedirectedScopeStartsNothingAtEveryEntry pins the redirect refusal at
+// ALL THREE places that own the same gate list, not just the one the report
+// named.
+//
+// WHY THREE. ensureBeadsProvider is not the only door into a server start.
+// healthBeadsProviderContext repeats the same four gates and is reached from
+// resolvedRuntimeCityDoltTargetContext under allowRecovery, whose "recover"
+// op runs gc dolt-state recover-managed and starts a server without passing
+// through ensureBeadsProvider at all. managedDoltLifecycleOwned repeats them
+// a third time, and a "true" from it is what clears the caller to run the
+// local lifecycle. A guard in one door leaves the other two open, and the
+// suite would still be green -- which is exactly the shape of hole this case
+// exists to refuse.
+func TestRedirectedScopeStartsNothingAtEveryEntry(t *testing.T) {
+	redirected := func(t *testing.T) string {
+		t.Helper()
+		realCity := t.TempDir()
+		wt := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(wt, ".beads"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(wt, ".beads", "redirect"),
+			[]byte(filepath.Join(realCity, ".beads")+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return wt
+	}
+
+	t.Run("health", func(t *testing.T) {
+		wt := redirected(t)
+		marker := filepath.Join(t.TempDir(), "health-ran")
+		script := writeNamedTestScript(t, "test-beads.sh",
+			"#!/bin/sh\ntouch "+marker+"\nexit 0\n")
+		setScopedBeadsProviderForTest(t, wt, "exec:"+script)
+		if err := healthBeadsProviderContext(context.Background(), wt, false); err != nil {
+			t.Fatalf("healthBeadsProviderContext on a redirected scope: %v", err)
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatal("the provider script ran on the health path for a scope whose store lives elsewhere: this is the recover door into a server start that a guard on ensureBeadsProvider alone leaves open")
+		}
+	})
+
+	t.Run("lifecycle-ownership", func(t *testing.T) {
+		wt := redirected(t)
+		owned, err := managedDoltLifecycleOwned(wt)
+		if err != nil {
+			t.Fatalf("managedDoltLifecycleOwned: %v", err)
+		}
+		if owned {
+			t.Fatal("a scope whose store lives elsewhere reported that it owns the managed dolt lifecycle; the caller then runs the local lifecycle for a store it does not own")
+		}
+	})
+
+	// THE OTHER SIDE, so the two cases above cannot be satisfied by refusing
+	// everything.
+	t.Run("a-plain-scope-is-still-owned", func(t *testing.T) {
+		plain := t.TempDir()
+		owned, err := managedDoltLifecycleOwned(plain)
+		if err != nil {
+			t.Fatalf("managedDoltLifecycleOwned: %v", err)
+		}
+		if !owned {
+			t.Fatal("a scope with no redirect was reported as not owning its lifecycle; the redirect check is refusing scopes it must not")
+		}
+	})
+}

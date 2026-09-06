@@ -131,16 +131,14 @@ var bootstrapPolicy = Ledger{
 			// existing exec.Command sites in scripts/go_owned_tmp_test.go,
 			// which is why BaselineFiles is unchanged at 178.
 			//
-			// 612 -> 613 (ci-3lrcr4): cmd/gc/bd_prewrite.go spawns the city's
-			// configured pre_write_command (ci-s7qh10). BaselineFiles moves
-			// with it, unlike the entry above -- this is a new source file,
-			// not a call joining sites already counted.
-			//
-			// REJECTED: injecting the exec dependency behind a seam. The
-			// feature IS running the operator's configured validator
-			// executable, so a seam relocates the call and spawns the same
-			// process; routing it through an already-counted file would only
-			// flatten this counter. The debt is banked because it is real.
+			// 612 -> 613 (ci-sg490p): cmd/gc/order_dispatch_incomplete_test.go
+			// spawns `sh -c "exit N"` to obtain a genuine *exec.ExitError. The
+			// guard it pins, declaredIncompleteExit, walks the error chain with
+			// errors.As to the CONCRETE *exec.ExitError, and the standard
+			// library exposes no way to build an os.ProcessState carrying a
+			// chosen wait status -- so a fabricated error cannot reach the
+			// branch at all, never mind exercise the chain walk that is the
+			// part able to be wrong. New file, so BaselineFiles moves with it.
 			BaselineCalls:   613,
 			BaselineFiles:   179,
 			ReportedCalls:   495,
@@ -182,9 +180,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:    ScopeUntagged,
 			Resource: ResourceSubprocess,
-			// 413 -> 414 (ci-3lrcr4): cmd/gc/bd_prewrite.go's validator exec.
-			// Rationale, and the seam that was rejected, sit on the all-scope
-			// subprocess audit row above.
+			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
+			// spawn recorded on the all-source audit row above.
 			BaselineCalls:   414,
 			BaselineFiles:   121,
 			ReportedCalls:   380,
@@ -507,9 +504,17 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:    ScopeUntagged,
 			Resource: ResourceSubprocess,
-			// 405 -> 406 (ci-3lrcr4): cmd/gc/bd_prewrite.go's validator exec.
-			// Rationale, and the seam that was rejected, sit on the all-scope
-			// subprocess audit row above.
+			// 405 -> 406 (ci-sg490p): the same call site, and it stays Small
+			// debt rather than moving to an exact Medium owner. The spawn lives
+			// in the shared helper exitErrorWithCode, and a resource inside a
+			// helper keeps its Small debt however Medium its callers are.
+			// Declaring it Medium would mean either collapsing four
+			// separately-named invariant tests into one runnable or inlining
+			// the spawn into each of them -- four new calls on the raw ratchets
+			// to save one here. Eight Medium subprocess owners stand against
+			// this row's 406 sites, so an undeclared helper-hosted spawn is the
+			// population this ratchet exists to track, not an anomaly it
+			// forbids.
 			BaselineCalls:   406,
 			BaselineFiles:   116,
 			ReportedCalls:   394,

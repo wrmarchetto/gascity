@@ -14,15 +14,11 @@ resource = "subprocess"
 # scripts/with-go-tmp as a real subprocess, which it must -- the defect it pins
 # lives in that script's own exit path. baseline_files is unchanged because the
 # call joins existing exec.Command sites in scripts/go_owned_tmp_test.go.
-#
-# 612 -> 613 (ci-3lrcr4): cmd/gc/bd_prewrite.go spawns the city's configured
-# pre_write_command (ci-s7qh10). baseline_files moves with it, unlike the note
-# above -- this is a new source file, not a call joining sites already counted.
-#
-# REJECTED: injecting the exec dependency behind a seam. The feature IS running
-# the operator's configured validator executable, so a seam relocates the call
-# and spawns the same process; routing it through an already-counted file would
-# only flatten this counter. The debt is banked because it is real.
+# 612 -> 613 (ci-sg490p): cmd/gc/order_dispatch_incomplete_test.go spawns
+# `sh -c "exit N"` for a genuine *exec.ExitError. declaredIncompleteExit
+# resolves the error chain with errors.As to the CONCRETE *exec.ExitError, and
+# the standard library offers no way to build an os.ProcessState with a chosen
+# wait status, so a fabricated error never reaches the branch.
 baseline_calls = 613
 baseline_files = 179
 reported_calls = 495
@@ -64,8 +60,8 @@ expires = "2026-10-01"
 [[debt]]
 scope = "untagged"
 resource = "subprocess"
-# 413 -> 414 (ci-3lrcr4): cmd/gc/bd_prewrite.go's validator exec. Rationale,
-# and the seam that was rejected, sit on the all-scope subprocess row above.
+# 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError spawn recorded
+# on the all-source audit row above.
 baseline_calls = 414
 baseline_files = 121
 reported_calls = 380
@@ -392,8 +388,11 @@ medium_reason = "package TestMain mutates process state"
 [[small_debt]]
 scope = "untagged"
 resource = "subprocess"
-# 405 -> 406 (ci-3lrcr4): cmd/gc/bd_prewrite.go's validator exec. Rationale,
-# and the seam that was rejected, sit on the all-scope subprocess row above.
+# 405 -> 406 (ci-sg490p): the same call site, kept as Small debt rather than
+# moved to an exact Medium owner. The spawn sits in the shared helper
+# exitErrorWithCode, and a resource inside a helper stays Small debt however
+# Medium its callers are; declaring it Medium would cost four new raw-ratchet
+# calls to save this one. See census.go for the full reasoning.
 baseline_calls = 406
 baseline_files = 116
 reported_calls = 394
