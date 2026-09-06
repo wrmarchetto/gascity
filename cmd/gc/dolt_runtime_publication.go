@@ -67,6 +67,18 @@ func readPublishedDoltRuntimeStateHint(cityPath string) (doltRuntimeState, bool,
 }
 
 func managedDoltLifecycleOwned(cityPath string) (bool, error) {
+	// A scope whose store redirects elsewhere owns no local lifecycle: the
+	// store it would manage belongs to the city it points at. Without this the
+	// function answers true for a city worktree and its caller goes on to run
+	// the local lifecycle for a store it does not own (ci-8sk9am).
+	//
+	// This is the third copy of the gate list below, after ensureBeadsProvider
+	// and healthBeadsProviderContext. The duplication predates this change and
+	// is why the refusal had to be added in three places rather than one --
+	// noted here because the next gate added will have the same problem.
+	if beadsScopeRedirectsElsewhere(cityPath) {
+		return false, nil
+	}
 	if cityUsesBdStoreContract(cityPath) {
 		if cityUsesDoltliteBeadsBackend(cityPath) {
 			return false, nil
