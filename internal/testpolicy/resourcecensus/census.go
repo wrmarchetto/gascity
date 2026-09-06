@@ -139,8 +139,15 @@ var bootstrapPolicy = Ledger{
 			// chosen wait status -- so a fabricated error cannot reach the
 			// branch at all, never mind exercise the chain walk that is the
 			// part able to be wrong. New file, so BaselineFiles moves with it.
-			BaselineCalls:   613,
-			BaselineFiles:   179,
+			// +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			BaselineCalls:   616,
+			BaselineFiles:   180,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -150,10 +157,17 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeAll,
-			Resource:        ResourceFixedSleep,
-			BaselineCalls:   440,
-			BaselineFiles:   163,
+			Scope:    ScopeAll,
+			Resource: ResourceFixedSleep,
+			// +1 call / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			BaselineCalls:   441,
+			BaselineFiles:   164,
 			ReportedCalls:   447,
 			ReportedFiles:   157,
 			OwnerBead:       "ga-80po0c.2",
@@ -182,8 +196,15 @@ var bootstrapPolicy = Ledger{
 			Resource: ResourceSubprocess,
 			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
 			// spawn recorded on the all-source audit row above.
-			BaselineCalls:   414,
-			BaselineFiles:   121,
+			// +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			BaselineCalls:   417,
+			BaselineFiles:   122,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -193,10 +214,17 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceFixedSleep,
-			BaselineCalls:   290,
-			BaselineFiles:   116,
+			Scope:    ScopeUntagged,
+			Resource: ResourceFixedSleep,
+			// +1 call / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			BaselineCalls:   291,
+			BaselineFiles:   117,
 			ReportedCalls:   295,
 			ReportedFiles:   114,
 			OwnerBead:       "ga-80po0c.2",
@@ -323,10 +351,17 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceTmux,
-			BaselineCalls:   6,
-			BaselineFiles:   2,
+			Scope:    ScopeUntagged,
+			Resource: ResourceTmux,
+			// +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			BaselineCalls:   9,
+			BaselineFiles:   3,
 			ReportedCalls:   6,
 			ReportedFiles:   2,
 			OwnerBead:       "ga-80po0c.2.2.1",
@@ -337,6 +372,21 @@ var bootstrapPolicy = Ledger{
 		},
 	},
 	Medium: []MediumOwner{
+		{
+			// A real tmux server is the point, not an incidental dependency:
+			// the defect is that removing a socket leaves the server running,
+			// and a fake executor cannot exhibit that. Confined to one test,
+			// which kills the server it starts on every path (ci-87655r).
+			PackageDir:      "test/tmuxtest",
+			PackageName:     "tmuxtest",
+			Owner:           "TestSweepOrphanKillsTmuxServerBeforeRemovingItsSocketDir",
+			Resources:       []Resource{ResourceSubprocess, ResourceTmux, ResourceFixedSleep},
+			OwnerBead:       "ci-87655r",
+			Invariant:       "the tmux orphan-sweep kill proof is a checked Medium owner: it starts one real tmux server, orphans it and asserts the PROCESS is gone",
+			ResourceOwner:   "the tmux, subprocess and sleep calls are confined to TestSweepOrphanKillsTmuxServerBeforeRemovingItsSocketDir, which cannot use a fake executor -- a stand-in cannot demonstrate that deleting a socket leaves a real server alive",
+			MigrationTarget: "P0.4c-tmux",
+			Expires:         "2026-10-01",
+		},
 		{
 			PackageDir:      "internal/api",
 			PackageName:     "api",

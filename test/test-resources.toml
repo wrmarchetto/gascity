@@ -19,8 +19,13 @@ resource = "subprocess"
 # resolves the error chain with errors.As to the CONCRETE *exec.ExitError, and
 # the standard library offers no way to build an os.ProcessState with a chosen
 # wait status, so a fabricated error never reaches the branch.
-baseline_calls = 613
-baseline_files = 179
+# +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts ONE real tmux
+# server, orphans it and asserts the PROCESS is gone -- a fake executor cannot
+# show that deleting a socket leaves a server alive, which is the whole defect.
+# Declared a [[medium]] owner above, which clears Small debt; source ratchets
+# are not test-size entries and do not exempt, so it is banked here.
+baseline_calls = 616
+baseline_files = 180
 reported_calls = 495
 reported_files = 135
 owner_bead = "ga-80po0c.2"
@@ -32,8 +37,13 @@ expires = "2026-10-01"
 [[audit_baseline]]
 scope = "all"
 resource = "fixed_sleep"
-baseline_calls = 440
-baseline_files = 163
+# +1 call / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts ONE real tmux
+# server, orphans it and asserts the PROCESS is gone -- a fake executor cannot
+# show that deleting a socket leaves a server alive, which is the whole defect.
+# Declared a [[medium]] owner above, which clears Small debt; source ratchets
+# are not test-size entries and do not exempt, so it is banked here.
+baseline_calls = 441
+baseline_files = 164
 reported_calls = 447
 reported_files = 157
 owner_bead = "ga-80po0c.2"
@@ -62,8 +72,13 @@ scope = "untagged"
 resource = "subprocess"
 # 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError spawn recorded
 # on the all-source audit row above.
-baseline_calls = 414
-baseline_files = 121
+# +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts ONE real tmux
+# server, orphans it and asserts the PROCESS is gone -- a fake executor cannot
+# show that deleting a socket leaves a server alive, which is the whole defect.
+# Declared a [[medium]] owner above, which clears Small debt; source ratchets
+# are not test-size entries and do not exempt, so it is banked here.
+baseline_calls = 417
+baseline_files = 122
 reported_calls = 380
 reported_files = 98
 owner_bead = "ga-80po0c.2"
@@ -75,8 +90,13 @@ expires = "2026-10-01"
 [[debt]]
 scope = "untagged"
 resource = "fixed_sleep"
-baseline_calls = 290
-baseline_files = 116
+# +1 call / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts ONE real tmux
+# server, orphans it and asserts the PROCESS is gone -- a fake executor cannot
+# show that deleting a socket leaves a server alive, which is the whole defect.
+# Declared a [[medium]] owner above, which clears Small debt; source ratchets
+# are not test-size entries and do not exempt, so it is banked here.
+baseline_calls = 291
+baseline_files = 117
 reported_calls = 295
 reported_files = 114
 owner_bead = "ga-80po0c.2"
@@ -205,8 +225,13 @@ expires = "2026-10-01"
 [[debt]]
 scope = "untagged"
 resource = "tmux"
-baseline_calls = 6
-baseline_files = 2
+# +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts ONE real tmux
+# server, orphans it and asserts the PROCESS is gone -- a fake executor cannot
+# show that deleting a socket leaves a server alive, which is the whole defect.
+# Declared a [[medium]] owner above, which clears Small debt; source ratchets
+# are not test-size entries and do not exempt, so it is banked here.
+baseline_calls = 9
+baseline_files = 3
 reported_calls = 6
 reported_files = 2
 owner_bead = "ga-80po0c.2.2.1"
@@ -219,6 +244,21 @@ expires = "2026-10-01"
 # top-level Go test identity. Only matching resources lexically inside that
 # declaration leave the Small-debt census; helper bodies and sibling tests do
 # not inherit a source exemption.
+# A real tmux server is the point, not an incidental dependency: the defect is
+# that removing a socket leaves the server running, and a fake executor cannot
+# exhibit that. Confined to one test, which kills the server it starts on every
+# path (ci-87655r).
+[[medium]]
+package_dir = "test/tmuxtest"
+package_name = "tmuxtest"
+owner = "TestSweepOrphanKillsTmuxServerBeforeRemovingItsSocketDir"
+resources = ["subprocess", "tmux", "fixed_sleep"]
+owner_bead = "ci-87655r"
+invariant = "the tmux orphan-sweep kill proof is a checked Medium owner: it starts one real tmux server, orphans it and asserts the PROCESS is gone"
+resource_owner = "the tmux, subprocess and sleep calls are confined to TestSweepOrphanKillsTmuxServerBeforeRemovingItsSocketDir, which cannot use a fake executor -- a stand-in cannot demonstrate that deleting a socket leaves a real server alive"
+migration_target = "P0.4c-tmux"
+expires = "2026-10-01"
+
 [[medium]]
 package_dir = "internal/api"
 package_name = "api"

@@ -188,12 +188,36 @@ var testTempRootAliveSentinel *os.File
 var tmuxSocketAliveSentinel *os.File
 
 type cleanupTestingM struct {
-	m     testscript.TestingM
-	paths []string
+	m testscript.TestingM
+	// killRoots hold tmux sockets and must have their servers killed before
+	// anything is removed. See Run.
+	killRoots []string
+	paths     []string
+	// killServers is the seam the ordering is asserted through; nil means
+	// tmuxtest.KillServersUnder. It is a dependency, not a test switch: the
+	// property under test is that the kill happens while the socket still
+	// exists, and driving that against a real tmux server would prove the
+	// kill works (test/tmuxtest already does) rather than that this function
+	// calls it in the right order.
+	killServers func(root string, diagnostics io.Writer) int
 }
 
 func (m cleanupTestingM) Run() int {
 	code := m.m.Run()
+	// KILL BEFORE REMOVE. cmd/gc is the one package that starts real tmux
+	// servers with no orphan sweep at either end (ci-87655r), and removing a
+	// socket does not stop its server -- it leaves it unreachable and alive,
+	// with nothing left to address it by. Removing first is what makes such an
+	// orphan permanent rather than merely late.
+	kill := m.killServers
+	if kill == nil {
+		kill = tmuxtest.KillServersUnder
+	}
+	for _, root := range m.killRoots {
+		if root != "" {
+			kill(root, io.Discard)
+		}
+	}
 	for _, path := range m.paths {
 		if path != "" {
 			_ = os.RemoveAll(path)
@@ -338,7 +362,7 @@ func TestMain(m *testing.M) {
 	configureSupervisorHooksForTests()
 	var testRunner testscript.TestingM = newDoltLeakGuardedTestingM(m, testTempRoot, testTempRoot, gcHome, runtimeDir, providerStubDir, sharedTestFixtureRoot)
 	if tmuxSocketCleanupRoot != "" {
-		testRunner = cleanupTestingM{m: testRunner, paths: []string{tmuxSocketCleanupRoot}}
+		testRunner = cleanupTestingM{m: testRunner, killRoots: []string{tmuxSocketRoot}, paths: []string{tmuxSocketCleanupRoot}}
 	}
 	testscript.Main(testRunner, map[string]func(){
 		"gc": func() {
