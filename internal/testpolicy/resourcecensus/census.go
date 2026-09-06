@@ -130,8 +130,19 @@ var bootstrapPolicy = Ledger{
 			// script would test the stand-in. No new file: the call joins
 			// existing exec.Command sites in scripts/go_owned_tmp_test.go,
 			// which is why BaselineFiles is unchanged at 178.
-			BaselineCalls:   612,
-			BaselineFiles:   178,
+			//
+			// 612 -> 613 (ci-3lrcr4): cmd/gc/bd_prewrite.go spawns the city's
+			// configured pre_write_command (ci-s7qh10). BaselineFiles moves
+			// with it, unlike the entry above -- this is a new source file,
+			// not a call joining sites already counted.
+			//
+			// REJECTED: injecting the exec dependency behind a seam. The
+			// feature IS running the operator's configured validator
+			// executable, so a seam relocates the call and spawns the same
+			// process; routing it through an already-counted file would only
+			// flatten this counter. The debt is banked because it is real.
+			BaselineCalls:   613,
+			BaselineFiles:   179,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -169,10 +180,13 @@ var bootstrapPolicy = Ledger{
 	},
 	Debt: []Baseline{
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceSubprocess,
-			BaselineCalls:   413,
-			BaselineFiles:   120,
+			Scope:    ScopeUntagged,
+			Resource: ResourceSubprocess,
+			// 413 -> 414 (ci-3lrcr4): cmd/gc/bd_prewrite.go's validator exec.
+			// Rationale, and the seam that was rejected, sit on the all-scope
+			// subprocess audit row above.
+			BaselineCalls:   414,
+			BaselineFiles:   121,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -491,10 +505,13 @@ var bootstrapPolicy = Ledger{
 	},
 	SmallDebt: []Baseline{
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceSubprocess,
-			BaselineCalls:   405,
-			BaselineFiles:   115,
+			Scope:    ScopeUntagged,
+			Resource: ResourceSubprocess,
+			// 405 -> 406 (ci-3lrcr4): cmd/gc/bd_prewrite.go's validator exec.
+			// Rationale, and the seam that was rejected, sit on the all-scope
+			// subprocess audit row above.
+			BaselineCalls:   406,
+			BaselineFiles:   116,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
