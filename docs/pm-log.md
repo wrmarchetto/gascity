@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-mnl 2026-09-06T15:32Z
+last_seen: gs-0e3 2026-09-06T15:43Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1343,5 +1343,36 @@ bead's notes -- the asker's burden, not this PM's. Residuals in pm-log #5
 stand: no scheduled wake has yet run WITH the assessment layer, and a
 governor that assesses then reports something else is mechanically
 unobservable today.
+
+Source: roadmap governor
+
+## 47. pm-idle gs-0e3: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-06)
+
+Fortieth ruling of this shape (pm-log #5 gs-8iv through #46 gs-mnl),
+re-verified live rather than recalled. The closed set under epic:governor was
+re-listed this turn and is unchanged (gs-x0k, gs-xeh, gs-o9i, gs-nun --
+criteria 1-6 verified in their close reasons, pm-log #5). ci-waw3o7 re-read
+in the city store this turn at 15:43Z: still DEFERRED, earliest revisit
+2026-09-07, last updated 2026-09-05, assignee human, and gate ci-gbhkpa
+re-read OPEN this turn at 15:43Z (updated 2026-09-05). Per pm-log #4 the
+epic closes on Willie's recorded say-so; it has not landed -- the deferral
+postpones the question rather than answering it -- so governor stays
+in-progress and the bead that reopens it remains ci-waw3o7. Nobody re-asks
+before the deferral expires tomorrow, per that bead's notes.
+
+No epic promoted -- the roadmap holds no other epic -- and no DECOMP sent.
+The summons's third option is the answer: the rig waits on a decision
+outside it, already recorded as pm-open #2 (amended at #29), with the
+placement gap as pm-open #3; no new entry and no ping. Rig store since
+last_seen moved only by this summons's claim and gs-24a
+(pm-epic-close:governor, open, filed 2026-09-06) -- same decision from
+opposite evidence, one unit for the next session, answered by re-checking
+ci-waw3o7. From tomorrow "deferral stands" stops being an available answer
+(pm-log #40): the next summons re-checks ci-waw3o7, and either Willie's
+ruling has landed and settles criterion 7, or the re-ask is owed, carrying
+the interval record per that bead's notes -- the asker's burden, not this
+PM's. Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
+assessment layer, and a governor that assesses then reports something else
+is mechanically unobservable today.
 
 Source: roadmap governor
