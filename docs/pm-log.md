@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-h0g 2026-09-06T15:28Z
+last_seen: gs-mnl 2026-09-06T15:32Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1311,5 +1311,37 @@ the re-ask is owed, carrying the interval record per that bead's notes -- the
 asker's burden, not this PM's. Residuals in pm-log #5 stand: no scheduled
 wake has yet run WITH the assessment layer, and a governor that assesses then
 reports something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 46. pm-epic-close gs-mnl: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-06)
+
+Thirty-ninth ruling of this shape (pm-log #5 gs-8iv through #45 gs-h0g), and
+the sibling unit #45 named, claimed by the same session four minutes later.
+Verified against the stores again rather than carried over: the closed set
+under epic:governor was re-listed this turn and is unchanged (gs-x0k, gs-xeh,
+gs-o9i, gs-nun -- criteria 1-6 verified in their close reasons, pm-log #5).
+ci-waw3o7 re-read in the city store this turn at 15:32Z: still DEFERRED,
+earliest revisit 2026-09-07, last updated 2026-09-05, assignee human. Gate
+ci-gbhkpa read open at 15:28Z on that bead's DEPENDS ON line (pm-log #45,
+same session). Per pm-log #4 the epic closes on Willie's recorded say-so; it
+has not landed -- the deferral postpones the question rather than answering
+it -- so governor stays in-progress and the bead that reopens it remains
+ci-waw3o7. Nobody re-asks before the deferral expires tomorrow, per that
+bead's notes.
+
+No epic promoted and no DECOMP sent -- the summons itself lists no other open
+epic. Per its own text that IS the answer: what gascity does next is already
+appended as pm-open #2 (amended at #29), so the close reason says so rather
+than duplicating the entry. Rig store since last_seen moved only by this
+summons's claim; after it closes the store holds nothing open, so the idle
+sweep files the next pm-idle:gascity in due course. From tomorrow "deferral
+stands" stops being an available answer (pm-log #40): the next summons
+re-checks ci-waw3o7, and either Willie's ruling has landed and settles
+criterion 7, or the re-ask is owed, carrying the interval record per that
+bead's notes -- the asker's burden, not this PM's. Residuals in pm-log #5
+stand: no scheduled wake has yet run WITH the assessment layer, and a
+governor that assesses then reports something else is mechanically
+unobservable today.
 
 Source: roadmap governor
