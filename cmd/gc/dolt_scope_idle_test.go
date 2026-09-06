@@ -315,30 +315,46 @@ func TestObserveManagedDoltScopeUseSkipsTheClaimantScanWhenClientsExist(t *testi
 	}
 }
 
+// waitForScopeIdleCondition polls cond until it holds or the timeout passes,
+// and reports whether it fired.
+//
+// Every wait in this suite is this same shape, so they share one call site
+// rather than open-coding a loop each -- which also keeps the file's
+// fixed-sleep footprint down to the waits that are genuinely "assert nothing
+// happened for this long" and cannot be polled at all.
+func waitForScopeIdleCondition(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if cond() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // waitForManagedDoltScopeClientCount polls until the count reaches want or
 // the deadline passes, returning the last reading. Socket teardown is not
 // synchronous with Close, so a single sample after a close is a race.
 func waitForManagedDoltScopeClientCount(t *testing.T, pid, want int) int {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
 	got := managedDoltScopeClientCount(pid)
-	for got != want && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	waitForScopeIdleCondition(5*time.Second, func() bool {
 		got = managedDoltScopeClientCount(pid)
-	}
+		return got == want
+	})
 	return got
 }
 
 func waitForManagedDoltScopeClientCountAtLeast(t *testing.T, pid, want int) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if managedDoltScopeClientCount(pid) >= want {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	if !waitForScopeIdleCondition(5*time.Second, func() bool {
+		return managedDoltScopeClientCount(pid) >= want
+	}) {
+		t.Fatalf("client count for pid %d never reached %d", pid, want)
 	}
-	t.Fatalf("client count for pid %d never reached %d", pid, want)
 }
 
 // startScopeIdleClaimant runs a real process with the given working directory
@@ -367,15 +383,11 @@ func startScopeIdleClaimant(t *testing.T, dir string, extraEnv []string) int {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 	})
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if _, err := os.Stat(ready); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("claimant in %s never reported ready", dir)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if !waitForScopeIdleCondition(10*time.Second, func() bool {
+		_, err := os.Stat(ready)
+		return err == nil
+	}) {
+		t.Fatalf("claimant in %s never reported ready", dir)
 	}
 	return cmd.Process.Pid
 }
@@ -422,19 +434,12 @@ func TestManagedDoltScopeWatchdogReapsAScopeNothingIsUsing(t *testing.T) {
 			logData, _ := os.ReadFile(logPath)
 			t.Fatalf("fake dolt pid %d was reaped inside the %s idle window; watchdog log:\n%s", doltPID, scopeIdleTestWindow, logData)
 		}
-		deadline := time.Now().Add(20 * time.Second)
-		for pidAlive(doltPID) {
-			if time.Now().After(deadline) {
-				logData, _ := os.ReadFile(logPath)
-				t.Fatalf("fake dolt pid %d still alive for unused scope %s; watchdog log:\n%s", doltPID, scope, logData)
-			}
-			time.Sleep(20 * time.Millisecond)
+		if !waitForScopeIdleCondition(20*time.Second, func() bool { return !pidAlive(doltPID) }) {
+			logData, _ := os.ReadFile(logPath)
+			t.Fatalf("fake dolt pid %d still alive for unused scope %s; watchdog log:\n%s", doltPID, scope, logData)
 		}
-		for pidAlive(watchdogPID) {
-			if time.Now().After(deadline) {
-				t.Fatalf("watchdog pid %d still alive after reaping its server", watchdogPID)
-			}
-			time.Sleep(20 * time.Millisecond)
+		if !waitForScopeIdleCondition(20*time.Second, func() bool { return !pidAlive(watchdogPID) }) {
+			t.Fatalf("watchdog pid %d still alive after reaping its server", watchdogPID)
 		}
 		// The config must still be there: if it is not, this test proved the
 		// scope-deletion path and nothing about idleness.
