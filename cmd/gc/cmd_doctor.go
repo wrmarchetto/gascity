@@ -427,6 +427,11 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 			register(newDoctorRigDoltServerCheck(cityPath, rig, !rigUsesManagedBdStoreContract(cityPath, rig) || opts.SkipRigDoltChecks))
 			// Custom types check — rig store.
 			register(doctor.NewCustomTypesCheck(rig.Path, rig.Name))
+			// Stranded-assignee scan — rig store. Registered per rig for the
+			// same reason custom-types is: the city instance reads the city
+			// store only, and a rig bead assigned to an unqualified pool name
+			// is invisible to every other angle (ci-tuy2u9).
+			register(doctor.NewUnclaimableAssigneeCheckForRig(cfg, cityPath, rig.Path, rig.Name, storeFactory))
 			register(newHoldLabelConventionsCheck(rig.Path, rig.Name, storeFactory))
 			// Dolt-backup registration catches the silent gap left by
 			// `gc rig add` before the rig is eligible for mol-dog backup

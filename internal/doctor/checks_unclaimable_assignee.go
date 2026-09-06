@@ -36,32 +36,59 @@ import (
 // beads nobody will ever claim. Doctor already reconciles bd store facts
 // against gc config (checks_custom_types.go) and is the established home.
 //
+// One instance is registered per store scope: the city store, and one per
+// non-suspended rig. Rig scopes were added by ci-tuy2u9, which measured the
+// same defect the city scope was built for happening in a rig store: as-d5nv
+// sat ready and assigned for 9h25m on "lab.engineer" -- the pool name with its
+// rig qualifier stripped -- while gc matched every claim tier against
+// "astoria-sel4/lab.engineer". The identity set is city-wide in both scopes,
+// because a rig agent is declared in city.toml and a rig session's bead is
+// written to the city store.
+//
 // Documented absences, each a deliberate limit on scope:
-//   - Rig stores are not scanned. Only the city store is read. Rig work
-//     assigned to a dead rig-agent name is the same defect and would need
-//     per-rig registration like NewCustomTypesCheck; nobody has measured it
-//     stranding a queue yet.
+//   - Suspended rigs are not scanned. Registration skips them so a check
+//     cannot bd-auto-start an orphan Dolt server (ga-wzk); work stranded in a
+//     suspended rig is reported when the rig resumes.
 //   - Ephemeral (wisp) beads are not scanned. The default TierMode reads
 //     durable rows only, and wisps are TTL-collected rather than stranded.
+//   - An uncapped pool's slot names get no qualifier suggestion. They are
+//     covered by a prefix rule rather than enumerated, so there is no
+//     qualified string to name; such a bead still reports, with the generic
+//     FixHint.
 //   - No fix is offered. See CanFix.
 type UnclaimableAssigneeCheck struct {
 	cfg      *config.City
 	cityPath string
-	newStore func(cityPath string) (beads.Store, error)
+	// scanDir holds the store whose beads are scanned. It equals cityPath for
+	// the city scope and the rig path for a rig scope. The identity set is
+	// resolved from cityPath either way.
+	scanDir string
+	// label distinguishes the registered instances in one flat result list.
+	label    string
+	newStore func(dir string) (beads.Store, error)
 }
 
-// NewUnclaimableAssigneeCheck creates the check. newStore is a factory that
-// opens the city bead store, injected so tests drive a real in-memory store
-// rather than a scripted stand-in.
+// NewUnclaimableAssigneeCheck creates the city-store scope. newStore is a
+// factory that opens the bead store at a directory, injected so tests drive a
+// real in-memory store rather than a scripted stand-in.
 func NewUnclaimableAssigneeCheck(cfg *config.City, cityPath string, newStore func(string) (beads.Store, error)) *UnclaimableAssigneeCheck {
-	return &UnclaimableAssigneeCheck{cfg: cfg, cityPath: cityPath, newStore: newStore}
+	return &UnclaimableAssigneeCheck{cfg: cfg, cityPath: cityPath, scanDir: cityPath, label: "city", newStore: newStore}
 }
 
-// Name returns the check identifier.
-func (c *UnclaimableAssigneeCheck) Name() string { return "unclaimable-assignee" }
+// NewUnclaimableAssigneeCheckForRig creates a scope that scans one rig's
+// store. cityPath is still required and is NOT interchangeable with rigPath:
+// session beads and the agent config both live at the city, so a rig scope
+// opens two stores.
+func NewUnclaimableAssigneeCheckForRig(cfg *config.City, cityPath, rigPath, rigName string, newStore func(string) (beads.Store, error)) *UnclaimableAssigneeCheck {
+	return &UnclaimableAssigneeCheck{cfg: cfg, cityPath: cityPath, scanDir: rigPath, label: rigName, newStore: newStore}
+}
 
-// Run reconciles every non-closed assigned bead in the city store against the
-// set of identities the city's config and live sessions can produce.
+// Name returns the check identifier, scoped by store label so a finding names
+// the store it came from.
+func (c *UnclaimableAssigneeCheck) Name() string { return "unclaimable-assignee:" + c.label }
+
+// Run reconciles every non-closed assigned bead in this scope's store against
+// the set of identities the city's config and live sessions can produce.
 func (c *UnclaimableAssigneeCheck) Run(_ *CheckContext) *CheckResult {
 	r := &CheckResult{Name: c.Name(), Severity: SeverityAdvisory}
 
@@ -79,17 +106,21 @@ func (c *UnclaimableAssigneeCheck) Run(_ *CheckContext) *CheckResult {
 		return r
 	}
 
-	store, err := c.newStore(c.cityPath)
+	// The city store carries every session bead in the city, including the
+	// sessions serving a rig, so the identity set is resolved from it in both
+	// scopes. Reading sessions from the rig store instead would resolve none
+	// and report every bead a live rig session legitimately holds.
+	cityStore, err := c.newStore(c.cityPath)
 	if err != nil {
 		// Reporting OK here would make an unreachable store look identical
 		// to a clean city -- the check would go permanently green at the
 		// moment it stopped running.
 		r.Status = StatusWarning
-		r.Message = fmt.Sprintf("store open failed: %v", err)
+		r.Message = fmt.Sprintf("city store open failed: %v", err)
 		return r
 	}
 
-	sessionBeads, err := session.ListAllSessionBeads(store, beads.ListQuery{})
+	sessionBeads, err := session.ListAllSessionBeads(cityStore, beads.ListQuery{})
 	if err != nil && !beads.IsPartialResult(err) {
 		r.Status = StatusWarning
 		r.Message = fmt.Sprintf("listing live sessions: %v", err)
@@ -97,10 +128,20 @@ func (c *UnclaimableAssigneeCheck) Run(_ *CheckContext) *CheckResult {
 	}
 	claimable := newClaimIdentitySet(c.cfg, sessionBeads)
 
+	scanStore := cityStore
+	if c.scanDir != c.cityPath {
+		scanStore, err = c.newStore(c.scanDir)
+		if err != nil {
+			r.Status = StatusWarning
+			r.Message = fmt.Sprintf("%s store open failed: %v", c.label, err)
+			return r
+		}
+	}
+
 	// AllowScan because the question is about every assigned bead; there is
 	// no narrower filter for "assignee matches none of a computed set".
 	// IncludeClosed stays false: a closed bead's assignee is history.
-	candidates, err := store.List(beads.ListQuery{AllowScan: true})
+	candidates, err := scanStore.List(beads.ListQuery{AllowScan: true})
 	if err != nil && !beads.IsPartialResult(err) {
 		r.Status = StatusWarning
 		r.Message = fmt.Sprintf("listing beads: %v", err)
@@ -115,8 +156,7 @@ func (c *UnclaimableAssigneeCheck) Run(_ *CheckContext) *CheckResult {
 		if claimable.covers(b.Assignee) {
 			continue
 		}
-		details = append(details, fmt.Sprintf("%s (%s) assigned to %q, which is not an agent, a pool slot, a named session or a live session",
-			b.ID, b.Status, b.Assignee))
+		details = append(details, unclaimableAssigneeDetail(b, claimable))
 	}
 
 	if len(details) == 0 {
@@ -126,12 +166,40 @@ func (c *UnclaimableAssigneeCheck) Run(_ *CheckContext) *CheckResult {
 	}
 	sort.Strings(details)
 	r.Status = StatusWarning
-	r.Message = fmt.Sprintf("%d bead(s) assigned to a name no session can carry", len(details))
+	r.Message = fmt.Sprintf("%d %s bead(s) assigned to a name no session can carry", len(details), c.label)
 	r.Details = details
 	r.FixHint = "reassign each to a live identity (bd update <id> --assignee <name>), " +
 		"or unassign it and stamp gc.routed_to=<pool> so any slot can claim it; " +
 		"names that are deliberately not agents belong in [doctor] external_assignees"
 	return r
+}
+
+// unclaimableAssigneeDetail renders one finding.
+//
+// The missing-qualifier case gets its own sentence and its own command because
+// its remedy is the one a reader cannot derive from the generic line: the name
+// is not a typo and was never retired, it is the right pool spelled without
+// its rig, and the fix is a string the check already knows. A finding that
+// only said "not an identity" is what let as-d5nv read as a routing question
+// rather than a spelling one (ci-tuy2u9).
+//
+// An ambiguous bare name -- two rigs both declaring the pool -- deliberately
+// gets NO single command. Reassigning rig work to the wrong rig's pool strands
+// it again under a name that now looks correct, so the candidates are listed
+// and the choice is left with the reader.
+func unclaimableAssigneeDetail(b beads.Bead, claimable claimIdentitySet) string {
+	forms := claimable.qualifiedFormsOf(b.Assignee)
+	switch len(forms) {
+	case 0:
+		return fmt.Sprintf("%s (%s) assigned to %q, which is not an agent, a pool slot, a named session or a live session",
+			b.ID, b.Status, b.Assignee)
+	case 1:
+		return fmt.Sprintf("%s (%s) assigned to %q, which is %s without its rig qualifier: run gc bd update %s --assignee %s",
+			b.ID, b.Status, b.Assignee, forms[0], b.ID, forms[0])
+	default:
+		return fmt.Sprintf("%s (%s) assigned to %q, which is a pool name without its rig qualifier and %d rigs declare it (%s): reassign it to the one that owns the work",
+			b.ID, b.Status, b.Assignee, len(forms), strings.Join(forms, ", "))
+	}
 }
 
 // CanFix returns false. Both remedies -- reassign, or unassign and route --
@@ -185,6 +253,12 @@ type claimIdentitySet struct {
 	// positive integer suffix is required, so polecat-47 is covered and
 	// polecat-typo is still reported.
 	slotPrefixes []string
+	// qualifiedForms maps an identity's unqualified spelling to every
+	// rig-qualified identity ending in it, so a finding can name the string to
+	// use rather than only the string that failed. Populated from `exact`
+	// alone: an uncapped pool's slot names live in slotPrefixes and have no
+	// enumerable qualified form to suggest.
+	qualifiedForms map[string][]string
 }
 
 // newClaimIdentitySet resolves the city's claimable assignee values from
@@ -199,7 +273,10 @@ type claimIdentitySet struct {
 // rule itself is NOT reimplemented: agentutil.PoolInstanceName is called, so a
 // change to namepool naming cannot drift this set away from the real one.
 func newClaimIdentitySet(cfg *config.City, sessionBeads []beads.Bead) claimIdentitySet {
-	s := claimIdentitySet{exact: make(map[string]struct{}, 32)}
+	s := claimIdentitySet{
+		exact:          make(map[string]struct{}, 32),
+		qualifiedForms: make(map[string][]string, 16),
+	}
 	if cfg == nil {
 		return s
 	}
@@ -237,13 +314,23 @@ func newClaimIdentitySet(cfg *config.City, sessionBeads []beads.Bead) claimIdent
 	return s
 }
 
-// add records a trimmed, non-empty identity.
+// add records a trimmed, non-empty identity, and indexes its unqualified
+// spelling when it carries a rig qualifier.
 func (s *claimIdentitySet) add(identity string) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
 		return
 	}
+	if _, exists := s.exact[identity]; exists {
+		return
+	}
 	s.exact[identity] = struct{}{}
+	// config.ParseQualifiedName splits on the LAST "/", the same rule
+	// Agent.QualifiedName composes with, so the bare form indexed here is
+	// exactly the string an operator gets by dropping the rig prefix.
+	if dir, bare := config.ParseQualifiedName(identity); dir != "" && bare != "" {
+		s.qualifiedForms[bare] = append(s.qualifiedForms[bare], identity)
+	}
 }
 
 // addSlotPrefix records an uncapped pool's slot prefix, skipping the duplicate
@@ -338,6 +425,22 @@ func (s claimIdentitySet) covers(assignee string) bool {
 		}
 	}
 	return false
+}
+
+// qualifiedFormsOf returns the rig-qualified identities whose unqualified
+// spelling is exactly assignee, sorted so a report is stable across runs. An
+// assignee that is already qualified, or that matches no identity under any
+// rig, yields none -- a suggestion invented for a typo would send the reader
+// to a pool that does not exist.
+func (s claimIdentitySet) qualifiedFormsOf(assignee string) []string {
+	forms := s.qualifiedForms[strings.TrimSpace(assignee)]
+	if len(forms) == 0 {
+		return nil
+	}
+	out := make([]string, len(forms))
+	copy(out, forms)
+	sort.Strings(out)
+	return out
 }
 
 // isPositiveSlotNumber reports whether a suffix is a slot index an uncapped

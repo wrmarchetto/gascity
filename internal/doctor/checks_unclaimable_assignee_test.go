@@ -2,6 +2,8 @@ package doctor
 
 import (
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -11,9 +13,12 @@ import (
 )
 
 // Scope: the unclaimable-assignee check only -- whether an open bead's
-// assignee resolves to a name some session in this city can hold work under.
-// It delegates the per-session half of that question (which values one session
-// bead carries) to internal/session's ClaimIdentities and its own tests.
+// assignee resolves to a name some session in this city can hold work under,
+// in both scopes it registers in: the city store, and one instance per rig
+// store. It delegates the per-session half of that question (which values one
+// session bead carries) to internal/session's ClaimIdentities and its own
+// tests, and the question of WHICH scopes get registered to
+// TestBuildDoctorChecksRegistersUnclaimableAssigneePerRig in cmd/gc.
 //
 // The suite exists because the failure this check detects is SILENT: bd accepts
 // any string as an assignee, so a typo, or a slot name that stopped existing
@@ -316,4 +321,188 @@ func TestUnclaimableAssigneeReportsAStoreOpenFailure(t *testing.T) {
 func TestUnclaimableAssigneeSkipsWithoutConfig(t *testing.T) {
 	r := runUnclaimableAssigneeCheck(t, nil, []beads.Bead{workBead("ci-typo", "toolsmth")})
 	assertReports(t, r)
+}
+
+// --- rig-store scope (ci-tuy2u9) ---
+
+// runRigUnclaimableAssigneeCheck runs the check over a RIG store while
+// resolving claimable identities from a separate city store, which is the
+// wiring the rig scope exists to exercise: session beads live only in the city
+// store, no matter which rig the session serves.
+//
+// The store factory REFUSES a directory the fixture never registered rather
+// than returning an empty store. An always-succeeding factory would hand a
+// pass to a check that opened the wrong path -- reading sessions from the rig
+// store would find none and look identical to a city with no live sessions.
+func runRigUnclaimableAssigneeCheck(t *testing.T, cfg *config.City, cityBeads, rigBeads []beads.Bead) *CheckResult {
+	t.Helper()
+	cityPath := filepath.Join(t.TempDir(), "city")
+	rigPath := filepath.Join(t.TempDir(), "rig")
+	cityStore := beads.NewMemStoreFrom(len(cityBeads)+1, cityBeads, nil)
+	rigStore := beads.NewMemStoreFrom(len(rigBeads)+1, rigBeads, nil)
+	check := NewUnclaimableAssigneeCheckForRig(cfg, cityPath, rigPath, fixtureRig, func(dir string) (beads.Store, error) {
+		switch dir {
+		case cityPath:
+			return cityStore, nil
+		case rigPath:
+			return rigStore, nil
+		}
+		return nil, fmt.Errorf("no store registered at %q", dir)
+	})
+	return check.Run(&CheckContext{})
+}
+
+// The rig and pool ci-tuy2u9 measured. They are constants because the fixture
+// builder and the scope under test have to agree on them; the expectations
+// below stay written out as literal strings, since an assertion recomputed
+// from the same constant the fixture used would pass on any spelling.
+const (
+	fixtureRig  = "astoria-sel4"
+	fixturePool = "lab.engineer"
+)
+
+// rigPoolConfig declares one rig-qualified pool agent per rig name, the shape
+// city.toml produces for `[[agent]]` entries under `[rigs.imports]`.
+func rigPoolConfig(rigs ...string) *config.City {
+	cfg := &config.City{}
+	for _, rig := range rigs {
+		cfg.Agents = append(cfg.Agents, config.Agent{Name: fixturePool, Dir: rig, MaxActiveSessions: intPtr(2)})
+	}
+	return cfg
+}
+
+// TestUnclaimableAssigneeReportsRigWorkOnAnUnqualifiedPoolName pins the
+// ci-tuy2u9 shape: a rig bead assigned to a pool name with its rig qualifier
+// STRIPPED. as-d5nv sat ready and assigned for 9h25m in exactly this state --
+// `bd ready` reported it as ready WITH an assignee, so it read as correctly
+// routed, while every claim path matched on the qualified string and found
+// nothing.
+//
+// The qualified sibling is in the same run because the whole hazard is that
+// the two spellings look interchangeable: a check that reported both would be
+// reporting the working shape too.
+func TestUnclaimableAssigneeReportsRigWorkOnAnUnqualifiedPoolName(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig)
+	r := runRigUnclaimableAssigneeCheck(t, cfg, nil, []beads.Bead{
+		workBead("as-unqualified", "lab.engineer"),
+		workBead("as-qualified", "astoria-sel4/lab.engineer"),
+	})
+	assertReports(t, r, "as-unqualified")
+}
+
+// TestUnclaimableAssigneeRigScopeResolvesSessionsFromTheCityStore pins where
+// the identity set is read from. Every session bead in this city lives in the
+// CITY store, including sessions serving a rig, so a rig scan that listed
+// sessions from the rig store it scans would resolve none and report every
+// bead a live rig session is legitimately holding.
+//
+// The config declares NO agent carrying this alias, so the assertion cannot
+// pass through the config tier: only the city-store session lookup covers it.
+func TestUnclaimableAssigneeRigScopeResolvesSessionsFromTheCityStore(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig)
+	r := runRigUnclaimableAssigneeCheck(t, cfg,
+		[]beads.Bead{liveSessionBead("ci-sess3", "astoria-sel4/lab.reviewer-1")},
+		[]beads.Bead{workBead("as-held", "astoria-sel4/lab.reviewer-1")},
+	)
+	assertReports(t, r)
+}
+
+// TestUnclaimableAssigneeNamesTheQualifiedStringToUse pins the report contract
+// the house rule on error messages requires: the bead, the pool it meant, and
+// the exact remedy command. A finding that only says "not an identity" leaves
+// the reader to guess whether the name is a typo, a retired slot, or a missing
+// qualifier -- and those have three different remedies.
+func TestUnclaimableAssigneeNamesTheQualifiedStringToUse(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig)
+	r := runRigUnclaimableAssigneeCheck(t, cfg, nil, []beads.Bead{
+		workBead("as-unqualified", "lab.engineer"),
+	})
+	detail := strings.Join(r.Details, "\n")
+	for _, want := range []string{
+		"as-unqualified",
+		`"lab.engineer"`,
+		"gc bd update as-unqualified --assignee astoria-sel4/lab.engineer",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail does not name %q; got:\n%s", want, detail)
+		}
+	}
+}
+
+// TestUnclaimableAssigneeNamesEveryRigForAnAmbiguousBareName pins that a bare
+// name two rigs both declare yields no single command. Both astoria rigs run a
+// lab.engineer pool, so naming one of them would be a coin flip presented as a
+// remedy -- and reassigning rig work to the wrong rig's pool strands it again
+// under a name that now looks correct.
+func TestUnclaimableAssigneeNamesEveryRigForAnAmbiguousBareName(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig, "astoria-zephyr")
+	r := runRigUnclaimableAssigneeCheck(t, cfg, nil, []beads.Bead{
+		workBead("as-unqualified", "lab.engineer"),
+	})
+	detail := strings.Join(r.Details, "\n")
+	for _, want := range []string{"astoria-sel4/lab.engineer", "astoria-zephyr/lab.engineer"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail does not name candidate %q; got:\n%s", want, detail)
+		}
+	}
+	if strings.Contains(detail, "--assignee astoria-sel4/lab.engineer ") ||
+		strings.HasSuffix(detail, "--assignee astoria-sel4/lab.engineer") {
+		t.Errorf("detail names one rig as THE remedy for an ambiguous name; got:\n%s", detail)
+	}
+}
+
+// TestUnclaimableAssigneeReportsATypoWithoutAQualifierSuggestion pins that the
+// qualifier remedy is offered only when a qualified form actually exists. A
+// misspelled name resolves to nothing under any rig, so inventing a
+// "did you mean" would send the reader to a pool that does not exist.
+func TestUnclaimableAssigneeReportsATypoWithoutAQualifierSuggestion(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig)
+	r := runRigUnclaimableAssigneeCheck(t, cfg, nil, []beads.Bead{
+		workBead("as-typo", "lab.enginer"),
+	})
+	assertReports(t, r, "as-typo")
+	if detail := strings.Join(r.Details, "\n"); strings.Contains(detail, "--assignee") {
+		t.Errorf("detail offers a qualifier remedy for a name no rig declares; got:\n%s", detail)
+	}
+}
+
+// TestUnclaimableAssigneeLabelsItsScope pins that each registered instance is
+// distinguishable by name. Five instances run in this city (the city store
+// plus one per rig) and they report into one flat result list, so an unlabeled
+// name leaves the reader unable to tell which store a finding came from.
+func TestUnclaimableAssigneeLabelsItsScope(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig)
+	city := NewUnclaimableAssigneeCheck(cfg, t.TempDir(), nil)
+	if got, want := city.Name(), "unclaimable-assignee:city"; got != want {
+		t.Errorf("city scope Name() = %q, want %q", got, want)
+	}
+	rig := NewUnclaimableAssigneeCheckForRig(cfg, t.TempDir(), t.TempDir(), fixtureRig, nil)
+	if got, want := rig.Name(), "unclaimable-assignee:astoria-sel4"; got != want {
+		t.Errorf("rig scope Name() = %q, want %q", got, want)
+	}
+}
+
+// TestUnclaimableAssigneeRigScopeReportsARigStoreOpenFailure pins the rig half
+// of the store-failure contract. The city store opens fine here, so an
+// implementation that scanned the city store for a rig scope would report OK
+// and go permanently green on every rig whose Dolt server is down.
+func TestUnclaimableAssigneeRigScopeReportsARigStoreOpenFailure(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig)
+	cityPath := filepath.Join(t.TempDir(), "city")
+	rigPath := filepath.Join(t.TempDir(), "rig")
+	cityStore := beads.NewMemStoreFrom(1, nil, nil)
+	check := NewUnclaimableAssigneeCheckForRig(cfg, cityPath, rigPath, fixtureRig, func(dir string) (beads.Store, error) {
+		if dir == cityPath {
+			return cityStore, nil
+		}
+		return nil, errors.New("dolt server unreachable at 127.0.0.1:0")
+	})
+	r := check.Run(&CheckContext{})
+
+	if r.Status == StatusOK {
+		t.Fatalf("status = OK on rig store-open failure; msg = %q", r.Message)
+	}
+	if !strings.Contains(r.Message, "dolt server unreachable") {
+		t.Errorf("message = %q, want the underlying store error", r.Message)
+	}
 }
