@@ -2637,6 +2637,45 @@ func staleWorktreeAlertFromMarker(workDir string) (staleWorktreeAlert, bool) {
 	return alert, true
 }
 
+// staleWorktreeMarkerAlreadyReported reports whether any live session bead
+// already carries this marker's fingerprint for this worktree.
+//
+// The dedup key is (work_dir, marker fingerprint) rather than the quarantining
+// bead's OWN prior fingerprint. A per-bead key reads as correct and is worthless
+// whenever the planner re-mints a bead for the slot: the fresh bead has no prior
+// fingerprint, so every mint re-mails the same operator action item -- 17 mails
+// to the mayor for one dirty worktree in ci-v1yc5x. The current bead is not
+// excluded from the scan, so the same-bead re-quarantine case still dedups
+// through this one path.
+//
+// Rejected: keying on the pool slot instead of the worktree path. The slot is
+// not stable -- claimPoolSlotWithConfigInfo hands out the lowest free number --
+// so the same marked worktree can surface under a different slot and would
+// re-mail. Closed beads are excluded (ListQuery defaults to open) so an
+// operator who closes the held bead gets a fresh alert on the next refusal.
+//
+// Fails open on a store error: a missed alert costs the operator their only
+// signal that a worktree needs salvaging, a duplicate costs one mail.
+func staleWorktreeMarkerAlreadyReported(sessFront *sessionpkg.Store, workDir, fingerprint string) bool {
+	if sessFront == nil || strings.TrimSpace(fingerprint) == "" {
+		return false
+	}
+	rows, err := sessFront.Store().List(beads.ListQuery{Type: sessionBeadType})
+	if err != nil {
+		return false
+	}
+	want := strings.TrimSpace(workDir)
+	for _, row := range rows {
+		if row.Metadata[worktreeStaleMarkerFingerprintKey] != fingerprint {
+			continue
+		}
+		if strings.TrimSpace(row.Metadata["work_dir"]) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func quarantinePendingCreateForStaleWorktree(info sessionpkg.Info, sessFront *sessionpkg.Store, workDir string, now time.Time, retryWindow time.Duration, stderr io.Writer) *staleWorktreeAlert {
 	if strings.TrimSpace(info.ID) == "" || sessFront == nil {
 		return nil
@@ -2647,9 +2686,7 @@ func quarantinePendingCreateForStaleWorktree(info sessionpkg.Info, sessFront *se
 	alert, hasAlert := staleWorktreeAlertFromMarker(workDir)
 	alerted := false
 	if hasAlert {
-		if previous, err := sessFront.Store().Get(info.ID); err == nil {
-			alerted = previous.Metadata[worktreeStaleMarkerFingerprintKey] == alert.Fingerprint
-		}
+		alerted = staleWorktreeMarkerAlreadyReported(sessFront, workDir, alert.Fingerprint)
 	}
 	batch := sessionpkg.QuarantinePatch(now.Add(retryWindow), 1)
 	batch["state_reason"] = staleWorktreeQuarantineReason

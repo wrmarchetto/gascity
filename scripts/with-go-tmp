@@ -35,7 +35,18 @@ trap 'terminate TERM 143' TERM
 
 GOTMPDIR="$gotmpdir_val" "$@" &
 child_pid=$!
-if wait "$child_pid"; then
-  exit 0
-fi
-exit $?
+# Score the wait explicitly. The obvious `if wait "$child_pid"; then exit 0;
+# fi; exit $?` reads as an exit-status passthrough and is not one: a bash `if`
+# whose condition is FALSE and which has no else branch is itself a SUCCESS,
+# so by the time `exit $?` runs, `$?` is the compound's 0 rather than the
+# child's status. That silently turned `make test` into a no-op gate -- the
+# inner runner printed its own FAIL line and full failure details while make
+# exited 0. Pinned by TestWithGoTmpPropagatesChildExitStatus.
+#
+# `|| status=$?` rather than a bare `wait`: this script runs under `set -e`,
+# where a bare failing wait would abort into the EXIT trap and reach the same
+# answer only by way of the trap's own status capture. The list form keeps the
+# status the value of an assignment nobody has to trace.
+status=0
+wait "$child_pid" || status=$?
+exit "$status"

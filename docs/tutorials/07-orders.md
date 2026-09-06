@@ -252,6 +252,45 @@ max_timeout = "120s"
 
 The effective timeout is the lesser of the per-order timeout and the global cap.
 
+## When "not finished" isn't a failure
+
+A recurring sweep often ends a run with work still outstanding — a queue too
+long to drain in one pass, a branch waiting on someone else. The script says so
+with a nonzero exit, and Gas City records the run as **failed**: doctor
+escalates three consecutive failures, so the order goes red while it is working
+exactly as designed.
+
+An exec order can name the exit statuses that mean *finished the pass, work
+remains*:
+
+```toml
+[order]
+description = "Merge finished feature branches"
+exec = "scripts/merge-sweep.sh"
+trigger = "cooldown"
+interval = "30m"
+
+# Exit 3 is this script's "ran clean, some branches still queued". Any other
+# nonzero status is still a failure.
+incomplete_exit_codes = [3]
+```
+
+A run ending in a declared status is recorded as `incomplete` rather than
+`failed`, fires `order.completed`, and does not count toward a failure streak.
+The script's output is kept on the tracking bead either way, so `gc order
+history` still shows what was left over.
+
+Give the condition its **own** exit status in the script first. Declaring a
+status the script also uses for real errors hides those errors — the point of
+the field is that the two are distinguishable at the source.
+
+| Status | Recorded as | Counts as a failure |
+|---|---|---|
+| `0` | `success` | no |
+| a declared `incomplete_exit_codes` value | `incomplete` | no |
+| any other nonzero exit | `failed` | yes |
+| killed at the timeout | `failed` | yes |
+
 ## Order scope
 
 When a pack is imported into more than one rig, its orders instantiate **once

@@ -121,9 +121,16 @@ var bootstrapPolicy = Ledger{
 	Version: 2,
 	AuditBaseline: []Baseline{
 		{
-			Scope:           ScopeAll,
-			Resource:        ResourceSubprocess,
-			BaselineCalls:   611,
+			Scope:    ScopeAll,
+			Resource: ResourceSubprocess,
+			// 611 -> 612 (ci-7gg9ra): TestWithGoTmpPropagatesChildExitStatus
+			// runs scripts/with-go-tmp as a real subprocess. It cannot be
+			// hermetic -- the defect it pins is how bash scores a compound
+			// statement in that script's own exit path, so a stand-in for the
+			// script would test the stand-in. No new file: the call joins
+			// existing exec.Command sites in scripts/go_owned_tmp_test.go,
+			// which is why BaselineFiles is unchanged at 178.
+			BaselineCalls:   612,
 			BaselineFiles:   178,
 			ReportedCalls:   495,
 			ReportedFiles:   135,

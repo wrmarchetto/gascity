@@ -7810,6 +7810,21 @@ func (r *memRecorder) hasType(typ string) bool {
 	return false
 }
 
+// messageOfType returns the Message of the first event of typ, or "" when no
+// such event was recorded. Tests that assert a diagnostic reached durable
+// state use it to compare against the event's own text rather than
+// re-spelling a parser's wording.
+func (r *memRecorder) messageOfType(typ string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.events {
+		if e.Type == typ {
+			return e.Message
+		}
+	}
+	return ""
+}
+
 func (r *memRecorder) hasSubject(subject string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

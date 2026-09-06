@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-try 2026-09-05T23:51Z
+last_seen: gs-32c 2026-09-06T04:31Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -765,5 +765,52 @@ the deferral date (2026-09-07) or Willie's ruling lands. Residuals in pm-log
 #5 stand: no scheduled wake has yet run WITH the assessment layer, and a
 governor that assesses then reports something else is mechanically
 unobservable today.
+
+Source: roadmap governor
+
+## 29. pm-idle gs-32c: governor stays in-progress, both gate blockers cleared (2026-09-06)
+
+Twenty-third ruling of this shape (pm-log #5 gs-8iv through #28 gs-try),
+re-verified live rather than recalled. The closed set under epic:governor is
+unchanged (gs-x0k, gs-xeh, gs-o9i, gs-nun -- criteria 1-6 verified in their
+close reasons, pm-log #5). Criterion-7 chain re-checked in the city store
+this turn at 04:33Z: ci-waw3o7 (P1, assignee human) holds the DEFERRED
+status pm-log #13 found, earliest revisit 2026-09-07, and gate ci-gbhkpa is
+still open and operator-paged. Per pm-log #4 the epic closes on Willie's
+recorded say-so. It has not landed -- the deferral postpones the question
+rather than answering it -- so governor stays in-progress and the bead that
+puts motion back remains ci-waw3o7.
+
+New since #28, and it retires the corroboration line #7 through #28 carried:
+both operator-only actions gate ci-gbhkpa names have lapsed. bench-alerts.log
+is no longer untracked -- 6deeededa on main git-ignores it (.gitignore:83),
+so the rebuild-preflight refusal it caused no longer applies -- and stale
+supervisor PID 3926095 is gone from the process table, with a supervisor now
+running as PID 978187. Nothing operator-shaped blocks a full answer to
+ci-waw3o7 anymore. The wait is now purely the deferral itself. pm-open #2
+amended this turn to record that. No new ping: the gate already
+operator-paged the question and Willie deferred it deliberately, so a page
+about its blockers clearing would page him about a bead he parked (pm-log
+#16 precedent on not re-pinging an already-paged question).
+
+Also read this turn: mayor mail ci-wisp-rxeo1gt retracting the make-test
+warning. Exit codes are trustworthy again as of d22facb0b, any green 'make
+test' between fc24ffc0f (2026-08-14) and that fix is unproven rather than
+wrong, and the mayor independently measured a full green suite (192
+packages, 38402 passes, zero failures) from go test's own JSONL.
+Disposition for this rig: no governor re-verification bead is needed. The
+close evidence pm-log #5 records does not rest on a bare green 'make test'
+-- the mutation kills (12/12, 17/17, 29 dead) are observed FAILURES, which
+the broken wrapper could only have hidden and never invented, and the Slack
+leg was confirmed at the transport.
+
+No epic promoted -- governor is the roadmap's only epic -- and no DECOMP
+sent. What gascity builds next is already recorded as pm-open #2, and the
+substrate-maintenance placement gap as pm-open #3. Rig store since last_seen
+moved only by this summons's claim and gs-imy (pm-epic-close:governor, open)
+-- same decision from opposite evidence, one unit for the next session,
+answered by re-checking ci-waw3o7. Residuals in pm-log #5 stand: no
+scheduled wake has yet run WITH the assessment layer, and a governor that
+assesses then reports something else is mechanically unobservable today.
 
 Source: roadmap governor

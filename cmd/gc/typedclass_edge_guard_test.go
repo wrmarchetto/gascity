@@ -176,7 +176,20 @@ var typedClassCodecCensus = map[string]map[string]int{
 	// the last interior caller is gone. The needle stays policed as a tripwire until
 	// the WI-7 unexport (pollerKeyFromBead) lands.
 	"RunFromTrackingBead(": {
-		"internal/api/huma_handlers_orders.go": 1,
+		// Ratcheted 1 -> 2 by ci-7gg9ra: humaHandleOrderHistory now decodes each
+		// history bead to report OrderRun.State() and the dispatch-failure reason
+		// on the wire, next to the pre-existing check-handler decode that reports
+		// last_run_outcome. Both are the same sanctioned edge shape -- an already
+		// raw beads.Bead, fetched by orderHistoryBeadsAcrossStoreInfos with its
+		// storeRef and before-cursor paging, projected at the serialization
+		// boundary. The alternative was worse, not better: without the decode the
+		// CLI would have had to crack entry.Labels itself, which is the duplicated
+		// truth table OrderRun.State() exists to remove, in a SECOND repository.
+		//
+		// Retires when the order-history read itself moves onto the orders front
+		// door (orders.Store.RecentRuns), which needs RecentRuns to carry storeRef
+		// and a before-cursor first. Both decodes then go to zero together.
+		"internal/api/huma_handlers_orders.go": 2,
 	},
 	"MaxSeqFromLabels(": {
 		"cmd/gc/cmd_order.go":                  1,

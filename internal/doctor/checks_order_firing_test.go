@@ -797,3 +797,104 @@ func TestOrderFiringCurrent_TimesOutStalledOrderHistory(t *testing.T) {
 		t.Fatalf("message = %q, want timeout diagnostic", result.Message)
 	}
 }
+
+// TestOrderFiringCurrent_IncompleteRunsAreNotAFailureStreak pins the operator-
+// facing half of ci-iv9asy: a recurring order whose command reports outstanding
+// work through a declared exit status must not be escalated as failing.
+//
+// The check was red against a merge sweep that was demonstrably merging
+// branches -- a merge commit at 17:01:57 and an order.failed for the same pass
+// at 17:02:30 -- because every pass of a queue too large to drain in one budget
+// exits nonzero. That red is worse than no check: it is the shape that teaches
+// an operator to ignore this check, and it contradicted city:merge-sweep-
+// progress, which reports the same standing queue as the designed steady state.
+//
+// Driven with a streak LONGER than the escalation limit rather than exactly at
+// it: a run of three is the threshold, and an assertion that only holds at the
+// threshold would pass a check that escalates at four.
+func TestOrderFiringCurrent_IncompleteRunsAreNotAFailureStreak(t *testing.T) {
+	now := time.Date(2026, 9, 5, 17, 2, 30, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "merge-sweep", "cooldown", "30m")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "merge-sweep", Ts: now.Add(-2 * time.Minute)},
+	)
+
+	check := NewOrderFiringCurrentCheck(cfg, cityPath)
+	check.clock = func() time.Time { return now }
+	check.history = func(orders.Order) ([]orders.OrderRun, error) {
+		var runs []orders.OrderRun
+		for i := range OrderFiringCurrentFailureHistoryLimit + 2 {
+			runs = append(runs, orders.OrderRun{
+				Outcome:   orders.RunOutcomeExecIncomplete,
+				CreatedAt: now.Add(-time.Duration(i) * 30 * time.Minute),
+			})
+		}
+		return runs, nil
+	}
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	if result.Status != StatusOK {
+		t.Fatalf("status = %v, want ok; msg = %s; details = %v", result.Status, result.Message, result.Details)
+	}
+	if details := strings.Join(result.Details, "\n"); strings.Contains(details, "execution failures") {
+		t.Fatalf("details = %v, want no execution-failure diagnostic", result.Details)
+	}
+}
+
+// TestOrderFiringCurrent_IncompleteRunDoesNotMaskAnOlderFailureStreak pins the
+// boundary the fix must not cross. A newest-edge incomplete run breaks the
+// streak by design -- it is evidence the command still runs -- but the failures
+// behind it must still be visible the moment they reach the edge again, and the
+// check must not start reporting a streak that has an incomplete run inside it.
+func TestOrderFiringCurrent_IncompleteRunDoesNotMaskAnOlderFailureStreak(t *testing.T) {
+	now := time.Date(2026, 9, 5, 17, 2, 30, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "merge-sweep", "cooldown", "30m")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-24 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "merge-sweep", Ts: now.Add(-2 * time.Minute)},
+	)
+
+	check := NewOrderFiringCurrentCheck(cfg, cityPath)
+	check.clock = func() time.Time { return now }
+	check.history = func(orders.Order) ([]orders.OrderRun, error) {
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExecIncomplete, CreatedAt: now.Add(-2 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-32 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-62 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-92 * time.Minute)},
+		}, nil
+	}
+	if got := consecutiveOrderExecutionFailures([]orders.OrderRun{
+		{Outcome: orders.RunOutcomeExecIncomplete},
+		{Outcome: orders.RunOutcomeExecFailed},
+		{Outcome: orders.RunOutcomeExecFailed},
+		{Outcome: orders.RunOutcomeExecFailed},
+	}); got != 0 {
+		t.Fatalf("consecutiveOrderExecutionFailures = %d, want 0: an incomplete run breaks the streak", got)
+	}
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	if result.Status != StatusOK {
+		t.Fatalf("status = %v, want ok; details = %v", result.Status, result.Details)
+	}
+
+	// Same three failures, now at the newest edge: still escalated.
+	check.history = func(orders.Order) ([]orders.OrderRun, error) {
+		return []orders.OrderRun{
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-2 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-32 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecFailed, CreatedAt: now.Add(-62 * time.Minute)},
+			{Outcome: orders.RunOutcomeExecIncomplete, CreatedAt: now.Add(-92 * time.Minute)},
+		}, nil
+	}
+	result = check.Run(&CheckContext{CityPath: cityPath})
+	if result.Status != StatusError {
+		t.Fatalf("status = %v, want error; details = %v", result.Status, result.Details)
+	}
+	if details := strings.Join(result.Details, "\n"); !strings.Contains(details, "merge-sweep: 3 consecutive execution failures") {
+		t.Fatalf("details = %v, want the failure streak reported", result.Details)
+	}
+}

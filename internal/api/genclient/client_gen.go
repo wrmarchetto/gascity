@@ -2605,20 +2605,22 @@ type OrderHistoryDetailResponse struct {
 
 // OrderHistoryEntry defines model for OrderHistoryEntry.
 type OrderHistoryEntry struct {
-	BeadId        string    `json:"bead_id"`
-	CaptureOutput bool      `json:"capture_output"`
-	CreatedAt     string    `json:"created_at"`
-	DurationMs    *string   `json:"duration_ms,omitempty"`
-	Error         *string   `json:"error,omitempty"`
-	ExitCode      *string   `json:"exit_code,omitempty"`
-	HasOutput     bool      `json:"has_output"`
-	Labels        *[]string `json:"labels"`
-	Name          string    `json:"name"`
-	Rig           *string   `json:"rig,omitempty"`
-	ScopedName    string    `json:"scoped_name"`
-	Signal        *string   `json:"signal,omitempty"`
-	StoreRef      string    `json:"store_ref"`
-	WispRootId    *string   `json:"wisp_root_id,omitempty"`
+	BeadId          string    `json:"bead_id"`
+	CaptureOutput   bool      `json:"capture_output"`
+	CreatedAt       string    `json:"created_at"`
+	DispatchFailure *string   `json:"dispatch_failure,omitempty"`
+	DurationMs      *string   `json:"duration_ms,omitempty"`
+	Error           *string   `json:"error,omitempty"`
+	ExitCode        *string   `json:"exit_code,omitempty"`
+	HasOutput       bool      `json:"has_output"`
+	Labels          *[]string `json:"labels"`
+	Name            string    `json:"name"`
+	Rig             *string   `json:"rig,omitempty"`
+	ScopedName      string    `json:"scoped_name"`
+	Signal          *string   `json:"signal,omitempty"`
+	Status          string    `json:"status"`
+	StoreRef        string    `json:"store_ref"`
+	WispRootId      *string   `json:"wisp_root_id,omitempty"`
 }
 
 // OrderHistoryListBody defines model for OrderHistoryListBody.

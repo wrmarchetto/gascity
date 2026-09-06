@@ -3916,3 +3916,104 @@ func writeGcBdProbeScript(t *testing.T, path, identity string) {
 		t.Fatal(err)
 	}
 }
+
+// TestDoBdPreWriteCommandRefusesCreateBeforeBdRuns pins the create path
+// through the real gc bd handoff. The unit table above proves the predicate
+// classifies `create`; only driving doBd proves the classification is what the
+// handoff consults -- the trigger and the id-collision guard used to share one
+// function, and the id guard must NOT be extended to create because create's
+// positional is a title, not a bead id.
+func TestDoBdPreWriteCommandRefusesCreateBeforeBdRuns(t *testing.T) {
+	disableManagedDoltRecoveryForTest(t)
+
+	cityDir := preWriteRefusalCity(t)
+	capture := preWriteRefusalBd(t)
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"--city", cityDir, "create", "bench sitting", "-l", "harness:astoria"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("doBd(create) = %d, want 1; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "refusing visibility write") {
+		t.Fatalf("stderr = %q, want validator refusal", stderr.String())
+	}
+	if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bd subprocess ran despite pre-write refusal: stat capture = %v", err)
+	}
+}
+
+// TestDoBdPreWriteCommandRefusesBehindAGlobalActorFlag pins that an explicit
+// --actor ahead of the verb does not route around the validator. The handoff
+// read args[0] as the verb, so this exact argv reached bd unvalidated while
+// the validator's own suite pinned a refusal for it.
+func TestDoBdPreWriteCommandRefusesBehindAGlobalActorFlag(t *testing.T) {
+	disableManagedDoltRecoveryForTest(t)
+
+	cityDir := preWriteRefusalCity(t)
+	capture := preWriteRefusalBd(t)
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"--city", cityDir, "--actor", "operator", "update", "city-abc", "--add-label", "harness:astoria"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("doBd(--actor update) = %d, want 1; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(capture); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bd subprocess ran despite pre-write refusal: stat capture = %v", err)
+	}
+}
+
+// TestDoBdPreWriteCommandLeavesReadsAlone is the control for the two above. A
+// validator that refused every argv would satisfy them both while breaking
+// every read, so a read must reach bd with the same refusing validator wired.
+func TestDoBdPreWriteCommandLeavesReadsAlone(t *testing.T) {
+	disableManagedDoltRecoveryForTest(t)
+
+	cityDir := preWriteRefusalCity(t)
+	capture := preWriteRefusalBd(t)
+
+	var stdout, stderr bytes.Buffer
+	if got := doBd([]string{"--city", cityDir, "list", "--status", "open"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("doBd(list) = %d, want 0; stdout=%q stderr=%q", got, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(capture); err != nil {
+		t.Fatalf("bd subprocess did not run for a read: stat capture = %v", err)
+	}
+}
+
+// preWriteRefusalCity builds a city whose pre_write_command refuses every argv
+// it is handed, so a test distinguishes "the validator refused" from "the
+// validator was never invoked" by the exit code alone.
+func preWriteRefusalCity(t *testing.T) string {
+	t.Helper()
+	cityDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityDir, ".beads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(`[workspace]
+name = "demo"
+prefix = "city"
+
+[beads]
+pre_write_command = "pre-write"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityDir, "pre-write"), []byte("#!/bin/sh\necho refusing visibility write >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GC_CITY_PATH", cityDir)
+	return cityDir
+}
+
+// preWriteRefusalBd installs a bd stand-in that records having run and returns
+// the witness path. The witness is what a refusal is measured by: a validator
+// consulted after bd already wrote is no gate at all.
+func preWriteRefusalBd(t *testing.T) string {
+	t.Helper()
+	binDir := t.TempDir()
+	capture := filepath.Join(t.TempDir(), "bd-ran")
+	if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte("#!/bin/sh\ntouch \"$GC_BD_CAPTURE\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GC_BD_CAPTURE", capture)
+	return capture
+}

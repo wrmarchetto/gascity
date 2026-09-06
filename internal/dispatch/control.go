@@ -96,6 +96,19 @@ func processRalphControl(store beads.Store, bead beads.Bead, opts ProcessOptions
 				beadmeta.AttemptLogMetadataKey:    attemptLog,
 				beadmeta.OutcomeMetadataKey:       beadmeta.OutcomeFail,
 				beadmeta.FailedAttemptMetadataKey: strconv.Itoa(iterationNum),
+				// This closure stamps no gc.failure_reason -- unlike the
+				// hard-fail and retry-exhaustion closures -- because an
+				// exhausted loop has no single reason, one per iteration. That
+				// left gc.outcome=fail with a NULL close_reason, which reads as
+				// an agent closing a bead without saying why (ci-ae1ob2). The
+				// synthesized reason points at the iteration beads that hold
+				// the real refusals.
+				//
+				// `bead` is the caller's copy, captured rather than re-read:
+				// only gc.root_bead_id, gc.step_ref and gc.step_id are consumed
+				// from it and none of those is written after a control is
+				// minted, so a fresh Get would buy nothing.
+				closeReasonMetadataKey: ralphExhaustedCloseReason(store, bead, iterationNum, attemptLog),
 			}
 			clearControllerSpawnErrorMetadata(closeMetadata)
 			if err := updateMetadataAndClose(store, beadID, closeMetadata); err != nil {
@@ -1845,7 +1858,33 @@ func copyNonGCMetadata(dst, src map[string]string) {
 	}
 }
 
+// closeReasonMetadataKey is the bead-lifecycle close reason. It carries no
+// gc. prefix on purpose: it is a beads-level field every store forwards to
+// `bd close --reason`, not gc dispatcher state, and prefixing it would hide it
+// from beads.Store.Close, which reads this exact literal.
+const closeReasonMetadataKey = "close_reason"
+
+// updateMetadataAndClose stamps a bead's disposition metadata and closes it.
+//
+// A batch carrying a close reason takes the two-step route -- write metadata,
+// then Close -- because the single `bd update --status closed` the fast path
+// uses has NO --reason argument and leaves the bead's close_reason NULL
+// whatever the batch says. Only beads.Store.Close reads metadata back and
+// forwards it (BdStore.Close). Every other close keeps the one-round-trip
+// path, which TestProcessRetryControlPassClosesWithSingleFinalMetadataUpdate
+// pins: nothing there needs a reason, and splitting it would make the
+// disposition record's survival depend on a second store call.
+//
+// The reasoned route drops the fast path's status re-read because
+// BdStore.Close carries the equivalent honesty guard itself -- it re-reads and
+// refuses a `bd close` that exited 0 without moving the status.
 func updateMetadataAndClose(store beads.Store, beadID string, metadata map[string]string) error {
+	if strings.TrimSpace(metadata[closeReasonMetadataKey]) != "" {
+		if err := store.SetMetadataBatch(beadID, metadata); err != nil {
+			return err
+		}
+		return store.Close(beadID)
+	}
 	status := "closed"
 	if err := store.Update(beadID, beads.UpdateOpts{
 		Status:   &status,
