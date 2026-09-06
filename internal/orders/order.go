@@ -6,6 +6,7 @@ package orders
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -92,6 +93,23 @@ type Order struct {
 	// environment. Env is supported only for exec orders; controller-
 	// owned routing and identity keys are rejected before dispatch.
 	Env map[string]string `toml:"env,omitempty"`
+	// IncompleteExitCodes lists the exit statuses this exec order's command
+	// uses to say "I ran to completion and some work is still outstanding",
+	// as distinct from "I could not run". A run ending in one of these is
+	// recorded as RunOutcomeExecIncomplete instead of RunOutcomeExecFailed,
+	// so consumers that count consecutive failures do not report a healthy
+	// recurring sweep as a fault.
+	//
+	// The declaration lives here rather than in Go because which statuses a
+	// command reserves for that meaning is the command author's decision, and
+	// only the author knows it. Nothing infers it: an order that declares
+	// nothing keeps every nonzero exit as a failure.
+	//
+	// A single catch-all code is the wrong shape for a command that already
+	// reports both conditions through exit 1 -- the code must be distinct at
+	// the source, or declaring it hides that command's genuine crashes behind
+	// the same status (ci-iv9asy).
+	IncompleteExitCodes []int `toml:"incomplete_exit_codes,omitempty"`
 	// Params declares the named arguments this order accepts through the
 	// dispatch args channel (webhook rules and `gc order run --var`). A param
 	// marked required must be present in the dispatch vars or the order refuses
@@ -145,6 +163,8 @@ type orderDecode struct {
 	Env          map[string]string     `toml:"env,omitempty"`
 	Params       map[string]OrderParam `toml:"params,omitempty"`
 	SkipAliases  []string              `toml:"skip_aliases,omitempty"`
+
+	IncompleteExitCodes []int `toml:"incomplete_exit_codes,omitempty"`
 }
 
 func (d orderDecode) normalized() Order {
@@ -172,6 +192,8 @@ func (d orderDecode) normalized() Order {
 		Env:          d.Env,
 		Params:       d.Params,
 		skipAliases:  d.SkipAliases,
+
+		IncompleteExitCodes: d.IncompleteExitCodes,
 	}
 }
 
@@ -192,6 +214,16 @@ func (a *Order) IsEnabled() bool {
 // rather than formula (wisp) dispatch.
 func (a *Order) IsExec() bool {
 	return a.Exec != ""
+}
+
+// IsIncompleteExit reports whether code is one this order declared as "ran to
+// completion with work outstanding". A zero code never matches: it is already
+// a success, and matching it would downgrade a clean run.
+func (a *Order) IsIncompleteExit(code int) bool {
+	if code <= 0 {
+		return false
+	}
+	return slices.Contains(a.IncompleteExitCodes, code)
 }
 
 // IsCityScoped reports whether the order is city-scoped, i.e. instantiated
@@ -265,6 +297,18 @@ func Validate(a Order) error {
 		}
 		if strings.Contains(key, "=") {
 			return fmt.Errorf("order %q: invalid env key %q: must not contain '='", a.Name, key)
+		}
+	}
+	if len(a.IncompleteExitCodes) > 0 && a.Exec == "" {
+		return fmt.Errorf("order %q: incomplete_exit_codes is supported only for exec orders", a.Name)
+	}
+	// 1-255 is the whole range a process exit status can carry, and 0 is
+	// already success. Rejecting the rest at load time rather than ignoring it
+	// matters because an out-of-range entry can never match: the order would
+	// look declared and behave as if it were not.
+	for _, code := range a.IncompleteExitCodes {
+		if code < 1 || code > 255 {
+			return fmt.Errorf("order %q: invalid incomplete_exit_codes entry %d: must be 1-255", a.Name, code)
 		}
 	}
 	for name := range a.Params {
