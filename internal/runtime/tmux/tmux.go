@@ -1942,6 +1942,23 @@ const (
 	submitReEnterBackoff      = 200 * time.Millisecond
 )
 
+// WHY TWO SOURCES OF EVIDENCE. The busy indicator answers "is this agent
+// visibly working", and the block above records the measured ~3.3s the
+// indicator takes to render. Nothing asked what happens when the turn is
+// SHORTER than that: the indicator never appears, every poll correctly reports
+// not-busy, and a submit that landed AND was answered is reported exactly like
+// one that never landed. That is not hypothetical -- an account at its usage
+// cap answers every nudge in 1.2-1.6s with an API-error turn, and on
+// 2026-09-06 it held a pool slot for 1h35m on the strength of this
+// indistinguishability (ci-mdfcgs, ci-uihrrv).
+//
+// The draft's DISAPPEARANCE from the input box is the second source, and it
+// answers the question actually being asked -- did the submit land -- rather
+// than a proxy for it. It is deliberately one-directional: it can only turn
+// "unconfirmed" into "confirmed", never the reverse, so the ga-bwm lost-Enter
+// fix keeps its re-send. In that failure the draft is still sitting in the box,
+// so this source correctly withholds confirmation and the loop re-sends.
+//
 // submitEnterAndConfirm sends the provider's submit key sequence (see
 // nudgeSubmitKeySequences — a single Enter for every family this fork has
 // verified so far) and confirms the message submitted by observing the
@@ -1959,13 +1976,64 @@ const (
 //
 // All side effects are injected so the decision logic is unit-testable without
 // a live tmux server.
-func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bool, error), sleep func(time.Duration)) (bool, error) {
+func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bool, error), drafted func() (bool, error), sleep func(time.Duration)) (bool, error) {
+	// Was the draft observed sitting in the input box before the first Enter?
+	// Its later ABSENCE only means "submitted" if it was there to begin with.
+	// A paste that never landed leaves an empty box too, and reading that as a
+	// confirmed submit would be the worst possible error here: it reports a
+	// nudge delivered that the agent never saw. So the disappearance is
+	// evidence only when paired with this observation, and when the draft was
+	// never seen this whole source abstains and the busy indicator decides
+	// alone -- byte-for-byte the behavior that shipped before.
+	draftSeen := false
+	if wasDrafted, err := drafted(); err == nil && wasDrafted {
+		draftSeen = true
+	}
+
+	// Observation failures are COUNTED, not swallowed. Both sources read the
+	// pane through capture-pane, and an error from it used to be discarded by
+	// `err == nil && isBusy` -- making "the pane says idle" and "the pane could
+	// not be read at all" the same answer, with nothing logged either way. A
+	// wedged session and a broken capture then produce identical evidence,
+	// which is what makes the difference worth carrying: every symptom of the
+	// 2026-09-06 outage looks the same under a failing capture, and nothing in
+	// the log could have distinguished them (ci-uihrrv).
+	//
+	// This does NOT change the control flow. An unobservable pane already
+	// ended the loop unconfirmed and already returned an error to the caller;
+	// only the error's wording changes, from "delivered but not confirmed" to
+	// a statement that nothing was ever observed.
+	observed := false
+	var observeErr error
+	look := func(source func() (bool, error)) (bool, bool) {
+		v, err := source()
+		if err != nil {
+			observeErr = err
+			return false, false
+		}
+		observed = true
+		return v, true
+	}
+
+	// submitted folds the two independent sources. Order matters only for
+	// cost: busy is the cheaper, older and better-understood signal.
+	submitted := func() bool {
+		if isBusy, ok := look(busy); ok && isBusy {
+			return true
+		}
+		if !draftSeen {
+			return false
+		}
+		stillDrafted, ok := look(drafted)
+		return ok && !stillDrafted
+	}
+
 	var lastErr error
 	for send := 0; send < submitEnterMaxSends; send++ {
 		if send > 0 {
-			// Re-confirm the pane is still idle before re-sending. A turn that
-			// already submitted (busy) must never receive a second Enter.
-			if isBusy, err := busy(); err == nil && isBusy {
+			// Re-confirm nothing submitted before re-sending. A turn that
+			// already submitted must never receive a second Enter.
+			if submitted() {
 				return true, nil
 			}
 			sleep(submitReEnterBackoff)
@@ -1977,11 +2045,18 @@ func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bo
 		lastErr = nil // a later send succeeded; don't surface an earlier transient failure
 		wake()
 		for poll := 0; poll < submitConfirmPollsPerSend; poll++ {
-			if isBusy, err := busy(); err == nil && isBusy {
+			if submitted() {
 				return true, nil
 			}
 			sleep(submitConfirmPollInterval)
 		}
+	}
+	if lastErr == nil && !observed && observeErr != nil {
+		// Every send reached tmux and not one look at the pane succeeded, so
+		// whether the message submitted is UNKNOWN rather than negative. Say
+		// so: "not confirmed" invites a reader to hunt a wedged agent, and the
+		// fault is in the observer.
+		return false, fmt.Errorf("submit delivered but the pane could never be observed: %w", observeErr)
 	}
 	return false, lastErr
 }
@@ -1994,6 +2069,17 @@ func (t *Tmux) paneBusy(target string) (bool, error) {
 		return false, err
 	}
 	return paneContainsBusyIndicator(lines), nil
+}
+
+// paneHoldsDraft reports whether target's input box still holds message. Used
+// alongside paneBusy to confirm a submit: see the two-sources note above
+// submitEnterAndConfirm.
+func (t *Tmux) paneHoldsDraft(target, message string) (bool, error) {
+	lines, err := t.CapturePaneLines(target, promptObservationLines)
+	if err != nil {
+		return false, err
+	}
+	return draftInInputBox(lines, message), nil
 }
 
 // submitVerifyEligible reports whether the target runs a provider whose busy
@@ -2137,19 +2223,28 @@ func (t *Tmux) NudgeSession(session, message string) error {
 	sendSubmit := func() error { return t.sendNudgeSubmitSequence(target, submitKeys) }
 	wake := func() { t.WakePaneIfDetached(session) }
 	if t.submitVerifyEligible(target) {
-		confirmed, err := submitEnterAndConfirm(sendSubmit, wake, func() (bool, error) { return t.paneBusy(target) }, time.Sleep)
+		drafted := func() (bool, error) { return t.paneHoldsDraft(target, message) }
+		confirmed, err := submitEnterAndConfirm(sendSubmit, wake, func() (bool, error) { return t.paneBusy(target) }, drafted, time.Sleep)
 		if err != nil {
 			return fmt.Errorf("failed to send submit sequence: %w", err)
 		}
 		delivered = true
 		if !confirmed {
 			// Do NOT collapse this to nil: a caller that treats nil as "clean
-			// delivery" would ack a queued nudge for a message that may still
-			// be sitting drafted-but-unsubmitted in the pane. Surfacing this
-			// as an error leaves the item unacked, so it requeues after the
-			// normal retry delay and spends one of its bounded attempts —
-			// the same handling as any other delivery failure — instead of
-			// silently losing the nudge.
+			// delivery" loses the distinction entirely, and the two callers
+			// need it for opposite reasons.
+			//
+			// WHAT THE CALLERS ACTUALLY DO, corrected 2026-09-06 (ci-uihrrv).
+			// This comment used to say the error "leaves the item unacked, so
+			// it requeues after the normal retry delay and spends one of its
+			// bounded attempts". That has not been true since the queue path
+			// was written: cmd/gc/cmd_nudge.go ACKS the queued nudges on this
+			// error and stamps last_nudge_delivered_at, deliberately, because
+			// a retry would paste the same reminder into an already-started
+			// turn. The claim-backstop path (cmd/gc/nudge_backstop.go) is the
+			// one that spends an attempt. A comment describing retired
+			// behavior is worse than none: it was read as the contract while
+			// the opposite shipped.
 			return fmt.Errorf("%w: session %q", ErrNudgeSubmitUnconfirmed, session)
 		}
 		return nil
@@ -3581,6 +3676,101 @@ func codexTranscriptTailContainsTurnAborted(tail string) bool {
 // "·"/"•" separator so it does NOT match idle chrome — "(ctrl+o to expand)",
 // "(main)", "⏱️ Jun 4 02:57:04", or the "✻ Worked for 3m 38s" done marker.
 var claudeBusySpinnerRe = regexp.MustCompile(`\([0-9]+[ms][^)]*[·•]`)
+
+// --- submitted-draft evidence ---
+
+// claudeInputPromptPrefix is Claude Code's INPUT BOX prompt: the glyph U+276F
+// followed by U+00A0, at column zero.
+//
+// Both the NBSP and the column-zero requirement were MEASURED off live panes on
+// the city socket 2026-09-06 rather than guessed. Neither is the primary
+// discriminator -- that is the last-prompt-line rule in claudeInputBoxContent,
+// since the input box is always drawn below the transcript. These two narrow
+// the window that rule leaves open: a capture that missed the input box would
+// otherwise read a submitted message's echo as a still-drafted one and
+// re-submit into a live turn. A submitted message is echoed into the transcript
+// with the same glyph, but indented and followed by an ORDINARY space:
+//
+//	"  \u276f You are holding a pool slot with queued work ..."   transcript echo
+//	"\u276f\u00a0You are holding a pool slot with queued work ..." unsent draft
+//	"\u276f\u00a0"                                                empty input
+//	"\u276f\u00a0Press up to edit queued messages"                submitted, queued
+//
+// Matching the glyph alone would therefore read a message that HAS submitted as
+// one still sitting in the input box -- the exact inversion this evidence
+// exists to avoid.
+const claudeInputPromptPrefix = "\u276f\u00a0"
+
+// claudeInputBoxContent returns what the input box holds, and whether one was
+// found at all. The LAST matching line wins: the transcript scrolls above the
+// input box, so an earlier match is history.
+func claudeInputBoxContent(lines []string) (string, bool) {
+	for i := len(lines) - 1; i >= 0; i-- {
+		if strings.HasPrefix(lines[i], claudeInputPromptPrefix) {
+			return strings.TrimSpace(strings.TrimPrefix(lines[i], claudeInputPromptPrefix)), true
+		}
+	}
+	return "", false
+}
+
+// draftInInputBox reports whether the input box still holds the message we
+// pasted. Compared on the draft's FIRST LINE only, and only its leading run:
+// the box wraps a long paste across several rows and renders continuation rows
+// without the prompt prefix, so the first row is the one piece guaranteed to be
+// on the prompt line itself.
+//
+// A draft too short to be distinctive is treated as ABSENT rather than present,
+// which is the safe direction: absent means this evidence abstains and the
+// busy-indicator path decides alone, exactly as it did before.
+func draftInInputBox(lines []string, draft string) bool {
+	head := draftHead(draft)
+	if head == "" {
+		return false
+	}
+	content, found := claudeInputBoxContent(lines)
+	if !found {
+		return false
+	}
+	return strings.HasPrefix(content, head)
+}
+
+// The fingerprint bounds. draftHeadMinRunes is the shortest leading run this
+// evidence will key on -- below it the comparison stops being a fingerprint,
+// since "ok" or "y" would match the queued-message placeholder or leftover
+// chrome by accident, and a wrong "still drafted" reading costs a duplicate
+// submit into a live turn. draftHeadMaxRunes caps it.
+//
+// THE CAP IS THE LOAD-BEARING HALF, and it is why this is a bounded run rather
+// than the whole first line. The input box WRAPS a long paste across several
+// rows and renders the continuation rows without the prompt prefix, so the
+// prompt line carries only the first visual ROW -- shorter than the draft's
+// first logical LINE. Comparing against the whole line therefore never
+// matches, and the evidence would silently never fire: the same
+// never-fires-and-looks-fine failure being fixed one layer up. Measured
+// against a real pane, the row held 68 characters of a 73-character first
+// line, so the discrepancy is small and permanent rather than obvious.
+const (
+	draftHeadMinRunes = 12
+	draftHeadMaxRunes = 24
+)
+
+// draftHead is the leading run of the draft's first line used as its
+// fingerprint, or "" when the draft is too short to be one.
+func draftHead(draft string) string {
+	first := draft
+	if i := strings.IndexAny(first, "\r\n"); i >= 0 {
+		first = first[:i]
+	}
+	first = strings.TrimSpace(first)
+	runes := []rune(first)
+	if len(runes) < draftHeadMinRunes {
+		return ""
+	}
+	if len(runes) > draftHeadMaxRunes {
+		runes = runes[:draftHeadMaxRunes]
+	}
+	return string(runes)
+}
 
 // paneContainsBusyIndicator checks captured pane lines for signs that the agent
 // is actively processing. Agent TUIs surface this differently: older Claude Code
