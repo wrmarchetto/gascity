@@ -447,18 +447,26 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	// A city may opt into a validator for mutation writes that become visible to
 	// a configured consumer. The validator is configuration, not SDK judgment;
 	// cities without it retain the ordinary bd passthrough.
-	if _, writeMutation, ambiguous := bdMutationWriteIDs(bdArgs); writeMutation {
-		if ambiguous {
-			fmt.Fprintf(stderr, "gc bd: cannot safely validate mutation args %v: unrecognized flag may consume a value\n", bdArgs) //nolint:errcheck // best-effort stderr
-			return 1
-		}
-		env, envErr := bdCommandEnv(cityPath, cfg, target)
-		if envErr != nil {
-			fmt.Fprintf(stderr, "gc bd: %v\n", envErr) //nolint:errcheck // best-effort stderr
-			return 1
-		}
-		if runBdPreWriteCommandWithEnv(cfg.Beads.PreWriteCommand, cityPath, target.ScopeRoot, bdArgs, workQueryEnvForDir(env, target.ScopeRoot), stderr) {
-			return 1
+	//
+	// Keyed on bdPreWriteMutation, NOT on the bdMutationWriteIDs guard below.
+	// The two answer different questions and sharing one predicate is what left
+	// `create` unvalidated: that guard returns the positional bead ids it must
+	// verify against the store, and create's positional is a TITLE, so widening
+	// it to create would send every title through a substring-collision lookup.
+	if strings.TrimSpace(cfg.Beads.PreWriteCommand) != "" {
+		if writeMutation, ambiguous := bdPreWriteMutation(bdArgs); writeMutation {
+			if ambiguous {
+				fmt.Fprintf(stderr, "gc bd: cannot safely validate mutation args %v: unrecognized flag may consume a value\n", bdArgs) //nolint:errcheck // best-effort stderr
+				return 1
+			}
+			env, envErr := bdCommandEnv(cityPath, cfg, target)
+			if envErr != nil {
+				fmt.Fprintf(stderr, "gc bd: %v\n", envErr) //nolint:errcheck // best-effort stderr
+				return 1
+			}
+			if runBdPreWriteCommandWithEnv(cfg.Beads.PreWriteCommand, cityPath, target.ScopeRoot, bdArgs, workQueryEnvForDir(env, target.ScopeRoot), stderr) {
+				return 1
+			}
 		}
 	}
 
