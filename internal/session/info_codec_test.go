@@ -13,7 +13,8 @@ import (
 
 // infoFromPersistedBeadFrozen is a verbatim copy of the pre-S09b struct-literal
 // projection of infoFromPersistedBead, carrying THIS tree's full key set (the
-// ~19 keys beyond the original commit: pool_alias_conflict*, PackWorkspace /
+// ~19 keys beyond the original commit: alias_reservation_refused*,
+// pool_alias_conflict*, PackWorkspace /
 // WorkDirCanonical / WorkerDir, awake_started_at, usage_compute_emitted_at,
 // SessionCircuitState, live_hash, startup_dialog_verified, builtin_ancestor,
 // and the 7-key sleep-policy cluster). It is the INDEPENDENT oracle for the
@@ -57,21 +58,24 @@ func infoFromPersistedBeadFrozen(b beads.Bead) Info {
 		ContinuationEpoch: b.Metadata["continuation_epoch"],
 		SleepReason:       b.Metadata["sleep_reason"],
 
-		ConfiguredNamedIdentity: b.Metadata[NamedSessionIdentityMetadata],
-		ConfiguredNamedSession:  strings.TrimSpace(b.Metadata[NamedSessionMetadataKey]) == "true",
-		ConfiguredNamedMode:     b.Metadata[NamedSessionModeMetadata],
-		CommonName:              b.Metadata["common_name"],
-		PoolSlot:                b.Metadata["pool_slot"],
-		PoolManaged:             strings.TrimSpace(b.Metadata["pool_managed"]) == "true",
-		SessionOrigin:           b.Metadata["session_origin"],
-		DependencyOnly:          strings.TrimSpace(b.Metadata["dependency_only"]) == "true",
-		DependencyOnlyMetadata:  b.Metadata["dependency_only"],
-		ManualSession:           strings.TrimSpace(b.Metadata["manual_session"]) == "true",
-		ManualSessionMetadata:   b.Metadata["manual_session"],
-		PoolAliasConflict:       b.Metadata["pool_alias_conflict"],
-		PoolAliasConflictCount:  b.Metadata["pool_alias_conflict_count"],
-		PoolAliasConflictAt:     b.Metadata["pool_alias_conflict_at"],
-		Labels:                  b.Labels,
+		ConfiguredNamedIdentity:       b.Metadata[NamedSessionIdentityMetadata],
+		ConfiguredNamedSession:        strings.TrimSpace(b.Metadata[NamedSessionMetadataKey]) == "true",
+		ConfiguredNamedMode:           b.Metadata[NamedSessionModeMetadata],
+		CommonName:                    b.Metadata["common_name"],
+		PoolSlot:                      b.Metadata["pool_slot"],
+		PoolManaged:                   strings.TrimSpace(b.Metadata["pool_managed"]) == "true",
+		SessionOrigin:                 b.Metadata["session_origin"],
+		DependencyOnly:                strings.TrimSpace(b.Metadata["dependency_only"]) == "true",
+		DependencyOnlyMetadata:        b.Metadata["dependency_only"],
+		ManualSession:                 strings.TrimSpace(b.Metadata["manual_session"]) == "true",
+		ManualSessionMetadata:         b.Metadata["manual_session"],
+		AliasReservationRefused:       b.Metadata["alias_reservation_refused"],
+		AliasReservationRefusedReason: b.Metadata["alias_reservation_refused_reason"],
+
+		PoolAliasConflict:      b.Metadata["pool_alias_conflict"],
+		PoolAliasConflictCount: b.Metadata["pool_alias_conflict_count"],
+		PoolAliasConflictAt:    b.Metadata["pool_alias_conflict_at"],
+		Labels:                 b.Labels,
 
 		// Canonical-identity record mirrors (verbatim). S19 Stage 2 (write-only).
 		CanonicalInstanceNameMetadata: b.Metadata[CanonicalInstanceNameMetadata],
@@ -201,6 +205,10 @@ func TestInfoCodecProjectionParity(t *testing.T) {
 		{"provider": "acp", "transport": ""},    // explicit empty transport, provider fallback
 		{"provider": "claude", "transport": ""}, // no fallback -> transport ""
 		{"session_name": ""},                    // sessionNameFor fallback
+		// A refused create-time alias reservation: alias absent, refusal
+		// recorded. Both keys are exercised because the parity oracle only
+		// compares fields some bead in this matrix actually populates.
+		{"alias_reservation_refused": "worker-1", "alias_reservation_refused_reason": "alias exists: conflicts with session name on s-1"},
 	}
 	for i, m := range edgeMeta {
 		beadsToCheck = append(beadsToCheck,

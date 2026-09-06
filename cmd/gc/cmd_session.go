@@ -1100,16 +1100,21 @@ type sessionListJSONRow struct {
 	// no raw session_name column joins it: the published session_name is
 	// Info.SessionName, whose sessionNameFor(ID) fallback would match work the
 	// session was never assigned.
-	ClaimIdentities      []string   `json:"claim_identities,omitempty"`
-	SessionKey           string     `json:"session_key,omitempty"`
-	ResumeFlag           string     `json:"resume_flag,omitempty"`
-	ResumeStyle          string     `json:"resume_style,omitempty"`
-	ResumeCommand        string     `json:"resume_command,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	LastActive           time.Time  `json:"last_active"`
-	LastNudgeDeliveredAt *time.Time `json:"last_nudge_delivered_at,omitempty"`
-	Attached             bool       `json:"attached"`
-	Closed               bool       `json:"closed"`
+	ClaimIdentities []string `json:"claim_identities,omitempty"`
+	// AliasReservationRefused* explain a session whose claim_identities carry no
+	// alias rung: its create-time reservation was refused and it therefore
+	// claims under its session name. Absent on a session that won its alias.
+	AliasReservationRefused       string     `json:"alias_reservation_refused,omitempty"`
+	AliasReservationRefusedReason string     `json:"alias_reservation_refused_reason,omitempty"`
+	SessionKey                    string     `json:"session_key,omitempty"`
+	ResumeFlag                    string     `json:"resume_flag,omitempty"`
+	ResumeStyle                   string     `json:"resume_style,omitempty"`
+	ResumeCommand                 string     `json:"resume_command,omitempty"`
+	CreatedAt                     time.Time  `json:"created_at"`
+	LastActive                    time.Time  `json:"last_active"`
+	LastNudgeDeliveredAt          *time.Time `json:"last_nudge_delivered_at,omitempty"`
+	Attached                      bool       `json:"attached"`
+	Closed                        bool       `json:"closed"`
 }
 
 type sessionListJSON struct {
@@ -1201,6 +1206,9 @@ func sessionListJSONRows(sessions []session.Info) []sessionListJSONRow {
 			ConfiguredNamedIdentity: s.ConfiguredNamedIdentity,
 			AliasHistory:            s.AliasHistory,
 			ClaimIdentities:         sessionBeadAssigneeIdentitiesInfo(s),
+
+			AliasReservationRefused:       s.AliasReservationRefused,
+			AliasReservationRefusedReason: s.AliasReservationRefusedReason,
 
 			SessionKey:    s.SessionKey,
 			ResumeFlag:    s.ResumeFlag,

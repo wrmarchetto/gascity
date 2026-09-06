@@ -161,6 +161,14 @@ type Info struct {
 	// the Info form of that lane needs the raw values to stay byte-identical. These
 	// keys are cmd/gc constants (session_beads.go poolAliasConflict*MetadataKey); the
 	// literals here mirror them. Additive, internal-only (absent from the HTTP wire).
+	// AliasReservationRefused / AliasReservationRefusedReason are the RAW
+	// record of a create-time alias reservation that was refused, leaving the
+	// session alias-less and therefore claiming under its session name. Absent
+	// on every session that won its alias, so presence is the signal. Keys are
+	// cmd/gc constants (session_beads.go aliasReservationRefused*MetadataKey).
+	AliasReservationRefused       string // alias_reservation_refused (raw; the alias not won)
+	AliasReservationRefusedReason string // alias_reservation_refused_reason (raw)
+
 	PoolAliasConflict      string   // pool_alias_conflict (raw; deferred canonical alias)
 	PoolAliasConflictCount string   // pool_alias_conflict_count (raw)
 	PoolAliasConflictAt    string   // pool_alias_conflict_at (raw RFC3339)

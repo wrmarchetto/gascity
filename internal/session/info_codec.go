@@ -101,6 +101,8 @@ var infoKeyCodec = []infoKeySpec{
 		i.ManualSession = strings.TrimSpace(v) == "true"
 		i.ManualSessionMetadata = v
 	}},
+	{"alias_reservation_refused", func(i *Info, v string) { i.AliasReservationRefused = v }},
+	{"alias_reservation_refused_reason", func(i *Info, v string) { i.AliasReservationRefusedReason = v }},
 	{"pool_alias_conflict", func(i *Info, v string) { i.PoolAliasConflict = v }},
 	{"pool_alias_conflict_count", func(i *Info, v string) { i.PoolAliasConflictCount = v }},
 	{"pool_alias_conflict_at", func(i *Info, v string) { i.PoolAliasConflictAt = v }},

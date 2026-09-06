@@ -4087,6 +4087,25 @@ func createPoolSessionBeadWithGuardedAlias(
 		if alias != "" {
 			if err := session.EnsureAliasAvailableWithConfig(bp.beadStore, bp.city, alias, ""); err == nil {
 				createIdentity.Alias = alias
+			} else {
+				// Creating without the alias is the intended fallback (#1784),
+				// but until ci-yfuh3a it was a SILENT one, and it is the branch
+				// that decides the session's assignee spelling for its whole
+				// life: with no alias, AssigneeIdentifier falls through to the
+				// session name, so every claim this session writes is
+				// unresolvable to a consumer joining on the agent name.
+				//
+				// The record is on the bead, not only on stderr. bp.stderr is
+				// the controller's rotating log, and the question it answers is
+				// asked days later against the store -- which is exactly how
+				// this defect had to be reconstructed from event-log
+				// archeology. The error text names the blocking bead, which is
+				// what distinguishes a real collision with an unrelated live
+				// session from this slot's own outgoing incarnation.
+				createIdentity.Metadata = recordAliasReservationRefusal(createIdentity.Metadata, alias, err)
+				if bp.stderr != nil {
+					fmt.Fprintf(bp.stderr, "createPoolSessionBeadWithGuardedAlias: alias reservation refused for %s: %v; creating without alias\n", template, err) //nolint:errcheck
+				}
 			}
 		}
 		var err error
