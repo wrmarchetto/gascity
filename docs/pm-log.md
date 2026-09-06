@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-4wo 2026-09-06T08:23Z
+last_seen: gs-3pr 2026-09-06T14:24Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1018,5 +1018,47 @@ ratchets) grew local main to 35 ahead of origin, pm-log #35 rebased to
 a8d4adab4 mid-stack. This turn ends by retrying pull-rebase-push; if the
 gate is still red, the defect gets filed as a standalone rig bead (pm-open
 #3 precedent) and that bead is the durable record of the outcome.
+
+Source: roadmap governor
+
+## 37. pm-epic-close gs-3pr: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-06)
+
+Thirty-first ruling of this shape (pm-log #5 gs-8iv through #36 gs-4wo),
+re-verified live rather than recalled. The closed set under epic:governor was
+re-listed this turn and is unchanged (gs-x0k, gs-xeh, gs-o9i, gs-nun --
+criteria 1-6 verified in their close reasons, pm-log #5). Criterion-7 chain
+re-checked in the city store this turn at 14:24Z: ci-waw3o7 (P1, assignee
+human) holds the DEFERRED status pm-log #13 found, earliest revisit
+2026-09-07 and last updated 2026-09-05, and gate ci-gbhkpa is still open and
+operator-paged. Per pm-log #4 the epic closes on Willie's recorded say-so; it
+has not landed -- the deferral postpones the question rather than answering
+it -- so governor stays in-progress and the bead that puts motion back
+remains ci-waw3o7.
+
+No epic promoted -- the summons itself lists no other open epic -- and no
+DECOMP sent. What gascity builds next is already recorded as pm-open #2
+(amended at #29), and the substrate-maintenance placement gap as pm-open #3;
+no new entry.
+
+The gap between #36 and this entry is the wedged root, closed out here.
+#36's turn-end push retry ran the AGENTS.md session-close pull-rebase in the
+root itself (sessions ci-fmw4nn and ci-anxlfj per gs-eep), wedging it
+detached mid interactive rebase with three conflicted paths. Ten summonses
+(gs-0eh through gs-lsh, 08:28Z-09:39Z) were closed no-ruling-taken under the
+startup protocol's non-mainline rule, with no pm-log entries -- gs-0eh and
+gs-lsh close reasons sampled this turn, so no unlogged ruling hides in the
+gap; each carried the #36 standing answer by reference. The durable record
+is gs-eep (owner mayor): repair deferred to the operator, abort verified
+safe. Verified directly this turn: the root is repaired -- branch main at
+01a2b9b11, clean, no rebase in progress, HEAD equal to origin/main -- so
+pm-log #34-#36 survived the reconciliation and the wedge gs-eep describes
+has lapsed, left for its owner to confirm and close. Standing correction:
+#36's push-retry note is retired, not precedent -- gs-eep's ruling matches
+the PM boundary (add/commit of the three state files only), so no PM session
+retries a push again. Rig store since last_seen otherwise moved by gs-jv1
+(placement summons for gs-eep, open, one unit for a next session) and this
+summons's claim. Residuals in pm-log #5 stand: no scheduled wake has yet run
+WITH the assessment layer, and a governor that assesses then reports
+something else is mechanically unobservable today.
 
 Source: roadmap governor
