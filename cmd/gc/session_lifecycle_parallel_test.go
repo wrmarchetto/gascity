@@ -3368,6 +3368,105 @@ func TestAsyncStartSessionStillCurrent_RollbackPendingCreateStillWorksWhenNotAct
 	}
 }
 
+// TestRollbackPendingCreateRecordsTheExplicitNameItReleases pins the producer
+// half of ci-wjwshz. Clearing session_name releases the name, and that clear
+// also destroys the only record of what a runtime leaked by this failed create
+// is CALLED -- sessionName() then resolves the bead to the synthetic
+// sessionNameFor(id), so Suspend, the cleanup of last resort for a
+// failed-create bead, reaps a name no runtime ever had.
+//
+// THE KEY IS ASSERTED THROUGH THE EXPORTED CONSTANT, never as a literal here.
+// A producer writing one spelling and a consumer reading another is invisible
+// to a suite that tests each end separately, which is the class ci-4ucjtx was
+// filed for; naming sessionpkg.RolledBackSessionNameKey on both sides makes
+// the two ends the same fact rather than two agreeing copies.
+//
+// The name is asserted in the RETURNED BATCH as well as in the store, because
+// the reconciler folds that batch onto its typed snapshot -- a write that
+// landed in the store but not in the batch would leave the in-memory session
+// disagreeing with the bead for the rest of the tick.
+func TestRollbackPendingCreateRecordsTheExplicitNameItReleases(t *testing.T) {
+	store := newTxSpyStore()
+	now := time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC)
+	b, err := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: creatingMeta(map[string]string{
+			"session_name":          "worker",
+			"session_name_explicit": "true",
+			"pending_create_claim":  "true",
+			"last_woke_at":          now.Format(time.RFC3339),
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info := sessionpkg.Info{
+		ID:                  b.ID,
+		SessionNameExplicit: b.Metadata["session_name_explicit"],
+		SessionNameMetadata: b.Metadata["session_name"],
+	}
+	batch := rollbackPendingCreate(info, sessionFrontDoor(store), now, ioDiscard{})
+
+	if got := batch["session_name"]; got != "" {
+		t.Errorf("batch session_name = %q, want empty -- the claim must still be released", got)
+	}
+	if got := batch[sessionpkg.RolledBackSessionNameKey]; got != "worker" {
+		t.Errorf("batch %s = %q, want %q -- teardown cannot find the leaked runtime without it",
+			sessionpkg.RolledBackSessionNameKey, got, "worker")
+	}
+	after, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.Metadata[sessionpkg.RolledBackSessionNameKey]; got != "worker" {
+		t.Errorf("stored %s = %q, want %q",
+			sessionpkg.RolledBackSessionNameKey, got, "worker")
+	}
+}
+
+// TestRollbackPendingCreateRecordsNoNameForAnImplicitSession is the negative
+// half, and it is not padding: an implicitly named session's runtime is
+// already at sessionNameFor(id), which is exactly what sessionName() falls
+// back to, so there is nothing to record and recording anything would hand
+// the teardown a second name to reap for no reason. The rollback leaves
+// session_name alone entirely for these, so the key must be absent rather
+// than empty.
+func TestRollbackPendingCreateRecordsNoNameForAnImplicitSession(t *testing.T) {
+	store := newTxSpyStore()
+	now := time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC)
+	b, err := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: creatingMeta(map[string]string{
+			"session_name":         "s-worker",
+			"pending_create_claim": "true",
+			"last_woke_at":         now.Format(time.RFC3339),
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	info := sessionpkg.Info{ID: b.ID, SessionNameMetadata: b.Metadata["session_name"]}
+	batch := rollbackPendingCreate(info, sessionFrontDoor(store), now, ioDiscard{})
+
+	if _, ok := batch[sessionpkg.RolledBackSessionNameKey]; ok {
+		t.Errorf("batch carries %s for an implicitly named session",
+			sessionpkg.RolledBackSessionNameKey)
+	}
+	after, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after.Metadata["session_name"]; got != "s-worker" {
+		t.Errorf("session_name = %q, want it untouched for an implicit name", got)
+	}
+}
+
 // TestRollbackPendingCreateUsesSingleTransactionForAllWrites pins ga-igcny0.1.1:
 // the last_woke_at clear, the conditional session_name clear, and the
 // failed-create terminal close must land inside exactly one store.Tx call,
