@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-imy 2026-09-06T04:38Z
+last_seen: gs-27m 2026-09-06T04:50Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -841,5 +841,33 @@ until the deferral date (2026-09-07) or Willie's ruling lands. Residuals in
 pm-log #5 stand: no scheduled wake has yet run WITH the assessment layer, and
 a governor that assesses then reports something else is mechanically
 unobservable today.
+
+Source: roadmap governor
+
+## 31. pm-idle gs-27m: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-06)
+
+Twenty-fifth ruling of this shape (pm-log #5 gs-8iv through #30 gs-imy),
+twelve minutes after #30 and re-verified live rather than recalled. The
+closed set under epic:governor is unchanged (gs-x0k, gs-xeh, gs-o9i, gs-nun
+-- criteria 1-6 verified in their close reasons, pm-log #5). Criterion-7
+chain re-checked in the city store this turn at 04:50Z: ci-waw3o7 (P1,
+assignee human) holds the DEFERRED status pm-log #13 found, earliest revisit
+2026-09-07, and gate ci-gbhkpa is still open and operator-paged. Both
+operator-only blockers that gate names remain lapsed per pm-log #29 (the
+retired corroboration line was not re-checked). Per pm-log #4 the epic
+closes on Willie's recorded say-so; it has not landed -- the deferral
+postpones the question rather than answering it -- so governor stays
+in-progress and the bead that puts motion back remains ci-waw3o7.
+
+No epic promoted -- governor is the roadmap's only epic -- and no DECOMP
+sent. What gascity builds next is already recorded as pm-open #2 (amended at
+#29), and the substrate-maintenance placement gap as pm-open #3; no new
+entry. Rig store since last_seen moved by this summons's claim and by gs-jpa
+(pm-epic-close:governor, open) -- same decision from opposite evidence, one
+unit for the next session, answered by re-checking ci-waw3o7. The deferral
+revisit date is now under a day out, so rulings of this shape continue until
+it lapses or Willie's ruling lands. Residuals in pm-log #5 stand: no
+scheduled wake has yet run WITH the assessment layer, and a governor that
+assesses then reports something else is mechanically unobservable today.
 
 Source: roadmap governor
