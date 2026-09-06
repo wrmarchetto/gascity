@@ -153,21 +153,42 @@ func ValidateAlias(alias string) (string, error) {
 // EnsureAliasAvailable reports whether alias can be assigned to a live
 // session without colliding with another alias or runtime session name.
 func EnsureAliasAvailable(store beads.Store, alias, selfID string) error {
-	return ensureSessionAliasAvailable(store, nil, alias, selfID, "")
+	return ensureSessionAliasAvailable(store, nil, alias, selfID, "", nil)
 }
 
 // EnsureAliasAvailableWithConfig extends alias reservation checks with
 // configured named-session aliases so public targets cannot be squatted
 // before their managed session bead exists.
 func EnsureAliasAvailableWithConfig(store beads.Store, cfg *config.City, alias, selfID string) error {
-	return ensureSessionAliasAvailable(store, cfg, alias, selfID, "")
+	return ensureSessionAliasAvailable(store, cfg, alias, selfID, "", nil)
 }
 
 // EnsureAliasAvailableWithConfigForOwner extends alias reservation checks
 // with an explicit configured owner identity so callers creating a new
 // managed session bead can reserve that alias before a bead ID exists.
 func EnsureAliasAvailableWithConfigForOwner(store beads.Store, cfg *config.City, alias, selfID, selfOwner string) error {
-	return ensureSessionAliasAvailable(store, cfg, alias, selfID, selfOwner)
+	return ensureSessionAliasAvailable(store, cfg, alias, selfID, selfOwner, nil)
+}
+
+// SupersededHolderFunc reports whether a session bead currently holding an
+// identifier is an incarnation the claimant is REPLACING, rather than a
+// distinct session whose identifier has to be protected from it.
+//
+// It is supplied by the caller rather than decided here because the only
+// honest proof that a holder has stopped claiming is a runtime observation --
+// its pane is gone -- and this package stays off the process table. A nil
+// func is the ordinary case: every holder blocks.
+type SupersededHolderFunc func(beads.Bead) bool
+
+// EnsureAliasAvailableSuperseding is EnsureAliasAvailableWithConfigForOwner
+// with a caller-supplied handover exception for holders the claimant
+// supersedes. The exception covers the three live-identifier branches
+// (session_name, alias, agent_name) and deliberately does NOT cover the
+// configured named-session reservation below them: that reservation is a
+// statement in city config about an identity no bead has claimed yet, so no
+// runtime observation about any bead can retire it.
+func EnsureAliasAvailableSuperseding(store beads.Store, cfg *config.City, alias, selfID, selfOwner string, superseded SupersededHolderFunc) error {
+	return ensureSessionAliasAvailable(store, cfg, alias, selfID, selfOwner, superseded)
 }
 
 // EnsureSessionNameAvailableWithConfig extends session-name reservation checks
@@ -574,7 +595,7 @@ func noLiveSessionNameCollisions(store beads.Store, name, selfID, selfOwner stri
 	return true
 }
 
-func ensureSessionAliasAvailable(store beads.Store, cfg *config.City, alias, selfID, selfOwner string) error {
+func ensureSessionAliasAvailable(store beads.Store, cfg *config.City, alias, selfID, selfOwner string, superseded SupersededHolderFunc) error {
 	alias = strings.TrimSpace(alias)
 	if alias == "" {
 		return nil
@@ -605,6 +626,16 @@ func ensureSessionAliasAvailable(store beads.Store, cfg *config.City, alias, sel
 			continue
 		}
 		if b.Status == "closed" {
+			continue
+		}
+		// A holder the claimant supersedes is not a competitor for the
+		// identifier -- it is the same identity's previous incarnation, and
+		// the identifier has to travel with the replacement. The check sits
+		// above all three identifier branches rather than inside the alias
+		// one: a single outgoing incarnation holds alias AND agent_name, and
+		// letting it block on the second after being waved past the first
+		// would be a refusal with no reachable remedy.
+		if superseded != nil && superseded(b) {
 			continue
 		}
 		if strings.TrimSpace(b.Metadata["session_name"]) == alias {

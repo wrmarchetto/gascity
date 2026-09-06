@@ -4085,8 +4085,16 @@ func createPoolSessionBeadWithGuardedAlias(
 	lockErr := session.WithCitySessionIdentifierLocks(bp.cityPath, lockIDs, func() error {
 		createIdentity := identity
 		if alias != "" {
-			if err := session.EnsureAliasAvailableWithConfig(bp.beadStore, bp.city, alias, ""); err == nil {
+			// The handover predicate is what lets this slot reclaim its alias
+			// from its OWN outgoing incarnation, which the reconciler has not
+			// closed yet because it creates the replacement first. Everything
+			// else still blocks; see cmd/gc/pool_alias_handover.go.
+			handover := newPoolAliasHandover(bp, cfgAgent, alias, slot)
+			if err := session.EnsureAliasAvailableSuperseding(bp.beadStore, bp.city, alias, "", "", handover.predicate()); err == nil {
 				createIdentity.Alias = alias
+				if reclaimed := handover.reclaimedFrom(); len(reclaimed) > 0 && bp.stderr != nil {
+					fmt.Fprintf(bp.stderr, "createPoolSessionBeadWithGuardedAlias: %s reclaimed alias %q, superseding %s\n", template, alias, strings.Join(reclaimed, ", ")) //nolint:errcheck
+				}
 			} else {
 				// Creating without the alias is the intended fallback (#1784),
 				// but until ci-yfuh3a it was a SILENT one, and it is the branch
