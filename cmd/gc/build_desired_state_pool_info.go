@@ -192,6 +192,17 @@ func reusablePoolSessionInfo(bp *agentBuildParams, cfgAgent *config.Agent, templ
 	if info.MetadataState == "asleep" {
 		return false
 	}
+	// quarantined is deliberately NOT excluded here. A quarantined bead is the
+	// canonical occupant of its slot for the length of its quarantine window, so
+	// it must keep consuming the pool's demand -- excluding it makes the planner
+	// claim the next free slot number and start a second session against the
+	// same condition the quarantine exists to avoid (for a stale-worktree
+	// refusal, the same rejected worktree, forever). The cost is that ready work
+	// routed at the pool waits while the other slots are busy; that is the
+	// intended trade, and the window is bounded by quarantined_until and cut
+	// short by clearResolvedStaleWorktreeQuarantineInfo when the condition
+	// clears. The heal must therefore preserve the quarantined state -- see the
+	// BaseStateQuarantined case in internal/session/lifecycle_projection.go.
 	if isManualSessionInfoForAgent(info, cfgAgent) {
 		return false
 	}

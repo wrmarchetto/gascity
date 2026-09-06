@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1000,6 +1001,31 @@ func TestExecutePlannedStartsTraced_StaleWorktreeMarkerQuarantinesPendingCreate(
 	}
 	if duplicate := quarantinePendingCreateForStaleWorktree(sessiontest.SeedBead(t, updated), sessionFrontDoor(store), workDir, clk.Now().UTC(), retryWindow, &stderr); duplicate != nil {
 		t.Fatalf("duplicate stale-worktree alert = %+v, want nil for unchanged marker", duplicate)
+	}
+
+	// The quarantine only buys anything if it survives the SAME tick's state
+	// heal: the reconciler runs healStateWithRollbackInfo over every session
+	// with the runtime observed dead, which is the shape of every tick after a
+	// refused start. A heal that rewrites the state to asleep is invisible here
+	// but fatal one tick later, because the pool planner's reuse filter drops
+	// asleep beads and mints a replacement into the same marked worktree.
+	quarantined, err := store.Get(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	healed := sessiontest.SeedBead(t, quarantined)
+	healed = healed.ApplyPatch(healStatePatchWithRollbackInfo(healed, false, clk, 5*time.Second, true))
+	if got := healed.MetadataState; got != string(sessionpkg.StateQuarantined) {
+		t.Fatalf("state after runtime-dead heal = %q, want %q: the heal must not demote a live stale-worktree quarantine", got, sessionpkg.StateQuarantined)
+	}
+	if got := healed.QuarantinedUntil; got != quarantined.Metadata["quarantined_until"] {
+		t.Fatalf("quarantined_until after heal = %q, want %q unchanged", got, quarantined.Metadata["quarantined_until"])
+	}
+	if got := healed.SleepReason; got != string(sessionpkg.SleepReasonQuarantine) {
+		t.Fatalf("sleep_reason after heal = %q, want %q unchanged", got, sessionpkg.SleepReasonQuarantine)
+	}
+	if !reusablePoolSessionInfo(&agentBuildParams{}, &config.Agent{Name: "worker"}, "worker", healed, nil) {
+		t.Fatalf("reusablePoolSessionInfo(state=%q) = false, want true: the held slot must still satisfy the pool request, or the planner creates a second bead against the same marked worktree", healed.MetadataState)
 	}
 	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=builder/ci-next\nreason=unreachable-commits\n"), 0o644); err != nil {
 		t.Fatalf("rewrite stale worktree marker: %v", err)
@@ -7786,5 +7812,67 @@ func TestStaleResumeKeyProbe(t *testing.T) {
 	}
 	if _, probeable := staleResumeKeyProbe("claude", workDir, ""); probeable {
 		t.Fatal("empty key probeable = true, want false")
+	}
+}
+
+// TestQuarantinePendingCreateForStaleWorktree_DedupsAcrossReMintedBeads pins
+// that the stale-worktree alert is deduplicated per MARKER, not per bead.
+//
+// The alert is an operator action item -- salvage this worktree -- so it is
+// worth exactly one mail per distinct marker. A per-bead dedup key looks
+// correct in a single-bead test and is worthless in the field: a bead re-minted
+// for the same slot carries no prior fingerprint, so every mint re-mails. That
+// produced 17 identical mails to the mayor in ci-v1yc5x. The re-mint loop
+// itself is fixed elsewhere (the lifecycle projection now holds the
+// quarantine), but any future path that re-mints -- an operator closing the
+// held bead, a slot renumbering -- would re-open the mail flood without this.
+func TestQuarantinePendingCreateForStaleWorktree_DedupsAcrossReMintedBeads(t *testing.T) {
+	store := beads.NewMemStore()
+	clk := &clock.Fake{Time: time.Date(2026, 9, 5, 19, 57, 0, 0, time.UTC)}
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=fix/ci-sptsk3\nreason=uncommitted-work\n"), 0o644); err != nil {
+		t.Fatalf("write stale worktree marker: %v", err)
+	}
+
+	newSlotBead := func(id string) beads.Bead {
+		b, err := store.Create(beads.Bead{
+			ID:     id,
+			Title:  "toolsmith-1",
+			Type:   sessionBeadType,
+			Labels: []string{sessionBeadLabel},
+			Metadata: creatingMeta(map[string]string{
+				"session_name":         "toolsmith-1",
+				"template":             "toolsmith",
+				"agent_name":           "toolsmith-1",
+				"generation":           "1",
+				"continuation_epoch":   "1",
+				"instance_token":       "tok-" + id,
+				"pending_create_claim": "true",
+			}),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+
+	first := newSlotBead("gc-stale-slot-first")
+	if alert := quarantinePendingCreateForStaleWorktree(sessiontest.SeedBead(t, first), sessionFrontDoor(store), workDir, clk.Now().UTC(), time.Hour, io.Discard); alert == nil {
+		t.Fatal("first stale-worktree alert = nil, want an alert for a marker nothing has reported yet")
+	}
+
+	// A second bead minted for the same slot against the same untouched marker.
+	second := newSlotBead("gc-stale-slot-remint")
+	if alert := quarantinePendingCreateForStaleWorktree(sessiontest.SeedBead(t, second), sessionFrontDoor(store), workDir, clk.Now().UTC(), time.Hour, io.Discard); alert != nil {
+		t.Fatalf("re-mint stale-worktree alert = %+v, want nil: the marker is unchanged and already reported", alert)
+	}
+
+	// A changed marker is a new operator action item and must still mail.
+	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=fix/ci-other\nreason=unreachable-commits\n"), 0o644); err != nil {
+		t.Fatalf("rewrite stale worktree marker: %v", err)
+	}
+	third := newSlotBead("gc-stale-slot-changed")
+	if alert := quarantinePendingCreateForStaleWorktree(sessiontest.SeedBead(t, third), sessionFrontDoor(store), workDir, clk.Now().UTC(), time.Hour, io.Discard); alert == nil || alert.Reason != "unreachable-commits" {
+		t.Fatalf("changed-marker alert = %+v, want an alert carrying the new marker reason", alert)
 	}
 }

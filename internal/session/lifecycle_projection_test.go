@@ -1092,3 +1092,57 @@ func lifecycleRepoRoot(t *testing.T) string {
 	}
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
+
+// TestProjectRuntimeProjectionQuarantineHoldsOnlyWhileLive pins both halves of
+// the quarantine case in projectRuntimeProjection, because each half fails
+// silently on its own.
+//
+// Live quarantine, runtime dead: the reconciler's state heal runs this exact
+// input on every tick after a refused start. Projecting asleep here leaves
+// quarantined_until and the blocker intact -- nothing wakes, so the demotion is
+// invisible -- but the pool planner's reuse filter drops asleep beads and mints
+// a replacement into the same rejected worktree on the next tick (ci-v1yc5x).
+//
+// Expired quarantine, runtime dead: this is the ONLY path out of quarantined.
+// ClearExpiredQuarantinePatch clears quarantined_until and leaves the stored
+// state alone, so if the case above keyed on the base state instead of the live
+// blocker the bead would sit in quarantined forever and never be restartable.
+func TestProjectRuntimeProjectionQuarantineHoldsOnlyWhileLive(t *testing.T) {
+	now := time.Date(2026, 9, 5, 20, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name             string
+		quarantinedUntil string
+		wantState        State
+	}{
+		{
+			name:             "live quarantine survives the runtime-dead heal",
+			quarantinedUntil: now.Add(time.Hour).Format(time.RFC3339),
+			wantState:        StateQuarantined,
+		},
+		{
+			name:             "expired quarantine falls through to asleep",
+			quarantinedUntil: "",
+			wantState:        StateAsleep,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := ProjectLifecycle(LifecycleInput{
+				Status:           "open",
+				StoredState:      string(StateQuarantined),
+				SleepReason:      string(SleepReasonQuarantine),
+				QuarantinedUntil: tt.quarantinedUntil,
+				Runtime:          RuntimeFacts{Observed: true, Alive: false},
+				Now:              now,
+			})
+			if view.BaseState != BaseStateQuarantined {
+				t.Fatalf("BaseState = %q, want %q", view.BaseState, BaseStateQuarantined)
+			}
+			if view.ReconciledState != tt.wantState {
+				t.Fatalf("ReconciledState = %q, want %q", view.ReconciledState, tt.wantState)
+			}
+		})
+	}
+}
