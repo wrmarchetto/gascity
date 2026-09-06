@@ -139,19 +139,29 @@ var bootstrapPolicy = Ledger{
 			// chosen wait status -- so a fabricated error cannot reach the
 			// branch at all, never mind exercise the chain walk that is the
 			// part able to be wrong. New file, so BaselineFiles moves with it.
+			// +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			// +1 call / 1 file (ci-ewyqum): the GC_DIR clobber guard execs the
+			// provider script with a stub gc, because the property under test is
+			// what a CHILD PROCESS inherits.
+			// +2 calls / 1 file (ci-sptsk3): the idle-scope reap tests exec a
+			// process that stands in the scope and the watchdog helper that
+			// supervises a fake server. Neither can be a stand-in -- the claimant
+			// scan they exercise reads /proc/<pid>/cwd and /proc/<pid>/environ,
+			// which only a real child populates. The one new file is
+			// cmd/gc/dolt_scope_idle_test.go.
 			//
-			// 613 -> 615, 179 -> 180 (ci-sptsk3): the idle-scope reap tests exec
-			// a process that stands in the scope and the watchdog helper that
-			// supervises a fake server. Neither can be a stand-in -- the
-			// claimant scan they exercise reads /proc/<pid>/cwd and
-			// /proc/<pid>/environ, which only a real child populates. The one
-			// new file is cmd/gc/dolt_scope_idle_test.go.
-			//
-			// The ci-sptsk3 arithmetic was rebased: it was authored against a
-			// base of 612 and reads 613 here because ci-sg490p's spawn landed
-			// on main first. The DELTA is what that bead owns, not the floor.
-			BaselineCalls:   615,
-			BaselineFiles:   180,
+			// Three beads raised this one row from the same 613/179 base, so the
+			// ceiling is the SUM of all three deltas. Every side moved the file
+			// count to 180 for its OWN new file, which git merges to 180 without
+			// a marker -- two files short of the three the merged tree holds.
+			BaselineCalls:   619,
+			BaselineFiles:   182,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -163,14 +173,22 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:    ScopeAll,
 			Resource: ResourceFixedSleep,
-			// 440 -> 444, 163 -> 164 (ci-sptsk3): three of the four are the
-			// idle-reap control windows, which assert a server STAYS alive
-			// across several windows and so cannot be replaced by a lifecycle
-			// signal -- there is no event to wait for, elapsed time is the
-			// claim. The fourth is the poll step inside the shared deadline
-			// loop waitForScopeIdleCondition.
-			BaselineCalls:   444,
-			BaselineFiles:   164,
+			// +1 call / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			// +4 calls / 1 file (ci-sptsk3): three are the idle-reap control
+			// windows, which assert a server STAYS alive across several windows
+			// and so cannot be replaced by a lifecycle signal -- there is no
+			// event to wait for, elapsed time is the claim. The fourth is the
+			// poll step inside the shared deadline loop
+			// waitForScopeIdleCondition. Summed with ci-87655r's delta over the
+			// 440/163 base; both sides moved files to 164 for their own file.
+			BaselineCalls:   445,
+			BaselineFiles:   165,
 			ReportedCalls:   447,
 			ReportedFiles:   157,
 			OwnerBead:       "ga-80po0c.2",
@@ -199,11 +217,12 @@ var bootstrapPolicy = Ledger{
 			Resource: ResourceSubprocess,
 			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
 			// spawn recorded on the all-source audit row above.
-			//
-			// 414 -> 416, 121 -> 122 (ci-sptsk3): the same idle-scope reap
-			// spawns, counted again in the untagged scope.
-			BaselineCalls:   416,
-			BaselineFiles:   122,
+			// +3 calls / 1 file (ci-87655r), +1 call / 1 file (ci-ewyqum) and
+			// +2 calls / 1 file (ci-sptsk3): the same three spawn sets recorded
+			// on the all-source audit row above, counted again in the untagged
+			// scope and summed over the same 414/121 base.
+			BaselineCalls:   420,
+			BaselineFiles:   124,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -213,10 +232,14 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceFixedSleep,
-			BaselineCalls:   294,
-			BaselineFiles:   117,
+			Scope:    ScopeUntagged,
+			Resource: ResourceFixedSleep,
+			// +1 call / 1 file (ci-87655r) and +4 calls / 1 file (ci-sptsk3):
+			// the same sleeps recorded on the all-source audit row above,
+			// counted again in the untagged scope and summed over the 290/116
+			// base.
+			BaselineCalls:   295,
+			BaselineFiles:   118,
 			ReportedCalls:   295,
 			ReportedFiles:   114,
 			OwnerBead:       "ga-80po0c.2",
@@ -343,10 +366,17 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceTmux,
-			BaselineCalls:   6,
-			BaselineFiles:   2,
+			Scope:    ScopeUntagged,
+			Resource: ResourceTmux,
+			// +3 calls / 1 file (ci-87655r): the tmux orphan-sweep kill proof. It starts
+			// ONE real tmux server, orphans it and asserts the PROCESS is
+			// gone -- a fake executor cannot show that deleting a socket
+			// leaves a server alive, which is the whole defect. Declared a
+			// Medium owner above, which clears Small debt; source ratchets
+			// are not test-size entries and do not exempt, so the debt is
+			// banked here because it is real.
+			BaselineCalls:   9,
+			BaselineFiles:   3,
 			ReportedCalls:   6,
 			ReportedFiles:   2,
 			OwnerBead:       "ga-80po0c.2.2.1",
@@ -357,6 +387,21 @@ var bootstrapPolicy = Ledger{
 		},
 	},
 	Medium: []MediumOwner{
+		{
+			// A real tmux server is the point, not an incidental dependency:
+			// the defect is that removing a socket leaves the server running,
+			// and a fake executor cannot exhibit that. Confined to one test,
+			// which kills the server it starts on every path (ci-87655r).
+			PackageDir:      "test/tmuxtest",
+			PackageName:     "tmuxtest",
+			Owner:           "TestSweepOrphanKillsTmuxServerBeforeRemovingItsSocketDir",
+			Resources:       []Resource{ResourceSubprocess, ResourceTmux, ResourceFixedSleep},
+			OwnerBead:       "ci-87655r",
+			Invariant:       "the tmux orphan-sweep kill proof is a checked Medium owner: it starts one real tmux server, orphans it and asserts the PROCESS is gone",
+			ResourceOwner:   "the tmux, subprocess and sleep calls are confined to TestSweepOrphanKillsTmuxServerBeforeRemovingItsSocketDir, which cannot use a fake executor -- a stand-in cannot demonstrate that deleting a socket leaves a real server alive",
+			MigrationTarget: "P0.4c-tmux",
+			Expires:         "2026-10-01",
+		},
 		{
 			PackageDir:      "internal/api",
 			PackageName:     "api",
@@ -524,14 +569,22 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:    ScopeUntagged,
 			Resource: ResourceSubprocess,
-			// 405 -> 406 (ci-sg490p): the same call site, kept as Small debt
-			// rather than moved to an exact Medium owner. The spawn sits in the
-			// shared helper exitErrorWithCode, and a resource inside a helper
-			// stays Small debt however Medium its callers are.
-			//
-			// 406 -> 408, 116 -> 117 (ci-sptsk3): the idle-scope reap spawns.
-			BaselineCalls:   408,
-			BaselineFiles:   117,
+			// 405 -> 406 (ci-sg490p): the same call site, and it stays Small
+			// debt rather than moving to an exact Medium owner. The spawn lives
+			// in the shared helper exitErrorWithCode, and a resource inside a
+			// helper keeps its Small debt however Medium its callers are.
+			// Declaring it Medium would mean either collapsing four
+			// separately-named invariant tests into one runnable or inlining
+			// the spawn into each of them -- four new calls on the raw ratchets
+			// to save one here. Eight Medium subprocess owners stand against
+			// this row's 406 sites, so an undeclared helper-hosted spawn is the
+			// population this ratchet exists to track, not an anomaly it
+			// forbids.
+			// +1 call / 1 file (ci-ewyqum) and +2 calls / 1 file (ci-sptsk3),
+			// summed over the 406/116 base. ci-87655r contributes nothing here:
+			// it declares a Medium owner, which clears Small debt.
+			BaselineCalls:   409,
+			BaselineFiles:   118,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",

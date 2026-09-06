@@ -16,6 +16,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,6 +154,42 @@ func KillAllTestSessions(t testing.TB) {
 	if cleaned > 0 {
 		t.Logf("tmuxtest: cleaned up %d orphaned test socket(s)", cleaned)
 	}
+}
+
+// KillServersUnder kills every tmux server whose socket lives under root,
+// returning how many were killed.
+//
+// IT EXISTS BECAUSE REMOVING A SOCKET DOES NOT STOP A SERVER. Deleting the
+// socket file leaves tmux running with nothing left to address it by --
+// unreachable and alive -- and once its socket parent is gone nothing can
+// ever reap it. That is what produced a 24-day server on this host
+// (ci-87655r).
+//
+// The glob is deliberately every socket under the directory rather than the
+// gctest-* pattern listTestSocketPaths uses. The caller is about to delete
+// this directory because its creating run is gone, so everything inside it
+// belongs to that dead run; narrowing the pattern would strand any socket a
+// future test names differently, which is the same defect with a new name.
+//
+// Each kill is addressed to one socket path. A bare `tmux kill-server` would
+// take the operator's own server with it.
+func KillServersUnder(root string, diagnostics io.Writer) int {
+	if diagnostics == nil {
+		diagnostics = io.Discard
+	}
+	sockets, err := filepath.Glob(filepath.Join(root, "tmux-"+strconv.Itoa(os.Getuid()), "*"))
+	if err != nil {
+		return 0
+	}
+	killed := 0
+	for _, socketPath := range sockets {
+		if err := killTestSocketPath(socketPath); err != nil {
+			continue
+		}
+		killed++
+		_, _ = fmt.Fprintf(diagnostics, "tmuxtest: killed orphaned tmux server on %s\n", socketPath)
+	}
+	return killed
 }
 
 // tmuxArgs prepends -L socketName to the given tmux arguments when socketName

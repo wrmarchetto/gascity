@@ -2552,6 +2552,18 @@ func rollbackPendingCreateClears(info sessionpkg.Info, sessFront *sessionpkg.Sto
 	var postCloseClears map[string]string
 	if strings.TrimSpace(info.SessionNameExplicit) == "true" {
 		postCloseClears = map[string]string{"session_name": ""}
+		// Clearing session_name releases the name, which also destroys the
+		// only record of what a leaked runtime from this failed create is
+		// CALLED: sessionName() then resolves the bead to the synthetic
+		// sessionNameFor(id), and Suspend -- the cleanup of last resort for a
+		// failed-create bead -- reaps a name no runtime ever had. Keep the
+		// released name under a key that grants no claim, so that teardown
+		// can still find the process (ci-wjwshz). The reader is
+		// Manager.releasedRuntimeName, and it refuses the name if any open
+		// session bead has since taken it.
+		if released := strings.TrimSpace(info.SessionNameMetadata); released != "" {
+			postCloseClears[sessionpkg.RolledBackSessionNameKey] = released
+		}
 	}
 	txErr := store.Tx(commitMsg, func(tx beads.Tx) error {
 		if err := tx.SetMetadataBatch(info.ID, preCloseClears); err != nil {

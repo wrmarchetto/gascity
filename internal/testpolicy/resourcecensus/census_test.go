@@ -2068,9 +2068,19 @@ func TestBootstrapPolicyOwnsSyscallListenDebt(t *testing.T) {
 func TestBootstrapPolicyOwnsTmuxDebtAndExactMediumSetup(t *testing.T) {
 	t.Parallel()
 
+	// 6/2 -> 9/3 (ci-87655r): the orphan-sweep kill proof starts one real tmux
+	// server, orphans it and asserts the PROCESS is gone. It cannot use a fake
+	// executor -- the defect is that deleting a socket leaves a REAL server
+	// running, which a stand-in cannot exhibit -- and the bead's acceptance
+	// criterion requires exactly that observation, so this growth is mandated
+	// rather than casual.
+	//
+	// THE SMALL PIN BELOW IS UNCHANGED AT 0/0 AND THAT IS THE LOAD-BEARING
+	// HALF: the test is a declared Medium owner, so it leaves no Small debt.
+	// A future tmux dependency that is NOT declared still trips that assertion.
 	debt := findRow(t, bootstrapPolicy.Debt, ScopeUntagged, ResourceTmux)
-	if debt.BaselineCalls != 6 || debt.BaselineFiles != 2 {
-		t.Fatalf("tmux source baseline = %d/%d, want 6/2", debt.BaselineCalls, debt.BaselineFiles)
+	if debt.BaselineCalls != 9 || debt.BaselineFiles != 3 {
+		t.Fatalf("tmux source baseline = %d/%d, want 9/3", debt.BaselineCalls, debt.BaselineFiles)
 	}
 	smallDebt := findRow(t, bootstrapPolicy.SmallDebt, ScopeUntagged, ResourceTmux)
 	if smallDebt.BaselineCalls != 0 || smallDebt.BaselineFiles != 0 {
