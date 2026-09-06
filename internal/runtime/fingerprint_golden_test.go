@@ -63,6 +63,14 @@ func goldenFixtures() map[string]Config {
 		// Boundary: nil vs empty Env must hash identically (asserted below).
 		"env-nil":   {Env: nil},
 		"env-empty": {Env: map[string]string{}},
+		// The declared-env admission route (v6). Without a fixture that declares
+		// something, the golden net pins only the allow-list pass and a regression
+		// that dropped DeclaredEnvKeys from the hash would leave every golden
+		// unchanged. The key here is deliberately one no allow-list entry covers.
+		"declared-env": {
+			Env:             map[string]string{"CLAUDE_ACCOUNTS": "0 4", "PATH": "/usr/bin"},
+			DeclaredEnvKeys: []string{"CLAUDE_ACCOUNTS"},
+		},
 	}
 }
 
@@ -123,8 +131,8 @@ func TestFingerprintVersionPin(t *testing.T) {
 	// The version namespaces stored hashes; an UNINTENTIONAL bump during the
 	// de-conflation rebaselines every session (mass restart). An intentional
 	// bump is a deliberate edit to this assertion + a golden regen.
-	if FingerprintVersion != "v5" {
-		t.Errorf("FingerprintVersion = %q, want v5", FingerprintVersion)
+	if FingerprintVersion != "v6" {
+		t.Errorf("FingerprintVersion = %q, want v6", FingerprintVersion)
 	}
 }
 

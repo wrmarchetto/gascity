@@ -79,7 +79,7 @@ func oracleSessionBeadShapes() []beads.Bead {
 var assignedWorkGolden = map[string]bool{"ga-bare": false, "ga-named": true, "ga-named-fallback": true, "ga-noname": false, "ga-pool": true}
 
 // coreConfigHashGolden is the captured golden for TestSessionCoreConfigForHashInfoGolden.
-var coreConfigHashGolden = map[string]string{"empty/ga-bare": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-effort-override": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-named": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-named-fallback": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-noname": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-pool": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker-cmd/ga-bare": "v5:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-effort-override": "v5:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-named": "v5:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-named-fallback": "v5:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-noname": "v5:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-pool": "v5:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-provider/ga-bare": "v5:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-effort-override": "v5:f4922fa899cca0571515e4568d09101f08aa5ae3b737a050ded89bb0b56ca11f", "worker-provider/ga-named": "v5:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-named-fallback": "v5:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-noname": "v5:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-pool": "v5:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker/ga-bare": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-effort-override": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-named": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-named-fallback": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-noname": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-pool": "v5:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34"}
+var coreConfigHashGolden = map[string]string{"empty/ga-bare": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-effort-override": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-named": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-named-fallback": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-noname": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-pool": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker-cmd/ga-bare": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-effort-override": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-named": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-named-fallback": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-noname": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-pool": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-declared-env/ga-bare": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-effort-override": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-named": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-named-fallback": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-noname": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-pool": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-provider/ga-bare": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-effort-override": "v6:f4922fa899cca0571515e4568d09101f08aa5ae3b737a050ded89bb0b56ca11f", "worker-provider/ga-named": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-named-fallback": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-noname": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-pool": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker/ga-bare": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-effort-override": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-named": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-named-fallback": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-noname": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-pool": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34"}
 
 // TestSessionCoreConfigForHashInfoGolden is the DEDICATED pin for
 // sessionCoreConfigForHashInfo — the config-drift core-hash input builder. Its retired
@@ -118,6 +118,16 @@ func TestSessionCoreConfigForHashInfoGolden(t *testing.T) {
 		{"worker", TemplateParams{TemplateName: "worker"}},
 		{"worker-cmd", TemplateParams{TemplateName: "worker", Command: "claude --model x"}},
 		{"worker-provider", TemplateParams{TemplateName: "worker", Command: "agent --effort low", ResolvedProvider: effortProvider}},
+		// A config-declared env key (v6). The reconciler reaches its hash-form
+		// config through this projection, so without a fixture carrying one, an
+		// override path that dropped DeclaredEnvKeys would leave every entry
+		// here unchanged while making the reconciler blind to env drift again
+		// -- the ci-yulan1 failure, reintroduced one layer up.
+		{"worker-declared-env", TemplateParams{
+			TemplateName:    "worker",
+			Env:             map[string]string{"CLAUDE_ACCOUNTS": "0 4"},
+			DeclaredEnvKeys: []string{"CLAUDE_ACCOUNTS"},
+		}},
 	}
 
 	got := map[string]string{}
@@ -131,6 +141,11 @@ func TestSessionCoreConfigForHashInfoGolden(t *testing.T) {
 	// differs from a non-override shape (guards against a vacuous, override-inert golden).
 	if got["worker-provider/ga-effort-override"] == got["worker-provider/ga-bare"] {
 		t.Fatal("template_overrides did not affect the core hash; the override branch is not exercised")
+	}
+	// The declared-env fixture must differ from the same params without it, or
+	// its golden entries pin nothing.
+	if got["worker-declared-env/ga-bare"] == got["worker/ga-bare"] {
+		t.Fatal("DeclaredEnvKeys did not reach the core hash through this projection")
 	}
 	if len(coreConfigHashGolden) == 0 || !reflect.DeepEqual(got, coreConfigHashGolden) {
 		t.Errorf("core-config hash characterization drift; got=%#v", got)

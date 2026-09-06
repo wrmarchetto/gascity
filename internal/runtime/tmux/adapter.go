@@ -861,6 +861,21 @@ func (o *tmuxStartOps) createSession(name, workDir, command string, env map[stri
 // the controller's real value for the rest of the box's life. Re-marking a key
 // already marked is a no-op, and only controller-scope keys are marked, so a
 // relaunch that withholds no credential costs no extra tmux call at all.
+//
+// It re-applies no env VALUES, deliberately, and the obvious change -- a
+// set-environment pass here mirroring new-session's -e -- is rejected rather
+// than merely unwritten. Env is provision-half, so a relaunch runs only when
+// the provision hash is unchanged (the gate is cmd/gc/session_reconciler.go
+// :2929, re-checked against the prepared config at :6055), and since v6 that
+// half covers every key a config env block declared. The keys that could still
+// differ here are the ambient ones, which are not behavioral identity.
+//
+// What breaks if it is added anyway: a caller passing a PARTIAL Env would
+// write those keys and leave the rest at their create-time values, which is
+// worse than today's uniform "none" because it is invisible per-key. Add it
+// only alongside a rule for what a nil Env means on this path -- and note
+// ssh/provider.go and k8s/provider.go state the same contract in prose, so it
+// is three carriers, not one (ci-yulan1).
 func (o *tmuxStartOps) respawnAgent(name, workDir, command string, env map[string]string) error {
 	if err := o.tm.markSessionEnvRemoved(name, durableWithholdKeys(env)); err != nil {
 		return err

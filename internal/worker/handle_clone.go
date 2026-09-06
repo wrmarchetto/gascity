@@ -1,6 +1,10 @@
 package worker
 
-import "github.com/gastownhall/gascity/internal/runtime"
+import (
+	"encoding/json"
+
+	"github.com/gastownhall/gascity/internal/runtime"
+)
 
 func profileFamily(profile Profile) string {
 	switch profile {
@@ -60,6 +64,15 @@ func cloneRuntimeConfig(cfg runtime.Config) runtime.Config {
 	cfg.SessionSetup = append([]string(nil), cfg.SessionSetup...)
 	cfg.SessionLive = append([]string(nil), cfg.SessionLive...)
 	cfg.PackOverlayDirs = append([]string(nil), cfg.PackOverlayDirs...)
+	cfg.DeclaredEnvKeys = append([]string(nil), cfg.DeclaredEnvKeys...)
+	// InstallAgentHooks and StartupEnvelope were aliased until
+	// TestCloneRuntimeConfigDeepCopiesEveryReferenceField was written for
+	// DeclaredEnvKeys and walked the struct instead of the two fields anyone
+	// was thinking about. Pre-existing, and InstallAgentHooks is the one that
+	// bites: it feeds OverlayProviderNames, so it is a core-fingerprint input
+	// and a caller mutating the shared array changes another config's hash.
+	cfg.InstallAgentHooks = append([]string(nil), cfg.InstallAgentHooks...)
+	cfg.StartupEnvelope = append(json.RawMessage(nil), cfg.StartupEnvelope...)
 	cfg.CopyFiles = append([]runtime.CopyEntry(nil), cfg.CopyFiles...)
 	cfg.FingerprintExtra = cloneStringMap(cfg.FingerprintExtra)
 	return cfg

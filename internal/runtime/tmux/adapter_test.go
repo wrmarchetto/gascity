@@ -501,3 +501,78 @@ func TestProvider_RelaunchRepinsControllerTokenInPreexistingWarmBox(t *testing.T
 		t.Fatalf("respawned pane in a pre-fix warm box received the controller token: %s", got)
 	}
 }
+
+// TestProvider_RelaunchDoesNotReapplyEnvValues pins the carrier contract that
+// ci-yulan1 settled: a warm-box relaunch applies NO env values, so the
+// respawned agent keeps the environment its box was created with.
+//
+// The contract is deliberate, not an oversight -- see respawnAgent's comment
+// for the rejected set-environment pass -- and it is safe only because
+// Config.Env is provision-half, so a relaunch runs only when the provision hash
+// is unchanged. Before v6 that half was blind to config-declared env, which is
+// how the mayor came to run for hours on a provider env block its process had
+// never seen. This test pins the CARRIER half; the fingerprint half is pinned
+// in internal/runtime/fingerprint_declared_env_test.go. Either alone permits
+// the defect.
+//
+// MUTATION TRAP, stated because the obvious placement walks straight into it.
+// The natural home is startup_test.go, whose fakeStartOps.respawnAgent records
+// the env ARGUMENT it was handed -- and the real respawnAgent IS handed the env
+// and ignores it, so an assertion there passes whatever the carrier does. This
+// drives a real tmux and reads the value out of the RESPAWNED PROCESS instead,
+// which is the only place the answer differs.
+//
+// Run: go test ./internal/runtime/tmux/ -run RelaunchDoesNotReapplyEnv
+func TestProvider_RelaunchDoesNotReapplyEnvValues(t *testing.T) {
+	if !hasTmux() {
+		t.Skip("tmux not installed")
+	}
+	const envVar = "GC_TEST_DECLARED_VALUE"
+
+	cfg := DefaultConfig()
+	cfg.SocketName = privateSocketName("noenv")
+	p := NewProviderWithConfig(cfg)
+	name := "gc-test-relaunch-env-not-reapplied"
+	_ = p.Stop(name)
+	defer func() { _ = p.Stop(name) }()
+
+	workDir := t.TempDir()
+	marker := filepath.Join(workDir, "marker")
+	agentCmd := func(tag string) string {
+		return fmt.Sprintf(`sh -c 'printf %%s "%s=[${%s-ABSENT}]" > %s; sleep 300'`,
+			tag, envVar, marker)
+	}
+
+	if err := p.Start(context.Background(), name, runtime.Config{
+		Command: agentCmd("created"),
+		WorkDir: workDir,
+		Env:     map[string]string{envVar: "at-create"},
+	}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForMarker(t, marker, "created=[at-create]")
+
+	// A DIFFERENT value on the relaunch. Passing the same one, or none, would
+	// make the assertion below unable to tell "not re-applied" from "re-applied
+	// with a value that happens to match" -- the shape that hid this defect in
+	// production, where DEFAULT_POOL was byte-identical to the configured pool.
+	if err := p.Relaunch(context.Background(), name, runtime.Config{
+		Command: agentCmd("respawned"),
+		WorkDir: workDir,
+		Env:     map[string]string{envVar: "at-relaunch"},
+	}); err != nil {
+		t.Fatalf("Relaunch: %v", err)
+	}
+	waitForMarker(t, marker, "respawned=[at-create]")
+
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("reading marker: %v", err)
+	}
+	if string(got) != "respawned=[at-create]" {
+		t.Fatalf("respawned pane saw %q, want %q -- the relaunch carrier applied "+
+			"an env value, which overturns the contract respawnAgent documents "+
+			"and which ssh/provider.go and k8s/provider.go also state",
+			got, "respawned=[at-create]")
+	}
+}

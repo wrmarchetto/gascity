@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/gastownhall/gascity/internal/agent"
@@ -77,6 +78,11 @@ type TemplateParams struct {
 	ConfiguredNamedMode string
 	// FPExtra carries additional fingerprint data (pool config, etc.).
 	FPExtra map[string]string
+	// DeclaredEnvKeys names the Env keys a config env block set, as opposed to
+	// the ones swept out of the controller process. Carried to
+	// runtime.Config.DeclaredEnvKeys, which documents why the distinction is
+	// provenance rather than the key's name.
+	DeclaredEnvKeys []string
 	// ResolvedProvider is the resolved provider spec (for ACP routing, etc.).
 	ResolvedProvider *config.ResolvedProvider
 	// TemplateName is the config template name (pool base name or qualified name).
@@ -441,6 +447,39 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	processenv.PrependGCBinDirToPATH(env, env["GC_BIN"])
 	env = convergence.ScrubTokenEnv(env)
 
+	// This is the only point in gc where the env layers are still separate, so it
+	// is the only point that can say which keys a user DECLARED. agentEnv is
+	// excluded for the same reason: it is gc's own injection, not config.
+	//
+	// Populating here is sufficient only because every later mutation of
+	// tp.Env writes GC_ keys, which envFingerprintAllow already governs
+	// (build_desired_state_pool_info.go GC_ALIAS/GC_AGENT, session_reconciler
+	// .go GC_TEMPLATE/GC_ALIAS/GC_AGENT/GC_SESSION_ORIGIN). That is a
+	// CONVENTION WITH NO GATE: a future site writing a non-GC_ key into
+	// tp.Env reopens this defect and no test fails. If one is ever added,
+	// declare it here rather than trusting the prefix.
+	//
+	// Before this set existed, a key here contributed to NO fingerprint, so an
+	// edit to a [providers.<name>.env] block moved nothing; paired with a command
+	// change it read as launch-only drift and took the warm-box relaunch, which
+	// applies no env values at all (ci-yulan1). The set travels to
+	// runtime.Config.DeclaredEnvKeys, and both the start path and the reconciler's
+	// hash-form config reach it through templateParamsToConfig, so those two
+	// agree by construction.
+	//
+	// THE RECONCILER ONLY. Other packages build a runtime.Config from a
+	// ResolvedProvider's env and hash it against a stored started_config_hash
+	// -- startedConfigHashProvesACPTransport and its worker twin -- and those
+	// are second derivations that must set the field themselves. They were
+	// found by adversarial review, not by a test, which is why
+	// TestResolvedProviderEnvConfigsDeclareTheirEnvKeys now gates the class.
+	declaredEnvKeys := map[string]bool{}
+	for _, layer := range []map[string]string{workspaceEnv, resolved.Env, cfgAgent.Env} {
+		for key := range layer {
+			declaredEnvKeys[key] = true
+		}
+	}
+
 	// Step 10b: Upstream axis (Phase C). Inject the selected upstream's serving
 	// env LAST so it is authoritative for the model-serving keys, and after
 	// ScrubTokenEnv so its credential refs survive — which is exactly why the
@@ -487,12 +526,24 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 					return TemplateParams{}, fmt.Errorf("agent %q upstream %q sets %s, but its harness %q declares no upstream_env.%s binding (set %s_env on the upstream, or upstream_env.%s on the harness)", qualifiedName, upstreamName, r.field, resolvedProviderName(resolved), r.field, r.field, r.field)
 				}
 				env[envName] = processenv.ExpandSessionEnvValue(r.value)
+				// Undeclared: see the raw-env loop below for why an
+				// upstream-written key is never a fingerprint input.
+				delete(declaredEnvKeys, envName)
 			}
 		}
 		// Raw env is the harness-specific escape hatch, merged LAST (wins over the
 		// abstract render and ambient/agent env for the keys it sets).
+		//
+		// Undeclared alongside the abstract render above: these values are the
+		// RESOLVED credentials, and Config.Upstream documents that only the
+		// selected upstream NAME is fingerprinted, so a rotation never moves a
+		// hash. The subtraction is unconditional rather than conditional on who
+		// wrote the key first -- a provider [env] block naming the same key would
+		// otherwise smuggle the resolved value into the hash through the declared
+		// set, and the upstream layer is the one that decides the value here.
 		for k, v := range expandEnvMap(spec.Env) {
 			env[k] = v
+			delete(declaredEnvKeys, k)
 		}
 	}
 	// Managed agents are Gas City-owned recursive execution environments. Set
@@ -685,6 +736,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		Command:          command,
 		Prompt:           prompt,
 		Env:              env,
+		DeclaredEnvKeys:  sortedKeysOf(declaredEnvKeys),
 		Upstream:         cfgAgent.Upstream,
 		Hints:            hints,
 		WorkDir:          workDir,
@@ -704,6 +756,28 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	params.SessionOverride = cfgAgent.Session
 	params.EffectiveSessionProvider = effectiveSessionProvider(cfgAgent.Session, p.sessionProvider)
 	return params, nil
+}
+
+// sortedKeysOf returns the true-valued keys of set in sorted order, or nil when
+// the set is empty. Nil rather than an empty slice so a config declaring no env
+// is one identity however it was built. The equality is not free: it holds
+// because runtime.hashEnvFingerprint takes its allow-list-only path on a
+// zero-length slice, and that is pinned by
+// runtime.TestNilAndEmptyDeclaredEnvHashIdentically -- NOT by the fingerprint
+// golden net, whose nil-vs-empty pair is over Env.
+func sortedKeysOf(set map[string]bool) []string {
+	if len(set) == 0 {
+		return nil
+	}
+	// Every key present is a member: the only writers add true and delete, and
+	// no site writes false. An `if ok` filter here would be an unreachable
+	// branch that reads as a guarded invariant.
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // isOperationalScript reports whether rel (a slash-separated path relative to
@@ -869,6 +943,7 @@ func templateParamsToConfigWithDelivery(tp TemplateParams) (runtime.Config, prom
 	}
 	cfg.WorkDir = tp.WorkDir
 	cfg.FingerprintExtra = tp.FPExtra
+	cfg.DeclaredEnvKeys = tp.DeclaredEnvKeys
 	// Prompt delivery may prepend the startup prompt to the configured nudge.
 	cfg.Nudge = nudge
 	// ga-c4w: interactive `gc session new` sessions (session_origin=manual)

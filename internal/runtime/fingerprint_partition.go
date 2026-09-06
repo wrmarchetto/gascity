@@ -26,8 +26,8 @@ import (
 // Classification (settled adversarially; see
 // docs/architecture/worker-runtime-transport-unweld-v0.md §6):
 //
-//	PROVISION (box):  Env (allow-listed), FingerprintExtra, PreStart,
-//	                  OverlayDir, OverlayProviders, CopyFiles.
+//	PROVISION (box):  Env (allow-listed + DeclaredEnvKeys), FingerprintExtra,
+//	                  PreStart, OverlayDir, OverlayProviders, CopyFiles.
 //	LAUNCH (agent):   Command, Lifecycle, Upstream, MCPServers,
 //	                  AcceptStartupDialogs, MouseOn, SessionSetup,
 //	                  SessionSetupScript.
@@ -60,7 +60,7 @@ func LaunchFingerprint(cfg Config) string {
 // hashProvisionFields writes the box-affecting core fields to h, using the same
 // per-field framing as hashCoreFields.
 func hashProvisionFields(h hash.Hash, cfg Config) {
-	hashSortedMapIncluded(h, cfg.Env, envFingerprintInclude)
+	hashEnvFingerprint(h, cfg)
 
 	if len(cfg.FingerprintExtra) > 0 {
 		h.Write([]byte("fp")) //nolint:errcheck // hash.Write never errors

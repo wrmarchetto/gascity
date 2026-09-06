@@ -572,6 +572,28 @@ type Config struct {
 	// Env is additional environment variables set in the session.
 	Env map[string]string
 
+	// DeclaredEnvKeys names the Env keys whose value came from a config env
+	// block the user wrote -- [workspace.env], a provider chain's [env], an
+	// agent [env] -- rather than from the controller's own process environment.
+	// Only these keys and envFingerprintAllow contribute to the fingerprint.
+	//
+	// Provenance, NOT the key's name, is the discriminator, and the difference
+	// is load-bearing. The obvious rule -- fingerprint every key that is not
+	// GC_-prefixed, on the theory that gc's own injected vars are the ephemeral
+	// ones -- also sweeps in PATH, HOME, LANG and CLAUDE_CODE_OAUTH_TOKEN, which
+	// the session env carries from the controller process
+	// (processenv.ProviderProcessPassthroughEnv). Hashing those makes a
+	// credential rotation or a supervisor started from a different shell a
+	// fleet-wide config-drift restart, and it contradicts the exclusion Upstream
+	// documents above. A key the user declared is intent; a key gc swept up is
+	// ambient.
+	//
+	// Populated at the single seam where the layers are still separate
+	// (cmd/gc/template_resolve.go step 10); every later mutation of Env writes
+	// GC_ keys, which the allow-list already governs. Order is not significant --
+	// the hash sorts.
+	DeclaredEnvKeys []string
+
 	// MCPServers is the effective ACP session/new MCP server list for this
 	// session. Non-ACP providers ignore it.
 	MCPServers []MCPServerConfig
