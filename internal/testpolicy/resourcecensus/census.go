@@ -128,10 +128,17 @@ var bootstrapPolicy = Ledger{
 			// hermetic -- the defect it pins is how bash scores a compound
 			// statement in that script's own exit path, so a stand-in for the
 			// script would test the stand-in. No new file: the call joins
-			// existing exec.Command sites in scripts/go_owned_tmp_test.go,
-			// which is why BaselineFiles is unchanged at 178.
-			BaselineCalls:   612,
-			BaselineFiles:   178,
+			// existing exec.Command sites in scripts/go_owned_tmp_test.go, so
+			// that bump moved calls only.
+			//
+			// 612 -> 614, 178 -> 179 (ci-sptsk3): the idle-scope reap tests exec
+			// a process that stands in the scope and the watchdog helper that
+			// supervises a fake server. Neither can be a stand-in -- the
+			// claimant scan they exercise reads /proc/<pid>/cwd and
+			// /proc/<pid>/environ, which only a real child populates. The one
+			// new file is cmd/gc/dolt_scope_idle_test.go.
+			BaselineCalls:   614,
+			BaselineFiles:   179,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -141,10 +148,16 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeAll,
-			Resource:        ResourceFixedSleep,
-			BaselineCalls:   440,
-			BaselineFiles:   163,
+			Scope:    ScopeAll,
+			Resource: ResourceFixedSleep,
+			// 440 -> 444, 163 -> 164 (ci-sptsk3): three of the four are the
+			// idle-reap control windows, which assert a server STAYS alive
+			// across several windows and so cannot be replaced by a lifecycle
+			// signal -- there is no event to wait for, elapsed time is the
+			// claim. The fourth is the poll step inside the shared deadline
+			// loop waitForScopeIdleCondition.
+			BaselineCalls:   444,
+			BaselineFiles:   164,
 			ReportedCalls:   447,
 			ReportedFiles:   157,
 			OwnerBead:       "ga-80po0c.2",
@@ -171,8 +184,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceSubprocess,
-			BaselineCalls:   413,
-			BaselineFiles:   120,
+			BaselineCalls:   415,
+			BaselineFiles:   121,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -184,8 +197,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceFixedSleep,
-			BaselineCalls:   290,
-			BaselineFiles:   116,
+			BaselineCalls:   294,
+			BaselineFiles:   117,
 			ReportedCalls:   295,
 			ReportedFiles:   114,
 			OwnerBead:       "ga-80po0c.2",
@@ -262,8 +275,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceNetListen,
-			BaselineCalls:   95,
-			BaselineFiles:   36,
+			BaselineCalls:   97,
+			BaselineFiles:   37,
 			ReportedCalls:   92,
 			ReportedFiles:   34,
 			OwnerBead:       "ga-80po0c.2.2.2",
@@ -493,8 +506,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceSubprocess,
-			BaselineCalls:   405,
-			BaselineFiles:   115,
+			BaselineCalls:   407,
+			BaselineFiles:   116,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
@@ -506,8 +519,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceFixedSleep,
-			BaselineCalls:   290,
-			BaselineFiles:   116,
+			BaselineCalls:   294,
+			BaselineFiles:   117,
 			ReportedCalls:   287,
 			ReportedFiles:   113,
 			OwnerBead:       "ga-80po0c.2.1",
@@ -584,8 +597,8 @@ var bootstrapPolicy = Ledger{
 		{
 			Scope:           ScopeUntagged,
 			Resource:        ResourceNetListen,
-			BaselineCalls:   93,
-			BaselineFiles:   35,
+			BaselineCalls:   95,
+			BaselineFiles:   36,
 			ReportedCalls:   92,
 			ReportedFiles:   34,
 			OwnerBead:       "ga-80po0c.2.2.2",
