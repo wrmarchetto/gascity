@@ -168,6 +168,13 @@ func SweepOrphanPIDPrefixedDirs(root, prefix string, diagnostics io.Writer) {
 			}
 			reason = "pid dead, no sentinel"
 		}
+		// KILL BEFORE REMOVE, and the order is the whole point. RemoveAll
+		// deletes the socket, which does not stop the server -- it makes it
+		// unreachable AND alive, with no socket and no working directory left
+		// to address it by, which is what makes such an orphan permanent
+		// rather than merely late (ci-87655r). A sweep wired after the
+		// removal can never see the sockets it is meant to reap.
+		KillServersUnder(path, diagnostics)
 		// Name each removal so a recurrence of ga-djbcqt is attributable
 		// from run logs instead of gate-log forensics.
 		_, _ = fmt.Fprintf(diagnostics, "tmuxtest: removing orphaned socket parent %s (%s)\n", path, reason)
