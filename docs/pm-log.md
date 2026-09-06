@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-7eu 2026-09-06T05:18Z
+last_seen: gs-4wo 2026-09-06T08:23Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -983,5 +983,40 @@ session, answered by re-checking ci-waw3o7. Until the deferral date
 either shape gets this same answer. Residuals in pm-log #5 stand: no
 scheduled wake has yet run WITH the assessment layer, and a governor that
 assesses then reports something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 36. pm-epic-close gs-4wo: governor stays in-progress, ruling deferred to 2026-09-07 (2026-09-06)
+
+Thirtieth ruling of this shape (pm-log #5 gs-8iv through #35 gs-7eu),
+re-verified live rather than recalled, three hours after #35 across a usage
+pause. Criterion-7 chain re-checked in the city store this turn at 08:24Z:
+ci-waw3o7 (P1, assignee human) holds the DEFERRED status pm-log #13 found,
+earliest revisit 2026-09-07 and last updated 2026-09-05, and gate ci-gbhkpa
+is still open and operator-paged. The rig store moved since last_seen only
+by gs-0eh and this summons's claim, so the closed set under epic:governor is
+unchanged without re-listing it (gs-x0k, gs-xeh, gs-o9i, gs-nun -- criteria
+1-6 verified in their close reasons, pm-log #5). Per pm-log #4 the epic
+closes on Willie's recorded say-so; it has not landed -- the deferral
+postpones the question rather than answering it -- so governor stays
+in-progress and the bead that puts motion back remains ci-waw3o7.
+
+No epic promoted -- the summons itself lists no other open epic -- and no
+DECOMP sent. What gascity builds next is already recorded as pm-open #2
+(amended at #29), and the substrate-maintenance placement gap as pm-open #3;
+no new entry. gs-0eh (pm-idle:gascity, open, filed 05:34:39Z) is one unit
+for the next session -- same decision from opposite evidence, answered by
+re-checking ci-waw3o7.
+
+Operational note for the next session: #35's session-completion push failed
+at 05:22Z -- the pre-push gate's fast suite failed
+TestRepositoryLedgerMatchesCensusAndDocumentation (subprocess census one
+call/one file over baseline), a source-side drift in the shared checkout's
+unpushed stack that docs-only PM commits cannot cause. Engineer merge
+traffic since (seven fix branches, several commits reconciling census
+ratchets) grew local main to 35 ahead of origin, pm-log #35 rebased to
+a8d4adab4 mid-stack. This turn ends by retrying pull-rebase-push; if the
+gate is still red, the defect gets filed as a standalone rig bead (pm-open
+#3 precedent) and that bead is the durable record of the outcome.
 
 Source: roadmap governor
