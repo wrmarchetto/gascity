@@ -1079,8 +1079,28 @@ type sessionListJSONRow struct {
 	// legacy work_dir is stamped at create/dispatch and is often the agent
 	// home (depth-1) or empty, which is why the worktree reaper's liveness
 	// gate needs the canonical value (gastownhall/gascity#4492 accept-crit #1).
-	WorkerDir            string     `json:"worker_dir,omitempty"`
-	SessionName          string     `json:"session_name,omitempty"`
+	WorkerDir   string `json:"worker_dir,omitempty"`
+	SessionName string `json:"session_name,omitempty"`
+	// ConfiguredNamedIdentity and AliasHistory are two of the five rungs
+	// session.AssigneeIdentities enumerates, and until ci-yfuh3a neither was a
+	// column here: a claim written under either resolved to no session for any
+	// consumer of this command, which reads as an unheld claim rather than as a
+	// failed lookup.
+	ConfiguredNamedIdentity string   `json:"configured_named_identity,omitempty"`
+	AliasHistory            []string `json:"alias_history,omitempty"`
+	// ClaimIdentities is every assignee value a claim by this session could
+	// carry, straight from session.AssigneeIdentities. It is here so no consumer
+	// has to reassemble the ladder from the columns: the city's own
+	// governor-assess.py did reassemble it, joined on the agent name alone, and
+	// lost three of eight governor claims to the session-name spelling
+	// (ci-reqb5f). A derived field cannot drift from the ladder; a
+	// column-by-column rebuild in each consumer drifts at the next rung added.
+	//
+	// It carries the RAW session_name (Info.SessionNameMetadata), which is why
+	// no raw session_name column joins it: the published session_name is
+	// Info.SessionName, whose sessionNameFor(ID) fallback would match work the
+	// session was never assigned.
+	ClaimIdentities      []string   `json:"claim_identities,omitempty"`
 	SessionKey           string     `json:"session_key,omitempty"`
 	ResumeFlag           string     `json:"resume_flag,omitempty"`
 	ResumeStyle          string     `json:"resume_style,omitempty"`
@@ -1162,21 +1182,26 @@ func sessionListJSONRows(sessions []session.Info) []sessionListJSONRow {
 	rows := make([]sessionListJSONRow, len(sessions))
 	for i, s := range sessions {
 		rows[i] = sessionListJSONRow{
-			ID:            s.ID,
-			Name:          sessionListJSONName(s),
-			Template:      s.Template,
-			State:         s.State,
-			Closed:        s.Closed,
-			Title:         s.Title,
-			Rig:           sessionListJSONRig(s),
-			Alias:         s.Alias,
-			AgentName:     s.AgentName,
-			Provider:      s.Provider,
-			Transport:     s.Transport,
-			Command:       s.Command,
-			WorkDir:       s.WorkDir,
-			WorkerDir:     strings.TrimSpace(s.WorkerDir),
-			SessionName:   s.SessionName,
+			ID:          s.ID,
+			Name:        sessionListJSONName(s),
+			Template:    s.Template,
+			State:       s.State,
+			Closed:      s.Closed,
+			Title:       s.Title,
+			Rig:         sessionListJSONRig(s),
+			Alias:       s.Alias,
+			AgentName:   s.AgentName,
+			Provider:    s.Provider,
+			Transport:   s.Transport,
+			Command:     s.Command,
+			WorkDir:     s.WorkDir,
+			WorkerDir:   strings.TrimSpace(s.WorkerDir),
+			SessionName: s.SessionName,
+
+			ConfiguredNamedIdentity: s.ConfiguredNamedIdentity,
+			AliasHistory:            s.AliasHistory,
+			ClaimIdentities:         sessionBeadAssigneeIdentitiesInfo(s),
+
 			SessionKey:    s.SessionKey,
 			ResumeFlag:    s.ResumeFlag,
 			ResumeStyle:   s.ResumeStyle,
