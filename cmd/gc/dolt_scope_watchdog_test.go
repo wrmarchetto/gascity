@@ -181,6 +181,18 @@ func TestManagedDoltScopeWatchdogHelper(t *testing.T) {
 	if interval := strings.TrimSpace(os.Getenv("GC_TEST_MANAGED_DOLT_HELPER_SCOPE_WD_INTERVAL_MS")); interval != "" {
 		t.Setenv(managedDoltScopeWatchdogIntervalEnv, interval)
 	}
+	// Same re-export shape as the interval above, for the same reason:
+	// TestMain scrubs non-GC_TEST_ GC_* keys, so the idle window has to ride
+	// a GC_TEST_ control var into this helper and be re-exported for the
+	// watchdog child. Absent, the watchdog runs the production window and
+	// the idle path never fires -- which is what the scope-DELETION tests
+	// above want.
+	if idle := strings.TrimSpace(os.Getenv("GC_TEST_MANAGED_DOLT_HELPER_SCOPE_IDLE_MS")); idle != "" {
+		t.Setenv(managedDoltScopeIdleWindowEnv, idle)
+	}
+	if reap := strings.TrimSpace(os.Getenv("GC_TEST_MANAGED_DOLT_HELPER_SCOPE_IDLE_REAP")); reap != "" {
+		t.Setenv(managedDoltScopeIdleReapEnv, reap)
+	}
 	statePath := strings.TrimSpace(os.Getenv("GC_TEST_MANAGED_DOLT_HELPER_STATE"))
 	configPath := strings.TrimSpace(os.Getenv("GC_TEST_MANAGED_DOLT_HELPER_CONFIG"))
 	logPath := strings.TrimSpace(os.Getenv("GC_TEST_MANAGED_DOLT_HELPER_LOG"))
@@ -197,7 +209,12 @@ func TestManagedDoltScopeWatchdogHelper(t *testing.T) {
 	// startup sweeps cannot mistake the intentional handoff for an orphan.
 	t.Setenv(managedDoltTestParentPIDEnv, strconv.Itoa(os.Getppid()))
 
-	started, err := startManagedDoltSQLServerWithScopeWatchdog("", configPath, logPath, logFile)
+	// The city path is the SCOPE the watchdog measures for claimants. Empty
+	// is the default here and reads as unknown, so the scope-deletion tests
+	// above are untouched by idle reaping; the idle tests pass a real scope
+	// directory.
+	cityPath := strings.TrimSpace(os.Getenv("GC_TEST_MANAGED_DOLT_HELPER_CITY"))
+	started, err := startManagedDoltSQLServerWithScopeWatchdog(cityPath, configPath, logPath, logFile)
 	if err != nil {
 		t.Fatalf("start managed dolt with scope watchdog: %v", err)
 	}

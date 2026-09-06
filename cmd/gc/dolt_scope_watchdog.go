@@ -18,6 +18,14 @@ package main
 // renames) from being misread as deletion. The check queries live
 // filesystem state every cycle; there are no status files.
 //
+// The watchdog now carries a SECOND reap condition, added by ci-sptsk3: a
+// scope that still exists but that nothing is using any more. Its decision
+// lives in dolt_scope_idle.go; only the supervise loop below is shared. The
+// two are deliberately separate cases on separate tickers -- "the scope was
+// deleted" and "the scope is finished" are different claims with different
+// evidence, and the cheap stat that answers the first must not wait on the
+// /proc walk that answers the second.
+//
 // Memory cost: a gc re-exec initializes the full cmd/gc dependency graph
 // and holds it for the life of the scope — measured at ~97MB RSS per
 // watchdog, of which ~20MB is private dirty (the rest is binary text shared
@@ -234,8 +242,13 @@ func runManagedDoltScopeWatchdog(args []string, stdout, stderr *os.File) int {
 	fmt.Fprintln(stdout, formatManagedDoltWatchdogStartLine(startPID, startTicks, startIdentity)) //nolint:errcheck
 
 	interval := managedDoltScopeWatchdogInterval()
-	fmt.Fprintf(logFile, "gc scope watchdog: supervising dolt sql-server pid %d (config %s, poll interval %s)\n", //nolint:errcheck
-		cmd.Process.Pid, configFile, interval)
+	// Policy is resolved once, before the loop: an in-flight environment
+	// change must not switch reaping on or off mid-supervision, the same
+	// reason the poll interval is read here rather than per tick.
+	idleReap := managedDoltScopeIdleReapEnabled()
+	idleWindow := managedDoltScopeIdleWindow()
+	fmt.Fprintf(logFile, "gc scope watchdog: supervising dolt sql-server pid %d (config %s, poll interval %s, idle reap %v after %s)\n", //nolint:errcheck
+		cmd.Process.Pid, configFile, interval, idleReap, idleWindow)
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -246,7 +259,19 @@ func runManagedDoltScopeWatchdog(args []string, stdout, stderr *os.File) int {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	// A second ticker rather than a second branch on the first: the two
+	// decisions are independent (scope DELETED vs scope UNUSED) and share
+	// only a cadence, and folding them into one case would make the cheap
+	// scope-gone stat wait on the idle bookkeeping.
+	idleTicker := time.NewTicker(interval)
+	defer idleTicker.Stop()
 	goneStreak := 0
+	// idleSince is when the CHEAP signal -- no established client
+	// connection -- first read zero, and the zero Time means "not currently
+	// idle". The expensive claimant scan walks all of /proc, so it is
+	// deferred until this streak has already outlasted the whole window;
+	// on a server that is actually in use it therefore never runs.
+	var idleSince time.Time
 	for {
 		select {
 		case sig := <-signals:
@@ -265,6 +290,34 @@ func runManagedDoltScopeWatchdog(args []string, stdout, stderr *os.File) int {
 			}
 			fmt.Fprintf(logFile, "gc scope watchdog: config %s gone for %d consecutive checks; terminating dolt sql-server pid %d\n", //nolint:errcheck
 				configFile, goneStreak, cmd.Process.Pid)
+			_ = terminateManagedDoltScopeWatchdogChild(cityPath, cmd.Process.Pid, startTicks, startIdentity)
+			<-done
+			return 0
+		case <-idleTicker.C:
+			if !idleReap {
+				continue
+			}
+			if managedDoltScopeClientCount(cmd.Process.Pid) != 0 {
+				idleSince = time.Time{}
+				continue
+			}
+			if idleSince.IsZero() {
+				idleSince = time.Now()
+				continue
+			}
+			if time.Since(idleSince) < idleWindow {
+				continue
+			}
+			use := observeManagedDoltScopeUse(cityPath, cmd.Process.Pid, os.Getpid())
+			if !managedDoltScopeUnused(use) {
+				// Re-arm the whole window rather than the remainder: the
+				// scope proved itself in use, so the next reap must be
+				// backed by a fresh full-length observation.
+				idleSince = time.Time{}
+				continue
+			}
+			fmt.Fprintf(logFile, "gc scope watchdog: scope %s idle for %s with no client and no claimant; terminating dolt sql-server pid %d\n", //nolint:errcheck
+				cityPath, idleWindow, cmd.Process.Pid)
 			_ = terminateManagedDoltScopeWatchdogChild(cityPath, cmd.Process.Pid, startTicks, startIdentity)
 			<-done
 			return 0
