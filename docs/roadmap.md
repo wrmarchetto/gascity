@@ -62,6 +62,8 @@ Acceptance:
   without Willie checking in, such that his manual every-couple-of-hours
   ritual stops being necessary.
 
+Depends on: ci-waw3o7
+
 ## Abandoned
 
 None yet.
