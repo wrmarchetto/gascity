@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-d9m 2026-09-07T20:29Z
+last_seen: gs-zy2 2026-09-07T20:43Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1854,5 +1854,32 @@ on ci-waw3o7 is already pm-open #2(a), and #2(b) was closed by pm-log #59.
 Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
 assessment layer, and a governor that assesses then reports something else
 is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 63. pm-epic-close gs-zy2: governor stays in-progress; no drift from #62 fourteen minutes prior (2026-09-07)
+
+Fifty-first ruling of this shape, filed 14 minutes after gs-d9m (pm-log
+#62). Re-verified against the stores this turn at 20:43Z rather than
+recalled: the closed set under epic:governor is unchanged (gs-x0k, gs-xeh,
+gs-o9i, gs-nun -- criteria 1-6 verified in their close reasons, pm-log #5),
+and ci-waw3o7 in the city store is byte-identical to the #62 reading --
+still DEFERRED, last updated 2026-09-05, assignee human, Willie's recorded
+answer still the 2026-09-05 "NOT YET" ruling about the evidence. The only
+bead updated in this rig since last_seen is this summons itself. Per pm-log
+#4 governor stays in-progress and the bead that reopens it remains
+ci-waw3o7.
+
+Everything #62 established still holds: the deferral date has arrived so
+the re-ask is owed, and it is owed by ci-waw3o7's owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require, not by this PM. No page sent -- gate ci-gbhkpa already
+operator-pages the decision (pm-log #29 precedent against re-paging a
+parked question). No epic promoted and no DECOMP sent: the roadmap holds no
+status:open epic, and mayor-slack-bridge is in-progress with open work
+(gs-228 operator provisioning, gs-z09 round-trip demo -- both re-read this
+turn). No new pm-open entry: the wait is pm-open #2(a) and #2(b) was closed
+by pm-log #59. This summons loop re-fires by design while the epic waits on
+the external ruling; each close names ci-waw3o7 as the reopener.
 
 Source: roadmap governor
