@@ -1023,7 +1023,8 @@ func doStartStandalone(args []string, controllerMode bool, stdout, stderr io.Wri
 	poolDesired := retainScaleCheckPartialPoolDesired(
 		cfg,
 		PoolDesiredCounts(ComputePoolDesiredStates(
-			cfg, poolWorkBeads, openInfos, dsResult.ScaleCheckCounts)),
+			expandAgentClaimRoutes(cfg, cityPath, cityName, stderr),
+			poolWorkBeads, openInfos, dsResult.ScaleCheckCounts)),
 		sessionBeads,
 		effectivePoolPartialRetentionTemplates(dsResult),
 	)
