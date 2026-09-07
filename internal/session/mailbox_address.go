@@ -33,6 +33,17 @@ func MailboxAddress(b beads.Bead) string {
 // and trimmed, falling back to session_name only when nothing else resolves. It
 // is the canonical home of the logic the mail CLI previously inlined as
 // sessionMailboxAddresses.
+//
+// The seat identity in agent_name is deliberately ABSENT here even though mail
+// re-routed off a closing session lands on it (see SeatMailboxAddress). It
+// belongs to RecipientRoutesFromInfo instead, which is the one place beadmail
+// expands a resolved session into the addresses it will answer for -- every
+// caller of this function feeds its result back through that expansion, so a
+// copy here is a second authority on the same set that no test can kill. A
+// mutation sweep on 2026-09-07 found exactly that: removing agent_name from
+// this list changed nothing observable, including on the CLI inbox path. Add it
+// here only alongside a consumer that queries these addresses without route
+// expansion.
 func MailboxAddresses(b beads.Bead) []string {
 	return mailboxAddresses(b, false)
 }
@@ -186,4 +197,25 @@ func (s *Store) ExtmsgHandleSource(id string) (string, bool) {
 		return "", false
 	}
 	return ExtmsgHandleSource(b), true
+}
+
+// SeatMailboxAddress returns the address a session's mail should be re-routed
+// to when the session itself ends but its SEAT does not: the alias the seat
+// publishes under, else the seat identity in agent_name.
+//
+// The two addresses this deliberately does NOT consider are the bead id and the
+// runtime session_name. Both are unique to one occupant -- session_name embeds
+// the bead id -- so re-routing to either moves a message from one dead address
+// to another, which is the failure it exists to end. An empty return means the
+// session carried no durable address at all and the caller must not move the
+// message: leaving it on a dead address it can still be found on by id beats
+// moving it to one nothing will ever resolve.
+//
+// Pinned by cmd/gc/session_beads_mail_reroute_test.go, which asserts through an
+// inbox read rather than the assignee field.
+func SeatMailboxAddress(b beads.Bead) string {
+	if alias := strings.TrimSpace(b.Metadata["alias"]); alias != "" {
+		return alias
+	}
+	return strings.TrimSpace(b.Metadata["agent_name"])
 }

@@ -1261,3 +1261,119 @@ func generateThreadID() string {
 
 // Compile-time interface check.
 var _ mail.Provider = (*Provider)(nil)
+
+// --- re-routing mail off a dead address ---
+//
+// A message bead's Assignee is its ONLY route to an inbox: every listing path
+// in this file matches on it, and no other field records who a message is for.
+// When that address is one a session takes to the grave -- its bead ID, its
+// runtime session_name -- the message becomes unreachable the moment the
+// session bead closes. It is not re-routed, appears in no inbox, and stays open
+// forever; the only thing that names it is a `gc doctor` session-model advisory
+// (ci-cw9wsk: eleven such messages in the pilot city on 2026-09-07, three of
+// them live operational warnings for a bench sitting in progress).
+//
+// The repair belongs here rather than in the session-close caller for this
+// package's standing invariant: callers above beadmail never construct a
+// message-bead query and never write a message bead's fields. The caller
+// decides WHICH addresses died and which one survives; this decides what a
+// message is and whether it is still undelivered.
+
+// RerouteFromMetadataKey records the dead address a message was moved off.
+// Written once, on the first move, and never overwritten -- see Reroute.
+const RerouteFromMetadataKey = "mail.rerouted_from"
+
+// RerouteReasonMetadataKey records WHY a message changed recipient. A message
+// that silently changes address is worse than a stranded one: the sender is
+// told nothing either way, and without this a later reader cannot tell a
+// re-route from a mis-addressed send.
+const RerouteReasonMetadataKey = "mail.reroute_reason"
+
+// RerouteReasonRecipientClosed is the only reason value today: the session that
+// owned the address the message was sent to has ended.
+const RerouteReasonRecipientClosed = "recipient_session_closed"
+
+// RerouteLabel marks a re-routed message in `bd list` and in an inbox view, so
+// a reader who did not send it can see it arrived by redirection.
+const RerouteLabel = "mail-rerouted"
+
+// Reroute re-addresses every still-undelivered message sitting on a dead
+// address to a surviving one, and reports the message ids it moved.
+//
+// UNDELIVERED means open and unread. A read message is deliberately left where
+// it is: it was delivered, and moving it re-opens it in a successor's inbox,
+// which pages a second agent about something already handled and teaches a pool
+// to ignore the channel. A closed message is archived.
+//
+// `from` addresses that equal `to` are skipped rather than treated as a move,
+// which is what makes a second call over the same set a no-op -- the close path
+// is reached from three doors and the orphan pass re-runs every tick.
+//
+// Provenance is written only when RerouteFromMetadataKey is absent. On a second
+// move the original dead address is what a reader needs; overwriting it with
+// the intermediate hop would leave the record pointing at an address that was
+// itself only ever a way-station.
+//
+// Errors are split by severity, matching SweepReadMessagesBefore: listErr is
+// the fatal candidate-listing failure (nothing was moved), moveErrs holds the
+// per-message write failures that do not abort the pass. A failed move leaves
+// the message on its dead address, where the next tick retries it -- the same
+// side to err on as this package's notify-then-mark ordering.
+func Reroute(store beads.MailStore, from []string, to string) (moved []string, moveErrs []error, listErr error) {
+	to = strings.TrimSpace(to)
+	if store.Store == nil || to == "" {
+		return nil, nil, nil
+	}
+	seen := make(map[string]struct{})
+	for _, dead := range from {
+		dead = strings.TrimSpace(dead)
+		if dead == "" || dead == to {
+			continue
+		}
+		candidates, err := store.List(beads.ListQuery{
+			Type:     messageBeadType,
+			Assignee: dead,
+			Status:   "open",
+			TierMode: beads.TierBoth,
+		})
+		if err != nil {
+			return moved, moveErrs, fmt.Errorf("beadmail reroute: listing mail for %q: %w", dead, err)
+		}
+		for _, b := range candidates {
+			// The type and status re-check is defense in depth against a
+			// backing store that answers a ListQuery filter loosely, and no
+			// test in this repository can kill it -- a mutation sweep on
+			// 2026-09-07 confirmed it survives, because the query above
+			// already narrows to open message beads and MemStore honors it
+			// exactly. Kept rather than deleted for the reason
+			// mailboxMatchesByMetadata keeps the same shape: a loose answer
+			// here reassigns somebody's WORK to a mail address, which no
+			// caller could recover from. Weakening the query to reach this
+			// branch would trade a real filter for a coverage number.
+			if b.Type != messageBeadType || b.Status != "open" {
+				continue
+			}
+			if hasLabel(b.Labels, "read") || isRemovedMessageBead(b) {
+				continue
+			}
+			if _, dup := seen[b.ID]; dup {
+				continue
+			}
+			seen[b.ID] = struct{}{}
+			metadata := map[string]string{RerouteReasonMetadataKey: RerouteReasonRecipientClosed}
+			if strings.TrimSpace(b.Metadata[RerouteFromMetadataKey]) == "" {
+				metadata[RerouteFromMetadataKey] = dead
+			}
+			if err := store.Update(b.ID, beads.UpdateOpts{
+				Assignee: &to,
+				Labels:   []string{RerouteLabel},
+				Metadata: metadata,
+			}); err != nil {
+				moveErrs = append(moveErrs, fmt.Errorf("mail %s: reroute %q -> %q: %w", b.ID, dead, to, err))
+				continue
+			}
+			moved = append(moved, b.ID)
+		}
+	}
+	return moved, moveErrs, nil
+}
