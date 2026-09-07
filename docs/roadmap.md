@@ -64,6 +64,48 @@ Acceptance:
 
 Depends on: ci-waw3o7
 
+## epic:mayor-slack-bridge -- Direct Slack line to the mayor
+
+status: open
+
+A second Slack channel, separate from the alerts channel, that works like
+having the mayor's tmux window open in Slack: anything Willie posts there
+lands in the mayor session's prompt, and the mayor's own output mirrors
+back automatically. Feasibility and substrate survey are pm-log #57: the
+extmsg fabric already carries inbound generically, and the new code is a
+Slack Socket Mode adapter (contrib/openclaw-bridge shape) plus an
+output-mirror daemon on the session SSE stream. Design decisions are
+pm-log #58: assistant-turns-only mirror, Socket Mode ingress, secrets.env
+credential seam.
+
+Acceptance:
+
+- A message Willie posts in the channel arrives in the mayor session's
+  prompt with its full text via the extmsg inbound path, cold-waking the
+  mayor when no session is live.
+- The mayor's assistant turns -- and only those: no tool output, no other
+  agents' inbound traffic -- mirror to the channel automatically, with no
+  reply action required of the mayor.
+- Ingress is Slack Socket Mode; no public TLS endpoint is opened.
+- Adapter and mirror run as supervised out-of-process components in the
+  contrib/openclaw-bridge shape, surviving controller restart (automatic
+  re-registration) and mayor respawn (binding follows the named session).
+- The bridge is pure configuration with respect to roles: it binds a
+  named session; no role name appears in gc source (ZERO hardcoded
+  roles).
+- Slack credentials live in ${GC_HOME}/secrets.env like the alert seam,
+  never in city.toml or the repo.
+- Long turns are delivered within Slack message limits under a recorded
+  chunk/truncate policy rather than dropped.
+- The existing alerts channel and notify.sh seam are untouched.
+- Live round trip demonstrated: Willie's channel message reaches the
+  mayor and the mayor's answering turn appears in the channel with no
+  manual step.
+
+Depends on: a Slack app provisioned by Willie (bot token plus app-level
+token with connections:write; the new channel created), credentials landed
+in ${GC_HOME}/secrets.env. No hardware, no upstream rig.
+
 ## Abandoned
 
 None yet.

@@ -1711,3 +1711,23 @@ adapter vs Events API through /hook plus E7 wiring), and whether this
 becomes a roadmap epic now.
 
 Source: pm-chat sitting gs-23r (Explore survey of the repo this turn)
+
+## 58. pm-chat gs-23r: mayor-slack-bridge decisions -- assistant turns only, Socket Mode, roadmap epic (2026-09-07)
+
+Willie's rulings on the three design questions pm-log #57 put to him:
+
+1. Mirror scope: ASSISTANT TURNS ONLY. The mirror carries the mayor's own
+   output -- no tool output, no inbound traffic from other agents. His own
+   channel messages are natively visible in Slack and are not re-mirrored.
+2. Ingress: SOCKET MODE. The adapter holds an outbound websocket; no
+   public TLS endpoint is opened from the lab. The Events-API-through-
+   /hook/{name} alternative (and its E7 sink wiring) is not taken.
+3. It becomes a roadmap epic. Minted as epic:mayor-slack-bridge, added to
+   docs/roadmap.md as status: open in this same turn with draft acceptance
+   criteria derived from these rulings plus the pm-log #57 survey;
+   Willie's acceptance of the criteria wording is pending, and whether it
+   starts now (in-progress plus DECOMP) or parks open is his next call.
+   This is the first entry against the pm-open #2(b) gap (nothing queued
+   after governor).
+
+Source: Willie, pm-chat sitting gs-23r
