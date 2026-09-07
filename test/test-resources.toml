@@ -36,8 +36,13 @@ resource = "subprocess"
 # Three beads raised this one row from the same 613/179 base, so the ceiling is
 # the SUM of all three deltas. Every side moved the file count to 180 for its
 # OWN new file, which git merges to 180 with no marker -- two files short.
-baseline_calls = 619
-baseline_files = 182
+# +1 call / 1 file (gs-8ra): scripts/extmsg_bridge_isolation_test.go executes
+# scripts/check-extmsg-bridge-isolation.sh and the git plumbing its fixture
+# needs, through ONE shared spawn site. The gate is a shell script reading
+# `git ls-files`, so a stand-in would test a reimplementation of the thing
+# under test rather than the thing itself.
+baseline_calls = 620
+baseline_files = 183
 reported_calls = 495
 reported_files = 135
 owner_bead = "ga-80po0c.2"
@@ -89,12 +94,12 @@ scope = "untagged"
 resource = "subprocess"
 # 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError spawn recorded
 # on the all-source audit row above.
-# +3 calls / 1 file (ci-87655r), +1 call / 1 file (ci-ewyqum) and +2 calls /
-# 1 file (ci-sptsk3): the same three spawn sets recorded on the all-source
-# audit row above, counted again in the untagged scope and summed over the same
-# 414/121 base.
-baseline_calls = 420
-baseline_files = 124
+# +3 calls / 1 file (ci-87655r), +1 call / 1 file (ci-ewyqum), +2 calls /
+# 1 file (ci-sptsk3) and +1 call / 1 file (gs-8ra): the same four spawn sets
+# recorded on the all-source audit row above, counted again in the untagged
+# scope and summed over the same 414/121 base.
+baseline_calls = 421
+baseline_files = 125
 reported_calls = 380
 reported_files = 98
 owner_bead = "ga-80po0c.2"
@@ -447,11 +452,15 @@ resource = "subprocess"
 # exitErrorWithCode, and a resource inside a helper stays Small debt however
 # Medium its callers are; declaring it Medium would cost four new raw-ratchet
 # calls to save this one. See census.go for the full reasoning.
-# +1 call / 1 file (ci-ewyqum) and +2 calls / 1 file (ci-sptsk3), summed over
-# the 406/116 base. ci-87655r contributes nothing here: it declares a [[medium]]
-# owner, which clears Small debt.
-baseline_calls = 409
-baseline_files = 118
+# +1 call / 1 file (ci-ewyqum), +2 calls / 1 file (ci-sptsk3) and +1 call /
+# 1 file (gs-8ra), summed over the 406/116 base. ci-87655r contributes nothing
+# here: it declares a [[medium]] owner, which clears Small debt. gs-8ra
+# declares none either -- the gate it drives is a fast text scan over a
+# git-tracked file list, so its cases stay in the Small sweep, where a
+# weakened refusal fails the build on the next `make test` rather than
+# nightly.
+baseline_calls = 410
+baseline_files = 119
 reported_calls = 394
 reported_files = 105
 owner_bead = "ga-80po0c.2.1"

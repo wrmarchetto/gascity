@@ -156,12 +156,19 @@ var bootstrapPolicy = Ledger{
 			// which only a real child populates. The one new file is
 			// cmd/gc/dolt_scope_idle_test.go.
 			//
-			// Three beads raised this one row from the same 613/179 base, so the
-			// ceiling is the SUM of all three deltas. Every side moved the file
+			// +1 call / 1 file (gs-8ra): scripts/extmsg_bridge_isolation_test.go
+			// executes scripts/check-extmsg-bridge-isolation.sh and the git
+			// plumbing its fixture needs, through ONE shared spawn site. The
+			// gate is a shell script reading `git ls-files`, so a stand-in
+			// would test a reimplementation of the thing under test rather
+			// than the thing itself.
+			//
+			// Four beads raised this one row from the same 613/179 base, so the
+			// ceiling is the SUM of all four deltas. Every side moved the file
 			// count to 180 for its OWN new file, which git merges to 180 without
-			// a marker -- two files short of the three the merged tree holds.
-			BaselineCalls:   619,
-			BaselineFiles:   182,
+			// a marker -- three files short of the four the merged tree holds.
+			BaselineCalls:   620,
+			BaselineFiles:   183,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -217,12 +224,13 @@ var bootstrapPolicy = Ledger{
 			Resource: ResourceSubprocess,
 			// 413 -> 414 (ci-sg490p): the same irreducible *exec.ExitError
 			// spawn recorded on the all-source audit row above.
-			// +3 calls / 1 file (ci-87655r), +1 call / 1 file (ci-ewyqum) and
-			// +2 calls / 1 file (ci-sptsk3): the same three spawn sets recorded
-			// on the all-source audit row above, counted again in the untagged
-			// scope and summed over the same 414/121 base.
-			BaselineCalls:   420,
-			BaselineFiles:   124,
+			// +3 calls / 1 file (ci-87655r), +1 call / 1 file (ci-ewyqum),
+			// +2 calls / 1 file (ci-sptsk3) and +1 call / 1 file (gs-8ra): the
+			// same four spawn sets recorded on the all-source audit row above,
+			// counted again in the untagged scope and summed over the same
+			// 414/121 base.
+			BaselineCalls:   421,
+			BaselineFiles:   125,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -580,11 +588,15 @@ var bootstrapPolicy = Ledger{
 			// this row's 406 sites, so an undeclared helper-hosted spawn is the
 			// population this ratchet exists to track, not an anomaly it
 			// forbids.
-			// +1 call / 1 file (ci-ewyqum) and +2 calls / 1 file (ci-sptsk3),
-			// summed over the 406/116 base. ci-87655r contributes nothing here:
-			// it declares a Medium owner, which clears Small debt.
-			BaselineCalls:   409,
-			BaselineFiles:   118,
+			// +1 call / 1 file (ci-ewyqum), +2 calls / 1 file (ci-sptsk3) and
+			// +1 call / 1 file (gs-8ra), summed over the 406/116 base.
+			// ci-87655r contributes nothing here: it declares a Medium owner,
+			// which clears Small debt. gs-8ra does NOT declare one -- the gate
+			// it drives is a fast text scan over a git-tracked file list, so
+			// its 22 cases stay in the Small sweep where a weakened refusal
+			// fails the build on the next `make test` rather than nightly.
+			BaselineCalls:   410,
+			BaselineFiles:   119,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",

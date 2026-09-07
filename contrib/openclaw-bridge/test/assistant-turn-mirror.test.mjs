@@ -2,6 +2,13 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createAssistantTurnMirror, reconnectAssistantTurnStream, streamAssistantTurns } from '../lib/assistant-turn-mirror.mjs'
 
+// Fixture identities are named after what they test, never after a role. The
+// mirror binds whatever session id it is configured with, so a fixture named
+// for a role would read as the bridge knowing about one, which AGENTS.md
+// forbids (ZERO hardcoded roles). scripts/check-extmsg-bridge-isolation.sh
+// refuses the name in a comment as readily as in code: it scans text and
+// cannot tell prose from a lookup key, which is why it is not spelled here.
+
 const conversation = {
   scope_id: 'lab',
   provider: 'slack',
@@ -23,14 +30,14 @@ test('mirrors a final assistant text turn through extmsg outbound without an age
   const calls = []
   const mirror = createAssistantTurnMirror({
     conversation,
-    sessionID: 'session-mayor',
+    sessionID: 'session-under-test',
     publish: async (body) => calls.push(body),
   })
 
   await mirror.handleStructuredEvent(structured([assistantText('assistant-1', 'I found the issue and fixed it.')]))
 
   assert.deepEqual(calls, [{
-    session_id: 'session-mayor',
+    session_id: 'session-under-test',
     conversation,
     text: 'I found the issue and fixed it.',
     idempotency_key: 'assistant-turn:assistant-1:1',
@@ -39,7 +46,7 @@ test('mirrors a final assistant text turn through extmsg outbound without an age
 
 test('does not mirror a structured tool result', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-mayor', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
 
   await mirror.handleStructuredEvent(structured([{
     id: 'tool-result-1',
@@ -53,7 +60,7 @@ test('does not mirror a structured tool result', async () => {
 
 test('does not mirror assistant tool-use blocks', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-mayor', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
 
   await mirror.handleStructuredEvent(structured([{
     id: 'tool-use-1',
@@ -67,7 +74,7 @@ test('does not mirror assistant tool-use blocks', async () => {
 
 test('does not mirror inbound traffic from another agent', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-mayor', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
 
   await mirror.handleStructuredEvent(structured([{
     id: 'agent-message-1',
@@ -81,7 +88,7 @@ test('does not mirror inbound traffic from another agent', async () => {
 
 test('does not re-mirror a Slack channel message already visible to its sender', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-mayor', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
 
   await mirror.handleStructuredEvent(structured([{
     id: 'slack-inbound-1',
@@ -98,7 +105,7 @@ test('mirrors a long assistant turn as labeled lossless chunks instead of droppi
   const calls = []
   const mirror = createAssistantTurnMirror({
     conversation,
-    sessionID: 'session-mayor',
+    sessionID: 'session-under-test',
     maxMessageLength: 24,
     publish: async (body) => calls.push(body),
   })
@@ -115,7 +122,7 @@ test('mirrors a long assistant turn as labeled lossless chunks instead of droppi
 
 test('does not duplicate a final assistant turn replayed by SSE snapshot and upsert frames', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-mayor', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
   const event = structured([assistantText('assistant-stable-id', 'one durable answer')])
 
   await mirror.handleStructuredEvent({ ...event, operation: 'snapshot' })
