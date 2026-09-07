@@ -2369,3 +2369,172 @@ func TestBeadPrefixAPI(t *testing.T) {
 		}
 	}
 }
+
+// TestBeadAssignReportsTheHolderItDisplaced pins the operator-visibility half
+// of ci-q5spdz item 1. The endpoint moves a bead off whoever holds it with no
+// status or assignee check, which is CORRECT for an operator tool -- taking
+// work back from a stuck agent is the thing a dashboard is for, and this
+// handler has no earlier read to compare against, so there is no snapshot for
+// a compare-and-swap to pin. What was wrong is that it answered
+// {"status":"assigned"} and said nothing about the live claim it just ended,
+// so a mid-turn agent's work was displaced with no record anywhere the caller
+// could see.
+//
+// The assertion is on the RESPONSE, not on a refusal: a refusal was
+// deliberately rejected (see the handler comment), so a test keyed on 409
+// would pin the opposite decision.
+//
+// Run: go test ./internal/api/ -run Displaced
+func TestBeadAssignReportsTheHolderItDisplaced(t *testing.T) {
+	state := newFakeState(t)
+	store := state.stores["myrig"]
+	b, _ := store.Create(beads.Bead{Title: "Task", Assignee: "worker-2"})
+	inProgress := "in_progress"
+	if err := store.Update(b.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+		t.Fatalf("claim for worker-2: %v", err)
+	}
+	h := newTestCityHandler(t, state)
+
+	req := newPostRequest(cityURL(state, "/bead/")+b.ID+"/assign", bytes.NewBufferString(`{"assignee":"worker-1"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding assign response: %v", err)
+	}
+	if got["displaced"] != "worker-2" {
+		t.Errorf(`response["displaced"] = %q, want "worker-2": the reply named no holder for the claim it ended (%#v)`, got["displaced"], got)
+	}
+	if got["assignee"] != "worker-1" {
+		t.Errorf(`response["assignee"] = %q, want "worker-1"`, got["assignee"])
+	}
+	if stored, _ := store.Get(b.ID); stored.Assignee != "worker-1" {
+		t.Errorf("Assignee = %q, want worker-1: the operator's assign must still take effect", stored.Assignee)
+	}
+}
+
+// TestBeadAssignReportsNoDisplacementWhenNothingWasHeld covers the three
+// shapes that must stay quiet, and it is what stops a fix that reports
+// `displaced` unconditionally -- a key present on every ordinary assign is
+// noise a caller learns to ignore, which loses the one case that matters.
+//
+// An OPEN bead assigned to someone else is deliberately among the quiet
+// shapes: parked work carries an address, not a claim, and re-addressing it is
+// routine. Only an in_progress claim is a holder mid-work.
+func TestBeadAssignReportsNoDisplacementWhenNothingWasHeld(t *testing.T) {
+	cases := []struct {
+		name     string
+		assignee string
+		status   string
+	}{
+		{name: "unheld-and-open", assignee: "", status: "open"},
+		{name: "open-but-addressed-elsewhere", assignee: "worker-2", status: "open"},
+		{name: "in-progress-under-the-same-name", assignee: "worker-1", status: "in_progress"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := newFakeState(t)
+			store := state.stores["myrig"]
+			b, _ := store.Create(beads.Bead{Title: "Task", Assignee: tc.assignee})
+			if tc.status != "open" {
+				status := tc.status
+				if err := store.Update(b.ID, beads.UpdateOpts{Status: &status}); err != nil {
+					t.Fatalf("set status: %v", err)
+				}
+			}
+			h := newTestCityHandler(t, state)
+
+			req := newPostRequest(cityURL(state, "/bead/")+b.ID+"/assign", bytes.NewBufferString(`{"assignee":"worker-1"}`))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("assign status = %d, want %d, body: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			var got map[string]string
+			if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+				t.Fatalf("decoding assign response: %v", err)
+			}
+			if _, present := got["displaced"]; present {
+				t.Errorf(`response carries displaced=%q, want the key absent (%#v)`, got["displaced"], got)
+			}
+		})
+	}
+}
+
+// TestBeadAssignComparesTheNormalizedNameWhenReportingDisplacement closes a
+// mutation survivor. The displacement check compares the CURRENT holder
+// against the normalized assignee, not against the raw request field, and
+// nothing pinned that: an operator re-asserting the same holder by an alias,
+// a session_name or a configured identity would be told it had displaced
+// them, which is a false report of an ended claim -- the exact thing the key
+// exists to make trustworthy.
+//
+// Staged with the SESSION_NAME spelling, which the resolver rewrites to the
+// canonical alias (see TestPhase2BeadAssignNormalizesCurrentSessionName): the
+// request says "test-city--worker", the store holds "worker", and the two
+// differ as strings while naming one session. The alias spelling cannot stage
+// this -- it IS the canonical form, so raw and normalized are equal there and
+// the mutant survives.
+func TestBeadAssignComparesTheNormalizedNameWhenReportingDisplacement(t *testing.T) {
+	state := newFakeState(t)
+	state.cityBeadStore = beads.NewMemStore()
+	store := state.stores["myrig"]
+	// The ID offset is load-bearing, and its absence made the first version of
+	// this test VACUOUS -- caught by the mutation sweep, not by a read. Both
+	// stores mint "gc-1", so without it the work bead shares an ID with the
+	// session bead and beadStoresForID resolves to the session bead instead:
+	// the handler assigned THAT, the work bead was never touched, and the
+	// assertion below passed for the wrong reason. The sibling
+	// TestPhase2BeadAssignNormalizes* cases carry the same offset for the same
+	// reason. The post-state assertion at the end is what would now catch it.
+	_, _ = store.Create(beads.Bead{Title: "ID offset"})
+	sessionBead := createPhase2APISessionBead(t, state.cityBeadStore)
+	canonical := sessionBead.Metadata["alias"]
+	raw := sessionBead.Metadata["session_name"]
+	if canonical == "" || raw == "" || canonical == raw {
+		t.Fatalf("(alias, session_name) = (%q, %q); the case needs two spellings of one session that differ as strings", canonical, raw)
+	}
+	work, _ := store.Create(beads.Bead{Title: "Task", Assignee: canonical})
+	inProgress := "in_progress"
+	if err := store.Update(work.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+		t.Fatalf("claim for the canonical alias: %v", err)
+	}
+	srv := New(state)
+	h := newTestCityHandlerWith(t, state, srv)
+
+	req := newPostRequest(cityURL(state, "/bead/"+work.ID+"/assign"), bytes.NewBufferString(`{"assignee":"`+raw+`"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("assign status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding assign response: %v", err)
+	}
+	if got["assignee"] != canonical {
+		t.Fatalf("assignee = %q, want the canonical %q; the spelling was not normalized, so the case under test was never reached", got["assignee"], canonical)
+	}
+	if _, present := got["displaced"]; present {
+		t.Errorf(`response carries displaced=%q for a re-assert of the same session under another spelling; want the key absent (%#v)`, got["displaced"], got)
+	}
+	// Proof the handler acted on THIS bead. Without it an ID collision that
+	// sends the write to another store's bead leaves every assertion above
+	// trivially satisfied.
+	stored, err := store.Get(work.ID)
+	if err != nil {
+		t.Fatalf("get %s: %v", work.ID, err)
+	}
+	if stored.Assignee != canonical {
+		t.Fatalf("work bead %s assignee = %q, want %q: the handler wrote a different bead, so this case proved nothing", work.ID, stored.Assignee, canonical)
+	}
+	if stored.Status != "in_progress" {
+		t.Fatalf("work bead %s status = %q, want in_progress: the pre-write claim did not survive to the handler", work.ID, stored.Status)
+	}
+}

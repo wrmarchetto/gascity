@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"errors"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/api/apierr"
@@ -635,10 +637,44 @@ func (s *Server) humaHandleBeadReopen(_ context.Context, input *BeadReopenInput)
 }
 
 // humaHandleBeadAssign is the Huma-typed handler for POST /v0/bead/{id}/assign.
+//
+// The write is UNCONDITIONAL, and that is a decision rather than an oversight
+// (ci-q5spdz item 1). Every automated release path in the tree refuses on a
+// moved assignee -- ReleaseWorkBead, releaseOrphanedPoolAssignment,
+// workrelease.FromEndedSession -- but each of those acts on a snapshot it read
+// earlier, and the compare-and-swap pins the assignee across that window.
+// This handler has no earlier read: the operator's intent is current by
+// construction, so there is nothing to compare against and a CAS would only
+// invent a race. Taking work back from a stuck agent is what an operator tool
+// is for.
+//
+// A 409 refusal with a force flag was considered and rejected. It would need
+// the operator to retry every ordinary intervention, and this endpoint already
+// declares 409 for the concurrent-delete case, so overloading it would make
+// the two indistinguishable to a client.
+//
+// What WAS missing is the record. The reply used to say {"status":"assigned"}
+// and nothing about the live claim it had just ended, so an agent's mid-turn
+// work was displaced with no trace anywhere the caller could see -- against
+// the project's own rule that a swallowed condition must still reach whoever
+// can act on it. It now names the displaced holder in the reply and in the
+// server log.
+//
+// NOT DONE, and left out on purpose: telling the DISPLACED HOLDER. That means
+// mail or a nudge from inside a bead handler, which is a design question about
+// who may interrupt a running session, not a reporting fix. Filed rather than
+// guessed.
+//
+// The report covers an in_progress claim only. An open bead carries an
+// ADDRESS, not a claim, and re-addressing parked work is routine -- a
+// `displaced` key on every ordinary assign is noise a caller learns to ignore,
+// which loses the one case that matters. Held by
+// TestBeadAssignReportsNoDisplacementWhenNothingWasHeld.
 func (s *Server) humaHandleBeadAssign(ctx context.Context, input *BeadAssignInput) (*IndexOutput[map[string]string], error) {
 	id := input.ID
 	for _, store := range s.beadStoresForID(id) {
-		if _, err := store.Get(id); err != nil {
+		before, err := store.Get(id)
+		if err != nil {
 			if errors.Is(err, beads.ErrNotFound) {
 				continue
 			}
@@ -647,6 +683,17 @@ func (s *Server) humaHandleBeadAssign(ctx context.Context, input *BeadAssignInpu
 		assignee, err := s.normalizeRawBeadAssignee(ctx, input.Body.Assignee)
 		if err != nil {
 			return nil, apierr.InvalidRequest.Msg(err.Error())
+		}
+		// Read from the pre-write snapshot, and compared against the
+		// NORMALIZED assignee: an operator naming the same holder by an alias,
+		// a session_name or a configured identity has displaced nobody, and
+		// comparing the raw request field would report all three as
+		// displacements.
+		displaced := ""
+		if before.Status == "in_progress" {
+			if held := strings.TrimSpace(before.Assignee); held != "" && held != assignee {
+				displaced = held
+			}
 		}
 		// Once Get succeeded in this store, treat Update-ErrNotFound as a
 		// concurrent-delete race rather than "try the next store" — the bead
@@ -658,9 +705,17 @@ func (s *Server) humaHandleBeadAssign(ctx context.Context, input *BeadAssignInpu
 			}
 			return nil, apierr.Internal.Msg(err.Error())
 		}
+		body := map[string]string{"status": "assigned", "assignee": assignee}
+		if displaced != "" {
+			// Logged as well as returned. The HTTP caller may be a script that
+			// discards the body, and this is the only record that an agent's
+			// in-flight claim was ended by hand.
+			log.Printf("gc api: assigning %s to %q displaced %q, which held it in_progress", id, assignee, displaced)
+			body["displaced"] = displaced
+		}
 		return &IndexOutput[map[string]string]{
 			Index: s.latestIndex(),
-			Body:  map[string]string{"status": "assigned", "assignee": assignee},
+			Body:  body,
 		}, nil
 	}
 	return nil, apierr.BeadNotFound.Msg("bead " + id + " not found")
