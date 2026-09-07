@@ -154,10 +154,16 @@ func admitByProvider(t *testing.T, first, second string) map[string]int {
 		Workspace: config.Workspace{MaxActiveSessions: intPtrProviderScope(5)},
 	}
 	demand := map[string]int{}
+	// Ordered pairs, NOT a map literal. Go randomizes map iteration, so
+	// ranging one here appended the ten templates in a random order, the cap
+	// admitted whichever five came first, and the split this test compares
+	// varied run to run -- measured failing 2 of 12 processes at -count=1.
+	// The mirror assertion below is only meaningful against a fixed order.
+	pairs := []struct{ prefix, provider string }{{"a", first}, {"z", second}}
 	for i := 1; i <= 5; i++ {
-		for prefix, provider := range map[string]string{"a": first, "z": second} {
-			name := fmt.Sprintf("%s%d", prefix, i)
-			cfg.Agents = append(cfg.Agents, providerAgent(name, provider, 1))
+		for _, pair := range pairs {
+			name := fmt.Sprintf("%s%d", pair.prefix, i)
+			cfg.Agents = append(cfg.Agents, providerAgent(name, pair.provider, 1))
 			demand[name] = 1
 		}
 	}
