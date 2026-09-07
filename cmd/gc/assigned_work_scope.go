@@ -144,11 +144,27 @@ func filterAssignedWorkBeadsForPoolDemand(
 	for i, wb := range assignedWorkBeads {
 		// The open-routed collection intentionally includes blocked beads so
 		// the orphan reaper can inspect them. Pool desired-state computation is
-		// a different consumer: it may only wake for open work that the shared
-		// Ready() snapshot proved claimable. Without this gate an assigned and
-		// routed blocked bead becomes a wake-known-identity request, repeatedly
+		// a different consumer: it may only wake for work the shared Ready()
+		// snapshot proved claimable. Without this gate an assigned and routed
+		// unclaimable bead becomes a wake-known-identity request, repeatedly
 		// starting a session that cannot claim it.
-		if readyAssigned != nil && wb.Status == "open" && !readyAssigned[storeScopedBeadKey{StoreRef: assignedWorkStoreRefs[i], ID: wb.ID}] {
+		//
+		// in_progress is the ONLY status exempt from needing that proof, and
+		// the exemption is required rather than lenient: `bd ready` never
+		// returns an in_progress bead, so demanding proof for one would stop
+		// every running pool session from being preserved. Everything else
+		// must be vouched for.
+		//
+		// Keyed on "not in_progress" rather than on a list of bad statuses.
+		// This gate previously read `wb.Status == "open"`, which let every
+		// OTHER non-actionable status through unchecked -- a deferred bead
+		// assigned to a pool raised demand the claim then refused, because
+		// hookCandidatePoolAlias admits pool-assigned work only at status
+		// "open". Measured on ci-13jujx: 22 session.demand_claim_mismatch
+		// events, reason no_work, one bead, one day, ~30 min apart, each one a
+		// session spawned and drained (ci-iy3q4k). Enumerating statuses to
+		// exclude would have the same hole the next time one is added.
+		if readyAssigned != nil && wb.Status != "in_progress" && !readyAssigned[storeScopedBeadKey{StoreRef: assignedWorkStoreRefs[i], ID: wb.ID}] {
 			continue
 		}
 		template := routedToOrLegacyWorkflowTarget(wb)
