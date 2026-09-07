@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 const entrypoint = (f) => fileURLToPath(new URL(`../${f}`, import.meta.url))
 
-for (const file of ['bridge.mjs', 'telegram-bridge.mjs', 'slack-bridge.mjs']) {
+for (const file of ['bridge.mjs', 'telegram-bridge.mjs', 'slack-bridge.mjs', 'slack-mirror.mjs']) {
   test(`node --check passes for ${file} (executable entrypoint parses)`, async () => {
     try {
       await execFileAsync(process.execPath, ['--check', entrypoint(file)])

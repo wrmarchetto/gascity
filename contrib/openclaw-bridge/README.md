@@ -313,3 +313,30 @@ the service file. It refuses to start if either token is absent.
 The existing iMessage and Telegram bridges remain proof-of-concept connector
 examples. A Slack/Discord bridge follows the same adapter-normalizes,
 gc-routes shape.
+
+### Assistant-turn mirror
+
+Run `slack-mirror.mjs` beside the Socket Mode adapter to project one named
+session's final assistant text into the same channel without requiring the
+agent to call a reply tool:
+
+```bash
+GC_CITY=lab \
+SLACK_CHANNEL_ID=C012345 \
+GC_MIRROR_SESSION=lab/lead \
+node slack-mirror.mjs
+```
+
+It reads `GET /session/{id}/stream?format=structured` and publishes only
+messages whose normalized `role` is `assistant`, `status` is `final`, and whose
+blocks are text. Tool use/results and all user messages are excluded, so neither
+tool output, other-agent traffic, nor the human's already-visible Slack message
+is reflected back into the channel. Stable structured message IDs suppress
+snapshot/upsert replays while the process runs. Its supervisor owns restart and
+cross-process lifecycle; the mirror exits if its stream ends or cannot connect.
+
+Slack permits 40,000 UTF-16 code units. The mirror's in-code delivery policy
+uses a 39,000-unit ceiling: a short turn is published intact, while a long turn
+is published losslessly as ordered `[part i/n]` messages. The labels are inside
+that ceiling and Unicode code points are never split. Set
+`SLACK_MIRROR_MAX_MESSAGE_LENGTH` only for a stricter transport limit or test.
