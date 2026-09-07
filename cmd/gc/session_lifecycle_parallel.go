@@ -1004,7 +1004,7 @@ func buildPreparedStartWithWorkDirResolver(
 	} else if wd := candidate.info.WorkDir; wd != "" {
 		agentCfg.WorkDir = resolveWorkDirAgainstCity(cityPath, wd)
 	}
-	if err := validateWorkDirForSessionAssignment(agentCfg.WorkDir); err != nil {
+	if err := validateWorkDirForSessionAssignment(agentCfg.WorkDir, preOverrideWorkDir); err != nil {
 		return nil, candidate.info, err
 	}
 	// The task work_dir override above can replace agentCfg.WorkDir after
@@ -2958,7 +2958,17 @@ func executePlannedStartsTraced(
 						if cfg != nil {
 							retryWindow = cfg.Daemon.RestartWindowDuration()
 						}
-						alert := quarantinePendingCreateForStaleWorktree(candidate.info, sessFront, candidate.tp.WorkDir, clk.Now().UTC(), retryWindow, stderr)
+						// The refused directory, not candidate.tp.WorkDir: a
+						// refusal only happens when the work dir was overridden
+						// away from the configured home, so tp.WorkDir carries
+						// no marker and the quarantine would record nothing and
+						// mail nobody. Falls back to tp.WorkDir for any future
+						// refusal that names no directory.
+						refusedWorkDir := staleWorktreeMarkerRefusedWorkDir(err)
+						if refusedWorkDir == "" {
+							refusedWorkDir = candidate.tp.WorkDir
+						}
+						alert := quarantinePendingCreateForStaleWorktree(candidate.info, sessFront, refusedWorkDir, clk.Now().UTC(), retryWindow, stderr)
 						if alert != nil && startOpts.staleWorktreeAlert != nil {
 							startOpts.staleWorktreeAlert(*alert)
 						}

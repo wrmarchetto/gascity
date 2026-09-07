@@ -10,9 +10,13 @@ import (
 	"github.com/gastownhall/gascity/internal/doctor"
 )
 
-// worktreeStaleCheck reports agent-home worktree markers that prevent the
-// reconciler from assigning a replacement session. The marker remains a
-// fail-closed handoff boundary; this check only makes its impact visible.
+// worktreeStaleCheck reports agent-home worktree markers recording work the
+// prune path refused to destroy. The marker still refuses any session pointed
+// at that worktree from elsewhere, but since bead ci-4btflb it admits the slot
+// whose home it is -- otherwise no actor could ever commit the work, and the
+// slot respawned into the refusal on a loop. So this check is the standing
+// signal that a tree holds unadjudicated work: an admitted adoption raises no
+// operator mail, because no start was refused.
 type worktreeStaleCheck struct {
 	cityPath string
 }
@@ -49,7 +53,7 @@ func (c *worktreeStaleCheck) Run(ctx *doctor.CheckContext) *doctor.CheckResult {
 	}
 	if len(markers) == 0 {
 		result.Status = doctor.StatusOK
-		result.Message = "no stale worktree markers block agent slots"
+		result.Message = "no worktree markers record unadjudicated work"
 		return result
 	}
 
@@ -58,12 +62,12 @@ func (c *worktreeStaleCheck) Run(ctx *doctor.CheckContext) *doctor.CheckResult {
 		slots = append(slots, marker.slot)
 	}
 	result.Status = doctor.StatusWarning
-	result.Message = fmt.Sprintf("%d stale worktree marker(s) block agent slot(s): %s", len(markers), strings.Join(slots, ", "))
+	result.Message = fmt.Sprintf("%d worktree marker(s) record unadjudicated work in agent slot(s): %s", len(markers), strings.Join(slots, ", "))
 	result.Details = make([]string, 0, len(markers))
 	for _, marker := range markers {
 		result.Details = append(result.Details, marker.path)
 	}
-	result.FixHint = "inspect the named worktree; the controller clears markers only after its fail-closed recovery checks prove the worktree is resolved"
+	result.FixHint = "inspect the named worktree: its own slot is admitted and can commit or discard the work, and the controller clears the marker only after its fail-closed recovery checks prove the tree resolved"
 	return result
 }
 

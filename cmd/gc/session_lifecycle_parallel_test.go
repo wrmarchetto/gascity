@@ -910,11 +910,18 @@ func TestPrepareStartCandidateForCity_RejectsStaleAssignedTaskWorkDir(t *testing
 	}
 }
 
+// The marked directory here is one the candidate reaches only through its
+// session bead's stored work_dir, NOT its configured home: since bead ci-4btflb
+// a marker in the candidate's own home admits it, because refusing the owner too
+// left the slot with no actor that could ever commit the work or clear the
+// condition. So the quarantine, the operator alert and the dedup fingerprint are
+// reachable only on the foreign-directory arm, and this test drives that arm.
 func TestExecutePlannedStartsTraced_StaleWorktreeMarkerQuarantinesPendingCreate(t *testing.T) {
 	store := beads.NewMemStore()
 	clk := &clock.Fake{Time: time.Date(2026, 8, 23, 9, 15, 0, 0, time.UTC)}
 	retryWindow := 2 * time.Hour
 	workDir := t.TempDir()
+	configuredHome := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workDir, worktreeStaleFileName), []byte("branch=builder/ci-befp7\nreason=uncommitted-work\n"), 0o644); err != nil {
 		t.Fatalf("write stale worktree marker: %v", err)
 	}
@@ -930,13 +937,14 @@ func TestExecutePlannedStartsTraced_StaleWorktreeMarkerQuarantinesPendingCreate(
 			"continuation_epoch":   "1",
 			"instance_token":       "tok-stale-worktree",
 			"pending_create_claim": "true",
+			"work_dir":             workDir,
 		}),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	tp := TemplateParams{Command: "worker", SessionName: "worker", TemplateName: "worker", WorkDir: workDir}
+	tp := TemplateParams{Command: "worker", SessionName: "worker", TemplateName: "worker", WorkDir: configuredHome}
 	var stderr bytes.Buffer
 	var alerts []staleWorktreeAlert
 	woken := executePlannedStartsTraced(
