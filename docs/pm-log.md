@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-wm2 2026-09-07T16:29Z
+last_seen: gs-d9m 2026-09-07T20:29Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1817,3 +1817,42 @@ gascity/lab.engineer and slings on its own schedule per the #60 verdict;
 epic:mayor-slack-bridge's close is not gated on it.
 
 Source: pm-log #60
+
+## 62. pm-epic-close gs-d9m: governor stays in-progress; deferral date arrived, re-ask owed (2026-09-07)
+
+Fiftieth ruling of this shape (pm-log #5 gs-8iv through #56 gs-1ha), and the
+first taken after the deferral's earliest-revisit date arrived -- today IS
+2026-09-07, so per pm-log #40 "deferral stands" is no longer the answer on
+its own. Verified against the stores rather than recalled: the closed set
+under epic:governor was re-listed this turn and is unchanged (gs-x0k,
+gs-xeh, gs-o9i, gs-nun -- criteria 1-6 verified in their close reasons,
+pm-log #5). ci-waw3o7 re-read in the city store this turn at 20:29Z: still
+DEFERRED, deferred date 2026-09-07, last updated 2026-09-05, assignee human,
+gate ci-gbhkpa still open on its DEPENDS ON line. Willie's say-so has not
+landed -- the recorded answer is still the 2026-09-05 "NOT YET", a ruling
+about the evidence rather than a no -- so per pm-log #4 governor stays
+in-progress and the bead that reopens it remains ci-waw3o7.
+
+What changes today: the deferral has run its course, so the re-ask is now
+OWED. Per that bead's notes it must carry the interval record -- how many
+wakes since 2026-09-05, how many findings, how many real -- and that burden
+sits with the asker (ci-waw3o7's owner, gascity/lab.engineer-1), not this
+PM: the PM holds neither the wake ledger nor the finding record, and a bare
+re-ask without the record is exactly what the notes forbid. No page sent --
+the open gate ci-gbhkpa already operator-pages the decision, and the pm-log
+#29 precedent against re-paging a parked question holds until someone can
+page WITH the record.
+
+No epic promoted and no DECOMP sent, for a reason this shape has not met
+before: the roadmap holds no status:open epic. mayor-slack-bridge is
+already in-progress, decomposed (pm-log #59, #60), and moving -- read this
+turn, its four build beads and the found bug are closed (gs-wnn, gs-eh2,
+gs-2hl, gs-8ra, gs-lq9), leaving gs-228 (operator provisioning, human-side)
+and gs-z09 (round-trip demo) open. A second DECOMP would double-decompose
+it. The rig is not idle behind governor, so no new pm-open entry: the wait
+on ci-waw3o7 is already pm-open #2(a), and #2(b) was closed by pm-log #59.
+Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
+assessment layer, and a governor that assesses then reports something else
+is mechanically unobservable today.
+
+Source: roadmap governor
