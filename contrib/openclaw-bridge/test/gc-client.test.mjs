@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { env, makeGcClient, startCallbackServer, makeAdapterRegistrar } from '../lib/gc-client.mjs'
+import { env, makeGcClient, startCallbackServer, makeAdapterRegistrar, makeNamedSessionBinder } from '../lib/gc-client.mjs'
 
 // listen starts a one-off server on an ephemeral port and resolves { server, port }.
 function listen(handler) {
@@ -166,6 +166,40 @@ test('makeAdapterRegistrar registers and unregisters with the gc-facing body sha
     const del = calls.find((c) => c.method === 'DELETE' && c.url === '/v0/city/c/extmsg/adapters')
     assert.ok(del, 'deleted the registration on unregister')
     assert.deepEqual(JSON.parse(del.body), { provider: 'telegram', account_id: 'default' })
+  } finally {
+    await close(server)
+  }
+})
+
+test('makeNamedSessionBinder binds an adapter conversation to the configured agent identity', async () => {
+  const calls = []
+  const { server, port } = await listen((req, res) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      calls.push({ method: req.method, url: req.url, body: Buffer.concat(chunks).toString('utf8') })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('{}')
+    })
+  })
+  try {
+    const { gcFetch } = makeGcClient({ baseUrl: `http://127.0.0.1:${port}`, city: 'lab' })
+    const conversation = {
+      scope_id: 'lab',
+      provider: 'slack',
+      account_id: 'team-1',
+      conversation_id: 'C012345',
+      kind: 'room',
+    }
+    await makeNamedSessionBinder({ gcFetch, conversation, agentName: 'lab/lead', log: () => {} }).bindWithRetry()
+
+    assert.deepEqual(calls, [
+      {
+        method: 'POST',
+        url: '/v0/city/lab/extmsg/bind',
+        body: JSON.stringify({ conversation, agent_name: 'lab/lead' }),
+      },
+    ])
   } finally {
     await close(server)
   }

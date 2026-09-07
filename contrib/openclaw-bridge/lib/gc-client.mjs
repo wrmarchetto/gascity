@@ -108,6 +108,32 @@ export function makeAdapterRegistrar({ gcFetch, baseUrl, provider, account, name
   return { register, registerWithRetry, startReregister, unregister }
 }
 
+// makeNamedSessionBinder keeps an adapter's configured conversation attached
+// to a named-session-backed agent. Binding by configured identity (rather than
+// a volatile live session ID) is what lets gc cold-wake and re-resolve the
+// target after a session exits. The extmsg bind endpoint is idempotent for an
+// existing binding to the same identity, so this is also safe at every bridge
+// restart.
+export function makeNamedSessionBinder({ gcFetch, conversation, agentName, log }) {
+  const bind = () => gcFetch('POST', '/extmsg/bind', { conversation, agent_name: agentName })
+
+  async function bindWithRetry() {
+    let attempts = 0
+    for (;;) {
+      try {
+        return await bind()
+      } catch (err) {
+        attempts += 1
+        if (attempts >= 60) throw err
+        if (attempts === 1) log(`waiting to bind configured session (${err.message})`)
+        await new Promise((resolve) => setTimeout(resolve, 1000))
+      }
+    }
+  }
+
+  return { bind, bindWithRetry }
+}
+
 // makeShutdown returns an idempotent SIGINT/SIGTERM handler that tears the
 // bridge down in a fixed order: stop re-registering, run the provider-specific
 // teardown (stop inbound, abort polls), unregister from gc (best-effort — gc may

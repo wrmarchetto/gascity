@@ -272,6 +272,44 @@ and `demo-telegram.sh` exercises a per-workstream thread end to end.
    That job also `node --check`s both entrypoints and smoke-loads the openclaw
    connectors (`test/entrypoints.test.mjs`, `test/openclaw-loader.test.mjs`).
 
-A Slack/Discord bridge would follow the same shape; their plugins are
-bigger but the bridge-facing surface (send adapter + inbound normalization +
-id model) is the same family of exports.
+## Slack Socket Mode bridge
+
+`slack-bridge.mjs` carries ordinary human messages from one configured Slack
+channel into the extmsg inbound fabric. It uses Slack Socket Mode: the bridge
+opens an outbound WebSocket, so it does **not** expose a public HTTP endpoint
+or require a public TLS certificate. gc's callback listener remains bound to
+`127.0.0.1` for outbound publishes.
+
+The bridge binds its configured conversation to `SLACK_TARGET_AGENT` through
+`POST /extmsg/bind`. That value must be the identity of a configured named
+session, not a role convention or a transient session ID. The durable
+agent-name binding is idempotent on restart and lets gc cold-wake a fresh
+session when a Slack message arrives after the old one has exited.
+
+Slack app setup: enable Socket Mode; create an app-level token with
+`connections:write`; subscribe to `message.channels`; grant the bot
+`channels:history` and `chat:write`; then invite the bot to the target channel.
+The bridge ignores bot messages, Slack message subtypes (including edits), and
+every channel other than `SLACK_CHANNEL_ID`.
+
+```bash
+# Environment supplied by the component supervisor.
+GC_CITY=lab
+SLACK_APP_TOKEN=xapp-...       # app-level token, connections:write
+SLACK_BOT_TOKEN=xoxb-...       # bot token
+SLACK_CHANNEL_ID=C012345
+SLACK_TARGET_AGENT=lab/lead    # configured named-session identity
+node slack-bridge.mjs
+```
+
+Keep `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` only in
+`${GC_HOME}/secrets.env` (mode `0600`), never in `city.toml` or this
+repository. The bridge intentionally reads credentials only from its inherited
+environment; it does not open or parse the secrets file. When the supervising
+service is Gas City, opt those non-provider keys into the service environment
+with `GC_SUPERVISOR_ENV=SLACK_APP_TOKEN,SLACK_BOT_TOKEN` before regenerating
+the service file. It refuses to start if either token is absent.
+
+The existing iMessage and Telegram bridges remain proof-of-concept connector
+examples. A Slack/Discord bridge follows the same adapter-normalizes,
+gc-routes shape.
