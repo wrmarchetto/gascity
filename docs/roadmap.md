@@ -66,7 +66,7 @@ Depends on: ci-waw3o7
 
 ## epic:mayor-slack-bridge -- Direct Slack line to the mayor
 
-status: open
+status: in-progress
 
 A second Slack channel, separate from the alerts channel, that works like
 having the mayor's tmux window open in Slack: anything Willie posts there

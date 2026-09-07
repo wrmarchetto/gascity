@@ -1731,3 +1731,18 @@ Willie's rulings on the three design questions pm-log #57 put to him:
    after governor).
 
 Source: Willie, pm-chat sitting gs-23r
+
+## 59. pm-chat gs-23r: mayor-slack-bridge accepted and started (2026-09-07)
+
+Willie accepted the epic:mayor-slack-bridge acceptance criteria as written
+(pm-log #58, roadmap entry unchanged from the draft) and said to start it.
+status set to in-progress in this same turn and the DECOMP request sent to
+the mayor per the decomposition procedure, carrying the nine criteria and
+the provisioning dependency (Slack app credentials into secrets.env --
+Willie's side, parallel to the build, gates only the round-trip demo
+criterion). Governor remains in-progress alongside it, waiting solely on
+the external ci-waw3o7 ruling, so the two epics do not compete for
+workers. This closes the pm-open #2(b) gap: the rig now has queued work
+after governor.
+
+Source: Willie, pm-chat sitting gs-23r
