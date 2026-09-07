@@ -475,6 +475,16 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 			// bare template stays in RouteTargets, which governs FRESH claims of
 			// UNASSIGNED routed work. The canonical slot / named holder keep it via
 			// `alias` (GC_ALIAS == qualified bare name); only suffixed workers drop it.
+			//
+			// BEFORE ADDING A SPELLING HERE, read the contract on
+			// hookClaimExistingAssignment. That tier adopts on an identity match
+			// with NO store write and no CAS, so a spelling two live sessions can
+			// both present hands one bead to both of them, silently -- ga-80pen8
+			// was exactly that, via the bare template. The uniqueness this set
+			// relies on is a runtime property of the session store, so no gate can
+			// check a new spelling statically; the two tests that can are
+			// TestPoolWorkerIdentityCandidatesExcludeBareTemplate and
+			// TestHookClaimAdoptionCannotArbitrateBetweenSessionsSharingAnIdentity.
 			IdentityCandidates: hookClaimIdentityCandidates(
 				assignee,
 				sessionID,

@@ -2186,6 +2186,128 @@ func TestPoolWorkerIdentityCandidatesExcludeBareTemplate(t *testing.T) {
 	}
 }
 
+// TestHookClaimAdoptionCannotArbitrateBetweenSessionsSharingAnIdentity pins the
+// contract of the third claim tier, adoption, which is the one tier that
+// arbitrates nothing.
+//
+// FRESH claims are atomic: both gc's built-in work_query and a user-supplied
+// one converge on the store's `update --if-assignee` CAS
+// (ops.Claim/ops.PoolClaim -> ReassignIfAssignee/ReassignPoolClaimIfCurrent,
+// internal/beads/bdstore.go), which writes nothing and exits 13 on mismatch, so
+// a loser is always refused and told. hookClaimExistingAssignment is not that:
+// it decides purely from the work-query snapshot, on
+// status == in_progress && assignee in IdentityCandidates, and issues ZERO
+// store writes. Measured here: two sessions differing only in session id, both
+// carrying one alias, are BOTH told the same bead is theirs -- 2 of 2, with no
+// CAS attempted and no bead.claim_rejected emitted.
+//
+// THAT IS NOT A DEFECT TO FIX HERE, and the reason is worth stating because the
+// obvious repair does not work. The two callers are indistinguishable at this
+// layer: they present the same identity string, so a CAS on
+// assignee == that string succeeds for both. The one field that DOES differ,
+// the session id, is exactly the field adoption must ignore -- adoption exists
+// so a restarted or crash-recovered incarnation reclaims its own in-progress
+// work, and that incarnation has a NEW session id and the SAME alias. Keying
+// adoption on the session id would delete the feature.
+//
+// SO ADOPTION'S SAFETY RESTS ENTIRELY ON TWO GUARDS ABOVE IT, and this test
+// exists so the next person to widen IdentityCandidates learns that before
+// they do:
+//
+//  1. Identity uniqueness at session creation. ensureSessionAliasAvailable
+//     (internal/session/names.go) refuses an alias held by any non-closed
+//     session bead. Its two wave-past exceptions each require the other
+//     holder to be observably NOT live -- poolAliasHandover.supersedes
+//     demands a non-live state AND a runtime probe returning not-running,
+//     treating a probe ERROR as still-running; the configured-named exception
+//     demands StateAsleep, which the fence below classifies stale anyway. The
+//     scan is read-then-write and safe only because session creation is
+//     serialized inside one controller tick; nothing in the store would
+//     reject a duplicate.
+//  2. The instance-token fence, classifyHookClaimSession, which drains a
+//     superseded incarnation as stale_session BEFORE the work query runs.
+//
+// AND THE FENCE FAILS OPEN, twice, by design: it does not run at all when the
+// runtime carries no GC_SESSION_ID or no GC_INSTANCE_TOKEN
+// (TestHookCommandClaimTokenlessRuntimeSkipsFence), and a genuine session-store
+// fault is admitted rather than refused
+// (TestHookCommandClaimFailsOpenOnSessionStoreError). Both are deliberate --
+// neither an unfenceable context nor an infrastructure hiccup should refuse a
+// healthy worker -- but they mean guard 2 is not a backstop for guard 1 in
+// every case. Two live runtimes sharing an alias would need guard 1's liveness
+// probe to have been wrong; nothing below this line would notice.
+//
+// The assertion is written as "both, with no write" rather than "exactly one"
+// deliberately. Exactly-one is not reachable at this layer, so asserting it
+// would be a permanently red test with no correct fix. This shape goes red the
+// moment someone adds arbitration here, which is when the contract above has to
+// be revisited rather than silently inherited.
+func TestHookClaimAdoptionCannotArbitrateBetweenSessionsSharingAnIdentity(t *testing.T) {
+	const (
+		sharedAlias = "gascity/toolsmith-1"
+		beadID      = "ci-shared"
+	)
+	runner := func(string, string) (string, error) {
+		return `[{"id":"` + beadID + `","status":"in_progress","assignee":"` + sharedAlias +
+			`","metadata":{"gc.routed_to":"` + sharedAlias + `"}}]`, nil
+	}
+	casAttempts := 0
+	rejections := 0
+	newOps := func() hookClaimOps {
+		return hookClaimOps{
+			Runner: runner,
+			Claim: func(context.Context, string, []string, string, string) (beads.Bead, bool, error) {
+				casAttempts++
+				return beads.Bead{}, false, nil
+			},
+			PoolClaim: func(context.Context, string, []string, string, string, string) (beads.Bead, bool, error) {
+				casAttempts++
+				return beads.Bead{}, false, nil
+			},
+			EmitClaimRejected: func(string, string, string) { rejections++ },
+		}
+	}
+
+	// The two sessions differ in exactly one input: their session id. Everything
+	// an adoption decision reads -- the alias, the assignee, the agent name --
+	// is the string they share, which is the collision guard 1 above forbids.
+	told := []string{}
+	for _, sessionID := range []string{"session-a", "session-b"} {
+		opts := hookClaimOptions{
+			Assignee:           sharedAlias,
+			IdentityCandidates: hookClaimIdentityCandidates(sharedAlias, sessionID, sharedAlias, sharedAlias),
+			RouteTargets:       hookClaimRouteTargets(sharedAlias),
+			JSON:               true,
+		}
+		var stdout, stderr bytes.Buffer
+		if code := doHookClaim("bd ready --json", "/tmp/work", opts, newOps(), &stdout, &stderr); code != 0 {
+			t.Fatalf("%s: doHookClaim = %d, want 0; stdout=%q stderr=%s", sessionID, code, stdout.String(), stderr.String())
+		}
+		var result hookClaimJSONResult
+		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+			t.Fatalf("%s: stdout is not JSON: %v\nraw: %s", sessionID, err, stdout.String())
+		}
+		if result.Action != "work" || result.Reason != "existing_assignment" || result.BeadID != beadID {
+			t.Fatalf("%s: result = %+v, want action=work reason=existing_assignment bead=%s", sessionID, result, beadID)
+		}
+		told = append(told, sessionID)
+	}
+	if len(told) != 2 {
+		t.Fatalf("sessions told the bead is theirs = %v, want both -- adoption arbitrates nothing", told)
+	}
+
+	// The load-bearing half. No CAS ran, so nothing could have refused a loser,
+	// and no bead.claim_rejected was emitted, so nothing downstream can even see
+	// that two sessions were handed one bead. If either count becomes nonzero,
+	// adoption has grown arbitration and the contract in this docstring is stale.
+	if casAttempts != 0 {
+		t.Errorf("store CAS attempts = %d, want 0: adoption decides from the work-query snapshot alone", casAttempts)
+	}
+	if rejections != 0 {
+		t.Errorf("bead.claim_rejected emissions = %d, want 0: adoption has no loser to report", rejections)
+	}
+}
+
 // TestHookClaimSkipsMessageBeadsAheadOfRoutedWork guards against #4419:
 // the ready-assignment path matched any OPEN candidate whose Assignee
 // equaled one of the session's identity strings, with no type check. A mail
