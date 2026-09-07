@@ -241,6 +241,13 @@ check-native-dependency-surface:
 check-eventexport-isolation:
 	bash scripts/check-eventexport-isolation.sh
 
+## check-extmsg-bridge-isolation: keep role names and the alerts seam off the extmsg bridge path
+## epic:mayor-slack-bridge criteria 5 and 8 (bead gs-8ra). Both are cross-cutting
+## negatives that every other bead satisfies today and any later edit can break,
+## and neither is visible in the epic's round-trip demo.
+check-extmsg-bridge-isolation:
+	bash scripts/check-extmsg-bridge-isolation.sh
+
 ## check-bd: verify bd (beads CLI) is installed
 check-bd:
 	@command -v bd >/dev/null 2>&1 || \
