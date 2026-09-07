@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-82l 2026-09-07T23:40Z
+last_seen: gs-cu8 2026-09-07T23:44Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2041,3 +2041,41 @@ assessment layer, and a governor that assesses then reports something else
 is mechanically unobservable today.
 
 Source: roadmap governor
+
+## 69. epic-unmapped gs-cu8: gs-fn6 placed under epic:mayor-slack-bridge, not standalone (2026-09-07)
+
+Sweep summons gs-cu8 caught open bead gs-fn6 (port the five
+bridge-isolation refusals dropped when main's gate won the merge, P1, owner
+Willie) carrying no epic:<slug> label. Ruled epic:mayor-slack-bridge and
+added the label this turn -- the first epic-unmapped ruling to go that way
+rather than standalone, and the grounds are the same test pm-log #60
+applied, in reverse: an acceptance criterion covers this work.
+
+gs-fn6's own description identifies the merged guard as "the
+epic:mayor-slack-bridge criteria 5 and 8 gate" -- main (38c57a17e) and
+origin (bf5216af9, d3fe88ca3) implemented it independently, the merge
+(4ef6f1638) resolved both add/add conflicts to main's implementation, and
+five origin-only refusals were dropped. Dropped refusal 1 is a MEASURED
+hole in the criterion-8 guarantee, not hygiene: SLACK_BOT_TOKEN is absent
+from main's gate entirely (it catches only xoxb-/xapp- literals), so a
+bridge component aliasing the alerts seam's bot token passes the gate
+clean -- the bead calls it "the one real uncovered hole in the merged
+tree". Refusals 4 and 5 guard the alerts seam directly (criterion 8),
+refusals 2 and 3 guard the knob/secrets discipline (criterion 6
+territory).
+
+Why not standalone: the gs-z39/gs-c6f/gs-eep/gs-olu class (pm-open #3) is
+work no acceptance criterion closes over. Here criterion 8 closes over it,
+and pm-log #60 already upheld the gate itself as in-epic scope (gs-8ra,
+"a rule not expressed as a failing gate rots"). The label's mechanical
+effect -- gating the epic's close -- is the point rather than the hazard
+this time: signing criterion 8 at epic close over a known uncovered hole
+in its own gate would be a done that outruns the criteria. The epic is not
+newly held open by this: gs-228 and gs-z09 are open under it already, and
+gs-fn6 at P1 outranks both.
+
+No pm-open change: gs-fn6 does not join the standalone class, so pm-open
+#3's standing question is untouched. No page -- placement ruling, not a
+new open question. Summons gs-cu8 closed with this verdict.
+
+Source: roadmap mayor-slack-bridge
