@@ -761,3 +761,67 @@ func TestResolveTaskWorkDirIncludesAssignedWisp(t *testing.T) {
 		t.Fatalf("resolveTaskWorkDir = %q, want assigned wisp work_dir %q", got, workDir)
 	}
 }
+
+// TestFilterAssignedWorkBeadsForPoolDemandDropsDeferredAssignedWork pins that
+// a DEFERRED assigned bead raises no pool demand.
+//
+// The readiness gate this exercises was written for open beads only, so a
+// deferred bead skipped it entirely and became a wake-known-identity request.
+// The claim side then refuses it -- hookCandidatePoolAlias admits a
+// pool-assigned bead only at status "open" -- so the session woke, found
+// nothing, drained, and the demand was still there. Measured on ci-13jujx
+// (deferred, assigned bench-engineer): 22 session.demand_claim_mismatch
+// events with reason no_work in one day, one bead, roughly every 30 minutes
+// (ci-iy3q4k).
+//
+// readyAssigned is non-nil but does NOT contain the bead, which is the real
+// shape: `bd ready` never returns a deferred bead, so the shared Ready()
+// snapshot cannot vouch for one. Passing nil instead would disable the gate
+// and make the test vacuous.
+func TestFilterAssignedWorkBeadsForPoolDemandDropsDeferredAssignedWork(t *testing.T) {
+	cfg := &config.City{
+		Agents: []config.Agent{{
+			Name: "worker",
+		}},
+	}
+	work := []beads.Bead{{
+		ID:       "deferred-assigned",
+		Status:   "deferred",
+		Assignee: "worker",
+		Metadata: map[string]string{"gc.routed_to": "worker"},
+	}}
+	readyAssigned := map[storeScopedBeadKey]bool{}
+
+	got := filterAssignedWorkBeadsForPoolDemand(cfg, "", nil, work, []string{""}, readyAssigned)
+
+	if len(got) != 0 {
+		t.Fatalf("filtered work = %#v, want a deferred assigned bead to raise NO pool demand", got)
+	}
+}
+
+// TestFilterAssignedWorkBeadsForPoolDemandKeepsInProgressWithoutReadyProof is
+// the positive control for the test above. An in_progress bead is actionable
+// by contract -- its holder already owns it -- and `bd ready` does not return
+// it either, so it must survive WITHOUT appearing in readyAssigned. Without
+// this, a gate that simply required readiness of everything would satisfy the
+// deferred test and stop every running pool session from being preserved.
+func TestFilterAssignedWorkBeadsForPoolDemandKeepsInProgressWithoutReadyProof(t *testing.T) {
+	cfg := &config.City{
+		Agents: []config.Agent{{
+			Name: "worker",
+		}},
+	}
+	work := []beads.Bead{{
+		ID:       "held",
+		Status:   "in_progress",
+		Assignee: "worker",
+		Metadata: map[string]string{"gc.routed_to": "worker"},
+	}}
+	readyAssigned := map[storeScopedBeadKey]bool{}
+
+	got := filterAssignedWorkBeadsForPoolDemand(cfg, "", nil, work, []string{""}, readyAssigned)
+
+	if len(got) != 1 || got[0].ID != "held" {
+		t.Fatalf("filtered work = %#v, want in_progress work preserved with no readiness proof", got)
+	}
+}
