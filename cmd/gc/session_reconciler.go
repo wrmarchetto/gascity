@@ -27,6 +27,7 @@ import (
 	"github.com/gastownhall/gascity/internal/clock"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
+	"github.com/gastownhall/gascity/internal/pathutil"
 	"github.com/gastownhall/gascity/internal/runtime"
 	sessionpkg "github.com/gastownhall/gascity/internal/session"
 	"github.com/gastownhall/gascity/internal/telemetry"
@@ -5721,22 +5722,87 @@ func resolveWorkDirAgainstCity(cityPath, workDir string) string {
 }
 
 // validateWorkDirForSessionAssignment refuses a directory explicitly retained
-// by the worktree-prune path. The marker is a durable handoff boundary: its
-// contents identify work that must be adjudicated, never silently reused by a
-// replacement session. Marker read failures also fail closed so an unreadable
-// marker cannot turn into an unsafe assignment.
-func validateWorkDirForSessionAssignment(workDir string) error {
+// by the worktree-prune path, EXCEPT when that directory is ownWorkDir -- the
+// candidate's own configured home. The marker is a durable handoff boundary:
+// its contents identify work that must be adjudicated, never silently reused by
+// a session the tree does not belong to. Marker read failures fail closed so an
+// unreadable marker cannot turn into an unsafe assignment.
+//
+// The exemption is the fix, not a softening. Refusing the owner too deadlocked
+// the two protections around this marker: the prune path declines to remove a
+// worktree holding uncommitted work and writes the marker recording that, and
+// the only actor that can commit the work -- or clear the condition the marker
+// names -- is a session in that worktree. Three slots, each carrying a P1,
+// respawned into this error on a loop until the operator committed by hand
+// (bead ci-4btflb). However this pair is written, the reconciler must not be
+// able to refuse both to clean and to use one worktree;
+// TestStaleWorktreeOwnerWriterAndGateCannotDeadlock and
+// TestRealGitStaleMarkerWriterAdmitsItsOwnSlot assert it as a pair over one
+// directory, because each refusal is correct alone and only the conjunction is
+// the defect.
+//
+// Rejected: admitting only the session working the bead the marker's branch=
+// line names. It reads as the narrower rule and does not break the loop at all
+// -- every session in the incident was a fresh one carrying a different bead,
+// the NORMAL shape after a mid-turn death, so branch matching refuses exactly
+// the sessions that have to be admitted.
+//
+// Also rejected: recording an owner in the marker. Writer and reader would then
+// have to agree on an identity string, and markers already on disk carry none,
+// so every pre-existing marker would keep deadlocking its slot. The configured
+// home is derivable on both sides at every version of the marker.
+//
+// Given up: the operator mail. An admitted adoption raises no staleWorktreeAlert
+// because no start was refused, so `gc doctor` (doctor_worktree_stale.go) is the
+// standing signal, and judging whether an inherited diff is this session's own
+// work stays in the agent prompt rather than in Go.
+//
+// An empty ownWorkDir establishes no ownership and admits nothing -- NOT
+// admit-on-unknown: a candidate with no resolvable home reached the marked
+// directory through an override, which is the foreign case.
+func validateWorkDirForSessionAssignment(workDir, ownWorkDir string) error {
 	workDir = strings.TrimSpace(workDir)
 	if workDir == "" {
 		return nil
 	}
 	marker := filepath.Join(workDir, worktreeStaleFileName)
 	if _, err := os.Lstat(marker); err == nil {
-		return fmt.Errorf("%w: worktree %q carries %s; refusing session assignment", errStaleWorktreeMarker, workDir, marker)
+		if own := strings.TrimSpace(ownWorkDir); own != "" && pathutil.SamePath(own, workDir) {
+			return nil
+		}
+		return &staleWorktreeMarkerRefusal{workDir: workDir, marker: marker}
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("checking stale worktree marker for %q: %w", workDir, err)
 	}
 	return nil
+}
+
+// staleWorktreeMarkerRefusal carries the directory whose marker caused the
+// refusal, which is NOT always the candidate's tp.WorkDir -- the refusal now
+// happens only when the work dir was overridden away from the configured home,
+// so the marker the quarantine path and its operator mail describe lives at the
+// override path. quarantinePendingCreateForStaleWorktree reading tp.WorkDir
+// instead would find no marker there, report "no marker", and quarantine
+// nothing while mailing nobody.
+type staleWorktreeMarkerRefusal struct {
+	workDir string
+	marker  string
+}
+
+func (e *staleWorktreeMarkerRefusal) Error() string {
+	return fmt.Sprintf("%s: worktree %q carries %s; refusing session assignment", errStaleWorktreeMarker, e.workDir, e.marker)
+}
+
+func (e *staleWorktreeMarkerRefusal) Unwrap() error { return errStaleWorktreeMarker }
+
+// staleWorktreeMarkerRefusedWorkDir returns the directory a stale-marker
+// refusal named, or "" for any other error.
+func staleWorktreeMarkerRefusedWorkDir(err error) string {
+	var refusal *staleWorktreeMarkerRefusal
+	if errors.As(err, &refusal) {
+		return refusal.workDir
+	}
+	return ""
 }
 
 // resolveTaskWorkDir checks the agent's assigned task beads for a work_dir

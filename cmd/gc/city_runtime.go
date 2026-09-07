@@ -178,7 +178,7 @@ func sendStaleWorktreeAlert(provider mail.Provider, sender, recipient string, al
 		reason = "(not recorded)"
 	}
 	subject := fmt.Sprintf("worktree marker blocks session start: %s", alert.WorkDir)
-	body := fmt.Sprintf("A session start was quarantined because its worktree carries %s.\n\nWorktree: %s\nBranch: %s\nReason: %s\n\nThe controller will not retry this slot until its configured restart window expires. Clear or update the marker only after preserving the work it protects.\n", worktreeStaleFileName, alert.WorkDir, branch, reason)
+	body := fmt.Sprintf("A session start was quarantined because its worktree carries %s and is NOT that session's own configured home -- a marker in a session's own home admits it instead (bead ci-4btflb), so this alert means one slot was pointed at another's marked worktree.\n\nWorktree: %s\nBranch: %s\nReason: %s\n\nThe controller will not retry this slot until its configured restart window expires. Clear or update the marker only after preserving the work it protects.\n", worktreeStaleFileName, alert.WorkDir, branch, reason)
 	if _, err := provider.Send(sender, recipient, subject, body); err != nil {
 		fmt.Fprintf(stderr, "session reconciler: stale-worktree alert mail failed: %v\n", err) //nolint:errcheck // best-effort alert
 	}
