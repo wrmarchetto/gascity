@@ -147,7 +147,7 @@ func computePoolDeathHandlers(cfg *config.City, cityName, cityPath string, sp ru
 		if !a.SupportsInstanceExpansion() {
 			continue
 		}
-		agentEnv, err := controllerQueryRuntimeEnv(cityPath, cfg, &a)
+		agentEnv, err := controllerAgentCommandEnv(cityPath, cfg, &a)
 		if err != nil {
 			fmt.Fprintf(stderr, "on_death %s env: %v\n", a.QualifiedName(), err) //nolint:errcheck // best-effort stderr
 			continue

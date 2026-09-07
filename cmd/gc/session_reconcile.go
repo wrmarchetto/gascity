@@ -314,7 +314,7 @@ func computeWorkSet(cfg *config.City, runner ScaleCheckRunner, cityName, cityDir
 		if isAgentEffectivelySuspendedWith(cfg, cityDir, a, suspState) {
 			continue
 		}
-		probeEnv, err := controllerQueryRuntimeEnv(cityDir, cfg, a)
+		probeEnv, err := controllerAgentCommandEnv(cityDir, cfg, a)
 		if err != nil {
 			fmt.Fprintf(stderr, "session reconcile: building probe env for %s: %v\n", qn, err) //nolint:errcheck
 			continue

@@ -26,9 +26,23 @@ type hookStoreRunner func(command, dir string, env []string) (string, error)
 // every federated store attempt — the query always matches the agent's OWN
 // identity (gc.routed_to / assignee == this identity) regardless of which store
 // it reads.
+//
+// GC_ROUTE_TARGETS belongs here for the same reason and not because it is an
+// identity: each federated entry's env is built from a per-store VIEW of the
+// agent (view.Dir = rigName, or cleared for the city entry), and
+// controllerAgentCommandEnv recomputing the targets from that view expands a
+// "{{.Rig}}" claim route against the store being READ rather than the agent's
+// own scope. Measured for a city-scoped agent carrying that route: its own env
+// held "toolsmith\n/lab.engineer" while the rig entry held
+// "dart/toolsmith\ndart/lab.engineer". A query serving the rig entry's list
+// offers a bead gc then refuses to claim, which bounces the slot
+// claim/drain/respawn -- the inverse of the narrowing failure the variable
+// exists to close, and it bounces the pool the same way.
+// TestRouteTargetsEnvIsConstantAcrossFederatedHookStores pins it.
 var hookIdentityEnvKeys = []string{
 	"GC_AGENT", "GC_SESSION_NAME", "GC_ALIAS",
 	"GC_SESSION_ID", "GC_SESSION_ORIGIN", "GC_TEMPLATE",
+	routeTargetsEnvKey,
 }
 
 // appendRigHookStores adds one hookStore per non-suspended rig for a cross-store-eligible
