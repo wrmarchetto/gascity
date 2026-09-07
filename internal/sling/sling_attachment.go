@@ -447,8 +447,25 @@ func CheckBeadStateWithOptions(q BeadQuerier, beadID string, a config.Agent, dep
 		return BeadCheckResult{}
 	}
 
+	// A custom sling_query owns the routing write, so gc cannot compare this
+	// bead against a target it does not know. That is why this returns before
+	// the idempotency and pool-membership logic below and must keep doing so:
+	// every branch there measures against agentutil.RoutedToIdentity, which a
+	// custom query need not write. What the early return must NOT drop is the
+	// remedy. shouldReopenForReassign gates reopenForReassign on opts.Reassign
+	// alone, never on the query shape, so --reassign clears the assignee and
+	// reopens the bead here exactly as it does on a built-in route.
+	//
+	// The message deliberately does not borrow the built-in branches' claim
+	// that pool %q "cannot claim it", nor assert that a route was written:
+	// both are statements about a target this path cannot resolve. Retaining
+	// the assignee is the part that is true whatever the query does.
 	if IsCustomSlingQuery(a) {
-		return BeadCheckResult{Warnings: routedStateWarnings(b, beadID)}
+		warnings := routedStateWarnings(b, beadID)
+		if b.Assignee != "" && !opts.Reassign {
+			warnings = append(warnings, fmt.Sprintf("warning: bead %s is assigned to %q; this agent routes through a custom sling_query, so sling retains that assignment and can leave the bead both assigned and routed — rerun with --reassign to clear the assignee and reopen the bead", beadID, b.Assignee))
+		}
+		return BeadCheckResult{Warnings: warnings}
 	}
 
 	target := agentutil.RoutedToIdentity(&a)
