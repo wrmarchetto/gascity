@@ -72,7 +72,7 @@ func controllerWorkQueryEnv(cityPath string, cfg *config.City, agentCfg *config.
 			}
 		}
 	}
-	queryEnv, err := controllerQueryRuntimeEnv(cityPath, cfg, agentCfg)
+	queryEnv, err := controllerAgentCommandEnv(cityPath, cfg, agentCfg)
 	if err != nil {
 		return nil, err
 	}

@@ -232,7 +232,7 @@
             "type": "string"
           },
           "type": "array",
-          "description": "ClaimRoutes optionally permit this agent to claim new unassigned work\nrouted to shared queues. They supplement the agent's own qualified pool\nroute, while assigned-work recovery remains restricted to the session's\nown identity. Supports the same Go template placeholders as WorkQuery."
+          "description": "ClaimRoutes optionally permit this agent to claim new unassigned work\nrouted to shared queues. They supplement the agent's own qualified pool\nroute, while assigned-work recovery remains restricted to the session's\nown identity. Supports the same Go template placeholders as WorkQuery.\n\nA custom WorkQuery or ScaleCheck must NOT restate this set. gc exports\nthe expanded result -- the agent's own pool route first, then every\nentry here -- as GC_ROUTE_TARGETS, newline-separated, in the environment\nof both commands. Restating it is how a query ends up narrower than what\ngc will claim on, and that disagreement is invisible from both sides:\ndemand counts zero, the pool sizes zero, and the tracker still shows a\nready assigned bead."
         },
         "sling_query": {
           "type": "string",

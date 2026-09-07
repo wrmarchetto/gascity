@@ -655,7 +655,7 @@ func buildDesiredStateWithSessionBeads(
 			}
 			coldWakeTemplates[template] = true
 		}
-		env, err := controllerQueryRuntimeEnv(cityPath, cfg, &cfg.Agents[i])
+		env, err := controllerAgentCommandEnv(cityPath, cfg, &cfg.Agents[i])
 		if err != nil {
 			fmt.Fprintf(stderr, "scaleCheck: building env for %s: %v\n", cfg.Agents[i].QualifiedName(), err) //nolint:errcheck
 			continue

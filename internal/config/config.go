@@ -3339,6 +3339,14 @@ type Agent struct {
 	// routed to shared queues. They supplement the agent's own qualified pool
 	// route, while assigned-work recovery remains restricted to the session's
 	// own identity. Supports the same Go template placeholders as WorkQuery.
+	//
+	// A custom WorkQuery or ScaleCheck must NOT restate this set. gc exports
+	// the expanded result -- the agent's own pool route first, then every
+	// entry here -- as GC_ROUTE_TARGETS, newline-separated, in the environment
+	// of both commands. Restating it is how a query ends up narrower than what
+	// gc will claim on, and that disagreement is invisible from both sides:
+	// demand counts zero, the pool sizes zero, and the tracker still shows a
+	// ready assigned bead.
 	ClaimRoutes []string `toml:"claim_routes,omitempty"`
 	// SlingQuery is the command template to route a bead to this session config.
 	// If it contains Go template placeholders, gc expands them using the same
