@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-1ha 2026-09-06T19:26Z
+last_seen: gs-23r 2026-09-07T12:55Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1665,3 +1665,49 @@ WITH the assessment layer, and a governor that assesses then reports
 something else is mechanically unobservable today.
 
 Source: roadmap governor
+
+## 57. pm-chat gs-23r: Slack mayor-channel feasibility -- yes; adapter and mirror are the new code (2026-09-07)
+
+Willie asked in the chat sitting whether a second Slack channel can be a
+direct line to the mayor -- his messages reach the mayor's prompt, the
+mayor's output mirrors to the channel, "like having the mayor's tmux window
+open in Slack". Feasibility answer, from an Explore survey of the repo this
+turn: YES, and most of the plumbing already ships.
+
+- internal/extmsg is a provider-neutral BIDIRECTIONAL messaging fabric
+  (conversation bindings, group routing, transcripts, delivery receipts),
+  not just emitters. No Slack provider is in-tree; adapters are
+  out-of-process, registered at runtime via POST /extmsg/adapters
+  (in-memory registry, must re-register after controller restart).
+- Inbound (Slack to mayor) is generically complete: POST
+  /v0/city/{city}/extmsg/inbound routes binding, then group, then default
+  route, and lands the full message text in the named session's prompt as a
+  sanitized system-reminder nudge, cold-waking the session if it is down
+  (internal/api/handler_extmsg.go, internal/extmsg/inbound.go). Slack HMAC
+  verification (slack-v0) already ships in internal/webhookverify.
+- Outbound transport exists (POST /extmsg/outbound to adapter /publish) but
+  NOTHING mirrors output automatically today: output reaches a conversation
+  only when the agent chooses to reply. The tmux-window semantics need a
+  small mirror daemon consuming GET /session/{id}/stream (SSE, structured
+  turn events) and posting each assistant turn to /extmsg/outbound. All
+  stable existing APIs -- glue, not core surgery.
+- New code: (a) a Slack adapter process on the contrib/openclaw-bridge
+  template (its README names Slack as following the same shape); (b) the
+  mirror daemon; (c) optionally wiring webhooksink's StubConversationSink
+  (TODO(E7), which names Slack) if gc's own /hook/{name} receiver is the
+  ingress. Provisioning either way: a real Slack app with scopes; Socket
+  Mode avoids public TLS ingress.
+- notify.sh stays as-is: deliberately one-way, and its header comment
+  explicitly rejects the two-way path for the alert seam.
+- Substrate doc-rot found by the survey, worth a standalone bead:
+  docs/guides/connected-clients.md documents POST /v0/extmsg/clients and an
+  SSE subscribe endpoint that DO NOT EXIST in code, and the docsync test
+  pins only the prose, not the implementation. Do not plan against that
+  guide.
+
+Design questions put to Willie, unanswered as of this entry: mirror scope
+(assistant turns only vs every turn the mayor sees), ingress (Socket Mode
+adapter vs Events API through /hook plus E7 wiring), and whether this
+becomes a roadmap epic now.
+
+Source: pm-chat sitting gs-23r (Explore survey of the repo this turn)
