@@ -54,6 +54,36 @@ func (s *recordingWriteWorkStore) SetMetadata(id, key, value string) error {
 	return nil
 }
 
+// heldBeadInRecordingStore creates a bead in rec's embedded MemStore and
+// really claims it under assignee, returning the snapshot a caller would have
+// enumerated. The metadata is stamped on the returned snapshot only, which is
+// where workrelease.Metadata reads the routing keys from.
+//
+// The release path arbitrates an in_progress+assigned bead through the store's
+// ReleaseIfCurrent CAS, so a literal bead that was never stored makes the CAS
+// refuse and the façade emit nothing. rec.Update deliberately does not
+// delegate to the MemStore, so the claim is driven on the MemStore directly.
+func heldBeadInRecordingStore(t *testing.T, rec *recordingWriteWorkStore, assignee string, metadata map[string]string) beads.Bead {
+	t.Helper()
+	created, err := rec.Create(beads.Bead{Title: "held", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	inProgress := "in_progress"
+	if err := rec.MemStore.Update(created.ID, beads.UpdateOpts{Status: &inProgress, Assignee: &assignee}); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	item, err := rec.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if item.Status != "in_progress" || item.Assignee != assignee {
+		t.Fatalf("setup did not take: status=%q assignee=%q", item.Status, item.Assignee)
+	}
+	item.Metadata = metadata
+	return item
+}
+
 func derefStr(p *string) string {
 	if p == nil {
 		return "<nil>"
@@ -108,22 +138,67 @@ func TestWorkAssignmentReleaseWorkBead_OpenStaysOpen(t *testing.T) {
 	}
 }
 
-// TestWorkAssignmentReleaseWorkBead_InProgressResetsToOpen asserts an
-// in_progress bead is reset to open on release, byte-identical to the raw op.
-func TestWorkAssignmentReleaseWorkBead_InProgressResetsToOpen(t *testing.T) {
+// TestWorkAssignmentReleaseWorkBead_InProgressGoesThroughTheGuardedPath
+// asserts an in_progress release performs the status/assignee swap through the
+// store's conditional verb and emits the affinity clears as a separate
+// metadata-only write.
+//
+// It no longer asserts a single byte-identical Update carrying
+// status+assignee: an in_progress bead assigned to a named holder is exactly
+// the shape ReleaseIfCurrent arbitrates, so that Update is the op this path
+// deliberately stopped emitting (ci-23nak7). The unconditional single-Update
+// contract is still pinned for the shapes the CAS cannot cover, by
+// _OpenStaysOpen and the two run-target-fallback tests above.
+func TestWorkAssignmentReleaseWorkBead_InProgressGoesThroughTheGuardedPath(t *testing.T) {
 	rec := newRecordingWriteWorkStore()
 	wa := workAssignmentForStore(beads.WorkStore{Store: rec})
 
-	item := beads.Bead{ID: "w-ip", Status: "in_progress", Assignee: "agent-1"}
+	// The CAS is promoted from the embedded MemStore, so the bead has to
+	// really be there and really be held for it to win. rec.Update does not
+	// delegate, so the claim is driven on the MemStore directly.
+	created, err := rec.Create(beads.Bead{Title: "held", Type: "task"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	inProgress, holder := "in_progress", "agent-1"
+	if err := rec.MemStore.Update(created.ID, beads.UpdateOpts{Status: &inProgress, Assignee: &holder}); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	item, err := rec.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
 	if err := wa.ReleaseWorkBead(item, ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
-	got := rec.updates[0]
-	if got.opts.Status == nil || *got.opts.Status != "open" {
-		t.Fatalf("Status = %v, want open", got.opts.Status)
+
+	// The CAS did the swap.
+	got, err := rec.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get after release: %v", err)
 	}
-	if derefStr(got.opts.Assignee) != "" {
-		t.Fatalf("Assignee = %q, want empty-string clear", derefStr(got.opts.Assignee))
+	if got.Status != "open" {
+		t.Fatalf("Status = %q, want open", got.Status)
+	}
+	if got.Assignee != "" {
+		t.Fatalf("Assignee = %q, want cleared", got.Assignee)
+	}
+
+	// The façade emitted exactly the metadata-only follow-up write, carrying
+	// no status/assignee of its own.
+	if len(rec.updates) != 1 {
+		t.Fatalf("expected 1 metadata Update, got %d: %#v", len(rec.updates), rec.updates)
+	}
+	meta := rec.updates[0]
+	if meta.id != created.ID {
+		t.Fatalf("Update id = %q, want %q", meta.id, created.ID)
+	}
+	if meta.opts.Status != nil || meta.opts.Assignee != nil {
+		t.Fatalf("metadata write must carry neither status nor assignee, got status=%v assignee=%q", meta.opts.Status, derefStr(meta.opts.Assignee))
+	}
+	if !reflect.DeepEqual(meta.opts.Metadata, clearedSessionAffinityMetadata()) {
+		t.Fatalf("Metadata mismatch:\n got %#v\n want %#v", meta.opts.Metadata, clearedSessionAffinityMetadata())
 	}
 }
 
@@ -134,7 +209,7 @@ func TestWorkAssignmentReleaseWorkBead_RunTargetFallbackApplied(t *testing.T) {
 	rec := newRecordingWriteWorkStore()
 	wa := workAssignmentForStore(beads.WorkStore{Store: rec})
 
-	item := beads.Bead{ID: "w-route", Status: "in_progress", Assignee: "agent-1"}
+	item := heldBeadInRecordingStore(t, rec, "agent-1", nil)
 	if err := wa.ReleaseWorkBead(item, "worker"); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
@@ -150,12 +225,8 @@ func TestWorkAssignmentReleaseWorkBead_RunTargetFallbackSkippedWhenRouted(t *tes
 	rec := newRecordingWriteWorkStore()
 	wa := workAssignmentForStore(beads.WorkStore{Store: rec})
 
-	item := beads.Bead{
-		ID:       "w-routed",
-		Status:   "in_progress",
-		Assignee: "agent-1",
-		Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "existing"},
-	}
+	item := heldBeadInRecordingStore(t, rec, "agent-1",
+		map[string]string{beadmeta.RoutedToMetadataKey: "existing"})
 	if err := wa.ReleaseWorkBead(item, "worker"); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}

@@ -1,6 +1,10 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"strings"
+
 	sessionpkg "github.com/gastownhall/gascity/internal/session"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
@@ -164,12 +168,107 @@ func excludeMailMessageBeads(items []beads.Bead) []beads.Bead {
 // work open, unassigned and unrouted whenever the bead carried no route of its
 // own, which is invisible to both the pool demand probe and
 // releaseOrphanedPoolAssignments.
+//
+// The release is GUARDED on the assignee the caller enumerated. Both callers
+// (releaseWorkFromClosedSessionBead and
+// unclaimWorkAssignedToRetiredSessionInfo, cmd/gc/session_beads.go) read the
+// work with OpenAssignedTo and write it here, and nothing else pins the
+// assignee across that window. Unconditional, this reopened beads whose
+// holder had changed since the read -- and because claim_routes puts two
+// provider pools on one route, the reopened bead went to the OTHER pool while
+// the first was still working it (ci-23nak7; the same defect the closed-session
+// path already guards for after ci-2hk, where the work simply ran twice with
+// no error anywhere). Preferring the store's CAS and falling back to a live
+// recheck mirrors releaseWorkBeadFromClosedSession and
+// releaseOrphanedPoolAssignment rather than inventing a third discipline.
+//
+// A refusal returns nil, not an error: nothing failed, and the bead is
+// correctly left with its live holder. The callers' unclaimResult therefore
+// tallies a refusal as Released -- it counts release ATTEMPTS that did not
+// fault, not beads reopened. Splitting that counter is deliberately left
+// undone here; it would touch every caller of unclaimResult for a reporting
+// nicety, and no path reads the tally to make a decision.
 func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback string) error {
 	store := w.unwrapped()
 	if store == nil {
 		return nil
 	}
+	released, handled, err := releaseWorkBeadIfCurrent(store, item)
+	if err != nil {
+		return err
+	}
+	if handled {
+		if !released {
+			return nil
+		}
+		// The CAS swapped status/assignee only, so the affinity clears and the
+		// run_target fallback ride a separate metadata-only write. Both sides
+		// read workrelease.Metadata, so this stamps byte-identically to the
+		// unconditional path below.
+		return store.Update(item.ID, beads.UpdateOpts{Metadata: releaseWorkBeadMetadata(item, runTargetFallback)})
+	}
+	// Everything the CAS cannot arbitrate keeps the original unconditional
+	// write, byte-identical to the raw ops: an open-status bead (outside
+	// ReleaseIfCurrent's contract), an assignee-less snapshot, and a store
+	// with no usable conditional verb.
+	//
+	// NOT given a live-recheck fallback, unlike
+	// releaseWorkBeadFromClosedSession. A recheck only shrinks the window
+	// rather than closing it, it costs a store read on every release, and it
+	// would change the bead op this path emits -- the byte-identity the
+	// recording-fake write tests exist to pin. All six stores in this tree
+	// declare ConditionalAssignmentReleaser (the compile-time assertions in
+	// internal/beads: Bd, Caching, File, Mem, NativeDolt, SQLite), and
+	// production is Bd behind Caching, so the recheck would cover only a
+	// backend that does not exist yet. If one appears it releases unguarded:
+	// give it the recheck then, and pin it with the same two-arm test.
 	return store.Update(item.ID, workrelease.Options(item, runTargetFallback))
+}
+
+// releaseWorkBeadIfCurrent attempts the store's atomic conditional release for
+// a retirement/unclaim release.
+//
+// handled=false means the store cannot conditionally release this snapshot
+// shape -- no ConditionalAssignmentReleaser, ErrConditionalReleaseUnsupported,
+// or a snapshot outside the verb's in_progress+assigned contract -- and the
+// caller keeps the unconditional write. handled=true with released=false
+// means the store answered authoritatively that the assignee moved since the
+// caller's enumeration, and the release must NOT be retried unconditionally.
+//
+// The store argument must be the UNWRAPPED store. Asserting an optional
+// capability on a beads.WorkStore wrapper always fails (the typed-nil trap in
+// this file's header), and a silent failure here degrades every release back
+// to unconditional -- the exact defect this function exists to prevent.
+//
+// An error is returned rather than swallowed into the recheck fallback: a
+// store that could not answer leaves ownership UNRESOLVED, and downgrading
+// that to an unconditional write is exactly how a transient fault becomes a
+// second holder. This differs from releasePoolAssignmentIfCurrent, which logs
+// and skips the tick because it has no error channel to its caller; here both
+// callers already report and tally what comes back.
+//
+// The open-status carve-out is deliberate and load-bearing, not defensive.
+// ReleaseIfCurrent's contract covers in_progress assignments only, so a bead
+// parked open on a pool route name has no CAS available; narrowing it to one
+// would strand every parked bead a retiring session leaves behind.
+// cmd/gc/work_assignment_release_cas_test.go pins both arms.
+func releaseWorkBeadIfCurrent(store beads.Store, item beads.Bead) (released, handled bool, err error) {
+	expectedAssignee := strings.TrimSpace(item.Assignee)
+	if item.Status != "in_progress" || expectedAssignee == "" {
+		return false, false, nil
+	}
+	releaser, ok := store.(beads.ConditionalAssignmentReleaser)
+	if !ok {
+		return false, false, nil
+	}
+	released, err = releaser.ReleaseIfCurrent(item.ID, expectedAssignee)
+	if err != nil {
+		if errors.Is(err, beads.ErrConditionalReleaseUnsupported) {
+			return false, false, nil
+		}
+		return false, true, fmt.Errorf("conditionally releasing %s from %q: %w", item.ID, expectedAssignee, err)
+	}
+	return released, true, nil
 }
 
 // releaseWorkBeadMetadata is the cmd/gc name for the shared release metadata
