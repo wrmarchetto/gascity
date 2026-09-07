@@ -116,7 +116,7 @@ func TestWorkAssignmentReleaseWorkBead_OpenStaysOpen(t *testing.T) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: rec})
 
 	item := beads.Bead{ID: "w-open", Status: "open", Assignee: "agent-1"}
-	if err := wa.ReleaseWorkBead(item, ""); err != nil {
+	if err := wa.ReleaseWorkBead(item, "", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 	if len(rec.updates) != 1 {
@@ -169,7 +169,7 @@ func TestWorkAssignmentReleaseWorkBead_InProgressGoesThroughTheGuardedPath(t *te
 		t.Fatalf("Get: %v", err)
 	}
 
-	if err := wa.ReleaseWorkBead(item, ""); err != nil {
+	if err := wa.ReleaseWorkBead(item, "", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestWorkAssignmentReleaseWorkBead_RunTargetFallbackApplied(t *testing.T) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: rec})
 
 	item := heldBeadInRecordingStore(t, rec, "agent-1", nil)
-	if err := wa.ReleaseWorkBead(item, "worker"); err != nil {
+	if err := wa.ReleaseWorkBead(item, "worker", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 	got := rec.updates[0]
@@ -227,7 +227,7 @@ func TestWorkAssignmentReleaseWorkBead_RunTargetFallbackSkippedWhenRouted(t *tes
 
 	item := heldBeadInRecordingStore(t, rec, "agent-1",
 		map[string]string{beadmeta.RoutedToMetadataKey: "existing"})
-	if err := wa.ReleaseWorkBead(item, "worker"); err != nil {
+	if err := wa.ReleaseWorkBead(item, "worker", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 	got := rec.updates[0]
@@ -276,7 +276,7 @@ func TestWorkAssignmentClearDetachedProbe_ByteIdentical(t *testing.T) {
 // underlying store the same way the raw ops did (no panic, no write).
 func TestWorkAssignmentWrite_NilStoreSafe(t *testing.T) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: nil})
-	if err := wa.ReleaseWorkBead(beads.Bead{ID: "x"}, ""); err != nil {
+	if err := wa.ReleaseWorkBead(beads.Bead{ID: "x"}, "", ""); err != nil {
 		t.Fatalf("nil store ReleaseWorkBead: %v", err)
 	}
 	if err := wa.ReassignWorkBead("x", "y"); err != nil {

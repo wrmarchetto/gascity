@@ -76,7 +76,7 @@ func TestReleaseWorkBeadRefusesWhenAssigneeMovedSinceSnapshot(t *testing.T) {
 	stale := current
 	stale.Assignee = "agent-1"
 
-	if err := wa.ReleaseWorkBead(stale, ""); err != nil {
+	if err := wa.ReleaseWorkBead(stale, "", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 
@@ -114,7 +114,7 @@ func TestReleaseWorkBeadRefusalWritesNothing(t *testing.T) {
 	stale := current
 	stale.Assignee = "agent-1"
 
-	if err := wa.ReleaseWorkBead(stale, "worker"); err != nil {
+	if err := wa.ReleaseWorkBead(stale, "worker", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 	if len(rec.updates) != 0 {
@@ -136,7 +136,7 @@ func TestReleaseWorkBeadReleasesWhenAssigneeStillMatches(t *testing.T) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: store})
 
 	current := inProgressBead(t, store, "agent-1")
-	if err := wa.ReleaseWorkBead(current, ""); err != nil {
+	if err := wa.ReleaseWorkBead(current, "", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 
@@ -181,7 +181,7 @@ func TestReleaseWorkBeadOpenBeadTakesUnconditionalPath(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 
-	if err := wa.ReleaseWorkBead(item, ""); err != nil {
+	if err := wa.ReleaseWorkBead(item, "", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 	got, err := store.Get(created.ID)
@@ -225,7 +225,7 @@ func TestReleaseWorkBeadUnsupportedConditionalFallsBack(t *testing.T) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: store})
 
 	current := inProgressBead(t, store, "agent-1")
-	if err := wa.ReleaseWorkBead(current, ""); err != nil {
+	if err := wa.ReleaseWorkBead(current, "", ""); err != nil {
 		t.Fatalf("ReleaseWorkBead: %v", err)
 	}
 	if store.conditionalHit == 0 {
@@ -263,7 +263,7 @@ func TestReleaseWorkBeadConditionalErrorDoesNotRelease(t *testing.T) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: store})
 
 	current := inProgressBead(t, store, "agent-1")
-	err := wa.ReleaseWorkBead(current, "")
+	err := wa.ReleaseWorkBead(current, "", "")
 	if err == nil {
 		t.Fatal("ReleaseWorkBead returned nil on an unresolved CAS; the caller cannot distinguish released from unknown")
 	}
