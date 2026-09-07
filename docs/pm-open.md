@@ -72,6 +72,14 @@ rig root (repair deferred to the operator, resolved by abort and closed
 epic's acceptance closes over it. Incident-management beads join the class
 alongside substrate fixes; the standing question below is unchanged.
 
+Update 2026-09-07 (pm-log #61): gs-olu (connected-clients.md repair plus a
+route-checking docsync test) joins the class, fourth after gs-z39, gs-c6f,
+and gs-eep. The pm-log #60 DECOMP verdict ruled it standalone: substrate doc
+rot the pm-log #57 survey found, covered by no epic:mayor-slack-bridge
+acceptance criterion. The mayor dropped the epic label without adding
+standalone, sweep summons gs-wm2 caught the unlabeled bead, and the label
+was added there. The standing question below is unchanged.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?

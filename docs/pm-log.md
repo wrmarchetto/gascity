@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-4n7 2026-09-07T16:15Z
+last_seen: gs-wm2 2026-09-07T16:29Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1802,3 +1802,18 @@ the remaining six cover all nine criteria and the provisioning dependency,
 and sling as filed on that one relabel.
 
 Source: roadmap mayor-slack-bridge
+
+## 61. epic-unmapped gs-wm2: standalone label added to gs-olu, completing the #60 relabel (2026-09-07)
+
+Sweep summons gs-wm2 caught open bead gs-olu carrying no epic:<slug> label.
+Not a new placement question: the pm-log #60 DECOMP verdict already ruled it
+standalone, on the gs-z39/gs-c6f/gs-eep precedent recorded in pm-open #3.
+The mayor executed half that relabel -- its 2026-09-07T16:19Z comment on
+gs-olu says "relabelled standalone", but only the epic label was removed and
+no standalone label was added, which is exactly the unlabeled state the
+sweep keys on. Added the standalone label this turn, appended the gs-olu
+update to pm-open #3, and closed the summons. The bead stays assigned
+gascity/lab.engineer and slings on its own schedule per the #60 verdict;
+epic:mayor-slack-bridge's close is not gated on it.
+
+Source: pm-log #60
