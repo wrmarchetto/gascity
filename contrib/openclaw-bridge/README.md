@@ -290,24 +290,24 @@ Slack app setup: enable Socket Mode; create an app-level token with
 `connections:write`; subscribe to `message.channels`; grant the bot
 `channels:history` and `chat:write`; then invite the bot to the target channel.
 The bridge ignores bot messages, Slack message subtypes (including edits), and
-every channel other than `SLACK_CHANNEL_ID`.
+every channel other than `BRIDGE_SLACK_CHANNEL_ID`.
 
 ```bash
 # Environment supplied by the component supervisor.
 GC_CITY=lab
-SLACK_APP_TOKEN=xapp-...       # app-level token, connections:write
-SLACK_BOT_TOKEN=xoxb-...       # bot token
-SLACK_CHANNEL_ID=C012345
+BRIDGE_SLACK_APP_TOKEN=xapp-...       # app-level token, connections:write
+BRIDGE_SLACK_BOT_TOKEN=xoxb-...       # bot token
+BRIDGE_SLACK_CHANNEL_ID=C012345
 SLACK_TARGET_AGENT=lab/lead    # configured named-session identity
 node slack-bridge.mjs
 ```
 
-Keep `SLACK_APP_TOKEN` and `SLACK_BOT_TOKEN` only in
+Keep `BRIDGE_SLACK_APP_TOKEN` and `BRIDGE_SLACK_BOT_TOKEN` only in
 `${GC_HOME}/secrets.env` (mode `0600`), never in `city.toml` or this
 repository. The bridge intentionally reads credentials only from its inherited
 environment; it does not open or parse the secrets file. When the supervising
 service is Gas City, opt those non-provider keys into the service environment
-with `GC_SUPERVISOR_ENV=SLACK_APP_TOKEN,SLACK_BOT_TOKEN` before regenerating
+with `GC_SUPERVISOR_ENV=BRIDGE_SLACK_APP_TOKEN,BRIDGE_SLACK_BOT_TOKEN` before regenerating
 the service file. It refuses to start if either token is absent.
 
 The existing iMessage and Telegram bridges remain proof-of-concept connector
@@ -322,7 +322,7 @@ agent to call a reply tool:
 
 ```bash
 GC_CITY=lab \
-SLACK_CHANNEL_ID=C012345 \
+BRIDGE_SLACK_CHANNEL_ID=C012345 \
 GC_MIRROR_SESSION=lab/lead \
 node slack-mirror.mjs
 ```

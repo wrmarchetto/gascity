@@ -29,17 +29,10 @@
 #    bridge's repo -- and criterion 8's "notify.sh stays exactly as it is"
 #    needs a city-side check to be mechanical. Recorded on gs-8ra.
 #
-# 2. The knob-name collision in ${GC_HOME}/secrets.env, which is a live
-#    defect and not a hypothetical. Measured 2026-09-07: slack-deliver.py
-#    reads SLACK_BOT_TOKEN and SLACK_CHANNEL_ID from that file, and this
-#    bridge reads knobs of the SAME two names from its environment while its
-#    own README (the "Keep ... only in ${GC_HOME}/secrets.env" line) tells
-#    the operator to put them there. So configuration alone -- with no code
-#    edit for any refusal below to catch -- points the mirror at the alerts
-#    channel, or repoints the alerts seam at the mirror's channel. Fixing it
-#    means renaming the bridge's knobs, which is bridge code this gate does
-#    not own; filed as its own bead from gs-8ra. Do NOT "fix" it by relaxing
-#    refusal 4: the collision is upstream of every scan here.
+# 2. The city's alert seam owns SLACK_WEBHOOK_URL, SLACK_BOT_TOKEN, and
+#    SLACK_CHANNEL_ID. Refusal 7 below compares that contract with the
+#    bridge's required Slack knobs, keeping the two configuration namespaces
+#    disjoint even when both components inherit ${GC_HOME}/secrets.env.
 set -euo pipefail
 
 ROOT=${1:-$(cd "$(dirname "$0")/.." && pwd)}
@@ -382,7 +375,7 @@ fi
 # told a secret to run is a gate that cannot run in CI.
 #
 # Code and launchers only, deliberately NOT the prose, for the same reason
-# refusal 1 spares prose: `SLACK_CHANNEL_ID=C012345` in the README is the
+# refusal 1 spares prose: `BRIDGE_SLACK_CHANNEL_ID=C012345` in the README is the
 # criterion being SATISFIED -- it shows the destination arriving as
 # configuration. Refusing an example there would only teach the next author
 # to stop writing examples.
@@ -396,7 +389,7 @@ fi
 # conversation id walks past this refusal. Nothing distinguishes such a token
 # from prose, and buying it would cost every capitalized word in the package.
 # The backstops for that case are refusal 4 (the alerts seam by name) and the
-# required('SLACK_CHANNEL_ID') read that makes a literal redundant in the
+# required('BRIDGE_SLACK_CHANNEL_ID') read that makes a literal redundant in the
 # first place.
 CHANNEL_LITERAL='\b[CGD][A-Z0-9]{8,}\b'
 channel_hits=$(grep -rnoE "$CHANNEL_LITERAL" -- "${PKG_FILES[@]}" |
@@ -404,10 +397,28 @@ channel_hits=$(grep -rnoE "$CHANNEL_LITERAL" -- "${PKG_FILES[@]}" |
 if [ -n "$channel_hits" ]; then
     echo "$channel_hits" >&2
     fail "Slack conversation id literal in the bridge path (above). The
-  conversation is configuration -- required('SLACK_CHANNEL_ID') -- so a literal
+  conversation is configuration -- required('BRIDGE_SLACK_CHANNEL_ID') -- so a literal
   here binds one channel forever and could bind the alerts channel. Remedy:
   read the id from configuration. If this is not a channel id, rename the
   constant so it does not read as one."
+fi
+
+# --- refusal 7: bridge Slack knobs do not alias the city's alert seam ---
+#
+# The alert delivery script is city-owned, while this gate runs in the bridge
+# repository. Its three environment names are therefore an explicit boundary
+# contract here. Keeping the list next to the gate makes a future alert-knob
+# change deliberate: update this contract and the city-side comparison in the
+# same change. The bridge must use its BRIDGE_SLACK_* namespace instead.
+ALERT_KNOBS=$'SLACK_WEBHOOK_URL\nSLACK_BOT_TOKEN\nSLACK_CHANNEL_ID'
+aliased_knobs=$(comm -12 <(printf '%s\n' "$ALERT_KNOBS" | sort) \
+    <(printf '%s\n' "$required_knobs" | sort) | grep -v '^$' || true)
+if [ -n "$aliased_knobs" ]; then
+    echo "$aliased_knobs" >&2
+    fail "bridge knob aliases the alerts seam (above). The alert delivery and
+  bridge channels are separate paths, even when both inherit secrets.env.
+  Remedy: use a BRIDGE_SLACK_* knob for the bridge; never reuse an alert seam
+  name."
 fi
 
 if [ "$STATUS" -eq 0 ]; then

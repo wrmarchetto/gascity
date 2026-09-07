@@ -32,17 +32,17 @@ test('slack bridge refuses to start when the bot token is absent', async () => {
   const env = {
     ...process.env,
     GC_CITY: 'lab',
-    SLACK_APP_TOKEN: 'xapp-test',
-    SLACK_BOT_TOKEN: '',
-    SLACK_CHANNEL_ID: 'C012345',
+    BRIDGE_SLACK_APP_TOKEN: 'xapp-test',
+    BRIDGE_SLACK_BOT_TOKEN: '',
+    BRIDGE_SLACK_CHANNEL_ID: 'C012345',
     SLACK_TARGET_AGENT: 'lab/lead',
   }
   try {
     await execFileAsync(process.execPath, [entrypoint('slack-bridge.mjs')], { env })
-    assert.fail('slack bridge started without SLACK_BOT_TOKEN')
+    assert.fail('slack bridge started without BRIDGE_SLACK_BOT_TOKEN')
   } catch (err) {
     assert.equal(err.code, 2)
-    assert.match(err.stderr, /SLACK_BOT_TOKEN is required/)
+    assert.match(err.stderr, /BRIDGE_SLACK_BOT_TOKEN is required/)
   }
 })
 
@@ -50,16 +50,16 @@ test('slack bridge refuses to start when the Socket Mode app token is absent', a
   const env = {
     ...process.env,
     GC_CITY: 'lab',
-    SLACK_APP_TOKEN: '',
-    SLACK_BOT_TOKEN: 'xoxb-test',
-    SLACK_CHANNEL_ID: 'C012345',
+    BRIDGE_SLACK_APP_TOKEN: '',
+    BRIDGE_SLACK_BOT_TOKEN: 'xoxb-test',
+    BRIDGE_SLACK_CHANNEL_ID: 'C012345',
     SLACK_TARGET_AGENT: 'lab/lead',
   }
   try {
     await execFileAsync(process.execPath, [entrypoint('slack-bridge.mjs')], { env })
-    assert.fail('slack bridge started without SLACK_APP_TOKEN')
+    assert.fail('slack bridge started without BRIDGE_SLACK_APP_TOKEN')
   } catch (err) {
     assert.equal(err.code, 2)
-    assert.match(err.stderr, /SLACK_APP_TOKEN is required/)
+    assert.match(err.stderr, /BRIDGE_SLACK_APP_TOKEN is required/)
   }
 })

@@ -331,6 +331,22 @@ func TestExtmsgBridgeIsolation(t *testing.T) {
 		mustFail: true,
 		wants:    "conversation id literal",
 	}, {
+		name: "bridge knob aliases the alerts seam bot token",
+		mutate: func(t *testing.T, root string) {
+			appendFixtureFile(t, root, "contrib/openclaw-bridge/slack-bridge.mjs",
+				"const botToken = required('SLACK_BOT_TOKEN')\nconsole.log(botToken)\n")
+		},
+		mustFail: true,
+		wants:    "bridge knob aliases the alerts seam",
+	}, {
+		name: "bridge knob aliases the alerts seam channel",
+		mutate: func(t *testing.T, root string) {
+			appendFixtureFile(t, root, "contrib/openclaw-bridge/slack-bridge.mjs",
+				"const channel = required('SLACK_CHANNEL_ID')\nconsole.log(channel)\n")
+		},
+		mustFail: true,
+		wants:    "bridge knob aliases the alerts seam",
+	}, {
 		name: "conversation id as a README example",
 		mutate: func(t *testing.T, root string) {
 			appendFixtureFile(t, root, "contrib/openclaw-bridge/README.md",

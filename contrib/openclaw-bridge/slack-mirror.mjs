@@ -18,7 +18,7 @@ const required = (name) => {
 
 const CITY = required('GC_CITY')
 const SESSION = required('GC_MIRROR_SESSION')
-const CHANNEL_ID = required('SLACK_CHANNEL_ID')
+const CHANNEL_ID = required('BRIDGE_SLACK_CHANNEL_ID')
 const GC_BASE = env('GC_BASE_URL', 'http://127.0.0.1:8372')
 const SCOPE = env('GC_SCOPE_ID', CITY)
 const PROVIDER = env('BRIDGE_PROVIDER', 'slack')

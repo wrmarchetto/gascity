@@ -20,9 +20,9 @@ const required = (name) => {
 }
 
 const CITY = required('GC_CITY')
-const APP_TOKEN = required('SLACK_APP_TOKEN')
-const BOT_TOKEN = required('SLACK_BOT_TOKEN')
-const CHANNEL_ID = required('SLACK_CHANNEL_ID')
+const APP_TOKEN = required('BRIDGE_SLACK_APP_TOKEN')
+const BOT_TOKEN = required('BRIDGE_SLACK_BOT_TOKEN')
+const CHANNEL_ID = required('BRIDGE_SLACK_CHANNEL_ID')
 const TARGET_AGENT = required('SLACK_TARGET_AGENT')
 const GC_BASE = env('GC_BASE_URL', 'http://127.0.0.1:8372')
 const SCOPE = env('GC_SCOPE_ID', CITY)
