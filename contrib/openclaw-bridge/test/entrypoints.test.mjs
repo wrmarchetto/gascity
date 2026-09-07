@@ -18,7 +18,7 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 const entrypoint = (f) => fileURLToPath(new URL(`../${f}`, import.meta.url))
 
-for (const file of ['bridge.mjs', 'telegram-bridge.mjs']) {
+for (const file of ['bridge.mjs', 'telegram-bridge.mjs', 'slack-bridge.mjs', 'slack-mirror.mjs']) {
   test(`node --check passes for ${file} (executable entrypoint parses)`, async () => {
     try {
       await execFileAsync(process.execPath, ['--check', entrypoint(file)])
@@ -27,3 +27,39 @@ for (const file of ['bridge.mjs', 'telegram-bridge.mjs']) {
     }
   })
 }
+
+test('slack bridge refuses to start when the bot token is absent', async () => {
+  const env = {
+    ...process.env,
+    GC_CITY: 'lab',
+    BRIDGE_SLACK_APP_TOKEN: 'xapp-test',
+    BRIDGE_SLACK_BOT_TOKEN: '',
+    BRIDGE_SLACK_CHANNEL_ID: 'C012345',
+    SLACK_TARGET_AGENT: 'lab/lead',
+  }
+  try {
+    await execFileAsync(process.execPath, [entrypoint('slack-bridge.mjs')], { env })
+    assert.fail('slack bridge started without BRIDGE_SLACK_BOT_TOKEN')
+  } catch (err) {
+    assert.equal(err.code, 2)
+    assert.match(err.stderr, /BRIDGE_SLACK_BOT_TOKEN is required/)
+  }
+})
+
+test('slack bridge refuses to start when the Socket Mode app token is absent', async () => {
+  const env = {
+    ...process.env,
+    GC_CITY: 'lab',
+    BRIDGE_SLACK_APP_TOKEN: '',
+    BRIDGE_SLACK_BOT_TOKEN: 'xoxb-test',
+    BRIDGE_SLACK_CHANNEL_ID: 'C012345',
+    SLACK_TARGET_AGENT: 'lab/lead',
+  }
+  try {
+    await execFileAsync(process.execPath, [entrypoint('slack-bridge.mjs')], { env })
+    assert.fail('slack bridge started without BRIDGE_SLACK_APP_TOKEN')
+  } catch (err) {
+    assert.equal(err.code, 2)
+    assert.match(err.stderr, /BRIDGE_SLACK_APP_TOKEN is required/)
+  }
+})

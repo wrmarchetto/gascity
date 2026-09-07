@@ -316,8 +316,27 @@ while IFS= read -r path; do
     # matched against comment-stripped code -- documenting the prohibition is
     # the expected thing for an engineer to do, and refusing that comment
     # would get this check deleted rather than obeyed.
+    #
+    # The two destination keys match on identifier boundaries, the two scripts
+    # as substrings, and the asymmetry is load-bearing. Criterion 8 REQUIRES
+    # the bridge to carry a channel key of its own, and the shape that takes in
+    # contrib/openclaw-bridge/slack-bridge.mjs is BRIDGE_SLACK_CHANNEL_ID --
+    # which contains SLACK_CHANNEL_ID, so a substring match refuses the correct
+    # isolation and reads as a real criterion-8 violation. The scripts stay
+    # substrings because they are reached through a path, and there is no
+    # boundary before notify.sh in assets/scripts/notify.sh.
+    #
+    # Rejected: dropping the two keys from this list once the bridge grew its
+    # own. A later edit could then read the alert destination directly, which
+    # is the whole of the criterion. What separates the bridge's key from the
+    # alerts key is the boundary, not the presence of the name.
+    # Pinned by TestExtmsgBridgeIsolationAcceptsANamespacedBridgeKey.
     for seam in SLACK_CHANNEL_ID SLACK_WEBHOOK_URL notify.sh slack-deliver; do
-        if hit=$(printf '%s\n' "$code" | grep -nF -- "$seam"); then
+        case "$seam" in
+            SLACK_*) matcher=(grep -nE -- "\\b${seam}\\b") ;;
+            *)       matcher=(grep -nF -- "$seam") ;;
+        esac
+        if hit=$(printf '%s\n' "$code" | "${matcher[@]}"); then
             echo "$hit" >&2
             fail "$path reaches the alerts seam through '$seam' (see above).
   The alerts channel is one-way by decision, not by oversight (pm-log #57), and

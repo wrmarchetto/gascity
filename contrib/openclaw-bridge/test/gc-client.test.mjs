@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { env, makeGcClient, startCallbackServer, makeAdapterRegistrar } from '../lib/gc-client.mjs'
+import { env, makeGcClient, startCallbackServer, makeAdapterRegistrar, makeNamedSessionBinder } from '../lib/gc-client.mjs'
 
 // listen starts a one-off server on an ephemeral port and resolves { server, port }.
 function listen(handler) {
@@ -166,6 +166,102 @@ test('makeAdapterRegistrar registers and unregisters with the gc-facing body sha
     const del = calls.find((c) => c.method === 'DELETE' && c.url === '/v0/city/c/extmsg/adapters')
     assert.ok(del, 'deleted the registration on unregister')
     assert.deepEqual(JSON.parse(del.body), { provider: 'telegram', account_id: 'default' })
+  } finally {
+    await close(server)
+  }
+})
+
+test('scheduled re-registration restores an adapter after a controller restart clears its registry', async () => {
+  let registered = false
+  let reregisterTick
+  let scheduledEvery
+  const { server, port } = await listen((req, res) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => {
+      if (req.method === 'POST' && req.url === '/v0/city/lab/extmsg/adapters') {
+        registered = true
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end('{}')
+        return
+      }
+      if (req.method === 'POST' && req.url === '/v0/city/lab/extmsg/outbound') {
+        if (!registered) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'adapter unavailable after controller restart' }))
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ delivered: true }))
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+  })
+  try {
+    const { gcFetch } = makeGcClient({ baseUrl: `http://127.0.0.1:${port}`, city: 'lab' })
+    const registrar = makeAdapterRegistrar({
+      gcFetch,
+      baseUrl: `http://127.0.0.1:${port}`,
+      provider: 'slack',
+      account: 'default',
+      name: 'slack-socket-mode-bridge',
+      callbackUrl: 'http://127.0.0.1:8932',
+      capabilities: { SupportsChildConversations: false, SupportsAttachments: false, MaxMessageLength: 40000 },
+      log: () => {},
+      reregisterMs: 25,
+      setIntervalFn: (fn, ms) => {
+        reregisterTick = fn
+        scheduledEvery = ms
+        return { unref() {} }
+      },
+    })
+
+    await registrar.registerWithRetry()
+    registered = false // controller restart: its adapter registry is in-memory
+    await assert.rejects(() => gcFetch('POST', '/extmsg/outbound', { text: 'before re-registration' }), { status: 503 })
+
+    const timer = registrar.startReregister()
+    assert.ok(timer)
+    assert.equal(scheduledEvery, 25)
+    await reregisterTick()
+
+    assert.deepEqual(await gcFetch('POST', '/extmsg/outbound', { text: 'after re-registration' }), { delivered: true })
+  } finally {
+    await close(server)
+  }
+})
+
+test('makeNamedSessionBinder binds an adapter conversation to the configured agent identity', async () => {
+  const calls = []
+  const { server, port } = await listen((req, res) => {
+    const chunks = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => {
+      calls.push({ method: req.method, url: req.url, body: Buffer.concat(chunks).toString('utf8') })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('{}')
+    })
+  })
+  try {
+    const { gcFetch } = makeGcClient({ baseUrl: `http://127.0.0.1:${port}`, city: 'lab' })
+    const conversation = {
+      scope_id: 'lab',
+      provider: 'slack',
+      account_id: 'team-1',
+      conversation_id: 'C012345',
+      kind: 'room',
+    }
+    await makeNamedSessionBinder({ gcFetch, conversation, agentName: 'lab/lead', log: () => {} }).bindWithRetry()
+
+    assert.deepEqual(calls, [
+      {
+        method: 'POST',
+        url: '/v0/city/lab/extmsg/bind',
+        body: JSON.stringify({ conversation, agent_name: 'lab/lead' }),
+      },
+    ])
   } finally {
     await close(server)
   }

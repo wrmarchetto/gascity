@@ -272,6 +272,75 @@ and `demo-telegram.sh` exercises a per-workstream thread end to end.
    That job also `node --check`s both entrypoints and smoke-loads the openclaw
    connectors (`test/entrypoints.test.mjs`, `test/openclaw-loader.test.mjs`).
 
-A Slack/Discord bridge would follow the same shape; their plugins are
-bigger but the bridge-facing surface (send adapter + inbound normalization +
-id model) is the same family of exports.
+## Slack Socket Mode bridge
+
+`slack-bridge.mjs` carries ordinary human messages from one configured Slack
+channel into the extmsg inbound fabric. It uses Slack Socket Mode: the bridge
+opens an outbound WebSocket, so it does **not** expose a public HTTP endpoint
+or require a public TLS certificate. gc's callback listener remains bound to
+`127.0.0.1` for outbound publishes.
+
+The bridge binds its configured conversation to `SLACK_TARGET_AGENT` through
+`POST /extmsg/bind`. That value must be the identity of a configured named
+session, not a role convention or a transient session ID. The durable
+agent-name binding is idempotent on restart and lets gc cold-wake a fresh
+session when a Slack message arrives after the old one has exited.
+
+Slack app setup: enable Socket Mode; create an app-level token with
+`connections:write`; subscribe to `message.channels`; grant the bot
+`channels:history` and `chat:write`; then invite the bot to the target channel.
+The bridge ignores bot messages, Slack message subtypes (including edits), and
+every channel other than `BRIDGE_SLACK_CHANNEL_ID`.
+
+```bash
+# Environment supplied by the component supervisor.
+GC_CITY=lab
+BRIDGE_SLACK_APP_TOKEN=xapp-...       # app-level token, connections:write
+BRIDGE_SLACK_BOT_TOKEN=xoxb-...       # bot token
+BRIDGE_SLACK_CHANNEL_ID=C012345
+SLACK_TARGET_AGENT=lab/lead    # configured named-session identity
+node slack-bridge.mjs
+```
+
+Keep `BRIDGE_SLACK_APP_TOKEN` and `BRIDGE_SLACK_BOT_TOKEN` only in
+`${GC_HOME}/secrets.env` (mode `0600`), never in `city.toml` or this
+repository. The bridge intentionally reads credentials only from its inherited
+environment; it does not open or parse the secrets file. When the supervising
+service is Gas City, opt those non-provider keys into the service environment
+with `GC_SUPERVISOR_ENV=BRIDGE_SLACK_APP_TOKEN,BRIDGE_SLACK_BOT_TOKEN` before regenerating
+the service file. It refuses to start if either token is absent.
+
+The existing iMessage and Telegram bridges remain proof-of-concept connector
+examples. A Slack/Discord bridge follows the same adapter-normalizes,
+gc-routes shape.
+
+### Assistant-turn mirror
+
+Run `slack-mirror.mjs` beside the Socket Mode adapter to project one named
+session's final assistant text into the same channel without requiring the
+agent to call a reply tool:
+
+```bash
+GC_CITY=lab \
+BRIDGE_SLACK_CHANNEL_ID=C012345 \
+GC_MIRROR_SESSION=lab/lead \
+node slack-mirror.mjs
+```
+
+It reads `GET /session/{id}/stream?format=structured` and publishes only
+messages whose normalized `role` is `assistant`, `status` is `final`, and whose
+blocks are text. Tool use/results and all user messages are excluded, so neither
+tool output, other-agent traffic, nor the human's already-visible Slack message
+is reflected back into the channel. Stable structured message IDs suppress
+snapshot/upsert replays while the process runs. The configured target is a named
+session, not its backing session ID: after the stream closes, the mirror
+reconnects through that name so a respawned session is followed automatically.
+It also retries a failed connection after a supervisor restart. Its process
+supervisor remains responsible for restarting the out-of-process component if
+the process itself exits.
+
+Slack permits 40,000 UTF-16 code units. The mirror's in-code delivery policy
+uses a 39,000-unit ceiling: a short turn is published intact, while a long turn
+is published losslessly as ordered `[part i/n]` messages. The labels are inside
+that ceiling and Unicode code points are never split. Set
+`SLACK_MIRROR_MAX_MESSAGE_LENGTH` only for a stricter transport limit or test.

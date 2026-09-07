@@ -502,6 +502,31 @@ export default token
 	}
 }
 
+// TestExtmsgBridgeIsolationAcceptsANamespacedBridgeKey pins the boundary
+// between the alerts seam's keys and the bridge's own. Criterion 8 requires the
+// bridge to carry a separate channel key, so the refusal above must match
+// SLACK_CHANNEL_ID as a whole identifier and not as a substring.
+// BRIDGE_SLACK_CHANNEL_ID names a different destination and is the shape the
+// isolation actually takes in contrib/openclaw-bridge/slack-bridge.mjs.
+//
+// Rejected: dropping the seam keys from the denylist once the bridge grew keys
+// of its own. That would let a later edit read the alert destination directly,
+// which is the whole of criterion 8. The boundary is what distinguishes the two,
+// not the presence of the name.
+func TestExtmsgBridgeIsolationAcceptsANamespacedBridgeKey(t *testing.T) {
+	f := newBridgeGateFixture(t, map[string]string{
+		"contrib/demo-bridge/demo-bridge.mjs": `import { required } from './lib/gc-client.mjs'
+const channel = required('BRIDGE_SLACK_CHANNEL_ID')
+const hook = required('BRIDGE_SLACK_WEBHOOK_URL')
+export default { channel, hook }
+`,
+	})
+	out, ok := f.run(t)
+	if !ok {
+		t.Fatalf("a bridge-owned key that merely contains a seam key must pass:\n%s", out)
+	}
+}
+
 // TestExtmsgBridgeIsolationFailsClosed is the arm that matters most and the one
 // a read of the script does not predict. Both mutations here leave the gate
 // exiting zero over a tree it never inspected: an empty scan set means the
