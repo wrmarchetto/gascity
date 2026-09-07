@@ -528,10 +528,32 @@ bd close <id>         # Complete work
 3. **Update issue status** - Close finished work, update in-progress items
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
-   git pull --rebase
+   git fetch origin
+   git merge --ff-only origin/main
    git push
    git status  # MUST show "up to date with origin"
    ```
+   Do **NOT** use `git pull --rebase` here. It is correct only while every
+   local commit is a non-merge. When HEAD is a merge -- which it is after
+   integrating `origin/main` -- rebase replays the branch and **drops the
+   merge**, and it does so while **exiting 0**, with no conflict and no
+   warning. Measured 2026-09-07: a merge whose conflict resolution took an
+   afternoon became a flattened replay that reported success. `pull.rebase` is
+   already `false` in this repo, but an explicit `--rebase` overrides config,
+   so the flag is the whole problem.
+
+   `merge --ff-only` is a no-op when `origin/main` is already an ancestor, and
+   **refuses** when the remote genuinely diverged rather than rewriting
+   anything. On that refusal, integrate deliberately -- `git merge
+   origin/main` -- and rebase only when the range carries no merge commits.
+
+   This is backed by `.githooks/pre-rebase`, which refuses any rebase over a
+   range containing a merge (bypass: `GC_ALLOW_MERGE_REBASE=1`). Like every
+   hook here it is live only while `git config core.hooksPath` prints
+   `.githooks`. Behavior is pinned by `scripts/prerebase_contract_test.go`,
+   which drives real repositories -- the hook's refusal is not something a
+   grep of the script can establish.
+
    NOTE: gascity Dolt is LOCAL-ONLY (no remote). Do NOT run `bd dolt push`,
    `bd dolt pull`, or `bd dolt remote add` here -- they fail and re-introduce
    a doomed `origin` remote (ga-9wsri). Use `git push` only.

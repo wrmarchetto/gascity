@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# .githooks/pre-rebase -- refuse a rebase that would silently flatten a merge.
+#
+# The documented session-completion protocol in AGENTS.md used to run
+# `git pull --rebase` unconditionally before every push. That is correct only
+# while the local commits are all non-merges. When HEAD is a merge, rebase
+# replays the branch and DROPS the merge -- and MEASURED 2026-09-07 on a
+# scratch repository reproducing the shape, it does so while EXITING 0, with
+# no conflict and no warning. A merge of origin/main that took an afternoon to
+# resolve became a flattened replay that reported success.
+#
+# So prose alone cannot hold this line: the harmful command succeeds, nothing
+# downstream disagrees with it, and the next reader types it from memory. This
+# hook is the gate that exits nonzero.
+#
+# NOT keyed on `git pull --rebase` specifically, which is only the spelling
+# that bit us. Any rebase over a range containing a merge has the same effect,
+# including `git rebase -i` and a rebase run by an editor or an agent, so the
+# refusal keys on the RANGE rather than on the invocation.
+#
+# The one legitimate way to rebase across merges is `--rebase-merges`, which
+# git does not expose to this hook -- there is no argument, environment
+# variable, or state file naming it here. GC_ALLOW_MERGE_REBASE is therefore
+# the deliberate operator bypass, and it is not a weakening: `git rebase
+# --no-verify` does not skip this hook, so without an escape the only route
+# left would be deleting the hook, which is worse than a named override.
+#
+# Verified by TestPreRebaseHookRefusesToFlattenMerges in
+# scripts/prerebase_contract_test.go, which drives a real repository rather
+# than reading this text -- a hook asserted only by grep cannot show that git
+# invokes it or that the merge survives.
+set -euo pipefail
+
+if [ -n "${GC_ALLOW_MERGE_REBASE:-}" ]; then
+    exit 0
+fi
+
+upstream="${1:-}"
+# Empty when rebasing the current branch, which is the common case.
+branch="${2:-HEAD}"
+
+if [ -z "$upstream" ]; then
+    exit 0
+fi
+
+# A range git cannot resolve must not be read as "no merges". Fail open to a
+# count of 0 only when rev-list SUCCEEDS and prints nothing.
+if ! merges=$(git rev-list --merges --count "$upstream..$branch" 2>/dev/null); then
+    echo "pre-rebase: cannot resolve $upstream..$branch, so whether this rebase" >&2
+    echo "  would flatten a merge is unknown. Refusing rather than guessing." >&2
+    exit 1
+fi
+
+if [ "${merges:-0}" -gt 0 ]; then
+    echo "pre-rebase: refusing -- $merges merge commit(s) in $upstream..$branch" >&2
+    echo "  would be FLATTENED, and the rebase would report success while doing it." >&2
+    echo "" >&2
+    echo "  If you are finishing a session, you do NOT need a rebase. Use:" >&2
+    echo "    git fetch origin && git merge --ff-only origin/main && git push" >&2
+    echo "" >&2
+    echo "  If the remote genuinely diverged, integrate deliberately:" >&2
+    echo "    git merge origin/main" >&2
+    echo "" >&2
+    echo "  If you really mean to rewrite the merges, say so explicitly:" >&2
+    echo "    GC_ALLOW_MERGE_REBASE=1 git rebase --rebase-merges $upstream" >&2
+    exit 1
+fi
+
+exit 0
