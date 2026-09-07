@@ -207,6 +207,8 @@ jobs:
         run: make check-native-dependency-surface
       - name: Event-export isolation guard
         run: make check-eventexport-isolation
+      - name: Slack-bridge isolation guard
+        run: make check-extmsg-bridge-isolation
       - name: Open-core boundary guard
         run: make check-core-boundary
       - name: Native DoltLite beads tests
