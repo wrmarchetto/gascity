@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 // Consume one configured session's structured transcript stream and publish its
 // final assistant text to the configured Slack conversation through gc's extmsg
-// outbound API. Supervision/restart ownership deliberately stays outside this
-// process so it can be composed with the adapter lifecycle independently.
+// outbound API. It reconnects after a supervisor restart or session handover;
+// process supervision still stays outside this component.
 
-import { createAssistantTurnMirror, streamAssistantTurns } from './lib/assistant-turn-mirror.mjs'
+import { createAssistantTurnMirror, reconnectAssistantTurnStream } from './lib/assistant-turn-mirror.mjs'
 import { env, makeGcClient } from './lib/gc-client.mjs'
 
 const required = (name) => {
@@ -45,11 +45,20 @@ const stop = () => controller.abort()
 process.on('SIGINT', stop)
 process.on('SIGTERM', stop)
 
-const streamURL = new URL(`/v0/city/${encodeURIComponent(CITY)}/session/${encodeURIComponent(SESSION)}/stream`, GC_BASE)
-streamURL.searchParams.set('format', 'structured')
-const response = await fetch(streamURL, {
-  headers: { Accept: 'text/event-stream' },
+await reconnectAssistantTurnStream({
+  sessionTarget: SESSION,
   signal: controller.signal,
+  openStream: async (sessionTarget) => {
+    const streamURL = new URL(`/v0/city/${encodeURIComponent(CITY)}/session/${encodeURIComponent(sessionTarget)}/stream`, GC_BASE)
+    streamURL.searchParams.set('format', 'structured')
+    const response = await fetch(streamURL, {
+      headers: { Accept: 'text/event-stream' },
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`GET ${streamURL.pathname}: HTTP ${response.status}`)
+    return response
+  },
+  onStructuredEvent: mirror.handleStructuredEvent,
+  onError: (error) => console.error('[slack-mirror] stream ended; reconnecting:', error?.message ?? error),
+  onReconnect: () => console.error('[slack-mirror] stream closed; reconnecting'),
 })
-if (!response.ok) throw new Error(`GET ${streamURL.pathname}: HTTP ${response.status}`)
-await streamAssistantTurns({ response, onStructuredEvent: mirror.handleStructuredEvent })

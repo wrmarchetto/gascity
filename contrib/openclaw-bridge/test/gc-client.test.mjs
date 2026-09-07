@@ -171,6 +171,68 @@ test('makeAdapterRegistrar registers and unregisters with the gc-facing body sha
   }
 })
 
+test('scheduled re-registration restores an adapter after a controller restart clears its registry', async () => {
+  let registered = false
+  let reregisterTick
+  let scheduledEvery
+  const { server, port } = await listen((req, res) => {
+    const chunks = []
+    req.on('data', (chunk) => chunks.push(chunk))
+    req.on('end', () => {
+      if (req.method === 'POST' && req.url === '/v0/city/lab/extmsg/adapters') {
+        registered = true
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end('{}')
+        return
+      }
+      if (req.method === 'POST' && req.url === '/v0/city/lab/extmsg/outbound') {
+        if (!registered) {
+          res.writeHead(503, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'adapter unavailable after controller restart' }))
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ delivered: true }))
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+  })
+  try {
+    const { gcFetch } = makeGcClient({ baseUrl: `http://127.0.0.1:${port}`, city: 'lab' })
+    const registrar = makeAdapterRegistrar({
+      gcFetch,
+      baseUrl: `http://127.0.0.1:${port}`,
+      provider: 'slack',
+      account: 'default',
+      name: 'slack-socket-mode-bridge',
+      callbackUrl: 'http://127.0.0.1:8932',
+      capabilities: { SupportsChildConversations: false, SupportsAttachments: false, MaxMessageLength: 40000 },
+      log: () => {},
+      reregisterMs: 25,
+      setIntervalFn: (fn, ms) => {
+        reregisterTick = fn
+        scheduledEvery = ms
+        return { unref() {} }
+      },
+    })
+
+    await registrar.registerWithRetry()
+    registered = false // controller restart: its adapter registry is in-memory
+    await assert.rejects(() => gcFetch('POST', '/extmsg/outbound', { text: 'before re-registration' }), { status: 503 })
+
+    const timer = registrar.startReregister()
+    assert.ok(timer)
+    assert.equal(scheduledEvery, 25)
+    await reregisterTick()
+
+    assert.deepEqual(await gcFetch('POST', '/extmsg/outbound', { text: 'after re-registration' }), { delivered: true })
+  } finally {
+    await close(server)
+  }
+})
+
 test('makeNamedSessionBinder binds an adapter conversation to the configured agent identity', async () => {
   const calls = []
   const { server, port } = await listen((req, res) => {

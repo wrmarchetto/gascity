@@ -128,3 +128,42 @@ export async function streamAssistantTurns({ response, onStructuredEvent }) {
     if (frame.event === 'structured' && frame.data !== '') await onStructuredEvent(JSON.parse(frame.data))
   }
 }
+
+function waitForReconnect(signal) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve()
+      return
+    }
+    const timer = setTimeout(done, 1000)
+    function done() {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', done)
+      resolve()
+    }
+    signal?.addEventListener('abort', done, { once: true })
+  })
+}
+
+// reconnectAssistantTurnStream follows one stable session target across stream
+// closure. The target is intentionally supplied to openStream on every attempt:
+// a configured named session resolves to its current backing session after a
+// respawn instead of preserving the previous volatile session bead ID.
+export async function reconnectAssistantTurnStream({ sessionTarget, openStream, onStructuredEvent, signal, waitForReconnect: wait = waitForReconnect, onError, onReconnect }) {
+  if (typeof sessionTarget !== 'string' || sessionTarget === '') throw new TypeError('sessionTarget is required')
+  if (typeof openStream !== 'function') throw new TypeError('openStream is required')
+  if (typeof onStructuredEvent !== 'function') throw new TypeError('onStructuredEvent is required')
+
+  while (!signal?.aborted) {
+    try {
+      const response = await openStream(sessionTarget)
+      await streamAssistantTurns({ response, onStructuredEvent })
+    } catch (error) {
+      if (signal?.aborted) return
+      onError?.(error)
+    }
+    if (signal?.aborted) return
+    onReconnect?.()
+    await wait(signal)
+  }
+}

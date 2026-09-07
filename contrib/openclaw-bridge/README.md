@@ -332,8 +332,12 @@ messages whose normalized `role` is `assistant`, `status` is `final`, and whose
 blocks are text. Tool use/results and all user messages are excluded, so neither
 tool output, other-agent traffic, nor the human's already-visible Slack message
 is reflected back into the channel. Stable structured message IDs suppress
-snapshot/upsert replays while the process runs. Its supervisor owns restart and
-cross-process lifecycle; the mirror exits if its stream ends or cannot connect.
+snapshot/upsert replays while the process runs. The configured target is a named
+session, not its backing session ID: after the stream closes, the mirror
+reconnects through that name so a respawned session is followed automatically.
+It also retries a failed connection after a supervisor restart. Its process
+supervisor remains responsible for restarting the out-of-process component if
+the process itself exits.
 
 Slack permits 40,000 UTF-16 code units. The mirror's in-code delivery policy
 uses a 39,000-unit ceiling: a short turn is published intact, while a long turn

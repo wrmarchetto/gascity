@@ -70,7 +70,18 @@ export function startCallbackServer({ handleRequest, port }) {
 // registry is in-memory, so callers register once at startup (retrying while gc
 // is still coming up), re-register on an interval to survive controller
 // restarts, and unregister on shutdown.
-export function makeAdapterRegistrar({ gcFetch, baseUrl, provider, account, name, callbackUrl, capabilities, log }) {
+export function makeAdapterRegistrar({
+  gcFetch,
+  baseUrl,
+  provider,
+  account,
+  name,
+  callbackUrl,
+  capabilities,
+  log,
+  reregisterMs = 30000,
+  setIntervalFn = setInterval,
+}) {
   const register = () =>
     gcFetch('POST', '/extmsg/adapters', {
       provider,
@@ -100,8 +111,8 @@ export function makeAdapterRegistrar({ gcFetch, baseUrl, provider, account, name
 
   // startReregister keeps the in-memory gc registration alive; returns the timer
   // so shutdown can clear it.
-  const startReregister = () =>
-    setInterval(() => register().catch((err) => log('re-register failed:', err.message)), 30000)
+  const reregister = () => register().catch((err) => log('re-register failed:', err.message))
+  const startReregister = () => setIntervalFn(reregister, reregisterMs)
 
   const unregister = () => gcFetch('DELETE', '/extmsg/adapters', { provider, account_id: account })
 

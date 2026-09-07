@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createAssistantTurnMirror, streamAssistantTurns } from '../lib/assistant-turn-mirror.mjs'
+import { createAssistantTurnMirror, reconnectAssistantTurnStream, streamAssistantTurns } from '../lib/assistant-turn-mirror.mjs'
 
 const conversation = {
   scope_id: 'lab',
@@ -138,4 +138,102 @@ test('consumes only structured SSE frames before passing them to the mirror filt
   await streamAssistantTurns({ response, onStructuredEvent: async (event) => seen.push(event) })
 
   assert.deepEqual(seen, [structured([assistantText('a-1', 'hello')])])
+})
+
+test('a mirror pinned to a retired backing session goes quiet after respawn', async () => {
+  const calls = []
+  const controller = new AbortController()
+  let liveSessionID = 's-before-respawn'
+  let reconnects = 0
+  const mirror = createAssistantTurnMirror({
+    conversation,
+    sessionID: 's-before-respawn',
+    publish: async (body) => calls.push(body),
+  })
+
+  await reconnectAssistantTurnStream({
+    sessionTarget: 's-before-respawn',
+    signal: controller.signal,
+    openStream: async (target) => {
+      const text = target === liveSessionID ? 'before respawn' : ''
+      return new Response(text === '' ? '' : `event: structured\ndata: ${JSON.stringify(structured([assistantText(`turn-${liveSessionID}`, text)]))}\n\n`)
+    },
+    onStructuredEvent: mirror.handleStructuredEvent,
+    waitForReconnect: async () => {
+      reconnects += 1
+      if (reconnects === 1) {
+        liveSessionID = 's-after-respawn'
+        return
+      }
+      controller.abort()
+    },
+  })
+
+  assert.deepEqual(calls.map(({ text }) => text), ['before respawn'])
+})
+
+test('replays an unacknowledged assistant turn after controller restart makes outbound unavailable', async () => {
+  const calls = []
+  const controller = new AbortController()
+  let publishes = 0
+  const mirror = createAssistantTurnMirror({
+    conversation,
+    sessionID: 'lab/lead',
+    publish: async (body) => {
+      publishes += 1
+      if (publishes === 1) throw Object.assign(new Error('adapter unavailable after controller restart'), { status: 503 })
+      calls.push(body)
+      controller.abort()
+    },
+  })
+  const event = structured([assistantText('replayed-turn', 'delivery resumed')])
+
+  await reconnectAssistantTurnStream({
+    sessionTarget: 'lab/lead',
+    signal: controller.signal,
+    openStream: async () => new Response(`event: structured\ndata: ${JSON.stringify(event)}\n\n`),
+    onStructuredEvent: mirror.handleStructuredEvent,
+    waitForReconnect: async () => {},
+  })
+
+  assert.equal(publishes, 2)
+  assert.deepEqual(calls.map(({ text }) => text), ['delivery resumed'])
+})
+
+test('reconnects through a stable named session after its backing session respawns', async () => {
+  const calls = []
+  const controller = new AbortController()
+  const namedSession = 'lab/lead'
+  let liveSessionID = 's-before-respawn'
+  const responses = new Map([
+    ['s-before-respawn', new Response(`event: structured\ndata: ${JSON.stringify(structured([assistantText('old-turn', 'before respawn')]))}\n\n`)],
+    ['s-after-respawn', new Response(`event: structured\ndata: ${JSON.stringify(structured([assistantText('new-turn', 'after respawn')]))}\n\n`)],
+  ])
+  const openedTargets = []
+  const mirror = createAssistantTurnMirror({
+    conversation,
+    sessionID: namedSession,
+    publish: async (body) => calls.push(body),
+  })
+
+  await reconnectAssistantTurnStream({
+    sessionTarget: namedSession,
+    signal: controller.signal,
+    openStream: async (target) => {
+      openedTargets.push(target)
+      const response = responses.get(liveSessionID)
+      assert.ok(response, `no stream for resolved session ${liveSessionID}`)
+      return response
+    },
+    onStructuredEvent: async (event) => {
+      await mirror.handleStructuredEvent(event)
+      if (event.structured_messages[0].id === 'new-turn') controller.abort()
+    },
+    waitForReconnect: async () => {
+      liveSessionID = 's-after-respawn'
+    },
+  })
+
+  assert.deepEqual(openedTargets, [namedSession, namedSession])
+  assert.deepEqual(calls.map(({ text }) => text), ['before respawn', 'after respawn'])
 })
