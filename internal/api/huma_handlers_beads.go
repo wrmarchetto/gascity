@@ -660,10 +660,14 @@ func (s *Server) humaHandleBeadReopen(_ context.Context, input *BeadReopenInput)
 // can act on it. It now names the displaced holder in the reply and in the
 // server log.
 //
-// NOT DONE, and left out on purpose: telling the DISPLACED HOLDER. That means
-// mail or a nudge from inside a bead handler, which is a design question about
-// who may interrupt a running session, not a reporting fix. Filed rather than
-// guessed.
+// TELLING THE DISPLACED HOLDER is deliberately NOT done here, and ci-32fp1p
+// settled that rather than deferring it: the holder learns at the boundary it
+// already crosses -- `gc bd release-if-current` now names the holder that took
+// its claim instead of printing a bare `skipped`. Mail and a nudge were both
+// rejected, and so was emitting an event from this handler; no bead handler in
+// this package publishes one, and every bead-claim anomaly event in the tree
+// is fired from cmd/gc/ instead. Do not add messaging or an event here without
+// reading engdocs/contributors/displaced-claim-notification.md first.
 //
 // The report covers an in_progress claim only. An open bead carries an
 // ADDRESS, not a claim, and re-addressing parked work is routine -- a
