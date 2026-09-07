@@ -1,0 +1,49 @@
+# The gh line stays best-effort across the whole walk, not just in HQ.
+#
+# bd shells out to `gh` for gh:run and gh:pr gates, so a city without
+# `gh auth` fails that line on every 30s cooldown. That tolerance predates the
+# per-store walk and has to survive it: without it, adding rig scoping turns
+# one unauthenticated city into a permanently failing order.
+#
+# The timer checks all succeed here, so a non-zero exit could only come from
+# the gh line -- which is what makes this scenario able to see the regression.
+
+exec bash $WORK/scripts/gate-sweep.sh
+exec cat $WORK/calls
+stdout '^timer <hq>$'
+stdout '^timer /stores/rig-a$'
+
+-- bin/gc --
+#!/bin/sh
+set -eu
+
+calls="$WORK/calls"
+
+case "$1 $2 ${3:-}" in
+  "rig list --json")
+    printf '%s\n' '{"rigs":[{"name":"city","path":"/stores/city","hq":true},{"name":"rig-a","path":"/stores/rig-a"}]}'
+    ;;
+  "bd gate check")
+    type=""
+    dir=""
+    shift 3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --type=*) type="${1#--type=}" ;;
+        -C) shift; dir="$1" ;;
+        --escalate) ;;
+        *) printf 'unexpected gate check flag: %s\n' "$1" >&2; exit 64 ;;
+      esac
+      shift
+    done
+    if [ "$type" = gh ]; then
+      printf 'gc bd gate check: gh: not authenticated\n' >&2
+      exit 1
+    fi
+    printf '%s %s\n' "$type" "${dir:-<hq>}" >> "$calls"
+    ;;
+  *)
+    printf 'unexpected gc command: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac

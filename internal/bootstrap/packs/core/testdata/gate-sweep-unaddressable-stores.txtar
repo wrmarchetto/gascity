@@ -1,0 +1,73 @@
+# The hq pseudo-rig and any rig with no resolved path must be left OUT of the
+# per-store walk. Neither omission is a coverage gap:
+#
+#   hq        already swept by the bare call; addressing it again would
+#             double-escalate every HQ gate on every 30s pass.
+#   no path   a rig declared in city.toml but never cloned reports "". As a
+#             `-C` argument that means the CURRENT directory, so the sweep
+#             would re-check whatever store it is standing in and call it
+#             coverage of the missing rig.
+
+exec bash $WORK/scripts/gate-sweep.sh
+exec cat $WORK/calls
+
+# The one addressable rig is swept.
+stdout '^timer /stores/rig-a$'
+
+# HQ is swept EXACTLY ONCE, and the count is the assertion rather than the
+# presence. Mutation showed why: dropping the empty-path guard does not produce
+# a `-C ""` call, because the loop's own emptiness test intercepts it and
+# treats the rig as HQ -- so the uncloned rig turns into a SECOND HQ sweep, and
+# every HQ gate gets double-escalated on every pass. A presence check is
+# equally satisfied by one sweep and by two, so it cannot see that.
+exec sh -c 'grep -c "^timer <hq>$" $WORK/calls'
+stdout '^1$'
+
+# HQ is never addressed by path either.
+exec cat $WORK/calls
+! stdout '/stores/city'
+
+# And no explicit-but-empty -C reaches gc.
+! stdout '<empty>'
+
+-- bin/gc --
+#!/bin/sh
+set -eu
+
+calls="$WORK/calls"
+
+record() {
+    printf '%s %s\n' "$1" "${2:-<hq>}" >> "$calls"
+}
+
+case "$1 $2 ${3:-}" in
+  "rig list --json")
+    printf '%s\n' '{"rigs":[{"name":"city","path":"/stores/city","hq":true},{"name":"rig-a","path":"/stores/rig-a"},{"name":"notcloned","path":""}]}'
+    ;;
+  "bd gate check")
+    type=""
+    dir=""
+    saw_c=no
+    shift 3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --type=*) type="${1#--type=}" ;;
+        -C) saw_c=yes; shift; dir="$1" ;;
+        --escalate) ;;
+        *) printf 'unexpected gate check flag: %s\n' "$1" >&2; exit 64 ;;
+      esac
+      shift
+    done
+    # An explicit but EMPTY -C is the failure this scenario exists to catch, so
+    # it is recorded distinguishably rather than collapsing into the bare form.
+    if [ "$saw_c" = yes ] && [ -z "$dir" ]; then
+      record "$type" "<empty>"
+    else
+      record "$type" "$dir"
+    fi
+    ;;
+  *)
+    printf 'unexpected gc command: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac

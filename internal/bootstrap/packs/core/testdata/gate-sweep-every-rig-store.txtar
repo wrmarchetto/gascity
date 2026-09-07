@@ -1,0 +1,66 @@
+# The sweep must evaluate timer gates in EVERY rig store, not only HQ.
+#
+# Asserted by recording the invocations the stand-in received, not by asserting
+# that a gate closed: a closed-gate assertion passes against a sweep that
+# reached exactly one store and found the gate there, which is the bug
+# (ci-q4fyku, as-oavp unswept for 2h37m in the astoria-sel4 store).
+
+exec bash $WORK/scripts/gate-sweep.sh
+exec cat $WORK/calls
+
+# HQ, addressed by the bare call.
+stdout '^timer <hq>$'
+
+# Both rigs, each addressed by its own store path.
+stdout '^timer /stores/rig-a$'
+stdout '^timer /stores/rig-b$'
+
+# The gh line is best-effort but must still be attempted everywhere -- a gate
+# type checked only in HQ is the defect this whole bead is about.
+stdout '^gh <hq>$'
+stdout '^gh /stores/rig-a$'
+stdout '^gh /stores/rig-b$'
+
+-- bin/gc --
+#!/bin/sh
+set -eu
+
+calls="$WORK/calls"
+
+# Record "<gate type> <scope>" per gate-check invocation. The scope is the -C
+# path, or the literal <hq> for a bare call, so a missing store shows up as an
+# absent line rather than as an indistinguishable one.
+record() {
+    printf '%s %s\n' "$1" "${2:-<hq>}" >> "$calls"
+}
+
+case "$1 $2 ${3:-}" in
+  "rig list --json")
+    # One hq pseudo-rig and two real ones. gc reports the city root as
+    # hq=true, and `gc rig list` is how the sibling renudge order enumerates
+    # scopes too.
+    printf '%s\n' '{"rigs":[{"name":"city","path":"/stores/city","hq":true},{"name":"rig-a","path":"/stores/rig-a"},{"name":"rig-b","path":"/stores/rig-b"}]}'
+    ;;
+  "bd gate check")
+    type=""
+    dir=""
+    shift 3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --type=*) type="${1#--type=}" ;;
+        -C) shift; dir="$1" ;;
+        --escalate) ;;
+        *) printf 'unexpected gate check flag: %s\n' "$1" >&2; exit 64 ;;
+      esac
+      shift
+    done
+    [ -n "$type" ] || { printf 'gate check with no --type\n' >&2; exit 64; }
+    record "$type" "$dir"
+    ;;
+  *)
+    # A stand-in that succeeded here would hand a pass to whatever this
+    # scenario forgot to script.
+    printf 'unexpected gc command: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
