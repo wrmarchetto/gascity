@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-bx3 2026-09-07T20:59Z
+last_seen: gs-8hj 2026-09-07T21:19Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1909,5 +1909,39 @@ turn). No new pm-open entry: the wait is pm-open #2(a) and #2(b) was closed
 by pm-log #59. Residuals in pm-log #5 stand: no scheduled wake has yet run
 WITH the assessment layer, and a governor that assesses then reports
 something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 65. pm-epic-close gs-8hj: governor stays in-progress; drift from #64 is ci-waw3o7's deferral expiring (2026-09-07)
+
+Fifty-third ruling of this shape, filed twenty minutes after gs-bx3 (pm-log
+#64). Re-verified against the stores this turn at 21:19Z rather than
+recalled: the closed set under epic:governor is unchanged (gs-x0k, gs-xeh,
+gs-o9i, gs-nun -- criteria 1-6 verified in their close reasons, pm-log #5).
+The one drift from #64: ci-waw3o7 in the city store now reads OPEN, updated
+2026-09-07 -- the 48h deferral on Willie's 2026-09-05T20:14Z answer has run
+out and the bead sits live on its human assignee's queue. Substance is
+unchanged: no new note, Willie's recorded answer is still the 2026-09-05
+"NOT YET" ruling about the evidence, and gate ci-gbhkpa is still open on
+its DEPENDS ON line. Per pm-log #4 governor stays in-progress and the bead
+that reopens it remains ci-waw3o7.
+
+The #62 position survives the flip: the re-ask is owed by ci-waw3o7's owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold.
+No page and no courtesy ping sent about the expiry: gate ci-gbhkpa already
+operator-pages the decision (pm-log #29 precedent), and a bare "deferral
+expired" nudge without the record is the bare re-ask the bead's notes
+forbid, one channel over. Appended the flip as an update to pm-open #2 so
+its ledger text stops calling the bead DEFERRED; the question there is
+unchanged, so it is bookkeeping rather than a new open question and got no
+new-question ping.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is in-progress with open work (gs-228 operator
+provisioning, gs-z09 round-trip demo -- both re-read this turn, both open).
+Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
+assessment layer, and a governor that assesses then reports something else
+is mechanically unobservable today.
 
 Source: roadmap governor

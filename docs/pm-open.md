@@ -48,6 +48,14 @@ process table (a supervisor now runs as PID 978187). What remains open is
 (a) the ruling itself -- ci-waw3o7, DEFERRED, earliest revisit 2026-09-07 --
 and (b), unchanged.
 
+Update 2026-09-07 (pm-log #65): ci-waw3o7's 48h deferral has expired; the
+bead now reads OPEN (updated 2026-09-07), live on its human assignee's
+queue. Substance unchanged -- Willie's answer is still the 2026-09-05 "NOT
+YET" and gate ci-gbhkpa is still open, so (a) remains the open half. The
+re-ask is owed by the bead's owner (gascity/lab.engineer-1) carrying the
+interval record its notes require (pm-log #62). (b) was settled by pm-log
+#59: mayor-slack-bridge is the epic after governor and is in-progress.
+
 ## 3. Substrate maintenance beads have no epic home; gs-z39 ruled standalone (2026-09-05)
 
 gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or
