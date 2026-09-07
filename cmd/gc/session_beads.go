@@ -20,6 +20,7 @@ import (
 	"github.com/gastownhall/gascity/internal/extmsg"
 	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/workrelease"
 )
 
 // sessionBeadLabel is the label for all session beads.
@@ -778,8 +779,25 @@ func retireRemovedConfiguredNamedSessionBead(
 	// address on one would strand the work. Every other caller passes
 	// seatSurvives.
 	unclaimWorkAssignedToRetiredSessionBead(store, rigStores, b, retiredSessionFallbackRoute(b), seatRetired, stderr)
+	// seatRetired here too, and it changes the destination: this named session
+	// was DELETED from config, so its alias and seat identity are borne by
+	// nobody ever again and mail moved onto either would be stranded a second
+	// time. The owning pool/agent route is the only address left.
+	rerouteMailFromEndingSession(store, b, seatRetired, stderr)
 	cancelStateAssignedToRetiredSessionBead(store, b.ID, now, stderr)
 	return true
+}
+
+// rerouteMailFromEndingSession is the cmd/gc adapter over
+// workrelease.RerouteMailFromEndedSession: it supplies the reconciler's own
+// identity vocabulary (sessionBeadAssigneeIdentities, which additionally
+// carries configured_named_identity) and nothing else, exactly as
+// sessionReleaseTargetsForBead does for the work sweep.
+//
+// Read internal/workrelease/mail_reroute.go for what the sweep does and the
+// incident behind it; the reasoning is not duplicated here.
+func rerouteMailFromEndingSession(store beads.Store, sessionBead beads.Bead, retired seatRetirement, stderr io.Writer) {
+	workrelease.RerouteMailFromEndedSession(store, sessionBead, sessionBeadAssigneeIdentities(sessionBead), retired, stderr)
 }
 
 func retiredSessionFallbackRoute(b beads.Bead) string {
@@ -3039,6 +3057,10 @@ func closeBeadWithTerminalPatch(store beads.Store, id, reason string, terminalPa
 	cancelStateAssignedToRetiredSessionBead(store, id, now, stderr)
 	if snapshotErr == nil {
 		releaseWorkFromClosedSessionBead(store, snapshot, stderr)
+		// The mail half of the same sweep. Runs after the work release rather
+		// than before it only so the two log lines read in the order the beads
+		// were touched; neither reads the other's writes.
+		rerouteMailFromEndingSession(store, snapshot, seatSurvives, stderr)
 	}
 	return true
 }

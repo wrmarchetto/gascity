@@ -115,6 +115,15 @@ func (s *Store) mailboxMatches(selector string, closed bool) ([]beads.Bead, erro
 	if closed {
 		status = "closed"
 	}
+	// agent_name is deliberately NOT probed here, though it IS an address a
+	// session receives mail at (see MailboxAddresses). Adding it changes nothing
+	// a test can observe: beadmail's recipientRoutes always keeps the literal
+	// recipient string as a route, and a message re-routed onto a seat identity
+	// carries that exact string as its assignee, so the literal match already
+	// delivers it. A mutation sweep on 2026-09-07 confirmed the probe was
+	// unkillable. Add it only alongside a caller that needs the seat identity
+	// resolved to a session rather than matched as an address -- and note it
+	// costs one extra List per resolve.
 	for _, key := range []string{"alias", "session_name"} {
 		keyMatches, err := mailboxMatchesByMetadata(store, key, selector, status)
 		if err != nil {
@@ -202,9 +211,18 @@ func addressAmbiguity(matches []beads.Bead) error {
 }
 
 // RecipientRoutesFromInfo returns every durable recipient route for a session:
-// ID, alias, canonical name, and historical aliases. It is the Info-form
-// counterpart of beadmail's former raw-bead codec and keeps address metadata
-// out of Messaging callers.
+// ID, alias, canonical name, seat identity (agent_name), and historical
+// aliases. It is the Info-form counterpart of beadmail's former raw-bead codec
+// and keeps address metadata out of Messaging callers.
+//
+// agent_name is the seat, and it is here because it is the ONLY route a
+// pool-managed session with no alias has that outlives the session itself: such
+// a session (measured in the pilot city 2026-09-07: gascity/lab.engineer-1) has
+// its bead id and its runtime session_name and nothing else, both of which die
+// with it. Mail re-routed off those addresses when the session closes lands on
+// the seat, and this is what makes the next occupant answer for it (ci-cw9wsk).
+// This is the single place that expansion lives -- MailboxAddresses documents
+// the absence and why a second copy there is unkillable.
 func RecipientRoutesFromInfo(info Info) []string {
 	seen := make(map[string]struct{}, 3+len(info.AliasHistory))
 	routes := make([]string, 0, 3+len(info.AliasHistory))
@@ -222,6 +240,7 @@ func RecipientRoutesFromInfo(info Info) []string {
 	add(info.ID)
 	add(info.Alias)
 	add(info.SessionNameMetadata)
+	add(info.AgentName)
 	for _, alias := range info.AliasHistory {
 		add(alias)
 	}

@@ -49,4 +49,22 @@ func releaseWorkFromClosedSession(store beads.Store, sessionBead beads.Bead) {
 	if released > 0 || failed > 0 {
 		log.Printf("gc api: closing session %s released %d work bead(s), %d failed", sessionBead.ID, released, failed)
 	}
+	// The mail half of the same sweep. Added here for the reason the work half
+	// was: both HTTP handlers stopped at worker.Handle.CloseDetailed, so a
+	// session closed from the dashboard left everything addressed to it behind
+	// -- and mail left behind is worse than a stranded claim, because no
+	// reconciler pass repairs it and the sender is never told (ci-cw9wsk).
+	//
+	// The cross-store gap named above applies unchanged: mail in a rig store
+	// addressed to a city session closed over HTTP is still not swept.
+	moved, mailFailed := workrelease.RerouteMailFromEndedSession(
+		store,
+		sessionBead,
+		workrelease.IdentitiesFromBead(sessionBead),
+		workrelease.SeatSurvives,
+		log.Writer(),
+	)
+	if moved > 0 || mailFailed > 0 {
+		log.Printf("gc api: closing session %s rerouted %d message(s), %d failed", sessionBead.ID, moved, mailFailed)
+	}
 }

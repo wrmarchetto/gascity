@@ -1908,6 +1908,9 @@ func cmdSessionClose(args []string, stdout, stderr io.Writer, jsonOutput ...bool
 	// CLI door did not, which is why the same close through the dashboard's
 	// reconciler recovered and through `gc session close` did not.
 	unclaimWorkAssignedToRetiredSessionBead(store, rigStores, closedSessionBead, retiredSessionFallbackRoute(closedSessionBead), seatSurvives, stderr)
+	// The mail half of the same sweep, on the same pre-close snapshot: the
+	// destination is read off identities the close has already retired.
+	rerouteMailFromEndingSession(store, closedSessionBead, seatSurvives, stderr)
 
 	if asJSON {
 		if err := writeSessionActionJSON(stdout, sessionActionResult{
