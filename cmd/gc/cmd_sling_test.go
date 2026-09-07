@@ -7099,11 +7099,20 @@ func TestCheckBeadStateCustomQueryNoIdempotency(t *testing.T) {
 	if result.Idempotent {
 		t.Error("expected Idempotent=false for custom sling_query (can't detect)")
 	}
-	if len(result.Warnings) != 1 {
-		t.Fatalf("expected 1 warning, got %d: %v", len(result.Warnings), result.Warnings)
+	// Two warnings, not one: the existing-state report plus the --reassign
+	// remedy added in ci-didsvz. The count is asserted rather than left open
+	// so a future edit that duplicates either line is caught here; the remedy
+	// text itself is pinned by
+	// TestCheckBeadStateOffersReassignRemedyForCustomSlingQuery in
+	// internal/sling, which owns the branch.
+	if len(result.Warnings) != 2 {
+		t.Fatalf("expected 2 warnings, got %d: %v", len(result.Warnings), result.Warnings)
 	}
 	if !strings.Contains(result.Warnings[0], "already assigned") {
 		t.Errorf("expected assignee warning, got %q", result.Warnings[0])
+	}
+	if !strings.Contains(result.Warnings[1], "--reassign") {
+		t.Errorf("expected --reassign remedy, got %q", result.Warnings[1])
 	}
 }
 

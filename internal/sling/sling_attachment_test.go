@@ -93,3 +93,92 @@ func TestCheckBeadStateExplainsPoolSlotAssignmentWillBePreserved(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckBeadStateOffersReassignRemedyForCustomSlingQuery pins that an agent
+// with a custom sling_query still gets the --reassign remedy when the bead it
+// is slung already carries an assignee.
+//
+// The invariant is the REMEDY TEXT, not warning presence. The defect state
+// already returned warnings on this path -- routedStateWarnings' bare "already
+// assigned to" line -- so a test asserting len(Warnings) > 0 goes green over
+// it, which is how this shipped: the IsCustomSlingQuery early return in
+// CheckBeadStateWithOptions sits above every actionable message, so the one
+// pool in this city declaring a custom sling_query was the only one that could
+// never be told what to do. A mayor slinging an already-assigned bead at it
+// got two bare lines on stderr, produced the routed-and-assigned shape
+// doctor/bead-preflight calls blocking, and tried setting assignee and route
+// equal before unsetting the route (ci-vk76d1, 2026-09-07).
+//
+// The remedy is real on this path rather than aspirational:
+// shouldReopenForReassign gates reopenForReassign on opts.Reassign alone and
+// never on the query shape, so --reassign clears the assignee and reopens the
+// bead here just as it does for a built-in route.
+//
+// Run: go test ./internal/sling/ -run CustomSlingQuery
+func TestCheckBeadStateOffersReassignRemedyForCustomSlingQuery(t *testing.T) {
+	maxSessions := 2
+	// Modeled on packs/lab/agents/engineer-codex: the query stamps a SHARED
+	// route that is not the agent's own identity, which is why the branches
+	// below the early return cannot be reused -- every one of them compares
+	// against agentutil.RoutedToIdentity, a target this query never writes.
+	pool := config.Agent{
+		Name:              "lab.engineer-codex",
+		MaxActiveSessions: &maxSessions,
+		SlingQuery:        "bd update {} --set-metadata gc.routed_to=dart/lab.engineer",
+	}
+	if !IsCustomSlingQuery(pool) {
+		t.Fatalf("IsCustomSlingQuery = false, want true; the case under test cannot be reached")
+	}
+	cfg := &config.City{Agents: []config.Agent{pool}}
+
+	warningsFor := func(assignee string, opts BeadCheckOptions) []string {
+		store := beads.NewMemStoreFrom(0, []beads.Bead{{
+			ID:       "GC-77",
+			Status:   "open",
+			Assignee: assignee,
+		}}, nil)
+		return CheckBeadStateWithOptions(store, "GC-77", pool, SlingDeps{Cfg: cfg}, opts).Warnings
+	}
+
+	// Both halves are asserted separately: the pre-existing state report must
+	// survive the fix, and the remedy must be added. Asserting only that some
+	// warning names the assignee would pass on the bare line alone.
+	t.Run("assigned-without-reassign-names-the-remedy", func(t *testing.T) {
+		warnings := warningsFor("human", BeadCheckOptions{})
+		var sawState, sawRemedy bool
+		for _, w := range warnings {
+			if strings.Contains(w, `already assigned to "human"`) {
+				sawState = true
+			}
+			if strings.Contains(w, "--reassign") && strings.Contains(w, "human") {
+				sawRemedy = true
+			}
+		}
+		if !sawState {
+			t.Errorf("warnings = %#v, want one reporting the existing assignee", warnings)
+		}
+		if !sawRemedy {
+			t.Errorf("warnings = %#v, want one naming the assignee and the --reassign remedy", warnings)
+		}
+	})
+
+	// Offering --reassign to a caller who already passed it reads as the flag
+	// having been ignored, so the guidance is conditional. This case is what
+	// stops a fix that appends the remedy unconditionally.
+	t.Run("reassign-already-requested-offers-no-remedy", func(t *testing.T) {
+		warnings := warningsFor("human", BeadCheckOptions{Reassign: true})
+		if joined := strings.Join(warnings, "\n"); strings.Contains(joined, "--reassign") {
+			t.Fatalf("warnings = %#v, want no --reassign guidance when it was already requested", warnings)
+		}
+	})
+
+	// An unassigned bead has nothing to reassign. Without this case a fix
+	// keyed on IsCustomSlingQuery alone rather than on the assignee passes,
+	// and every clean sling at this pool gains a spurious remedy line.
+	t.Run("unassigned-bead-offers-no-remedy", func(t *testing.T) {
+		warnings := warningsFor("", BeadCheckOptions{})
+		if len(warnings) != 0 {
+			t.Fatalf("warnings = %#v, want none for an unassigned, unrouted bead", warnings)
+		}
+	})
+}
