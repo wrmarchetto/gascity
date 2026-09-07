@@ -11,6 +11,8 @@
     "node": ">=22.19.0"
   },
   "dependencies": {
+    "@slack/socket-mode": "3.0.1",
+    "@slack/web-api": "8.1.1",
     "openclaw": "2026.6.5"
   }
 }
