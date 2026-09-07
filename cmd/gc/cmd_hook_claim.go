@@ -475,6 +475,50 @@ func reportHookClaimRejected(candidate, claimed beads.Bead, opts hookClaimOption
 	ops.EmitClaimRejected(candidate.ID, existing, opts.Assignee)
 }
 
+// hookClaimExistingAssignment is the ADOPTION tier: it hands back a bead this
+// session already owns, so a restarted or crash-recovered incarnation resumes
+// its in-progress work instead of drifting off it. It runs FIRST, before the
+// ready-assignment and fresh-claim tiers.
+//
+// IT ARBITRATES NOTHING, and that is a property of the design rather than an
+// omission. Unlike the other two tiers -- which go through the store's
+// `update --if-assignee` CAS, refuse a loser and emit bead.claim_rejected --
+// this one decides purely from the work-query snapshot and issues ZERO store
+// writes. Two runtimes presenting the same identity string are BOTH told the
+// bead is theirs, with no CAS attempted and nothing emitted that would let
+// anything downstream notice.
+//
+// A CAS here would not help: the two callers are indistinguishable, so a
+// compare-and-set on that same assignee succeeds for both. The one input that
+// differs is the session id, which is exactly what adoption must ignore -- a
+// resumed incarnation carries a NEW session id and the SAME alias, so keying
+// on it deletes the feature.
+//
+// SO THE SAFETY IS UPSTREAM, in two guards, and IdentityCandidates is the
+// surface that consumes them. Adding a spelling to that set is only safe while
+// the spelling is unique to one live session:
+//
+//   - ensureSessionAliasAvailable (internal/session/names.go) refuses an alias
+//     held by any non-closed session bead. Both its wave-past exceptions
+//     require the other holder to be observably not live. The scan is
+//     read-then-write, safe only because session creation is serialized inside
+//     one controller tick; the store itself would accept a duplicate.
+//   - the instance-token fence (classifyHookClaimSession, cmd_hook.go) drains a
+//     superseded incarnation as stale_session before the work query runs.
+//
+// The fence FAILS OPEN twice, deliberately: it does not run when the runtime
+// carries no GC_SESSION_ID or no GC_INSTANCE_TOKEN, and a genuine
+// session-store fault is admitted rather than refused. Neither should turn an
+// unfenceable context or an infrastructure hiccup into a refused healthy
+// worker -- but it means the fence is not a backstop for the uniqueness guard
+// in every case.
+//
+// The bare pool template is kept OUT of IdentityCandidates for exactly this
+// reason: it is also a [[named_session]] holder's own identity, and admitting
+// it let a suffixed worker adopt the holder's bead (ga-80pen8). It lives in
+// RouteTargets instead, which governs fresh claims and does go through the CAS.
+// Pinned in cmd_hook_test.go by the ga-80pen8 cluster and by
+// TestHookClaimAdoptionCannotArbitrateBetweenSessionsSharingAnIdentity.
 func hookClaimExistingAssignment(candidates []beads.Bead, opts hookClaimOptions) (hookClaimJSONResult, beads.Bead, bool) {
 	for _, candidate := range candidates {
 		if hookClaimCandidateIsMessage(candidate) {
