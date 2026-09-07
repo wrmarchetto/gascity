@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-23r 2026-09-07T12:55Z
+last_seen: gs-4n7 2026-09-07T16:15Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -1746,3 +1746,59 @@ workers. This closes the pm-open #2(b) gap: the rig now has queued work
 after governor.
 
 Source: Willie, pm-chat sitting gs-23r
+
+## 60. pm-decomp gs-4n7: objection -- relabel gs-olu standalone; six beads cover all nine criteria (2026-09-07)
+
+Reviewed the mayor's DECOMP for epic:mayor-slack-bridge: seven beads, all
+deferred to 2026-09-08 pending this verdict, checked against the epic's nine
+acceptance criteria and its dependency section. The summons body was
+truncated at 4000 characters at filing, losing gs-8ra's tail and the whole
+gs-olu entry, so the review read the beads in the store -- the authority
+either way, since the beads are what get slung.
+
+Coverage map:
+
+- gs-wnn: criteria 1 and 3 plus the config half of 5 and 6. Cold-wake
+  demonstrated (kill the mayor, post, observe the mint), not assumed, and
+  records that Events-API-through-/hook and the E7 sink are NOT taken,
+  matching the pm-log #58 Socket Mode ruling.
+- gs-eh2: criteria 2 and 7. Criterion 2's four negatives each pinned by
+  its own test, and a stop-and-report instruction if the SSE stream cannot
+  distinguish assistant turns from tool output, rather than a guessing
+  filter.
+- gs-2hl: criterion 4, both properties -- adapter re-registration and a
+  binding that follows the named session -- both seen red first because
+  both fail silently. Depends on gs-wnn and gs-eh2.
+- gs-8ra: criteria 5 and 8 as a mechanical gate in the normal gate run,
+  its scan list derived from the build rather than hand-kept.
+- gs-228: the roadmap's provisioning dependency, assigned human, gating
+  only criterion 9 with the build parallel to it.
+- gs-z09: criterion 9, one cold run, naming the four things a green demo
+  cannot show. Blocked on the six above.
+
+Every criterion has a bead, gs-228 maps to the dependency section, and the
+mayor's three judgment calls stand: the lifecycle split (criterion 4's
+properties are independently testable and fail silently), the gate as its
+own bead (a rule not expressed as a failing gate rots), and chunking policy
+inside gs-eh2 (the policy and its implementation land together).
+
+The objection: gs-olu (connected-clients.md repair plus a docsync test that
+checks documented routes against the router, P3) carries
+epic:mayor-slack-bridge, and no acceptance criterion covers it -- scope the
+epic did not ask for. The pm-log #57 survey that found it minted it "worth
+a standalone bead", and gs-z39, gs-c6f, and gs-eep set the precedent that
+substrate fixes carry standalone rather than the nearest epic's label
+(pm-open #3). The label is mechanical, not cosmetic: the pm-epic-close
+sweep keys on epic:<slug>, so a P3 doc chore under this label either gates
+the epic's close past its own nine criteria or gets rushed to unblock it.
+The mayor's hazard argument -- implementers of the other beads would read
+that guide first -- is already fenced without the label: the summons plans
+no bead against the guide and gs-wnn records the not-taken paths. The bead
+itself is good and stays: relabel, do not drop.
+
+Verdict closed onto gs-4n7 and mailed to the mayor: relabel gs-olu
+standalone (drop epic:mayor-slack-bridge) and sling it on its own schedule;
+the remaining six cover all nine criteria and the provisioning dependency,
+and sling as filed on that one relabel.
+
+Source: roadmap mayor-slack-bridge
