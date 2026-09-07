@@ -15,6 +15,7 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/beads/contract"
 	"github.com/gastownhall/gascity/internal/clock"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/extmsg"
@@ -1023,6 +1024,10 @@ func unclaimWorkAssignedToRetiredSessionBead(
 	if stderr == nil {
 		stderr = io.Discard
 	}
+	// Same resolve as the Info form below, from the session BEAD's metadata.
+	// contract.WorkerDirFromMetadata carries the canonical-then-legacy
+	// precedence; spelling the fallback here is how the two paths drift.
+	releasedWorkBranch := hookResolveWorkBranch(contract.WorkerDirFromMetadata(sessionBead.Metadata))
 	targets := sessionReleaseTargetsForBead(sessionBead, retired)
 	seen := make(map[string]struct{})
 	for storeIndex, ownerStore := range workAssignmentStores(store, rigStores) {
@@ -1050,7 +1055,7 @@ func unclaimWorkAssignedToRetiredSessionBead(
 				// to the work_query -- Tier 1 needs an assignee match, Tiers 2/3
 				// only match "ready"), and stamps fallbackRoute run_target only
 				// when the bead is otherwise unrouted.
-				if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
+				if err := wa.ReleaseWorkBead(item, fallbackRoute, releasedWorkBranch); err != nil {
 					fmt.Fprintf(stderr, "session beads: unclaiming work %s assigned to retired session %s: %v\n", item.ID, sessionBead.ID, err) //nolint:errcheck
 				}
 			}
@@ -1168,6 +1173,15 @@ func unclaimWorkAssignedToRetiredSessionInfo(
 	if stderr == nil {
 		stderr = io.Discard
 	}
+	// Resolved once, not per bead: it is a git subprocess, and every bead this
+	// sweep releases came off the same worktree. Empty when the session had no
+	// worktree, it was pruned, or HEAD is detached -- withReleasedWorkBranch
+	// then leaves each bead's existing stamp alone.
+	//
+	// WorkerDirFromInfo, not Info.WorkDir: the latter mirrors only the LEGACY
+	// work_dir key, so reading it directly resolves nothing for a session
+	// carrying the canonical worker_dir and silently leaves every stamp stale.
+	releasedWorkBranch := hookResolveWorkBranch(session.WorkerDirFromInfo(retiredSession))
 	targets := sessionReleaseTargetsForInfo(retiredSession, retired)
 	seen := make(map[string]struct{})
 	for storeIndex, ownerStore := range workAssignmentStores(store, rigStores) {
@@ -1188,7 +1202,7 @@ func unclaimWorkAssignedToRetiredSessionInfo(
 				}
 				seen[key] = struct{}{}
 				// Detached exactly as in the raw retirement path above.
-				if err := wa.ReleaseWorkBead(item, fallbackRoute); err != nil {
+				if err := wa.ReleaseWorkBead(item, fallbackRoute, releasedWorkBranch); err != nil {
 					fmt.Fprintf(stderr, "session beads: unclaiming work %s assigned to retired session %s: %v\n", item.ID, retiredSession.ID, err) //nolint:errcheck
 					res.Failed++
 					continue

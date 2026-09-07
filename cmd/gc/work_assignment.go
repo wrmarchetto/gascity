@@ -188,7 +188,7 @@ func excludeMailMessageBeads(items []beads.Bead) []beads.Bead {
 // fault, not beads reopened. Splitting that counter is deliberately left
 // undone here; it would touch every caller of unclaimResult for a reporting
 // nicety, and no path reads the tally to make a decision.
-func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback string) error {
+func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback, workBranch string) error {
 	store := w.unwrapped()
 	if store == nil {
 		return nil
@@ -205,7 +205,9 @@ func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback strin
 		// run_target fallback ride a separate metadata-only write. Both sides
 		// read workrelease.Metadata, so this stamps byte-identically to the
 		// unconditional path below.
-		return store.Update(item.ID, beads.UpdateOpts{Metadata: releaseWorkBeadMetadata(item, runTargetFallback)})
+		return store.Update(item.ID, beads.UpdateOpts{
+			Metadata: withReleasedWorkBranch(releaseWorkBeadMetadata(item, runTargetFallback), item, workBranch),
+		})
 	}
 	// Everything the CAS cannot arbitrate keeps the original unconditional
 	// write, byte-identical to the raw ops: an open-status bead (outside
@@ -222,7 +224,46 @@ func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback strin
 	// production is Bd behind Caching, so the recheck would cover only a
 	// backend that does not exist yet. If one appears it releases unguarded:
 	// give it the recheck then, and pin it with the same two-arm test.
-	return store.Update(item.ID, workrelease.Options(item, runTargetFallback))
+	opts := workrelease.Options(item, runTargetFallback)
+	opts.Metadata = withReleasedWorkBranch(opts.Metadata, item, workBranch)
+	return store.Update(item.ID, opts)
+}
+
+// withReleasedWorkBranch adds the gc.work_branch stamp to a release's metadata
+// patch when the caller resolved a branch that differs from the one on the
+// bead, and returns metadata unchanged otherwise.
+//
+// It exists because gc.work_branch is resolved ONCE, at claim time
+// (hookClaimIdentityPatch), and an agent runs `gc hook --claim` exactly once
+// per session -- BEFORE it cuts its feature branch. So the durable handle read
+// `main` while the work sat on feat/<bead>-<slug>, and a bead released off a
+// dead session pointed the next claimant at the wrong branch. It then redid
+// work that was sitting in the dead slot's worktree, and the salvage had to be
+// done by hand (ci-q3qbo9; measured on gs-eh2 and as-2mhs, 2026-09-07).
+//
+// An EMPTY branch leaves the existing stamp alone rather than clearing it. A
+// pruned worktree, a detached HEAD, or a non-repo work_dir all resolve to ""
+// (hookResolveWorkBranch), and erasing the handle in those cases would destroy
+// the only record of where the predecessor was working -- strictly worse than
+// a stale name. Clearing is therefore NOT an option this function offers.
+//
+// The stamp rides the same write as the rest of the release patch on both
+// paths. A second write would be a second thing to fail, and the whole point
+// is that the pointer and the reopening are consistent.
+//
+// Documented absence: nothing here records whether the worktree was DIRTY.
+// A branch name is enough to find the work, and the dirty-tree question
+// belongs to whatever decides adoption -- a behavior change, not this fix.
+func withReleasedWorkBranch(metadata map[string]string, item beads.Bead, workBranch string) map[string]string {
+	branch := strings.TrimSpace(workBranch)
+	if branch == "" || strings.TrimSpace(item.Metadata[beadmeta.WorkBranchMetadataKey]) == branch {
+		return metadata
+	}
+	if metadata == nil {
+		metadata = make(map[string]string, 1)
+	}
+	metadata[beadmeta.WorkBranchMetadataKey] = branch
+	return metadata
 }
 
 // releaseWorkBeadIfCurrent attempts the store's atomic conditional release for
