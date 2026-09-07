@@ -1,0 +1,57 @@
+# Two properties that pull against each other once the sweep is a loop, and the
+# fix has to hold both.
+#
+#   #1734: a timer-gate failure must reach the controller log, which happens
+#          only through a non-zero exit (the `if err != nil` branch of
+#          dispatchOne in cmd/gc/order_dispatch.go).
+#   this bead: one unreachable rig must NOT stop the stores after it. That
+#          would turn a single broken rig into a fleet-wide gate outage -- the
+#          same shape of failure being fixed here.
+#
+# So rig-a fails, rig-b must STILL be swept, and the script must still exit
+# non-zero. A `|| true` on the timer line satisfies the second half and
+# silently discards the first.
+
+! exec bash $WORK/scripts/gate-sweep.sh
+stderr 'rig-a is unreachable'
+exec cat $WORK/calls
+
+stdout '^timer <hq>$'
+stdout '^timer /stores/rig-b$'
+
+-- bin/gc --
+#!/bin/sh
+set -eu
+
+calls="$WORK/calls"
+
+case "$1 $2 ${3:-}" in
+  "rig list --json")
+    printf '%s\n' '{"rigs":[{"name":"city","path":"/stores/city","hq":true},{"name":"rig-a","path":"/stores/rig-a"},{"name":"rig-b","path":"/stores/rig-b"}]}'
+    ;;
+  "bd gate check")
+    type=""
+    dir=""
+    shift 3
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --type=*) type="${1#--type=}" ;;
+        -C) shift; dir="$1" ;;
+        --escalate) ;;
+        *) printf 'unexpected gate check flag: %s\n' "$1" >&2; exit 64 ;;
+      esac
+      shift
+    done
+    # Only the TIMER check fails, and only in rig-a. Failing the gh check too
+    # would let a passing run be explained by the gh line's own tolerance.
+    if [ "$dir" = /stores/rig-a ] && [ "$type" = timer ]; then
+      printf 'gc bd gate check: rig-a is unreachable\n' >&2
+      exit 1
+    fi
+    printf '%s %s\n' "$type" "${dir:-<hq>}" >> "$calls"
+    ;;
+  *)
+    printf 'unexpected gc command: %s\n' "$*" >&2
+    exit 64
+    ;;
+esac
