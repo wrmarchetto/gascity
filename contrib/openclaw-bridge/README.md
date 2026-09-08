@@ -339,6 +339,31 @@ It also retries a failed connection after a supervisor restart. Its process
 supervisor remains responsible for restarting the out-of-process component if
 the process itself exits.
 
+**It starts from now, not from the beginning.** Only an `operation: "upsert"`
+frame extends the transcript; every other frame restates it whole, and a
+restated transcript is treated as a watermark -- its turns are recorded as
+already settled and never published. Three frames restate: the snapshot that
+answers a request carrying no resume cursor (the mirror sends none), the
+snapshot that begins each reconnect, and the `reset` the stream sends when it
+cannot honor a cursor, after a respawn or a transcript rewrite. A resumed target
+writes a fresh transcript file, so an old turn can arrive under an entry id the
+mirror has never seen; the operation, not the id, is what separates a
+restatement from growth. Measured 2026-09-08 without this: one start against a
+two-hour-old transcript posted 91 turns in 43 seconds, 2.1/s against Slack's
+~1/s per-channel `chat.postMessage` ceiling, and the channel rate-limited four
+times.
+
+The cost is deliberate and worth stating: **a turn completed while the mirror
+was not reading the stream is never delivered** -- process down or connection
+dropped alike. Nothing in a restating frame distinguishes a turn the mirror
+missed from one that merely predates it. Publishing the unsettled tail of a
+reconnect snapshot would recover those few turns and reopen the flood, because
+that is exactly the frame a respawned target reconnects with. A turn the adapter
+refused is the one exception: it stays pending and is retried through the
+restating frame rather than watermarked into silence. Persisting a resume cursor
+and passing it as `after_cursor` would close the gap, but it does not replace the
+watermark, because an unusable cursor is answered with a reset.
+
 Slack permits 40,000 UTF-16 code units. The mirror's in-code delivery policy
 uses a 39,000-unit ceiling: a short turn is published intact, while a long turn
 is published losslessly as ordered `[part i/n]` messages. The labels are inside
