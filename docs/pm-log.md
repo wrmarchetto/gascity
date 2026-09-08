@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-0lj 2026-09-08T14:58:42Z
+last_seen: gs-o07 2026-09-08T15:16:12Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3484,6 +3484,55 @@ upstream probe declared. Standalone-class substrate bug (pm-open #3
 lineage), no epic label, owned end to end by the toolsmith: nothing is mine
 this turn. Placement, if the label sweep wants a ruling, arrives as its own
 summons. No other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). No new pm-open entry: pm-open #2(a) already reads "the wait
+is purely human" as of #102, and nothing advanced past that this turn.
+
+Source: roadmap governor
+
+## 107. pm-epic-close gs-o07: governor stays in-progress; drift: gs-a6j closed, gs-9zu filed (2026-09-08)
+
+Ninety-second ruling of this shape (pm-log #5 gs-8iv through #106 gs-0lj),
+re-verified live at 15:16Z rather than recalled. The closed set under
+epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 -- 5
+closed, 0 open, 0 in progress; criteria 1-6 verified in their close reasons
+pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7, read live
+in the city store: still OPEN, assignee human, updated 2026-09-08, carrying
+the gs-r76 interval record and the ci-lbaesr addendum in its notes, and no
+answer past Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live:
+still OPEN, still blocking ci-waw3o7, description unchanged from #102's
+rewrite (re-ask stamped 2026-09-08T13:31Z, both operator blockers recorded
+cleared). Per pm-log #4 governor stays in-progress and the bead that reopens
+it remains ci-waw3o7.
+
+Drift since last_seen (gs-0lj, set at pm-log #106): the updated-after
+listing against the 2026-09-08T14:58:42Z stamp, swept across all five
+statuses, returns gs-o07 (this claim, in_progress), gs-0lj (the prior
+summons, closed), gs-a6j, gs-bkb, and gs-9zu.
+
+- gs-a6j -- the shell-lint pack-scripts widening, sixth member of the
+  pm-open #3 standalone class (ruled #77), stalled since #103 on a
+  permission-dialog lease -- is now CLOSED by engineer-1: SWEEP_PATHS
+  widened to internal/bootstrap/packs, six findings cleared, commit
+  c1e24f983 on fix/gs-a6j-shell-lint-pack-scripts (branch named verbatim
+  in the close reason, per the RANK_CLOSE_REASON attribution requirement
+  its notes recorded). The SC2115 rm -rf was measured, not predicted: the
+  unguarded body with an empty variable deleted the archive repo, and the
+  ${var:?} guard was driven by hand both ways. Standalone class, owned end
+  to end; nothing mine.
+- gs-9zu is NEW: P2 bug filed by toolsmith-1, assignee
+  gascity/lab.engineer-1, in_progress with a live lease. gc bd update
+  --if-assignee is refused pre-write because internal/bdflags omits bd's
+  compare-and-swap flags (--if-assignee, --if-status), so the fail-closed
+  argv scan fires on a legitimate flag in any city gating its writes --
+  measured against a real city, and it is the documented remedy path for
+  slot-assigned beads (how gs-r76 was hand-corrected). Substrate bug, no
+  epic label yet, pm-open #3 lineage; placement, if the label sweep wants
+  a ruling, arrives as its own summons. Nothing mine this turn.
+- gs-bkb moved on metadata only: gc.outcome=pass and gc.upstream_probe
+  landed post-close on the #106-recorded fix. No substantive change.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress alongside governor by design
