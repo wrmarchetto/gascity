@@ -35,6 +35,18 @@ package main
 // claimants at unrelated branches, which is the one failure mode a
 // non-refusing signal cannot recover from.
 //
+// WHICH REPOSITORY IS SCANNED, and the absence that follows from it. `dir` is
+// the BEAD STORE's directory, threaded through from the federated claim loop
+// in cmd_hook.go -- not the claiming agent's checkout. That is right for the
+// measured incident (its seven branches were cut in the city repo, the same
+// repo that holds the city bead store) and it is the same seam
+// hookResolveWorkBranch already uses. It also means a bead in store X whose
+// fix lands in a DIFFERENT repository Y gets no sibling reported: absence of
+// the field says "no unlanded branch names this bead in the store's repo", not
+// "no sibling exists anywhere". Widening it would mean guessing which
+// repository an agent will edit, which is a judgment call and belongs in the
+// prompt, not here.
+//
 // Cost, measured 2026-09-08 against a gascity worktree holding 255 local
 // branches: 7ms to list the refs, and 60ms for the twenty git calls a full
 // cap of ten reported branches pays. The store side is one bd subprocess per

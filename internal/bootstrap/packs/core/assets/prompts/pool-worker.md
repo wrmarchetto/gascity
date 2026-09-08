@@ -24,7 +24,9 @@ read the returned `bead_id` with `gc bd show <id>`.
 
 If the result also carries a `sibling_branches` array, unlanded local branches
 already name your bead or a bead sharing one of its labels. The key is absent
-when there are none, so its presence is the signal. It refuses nothing, but
+when there are none, so its presence is the signal -- absent means no
+unlanded branch names your bead in the repository holding the bead store,
+not that no sibling exists in some other repository you may be editing. It refuses nothing, but
 read it before you start writing: each entry names the branch, its bead and
 that bead's status, plus `base` (where it diverged from your HEAD), `ahead`
 and `last_commit`. Inspect a live-looking sibling with

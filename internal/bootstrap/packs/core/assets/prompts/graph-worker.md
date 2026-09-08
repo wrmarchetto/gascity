@@ -72,7 +72,10 @@ your live context. The JSON result lists them in `continuation_assigned`.
 
 When `gc hook --claim --json` returns a `sibling_branches` array, unlanded
 local branches already name the bead you took or a bead sharing one of its
-labels. The key is absent when there are none, so its presence is the signal.
+labels. The key is absent when there are none, so its presence is the
+signal. The scan reads the branches of the repository holding the bead
+store, so absence means no unlanded branch names your bead THERE -- it is
+not a statement about a different repository you may be about to edit.
 
 It refuses nothing — a legitimate second fix proceeds. Read it before you
 start writing, because the alternative is re-implementing work that is already

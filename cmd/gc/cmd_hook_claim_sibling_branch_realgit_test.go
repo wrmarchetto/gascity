@@ -27,26 +27,20 @@ package main
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beads"
 )
 
-// gitOutputInTest returns the trimmed stdout of a git command, failing the
-// test on error. Separate from runGitInTest, which discards output: the
-// branch-cut shas are the test's own independent record of where each branch
-// started, so they have to be read back here rather than recomputed later.
-func gitOutputInTest(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
-	if err != nil {
-		t.Fatalf("git %v in %s: %v", args, dir, err)
-	}
-	return strings.TrimSpace(string(out))
-}
+// The branch-cut shas below are read back with gitOutputImport, the package's
+// existing output-returning git helper, rather than a local one: runGitInTest
+// discards output, and a fresh exec site in a new file is new resource debt
+// against test/test-resources.toml (measured here: +1 subprocess call and +1
+// file on all three subprocess rows, which the resource-ledger test rejected).
+// Reading them back at all is the point -- they are the test's own record of
+// where each branch started, so recomputing them later with the same call the
+// implementation makes would agree with a dropped or inverted base argument.
 
 // commitInTest adds one commit touching a uniquely named file, so no two
 // commits in a repo share a tree and every branch really diverges.
@@ -69,13 +63,13 @@ func TestHookClaimSiblingBranchesInRepoNamesBaseAndStateOfUnlandedBranches(t *te
 	dir := newWorkBranchRepo(t, "main")
 	// The frozen integration tip every sibling was cut from. Captured here, so
 	// the expectation does not come from the same merge-base call under test.
-	base := gitOutputInTest(t, dir, "rev-parse", "HEAD")
+	base := gitOutputImport(t, dir, "rev-parse", "HEAD")
 
 	// A live sibling: two commits, never merged.
 	runGitInTest(t, dir, "switch", "-q", "-c", "fix/ci-live00-open-route-demand")
 	commitInTest(t, dir, "live-a.txt")
 	commitInTest(t, dir, "live-b.txt")
-	liveTip := gitOutputInTest(t, dir, "rev-parse", "HEAD")
+	liveTip := gitOutputImport(t, dir, "rev-parse", "HEAD")
 
 	// An abandoned sibling: its bead is closed, its branch never landed. It
 	// must still be REPORTED -- suppressing it would leave the claimant unable
@@ -188,7 +182,7 @@ func TestHookClaimSiblingBranchesInRepoNamesBaseAndStateOfUnlandedBranches(t *te
 // pointer builds on work that does not exist.
 func TestHookClaimSiblingBranchesInRepoFabricatesNothingWithoutMatches(t *testing.T) {
 	dir := newWorkBranchRepo(t, "main")
-	head := gitOutputInTest(t, dir, "rev-parse", "HEAD")
+	head := gitOutputImport(t, dir, "rev-parse", "HEAD")
 	runGitInTest(t, dir, "switch", "-q", "-c", "fix/zz-other0-unrelated", head)
 	commitInTest(t, dir, "other-a.txt")
 	runGitInTest(t, dir, "switch", "-q", "main")
@@ -227,7 +221,7 @@ func TestHookClaimSiblingBranchesInRepoReportsAnUnreadableRepo(t *testing.T) {
 // wall of dead ones.
 func TestHookClaimSiblingBranchesInRepoCapsTheReport(t *testing.T) {
 	dir := newWorkBranchRepo(t, "main")
-	base := gitOutputInTest(t, dir, "rev-parse", "HEAD")
+	base := gitOutputImport(t, dir, "rev-parse", "HEAD")
 	siblings := make([]hookSiblingBead, 0, hookClaimSiblingBranchLimit+2)
 	for i := 0; i < hookClaimSiblingBranchLimit+2; i++ {
 		id := "ci-cap" + string(rune('a'+i))
