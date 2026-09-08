@@ -207,6 +207,8 @@ jobs:
         run: make check-native-dependency-surface
       - name: Event-export isolation guard
         run: make check-eventexport-isolation
+      - name: Shell lint gate
+        run: make check-shell-lint
       - name: Open-core boundary guard
         run: make check-core-boundary
       - name: extmsg bridge isolation guard

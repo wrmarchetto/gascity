@@ -182,9 +182,12 @@ components=$(
 
 scan_set=$(
     {
-        # shellcheck disable=SC2086 -- word splitting is the point: each
-        # component is a separate pathspec, and component paths cannot
-        # contain whitespace (they are package.json directories).
+        # Word splitting is the point: each component is a separate
+        # pathspec, and component paths cannot contain whitespace (they are
+        # package.json directories). The reason sits ABOVE the directive: a
+        # `--` tail does not parse and leaves this whole file unlinted
+        # (gs-fn6, gs-dzj).
+        # shellcheck disable=SC2086
         [ -z "$components" ] || git ls-files -- $components
         tracked_matching_route
     } | { grep -vE "$skip_re" || true; } | { grep -vE "$test_re" || true; } |

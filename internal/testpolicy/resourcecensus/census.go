@@ -160,8 +160,20 @@ var bootstrapPolicy = Ledger{
 			// ceiling is the SUM of all three deltas. Every side moved the file
 			// count to 180 for its OWN new file, which git merges to 180 without
 			// a marker -- two files short of the three the merged tree holds.
-			BaselineCalls:   619,
-			BaselineFiles:   182,
+			//
+			// +6 calls / 1 file (gs-dzj): scripts/shell_lint_gate_test.go, the
+			// contract suite for the shell-lint gate. Every spawn is the
+			// artifact under test or the tool that defines the answer -- bash
+			// running scripts/check-shell-lint.sh, git building the fixture
+			// repositories the gate enumerates with `git ls-files`, and
+			// shellcheck itself. Two of those tests exist to measure the REAL
+			// linter: one shows that a `disable=SC1072,SC1073` above a
+			// malformed directive makes shellcheck exit 0 with zero findings,
+			// the other requires every directive form the gate accepts to be
+			// one shellcheck parses. A stand-in for shellcheck would answer
+			// both from the stand-in and prove nothing.
+			BaselineCalls:   625,
+			BaselineFiles:   183,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -221,8 +233,10 @@ var bootstrapPolicy = Ledger{
 			// +2 calls / 1 file (ci-sptsk3): the same three spawn sets recorded
 			// on the all-source audit row above, counted again in the untagged
 			// scope and summed over the same 414/121 base.
-			BaselineCalls:   420,
-			BaselineFiles:   124,
+			// +6 calls / 1 file (gs-dzj): the shell-lint gate's contract suite,
+			// recorded on the all-source audit row above and counted again here.
+			BaselineCalls:   426,
+			BaselineFiles:   125,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -583,8 +597,13 @@ var bootstrapPolicy = Ledger{
 			// +1 call / 1 file (ci-ewyqum) and +2 calls / 1 file (ci-sptsk3),
 			// summed over the 406/116 base. ci-87655r contributes nothing here:
 			// it declares a Medium owner, which clears Small debt.
-			BaselineCalls:   409,
-			BaselineFiles:   118,
+			// +6 calls / 1 file (gs-dzj): the shell-lint gate's contract suite,
+			// which stays Small debt. Its spawns are cheap and hermetic -- each
+			// fixture is a t.TempDir() git repository and the gate only reads
+			// the tree it is pointed at -- so nothing about them wants a Medium
+			// declaration; they are irreducible rather than heavy.
+			BaselineCalls:   415,
+			BaselineFiles:   119,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",

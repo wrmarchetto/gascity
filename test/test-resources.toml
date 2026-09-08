@@ -36,8 +36,15 @@ resource = "subprocess"
 # Three beads raised this one row from the same 613/179 base, so the ceiling is
 # the SUM of all three deltas. Every side moved the file count to 180 for its
 # OWN new file, which git merges to 180 with no marker -- two files short.
-baseline_calls = 619
-baseline_files = 182
+#
+# +6 calls / 1 file (gs-dzj): scripts/shell_lint_gate_test.go, the contract
+# suite for the shell-lint gate. Every spawn is the artifact under test or the
+# tool that defines the answer -- bash running scripts/check-shell-lint.sh, git
+# building the fixture repositories the gate enumerates with `git ls-files`,
+# and shellcheck itself. Two of those tests exist to measure the REAL linter,
+# so a stand-in would answer from the stand-in. See census.go.
+baseline_calls = 625
+baseline_files = 183
 reported_calls = 495
 reported_files = 135
 owner_bead = "ga-80po0c.2"
@@ -93,8 +100,10 @@ resource = "subprocess"
 # 1 file (ci-sptsk3): the same three spawn sets recorded on the all-source
 # audit row above, counted again in the untagged scope and summed over the same
 # 414/121 base.
-baseline_calls = 420
-baseline_files = 124
+# +6 calls / 1 file (gs-dzj): the shell-lint gate's contract suite, recorded on
+# the all-source audit row above and counted again here.
+baseline_calls = 426
+baseline_files = 125
 reported_calls = 380
 reported_files = 98
 owner_bead = "ga-80po0c.2"
@@ -450,8 +459,12 @@ resource = "subprocess"
 # +1 call / 1 file (ci-ewyqum) and +2 calls / 1 file (ci-sptsk3), summed over
 # the 406/116 base. ci-87655r contributes nothing here: it declares a [[medium]]
 # owner, which clears Small debt.
-baseline_calls = 409
-baseline_files = 118
+# +6 calls / 1 file (gs-dzj): the shell-lint gate's contract suite, which stays
+# Small debt. Its spawns are cheap and hermetic -- each fixture is a
+# t.TempDir() git repository and the gate only reads the tree it is pointed at
+# -- so they are irreducible rather than heavy.
+baseline_calls = 415
+baseline_files = 119
 reported_calls = 394
 reported_files = 105
 owner_bead = "ga-80po0c.2.1"
