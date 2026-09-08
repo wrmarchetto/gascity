@@ -1564,10 +1564,14 @@ gc extmsg bind [flags]
 
 ## gc extmsg handoff
 
-Rebind an external conversation to another configured agent, replacing
-the active binding. Run from inside an agent session to hand a
-conversation to the right specialist — the routing judgment lives in the
-agent's prompt, this verb is pure transport.
+Rebind an external conversation to another configured agent (--to) or
+to a concrete session (--session), replacing the active binding. Run from
+inside an agent session to hand a conversation to the right specialist —
+the routing judgment lives in the agent's prompt, this verb is pure
+transport.
+
+This is the only verb that replaces an ACTIVE binding; plain "bind"
+refuses one with a conflict.
 
 ```
 gc extmsg handoff [flags]
@@ -1582,7 +1586,8 @@ gc extmsg handoff [flags]
 | `--parent-conversation-id` | string |  | Parent conversation ID for thread conversations |
 | `--provider` | string |  | External messaging provider (required) |
 | `--scope-id` | string |  | Conversation scope (default: the city name) |
-| `--to` | string |  | Configured agent identity to hand the conversation to (required) |
+| `--session` | string |  | Session ID to hand the conversation to (mutually exclusive with --to) |
+| `--to` | string |  | Configured agent identity to hand the conversation to (mutually exclusive with --session) |
 
 ## gc extmsg unbind
 

@@ -266,3 +266,86 @@ test('makeNamedSessionBinder binds an adapter conversation to the configured age
     await close(server)
   }
 })
+
+// A 409 from /extmsg/bind means the conversation is actively bound to a
+// DIFFERENT target. No amount of waiting changes that, and gc will not hand
+// the conversation over without replace=true, so the old behavior -- retry any
+// error 60 times at 1s then throw -- turned a permanent, actionable refusal
+// into 60s of silence followed by a process exit. Because the throw lands on a
+// top-level await in the bridge entrypoints, the supervisor restarts straight
+// back into the same 409: a crash loop whose only visible symptom is a
+// restarting service. The operator sequence that produces it is ordinary --
+// stop the bridge, repoint it at another agent, start it.
+//
+// The retry count is asserted, not just the throw. A fix that still burned the
+// 60 attempts and merely rewrote the final message would satisfy an
+// assertion on the error alone.
+test('makeNamedSessionBinder does not retry a 409 conflict and names the remedy', async () => {
+  let attempts = 0
+  const { server, port } = await listen((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      attempts += 1
+      res.writeHead(409, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ detail: 'conversation already bound to agent lab/other' }))
+    })
+  })
+  try {
+    const { gcFetch } = makeGcClient({ baseUrl: `http://127.0.0.1:${port}`, city: 'lab' })
+    const logged = []
+    const binder = makeNamedSessionBinder({
+      gcFetch,
+      conversation: { scope_id: 'lab', provider: 'slack', account_id: 'team-1', conversation_id: 'C1', kind: 'room' },
+      agentName: 'lab/lead',
+      log: (...a) => logged.push(a.join(' ')),
+    })
+
+    const err = await binder.bindWithRetry().then(
+      () => null,
+      (e) => e,
+    )
+    assert.ok(err, 'a 409 must reject rather than resolve')
+    assert.equal(attempts, 1, 'a permanent conflict must not be retried')
+    assert.equal(err.status, 409)
+    assert.match(err.message, /already bound/)
+    assert.match(err.message, /gc extmsg handoff/, 'the error must name the command that resolves it')
+  } finally {
+    await close(server)
+  }
+})
+
+// The companion assertion: classification must not swallow the transient case
+// the retry budget exists for. gc is routinely still starting when a bridge
+// comes up, and that arrives as a 5xx or a transport error, not a 4xx. Without
+// this test a fix could make every failure permanent and the suite would still
+// be green on the case above.
+test('makeNamedSessionBinder still retries a transient failure', async () => {
+  let attempts = 0
+  const { server, port } = await listen((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      attempts += 1
+      if (attempts < 3) {
+        res.writeHead(503, { 'Content-Type': 'application/json' })
+        res.end('{"detail":"starting"}')
+        return
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end('{"agent_name":"lab/lead"}')
+    })
+  })
+  try {
+    const { gcFetch } = makeGcClient({ baseUrl: `http://127.0.0.1:${port}`, city: 'lab' })
+    const binder = makeNamedSessionBinder({
+      gcFetch,
+      conversation: { scope_id: 'lab', provider: 'slack', account_id: 'team-1', conversation_id: 'C1', kind: 'room' },
+      agentName: 'lab/lead',
+      log: () => {},
+      retryDelayMs: 0,
+    })
+    assert.deepEqual(await binder.bindWithRetry(), { agent_name: 'lab/lead' })
+    assert.equal(attempts, 3)
+  } finally {
+    await close(server)
+  }
+})

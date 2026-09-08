@@ -125,8 +125,22 @@ export function makeAdapterRegistrar({
 // target after a session exits. The extmsg bind endpoint is idempotent for an
 // existing binding to the same identity, so this is also safe at every bridge
 // restart.
-export function makeNamedSessionBinder({ gcFetch, conversation, agentName, log }) {
+export function makeNamedSessionBinder({ gcFetch, conversation, agentName, log, retryDelayMs = 1000 }) {
   const bind = () => gcFetch('POST', '/extmsg/bind', { conversation, agent_name: agentName })
+
+  // A 409 is gc refusing to move a conversation that is actively bound to a
+  // different target, and a 400 is a target gc will never accept (an agent
+  // that is not a configured named session). Neither becomes true by waiting.
+  // Retrying them spent the 60-attempt budget in silence and then threw from
+  // the entrypoint's top-level await, so the service exited and the supervisor
+  // restarted it into the identical refusal -- a crash loop whose only symptom
+  // is a restarting bridge, with the surviving binding still routing inbound
+  // to the previous agent in each window the adapter is registered.
+  //
+  // 404 and 5xx are deliberately NOT in this set: a city can be mid-start, and
+  // that is exactly what the retry budget exists for. Transport errors carry
+  // no status at all and stay transient by the same rule.
+  const permanent = (err) => err.status === 409 || err.status === 400
 
   async function bindWithRetry() {
     let attempts = 0
@@ -134,10 +148,14 @@ export function makeNamedSessionBinder({ gcFetch, conversation, agentName, log }
       try {
         return await bind()
       } catch (err) {
+        if (permanent(err)) {
+          err.message = `${err.message} -- this will not clear by retrying; rebind with "gc extmsg handoff" (--to for an agent, --session for a session) or unbind the conversation first`
+          throw err
+        }
         attempts += 1
         if (attempts >= 60) throw err
         if (attempts === 1) log(`waiting to bind configured session (${err.message})`)
-        await new Promise((resolve) => setTimeout(resolve, 1000))
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs))
       }
     }
   }

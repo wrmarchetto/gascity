@@ -170,29 +170,30 @@ when none is live. Binding an actively-bound conversation conflicts; use
 
 func newExtMsgHandoffCmd(stdout, stderr io.Writer) *cobra.Command {
 	var conv extMsgConversationFlags
-	var to string
+	var to, sessionID string
 	var jsonOutput bool
 	cmd := &cobra.Command{
 		Use:   "handoff",
 		Short: "Rebind a conversation to another configured agent",
-		Long: `Rebind an external conversation to another configured agent, replacing
-the active binding. Run from inside an agent session to hand a
-conversation to the right specialist — the routing judgment lives in the
-agent's prompt, this verb is pure transport.`,
+		Long: `Rebind an external conversation to another configured agent (--to) or
+to a concrete session (--session), replacing the active binding. Run from
+inside an agent session to hand a conversation to the right specialist —
+the routing judgment lives in the agent's prompt, this verb is pure
+transport.
+
+This is the only verb that replaces an ACTIVE binding; plain "bind"
+refuses one with a conflict.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if strings.TrimSpace(to) == "" {
-				fmt.Fprintln(stderr, "gc extmsg handoff: --to is required") //nolint:errcheck // best-effort stderr
-				return errExit
-			}
-			if cmdExtMsgBind(conv, to, "", true, jsonOutput, stdout, stderr) != 0 {
+			if cmdExtMsgBind(conv, to, sessionID, true, jsonOutput, stdout, stderr) != 0 {
 				return errExit
 			}
 			return nil
 		},
 	}
 	addExtMsgConversationFlags(cmd, &conv)
-	cmd.Flags().StringVar(&to, "to", "", "Configured agent identity to hand the conversation to (required)")
+	cmd.Flags().StringVar(&to, "to", "", "Configured agent identity to hand the conversation to (mutually exclusive with --session)")
+	cmd.Flags().StringVar(&sessionID, "session", "", "Session ID to hand the conversation to (mutually exclusive with --to)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Output the binding record as JSON")
 	return cmd
 }
@@ -201,18 +202,24 @@ agent's prompt, this verb is pure transport.`,
 func cmdExtMsgBind(conv extMsgConversationFlags, agentName, sessionID string, replace, jsonOutput bool, stdout, stderr io.Writer) int {
 	verb := "bind"
 	action := "bound"
+	// The two verbs spell the agent target differently -- bind takes --agent,
+	// handoff takes --to -- so the shared diagnostics have to follow the verb.
+	// Naming the wrong one sends the reader to a flag that verb does not
+	// register, which is what these messages did before ci-nlx1rx.
+	agentFlag := "--agent"
 	if replace {
 		verb = "handoff"
 		action = "handed off"
+		agentFlag = "--to"
 	}
 	agentName = strings.TrimSpace(agentName)
 	sessionID = strings.TrimSpace(sessionID)
 	switch {
 	case agentName == "" && sessionID == "":
-		fmt.Fprintf(stderr, "gc extmsg %s: --agent or --session is required\n", verb) //nolint:errcheck // best-effort stderr
+		fmt.Fprintf(stderr, "gc extmsg %s: %s or --session is required\n", verb, agentFlag) //nolint:errcheck // best-effort stderr
 		return 1
 	case agentName != "" && sessionID != "":
-		fmt.Fprintf(stderr, "gc extmsg %s: --agent and --session are mutually exclusive\n", verb) //nolint:errcheck // best-effort stderr
+		fmt.Fprintf(stderr, "gc extmsg %s: %s and --session are mutually exclusive\n", verb, agentFlag) //nolint:errcheck // best-effort stderr
 		return 1
 	}
 	c, cityPath, ok := extMsgClient(verb, stderr)
