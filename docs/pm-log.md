@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-hk9 2026-09-08T07:48:11Z
+last_seen: gs-o3h 2026-09-08T13:51:51Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3295,5 +3295,67 @@ and mayor-slack-bridge is already in-progress alongside governor by design
 (pm-log #59, deliberately concurrent). pm-open #2(a) updated with the
 demand-gap finding and gs-r76; courtesy ping sent per the pm-open append
 rule, one factual line, not a re-page of the parked ruling.
+
+Source: roadmap governor
+
+## 102. pm-epic-close gs-o3h: governor stays in-progress; gs-r76 done, wait is now solely Willie's ruling (2026-09-08)
+
+Eighty-seventh ruling of this shape, and the first since #65 where the state
+under it moved. gs-r76 (filed by #101) is CLOSED: the interval record exists
+and the re-ask is made. Verified live at 13:51-13:53Z, not from the close
+reason alone -- ci-waw3o7 read live in the city store is OPEN, assignee
+human, updated 2026-09-08, carrying the record in its notes (stamped
+2026-09-08T13:31Z), and gate ci-gbhkpa read live is OPEN, operator-paged,
+its description rewritten to point at the record as superseding the old
+1.5-hour soak summary, with both operator-only blockers recorded cleared on
+the gate itself (supervisor PID 2914434 runs the current build; the
+untracked bench-alerts.log preflight refusal cleared by 6deeededa).
+
+The record, in one breath: 65.1 hours, 2026-09-05T20:14Z to 2026-09-08T13:20Z,
+40 wakes all WITH the assessment layer, cadence n=39 with the two populations
+separated by 44.2m (retires the old n=1 jitter bound), 14 real conditions
+relayed, zero false conditions reached the mayor, the assessor's one false
+finding dropped by the judgment layer then root-caused and fixed (3c52ab2,
+zero recurrences in 29 wakes), 10 wakes clean after the city restart. This
+answers the #5 residual "no scheduled wake has yet run WITH the assessment"
+-- all 40 did. Residual 1 (retroactive blindness) closed forward but
+reappeared in the soak instrument; ci-lbaesr (city store, P2, toolsmith)
+carries that with a failing-test-first plan. Residual 2 (a governor that
+assesses then reports something else) is unchanged in kind, though the
+record adds a by-hand audit of all 25 findings-wakes against the store as
+evidence of truthfulness -- and as evidence that confirming it still costs
+a human pass.
+
+The closed set under epic:governor is now 5 (gs-o9i, gs-x0k, gs-xeh, gs-nun,
+gs-r76; 0 open). Criteria 1-6 stand verified per pm-log #5. Criterion 7 is
+Willie's ruling and his recorded answer is still the 2026-09-05T20:14Z NOT
+YET, so per pm-log #4 governor stays in-progress and the bead that reopens
+it remains ci-waw3o7. What changed is the wait's character: nothing is owed
+by any agent anymore. The ask is made, the evidence is on the bead, the page
+stands (ci-gbhkpa, operator-paged). The wait is purely human.
+
+Alternative rejected: filing another epic:governor bead to quiet the sweep
+while Willie decides. gs-r76 earned its label because an owed act (the
+unmade re-ask) had no demand behind it; no such act remains. The only act
+left on this rig is consuming Willie's ruling into the roadmap, which is
+exactly what the pm-epic-close summons itself carries -- a bead for it would
+duplicate the sweep while disarming the only wake that notices the ruling
+land. So the 15-minute summons loop is, deliberately, the watch on
+ci-waw3o7: each ruling from here re-reads it and re-closes if unruled, and
+this entry is the citation that makes those rulings one line of new
+verification rather than a re-derivation.
+
+Drift since last_seen (gs-hk9, set at pm-log #101): the updated-after
+listing against the 2026-09-08T07:48:11Z stamp returns exactly gs-hk9
+(closed), gs-r76 (closed), and gs-o3h (this claim, in_progress). No other
+bead in this rig's store moved. Noted from gs-r76's close reason, no action
+mine: lab.engineer-1 parked ~12h on a dangerous-rm permission prompt
+(gs-a6j's session), already governor-paged 8 times -- operational, not
+roadmap, and already on the operator's channel.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). pm-open #2(a) updated with the advance; courtesy ping
+delivered (exit 0).
 
 Source: roadmap governor

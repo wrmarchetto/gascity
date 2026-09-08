@@ -64,6 +64,17 @@ rig, epic:governor, assignee gascity/lab.engineer-1) now carries it:
 produce the post-assessment interval record, put it on ci-waw3o7, re-ask.
 (a) itself remains open until Willie rules on ci-waw3o7.
 
+Update 2026-09-08 (pm-log #102): gs-r76 is closed -- the record exists and
+the re-ask is made. The 65.1-hour interval record (40 wakes, all with the
+assessment layer, 14 real conditions relayed, 0 false relays reached the
+mayor) is on ci-waw3o7's notes as of 2026-09-08T13:31Z, and gate
+ci-gbhkpa's description now points to it as superseding the old 1.5-hour
+soak summary. Both operator-only blockers are recorded cleared on the gate
+itself. Nothing is owed by any agent anymore: (a) is now solely Willie's
+ruling on ci-waw3o7, standing paged via ci-gbhkpa. Until he rules, the
+15-minute pm-epic-close sweep is the watch -- each summons re-reads
+ci-waw3o7 and re-closes if unruled.
+
 ## 3. Substrate maintenance beads have no epic home; gs-z39 ruled standalone (2026-09-05)
 
 gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or
