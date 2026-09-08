@@ -22,6 +22,19 @@ gc hook --claim --drain-ack --json
 If the result action is `drain`, your session is done. If the action is `work`,
 read the returned `bead_id` with `gc bd show <id>`.
 
+If the result also carries a `sibling_branches` array, unlanded local branches
+already name your bead or a bead sharing one of its labels. The key is absent
+when there are none, so its presence is the signal. It refuses nothing, but
+read it before you start writing: each entry names the branch, its bead and
+that bead's status, plus `base` (where it diverged from your HEAD), `ahead`
+and `last_commit`. Inspect a live-looking sibling with
+`git log --oneline <base>..<branch>` and decide whether to continue it,
+supersede it, or proceed independently — then say which in your close reason.
+A bead whose status is closed or whose `last_commit` is old is a warning, not
+a foundation. `via` says why a branch was reported: `self` is a prior
+session's unlanded attempt at the bead you now hold, anything else is the
+label the two beads share — and a shared state label relates nothing.
+
 ## Following Your Formula
 
 Your formula defines your work as a sequence of steps. Steps are NOT

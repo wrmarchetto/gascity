@@ -68,6 +68,31 @@ bead with `gc.root_bead_id` and `gc.continuation_group`, it preassigns other
 open, unassigned siblings in that group to `$GC_SESSION_NAME` so they stay with
 your live context. The JSON result lists them in `continuation_assigned`.
 
+## Sibling Branches — Work That Already Exists
+
+When `gc hook --claim --json` returns a `sibling_branches` array, unlanded
+local branches already name the bead you took or a bead sharing one of its
+labels. The key is absent when there are none, so its presence is the signal.
+
+It refuses nothing — a legitimate second fix proceeds. Read it before you
+start writing, because the alternative is re-implementing work that is already
+on disk. Each entry names the branch, its bead and that bead's status, plus
+`base` (where it diverged from your HEAD), `ahead` (commits it carries) and
+`last_commit`. A branch whose bead is closed, or whose `last_commit` is old,
+is a warning rather than a foundation; inspect it before deciding:
+
+```bash
+git log --oneline <base>..<branch>
+```
+
+`via` says why a branch was reported: `self` is a prior session's unlanded
+attempt at the bead you now hold, anything else is the label the two beads
+share. A shared state label relates nothing, so `via` is how you dismiss a
+coincidence without reading its commits.
+
+Continue it, supersede it deliberately, or proceed independently — but say
+which in your close reason.
+
 ## Polling Before Drain
 
 After closing a bead, if `gc hook --claim --json` returns no work, do NOT drain

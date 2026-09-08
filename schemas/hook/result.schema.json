@@ -60,6 +60,45 @@
     },
     "drain_acknowledged": {
       "type": "boolean"
+    },
+    "sibling_branches": {
+      "description": "Unlanded local branches already naming this bead or a bead sharing one of its labels, described from the claiming worktree's HEAD. Advisory: present only when such a branch exists, and never a reason a claim was refused.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "branch",
+          "bead_id"
+        ],
+        "properties": {
+          "branch": {
+            "type": "string"
+          },
+          "bead_id": {
+            "type": "string"
+          },
+          "bead_status": {
+            "type": "string"
+          },
+          "via": {
+            "description": "Why this branch is related to the claim: \"self\" for the claimed bead's own prior attempt, otherwise the label the two beads share.",
+            "type": "string"
+          },
+          "base": {
+            "type": "string"
+          },
+          "tip": {
+            "type": "string"
+          },
+          "ahead": {
+            "type": "integer"
+          },
+          "last_commit": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "allOf": [
