@@ -48,6 +48,17 @@ type TriggerOptions struct {
 	ConditionDir     string
 	ConditionEnv     []string
 	ConditionTimeout time.Duration
+	// PatrolInterval is the period of the dispatcher's tick grid. A cooldown
+	// order's deadline can only be served on a tick, so this is what sizes
+	// the dispatch-latency allowance in defaultCooldownSlack.
+	//
+	// Zero -- the value every bare caller leaves it at -- yields a zero
+	// allowance and so reproduces the exact `elapsed >= interval`
+	// comparison. That is deliberate for the one-shot evaluators (the API
+	// GET /v0/orders/check and the storeless CLI check): they answer "is it
+	// due right now", not "should this tick run it", and they have no grid
+	// whose rounding they would be compensating for.
+	PatrolInterval time.Duration
 }
 
 var (
@@ -79,7 +90,7 @@ func CheckTrigger(a Order, now time.Time, lastRunFn LastRunFunc, ep events.Provi
 func CheckTriggerWithOptions(a Order, now time.Time, lastRunFn LastRunFunc, ep events.Provider, cursorFn CursorFunc, opts TriggerOptions) TriggerResult {
 	switch a.Trigger {
 	case "cooldown":
-		return checkCooldown(a, now, lastRunFn)
+		return checkCooldown(a, now, lastRunFn, opts.PatrolInterval)
 	case "cron":
 		return checkCron(a, now, lastRunFn)
 	case "condition":
@@ -97,8 +108,57 @@ func CheckTriggerWithOptions(a Order, now time.Time, lastRunFn LastRunFunc, ep e
 	}
 }
 
+// cooldownSlackIntervalDivisor bounds the slack allowance as a share of the
+// order's own interval, which is what bounds how much faster than configured
+// an order can run. A poke tick landing inside the slack window fires the
+// order that much early, so the long-run rate cannot exceed
+// 1/(interval - interval/divisor) -- at 6, a 20% ceiling on the overshoot.
+//
+// SIZED AGAINST THE TAIL OF THE DISPATCH LATENCY, NOT ITS MEAN. The first
+// draft used 10, giving a 3s allowance on a 30s interval against a latency
+// whose mean is ~1.06s. That was wrong: 1.06s was an aggregate measured as
+// each dispatch's offset from its own tick's FIRST write, which pins the
+// first dispatch of every tick at zero by construction and so understates
+// the real tick-start-to-write gap. Measured properly off the controller
+// trace (site_code orders.dispatch, n=214 ticks, 2026-09-08), the gap runs
+// p50 0.83s / p90 2.38s for the first order dispatched in a tick and p50
+// 2.89s / p90 3.62s for the eighth, with the whole dispatch phase at p50
+// 3.0s and p90 3.5s. A 3s allowance therefore relapses whenever a 30s order
+// lands late in a tick's candidate order, which is the failure this constant
+// exists to prevent. 6 gives 5s there, clearing the p90 with margin.
+//
+// WHAT IT STILL DOES NOT COVER, so nobody reads this as a total fix: the
+// dispatch phase reached 10.5s at its max, and dolt-health and beads-health
+// do their gate reads and their tracking-bead write against the very store
+// whose health they report, behind two serial gates at orderGateTimeout=8s
+// each. Their latency is therefore correlated with the degradation they
+// exist to detect, and under it they will still slip a tick. No allowance
+// under one tick can cover a 16s gate stall; closing that needs the cooldown
+// clock to stop being a timestamp written after the work
+// (cmd/gc/order_dispatch.go:781), which is a change to the bead write path
+// and is deliberately NOT attempted here.
+const cooldownSlackIntervalDivisor = 6
+
+// defaultCooldownSlack sizes the dispatch-latency allowance for one order.
+//
+// Two bounds, and both are load-bearing -- strictly under one tick, so the
+// patrol grid can never serve an interval a whole tick early, and under
+// interval/cooldownSlackIntervalDivisor, so the rate a poke tick landing
+// inside the window can buy is bounded. Held by
+// TestDefaultCooldownSlackStaysInsideItsTwoBounds.
+func defaultCooldownSlack(tick, interval time.Duration) time.Duration {
+	if tick <= 0 || interval <= 0 {
+		return 0
+	}
+	slack := tick / 2
+	if byInterval := interval / cooldownSlackIntervalDivisor; byInterval < slack {
+		slack = byInterval
+	}
+	return slack
+}
+
 // checkCooldown checks if enough time has elapsed since the last run.
-func checkCooldown(a Order, now time.Time, lastRunFn LastRunFunc) TriggerResult {
+func checkCooldown(a Order, now time.Time, lastRunFn LastRunFunc, tick time.Duration) TriggerResult {
 	interval, err := time.ParseDuration(a.Interval)
 	if err != nil {
 		return TriggerResult{Due: false, Reason: fmt.Sprintf("bad interval: %v", err)}
@@ -113,16 +173,36 @@ func checkCooldown(a Order, now time.Time, lastRunFn LastRunFunc) TriggerResult 
 		return TriggerResult{Due: true, Reason: "never run", LastRun: last}
 	}
 
+	// The deadline is measured against SLACK below the interval, not the
+	// interval itself. `now` is the tick's start; `last` is the CreatedAt of
+	// the tracking bead the previous run wrote, which lands after that run's
+	// gates and Dolt reads. So elapsed at the tick where the interval is due
+	// reads (interval - that write latency) and falls a hair short, and the
+	// order waits a whole further tick -- every time, because the offset is
+	// re-established by each run rather than decaying. Measured on the live
+	// city: a write latency averaging 1.06s turned every one of 37 orders'
+	// effective period into interval + one 30s tick, delivering 8.23
+	// dispatches/min against a 12.23/min schedule (ci-tv57qh).
+	//
+	// THE REJECTED FIX a future editor will reach for is recording the tick's
+	// own `now` as the last run instead of the bead's CreatedAt. It does not
+	// hold: the durable value read back across ticks is the bead's, the
+	// dispatcher deliberately refreshes from the store and keeps the LATER of
+	// the two (cmd/gc/order_dispatch.go:730), and it would still leave the
+	// deadline needing to land on a tick to the nanosecond -- which ticker
+	// jitter alone defeats, since measured patrol gaps run 29-32s against a
+	// 30s period.
+	slack := defaultCooldownSlack(tick, interval)
 	elapsed := now.Sub(last)
-	if elapsed >= interval {
+	if elapsed >= interval-slack {
 		return TriggerResult{
 			Due:     true,
-			Reason:  fmt.Sprintf("elapsed %s >= interval %s", elapsed.Round(time.Second), interval),
+			Reason:  fmt.Sprintf("elapsed %s >= interval %s less %s tick slack", elapsed.Round(time.Second), interval, slack),
 			LastRun: last,
 		}
 	}
 
-	remaining := interval - elapsed
+	remaining := interval - slack - elapsed
 	return TriggerResult{
 		Due:     false,
 		Reason:  fmt.Sprintf("cooldown: %s remaining", remaining.Round(time.Second)),

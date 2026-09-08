@@ -705,6 +705,15 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		// shutdown, reload, or canceled tick interrupts a slow check promptly
 		// instead of waiting out its (now operator-configurable) check_timeout.
 		triggerOpts.ConditionCtx = ctx
+		// Tell the trigger which grid it is being evaluated on. A cooldown
+		// deadline can only be served on a tick, so checkCooldown sizes its
+		// dispatch-latency allowance from this; without it every order whose
+		// interval is a multiple of the tick waits one full extra tick, every
+		// run (ci-tv57qh). The PATROL interval is the right figure even on a
+		// poke tick: poke ticks are extra ticks on top of the clock-driven
+		// grid, not a different grid, and a clock-driven schedule has to be
+		// met by the clock-driven ticks.
+		triggerOpts.PatrolInterval = m.patrolInterval()
 		result := orders.CheckTriggerWithOptions(a, now, lastRunFn, m.ep, cursorFn, triggerOpts)
 		if lastRunErr != nil {
 			logDispatchError(m.stderr, "gc: order dispatch: reading last run for %s: %v", a.ScopedName(), lastRunErr)
@@ -1119,6 +1128,17 @@ func (m *memoryOrderDispatcher) legacyCityStoreForTarget(cityPath string, target
 	}
 	stores[key] = store
 	return store, true
+}
+
+// patrolInterval reports the controller's clock-driven tick period, or zero
+// when the dispatcher was built without a city config -- which is the case in
+// the storeless CLI and API evaluators, and which correctly yields no cooldown
+// slack there.
+func (m *memoryOrderDispatcher) patrolInterval() time.Duration {
+	if m.cfg == nil {
+		return 0
+	}
+	return m.cfg.Daemon.PatrolIntervalDuration()
 }
 
 func (m *memoryOrderDispatcher) cachedLastRun(orderName string, storeKeys []string, read orders.LastRunFunc) (time.Time, bool, error) {
