@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-cu8 2026-09-07T23:44Z
+last_seen: gs-igb 2026-09-07T23:58:30Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2079,3 +2079,37 @@ No pm-open change: gs-fn6 does not join the standalone class, so pm-open
 new open question. Summons gs-cu8 closed with this verdict.
 
 Source: roadmap mayor-slack-bridge
+
+## 70. pm-epic-close gs-igb: governor stays in-progress; only drift since #68 is the sling-gs-fn6 convoy (2026-09-07)
+
+Fifty-seventh ruling of this shape, filed about eleven minutes after gs-82l
+(pm-log #68). Re-verified against the stores this turn at 00:01Z rather than
+recalled: the closed set under epic:governor is unchanged (gs-o9i, gs-x0k,
+gs-xeh, gs-nun -- criteria 1-6 verified in their close reasons, pm-log #5),
+and ci-waw3o7, read live in the city store (/home/willie/projects/city),
+matches the #65-#68 readings exactly -- OPEN, updated 2026-09-07, owner
+gascity/lab.engineer-1, assignee human, gate ci-gbhkpa still OPEN on its
+DEPENDS ON line, notes unchanged: Willie's recorded answer is still the
+2026-09-05T20:14Z "NOT YET" ruling about the evidence (deferred 48h per that
+note, expired per #65). Per pm-log #4 governor stays in-progress and the
+bead that reopens it remains ci-waw3o7.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question).
+
+One bead changed in this rig since last_seen besides this summons: gs-e5n
+("sling-gs-fn6", P2, open, type convoy, depends on gs-fn6). It is dispatch
+scaffolding for the already-placed gs-fn6 (epic:mayor-slack-bridge, pm-log
+#69), not feature work of its own, so it raises no placement question and
+gets no label from this ruling. No epic promoted and no DECOMP sent: the
+roadmap holds no status:open epic, and mayor-slack-bridge is in-progress
+with open work (gs-228 operator provisioning, gs-z09 round-trip demo, gs-fn6
+itself, and now gs-e5n). No new pm-open entry: the wait is pm-open #2(a) and
+#2(b) was closed by pm-log #59. Residuals in pm-log #5 stand: no scheduled
+wake has yet run WITH the assessment layer, and a governor that assesses
+then reports something else is mechanically unobservable today.
+
+Source: roadmap governor
