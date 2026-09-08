@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-nv0 2026-09-08T00:33:06Z
+last_seen: gs-w5l 2026-09-08T00:44:58Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2214,3 +2214,36 @@ The bead stays in_progress on its assignee and this ruling does not touch
 its dispatch.
 
 Source: pm-log #61
+
+## 74. pm-epic-close gs-w5l: governor stays in-progress; no drift since #73 beyond this summons (2026-09-07)
+
+Sixtieth ruling of this shape, filed about twelve minutes after the gs-nv0
+placement ruling (pm-log #73). Re-verified against the stores this turn at
+00:45Z rather than recalled: the closed set under epic:governor is unchanged
+(gs-o9i, gs-x0k, gs-xeh, gs-nun -- criteria 1-6 verified in their close
+reasons, pm-log #5), and ci-waw3o7, read live in the city store, matches the
+#65-#72 readings exactly -- OPEN, updated 2026-09-07, owner
+gascity/lab.engineer-1, assignee human, gate ci-gbhkpa still OPEN on its
+DEPENDS ON line, Willie's recorded answer still the 2026-09-05T20:14Z "NOT
+YET" ruling about the evidence. Per pm-log #4 governor stays in-progress and
+the bead that reopens it remains ci-waw3o7.
+
+The only bead updated in this rig since last_seen is this summons itself
+(claimed 00:44:58Z). gs-dzj's latest update (00:26Z, its dispatch under the
+pm-log #73 standalone ruling) predates the stamp, so #73's drift record
+already covers it.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question). No epic promoted and no
+DECOMP sent: the roadmap holds no status:open epic, and mayor-slack-bridge
+is in-progress with live work (gs-fn6 in progress, gs-228 operator
+provisioning, gs-z09 round-trip demo, and convoy gs-e5n -- all re-read this
+turn). No new pm-open entry: the wait is pm-open #2(a) and #2(b) was closed
+by pm-log #59. Residuals in pm-log #5 stand: no scheduled wake has yet run
+WITH the assessment layer, and a governor that assesses then reports
+something else is mechanically unobservable today.
+
+Source: roadmap governor
