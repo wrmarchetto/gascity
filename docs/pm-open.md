@@ -88,6 +88,15 @@ acceptance criterion. The mayor dropped the epic label without adding
 standalone, sweep summons gs-wm2 caught the unlabeled bead, and the label
 was added there. The standing question below is unchanged.
 
+Update 2026-09-07 (pm-log #73): gs-dzj (gate scripts/ on shellcheck) joins
+the class, fifth after gs-z39, gs-c6f, gs-eep, and gs-olu. Sweep summons
+gs-nv0 ruled it standalone: repo-wide lint gating whose seed defect gs-fn6's
+bridge work FOUND -- a malformed directive had left a gate script unparsed
+-- but that no epic:mayor-slack-bridge criterion closes over. Same
+descent-is-not-coverage standard that kept gs-z39 out of epic:governor. The
+standing question below is unchanged, and the class growing to five is
+itself evidence for settling it.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?

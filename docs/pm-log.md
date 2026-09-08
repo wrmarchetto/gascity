@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-1iv 2026-09-08T00:29:59Z
+last_seen: gs-nv0 2026-09-08T00:33:06Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2182,3 +2182,35 @@ assessment layer, and a governor that assesses then reports something else
 is mechanically unobservable today.
 
 Source: roadmap governor
+
+## 73. epic-unmapped gs-nv0: gs-dzj ruled standalone, fifth of the pm-open #3 class (2026-09-07)
+
+Sweep summons gs-nv0 caught work bead gs-dzj (gate scripts/ on shellcheck,
+P2, in_progress, assignee gascity/lab.engineer-2) carrying no epic:<slug>
+label. Ruled standalone and labeled this turn; the label is verified present
+on the bead.
+
+Why not epic:mayor-slack-bridge, the epic whose work found it: gs-fn6
+discovered the seed defect -- a `--` prose tail on a shellcheck directive in
+scripts/check-extmsg-bridge-isolation.sh is SC1072/SC1073 and aborts the
+parse of the whole file, so one of the repo's own gate scripts was linted by
+nothing -- and pm-log #69 placed gs-fn6 in-epic because bridge criterion 8
+closes over that specific gate hole. gs-dzj is the generalization: fix three
+unrelated dirty files (bump-version.sh, test-push-gate-lock.sh,
+test-push-gate-select.sh), wire shellcheck into a make target, a CI step,
+and a contract test, and pin the looks-suppressed-but-unparsed failure mode
+with a fixture. No mayor-slack-bridge criterion mentions repo-wide script
+linting and no governor criterion does either. Descent is not coverage --
+the same standard that kept gs-z39, which the governor soak found, out of
+epic:governor.
+
+Why standalone rather than opening the epic it implies: substrate tooling of
+exactly the pm-open #3 class, joining gs-z39, gs-c6f, gs-eep, and gs-olu as
+fifth member. Whether such work gets a standing maintenance epic or a
+recorded standalone-by-default policy is pm-open #3's standing question and
+Willie's call; this ruling extends the precedent rather than settling it.
+pm-open #3 updated in this commit. Summons gs-nv0 closed with this verdict.
+The bead stays in_progress on its assignee and this ruling does not touch
+its dispatch.
+
+Source: pm-log #61
