@@ -129,6 +129,116 @@ func createVersionCheckBeadNamedByMetadata(t *testing.T, cityDir, formulaName, h
 	return created.ID
 }
 
+// versionCheckRetryStepRef is the Ref a retried step bead carries: the
+// `<formula>.<step>.run.<attempt>` shape internal/dispatch/ralph.go builds
+// and internal/dispatch/retry.go rewriteRetryAttemptRef renumbers. Built
+// from the fixture's own formula name and its first step id so it cannot
+// drift away from the formula the fixture writes -- and deliberately NOT a
+// name any formula in the fixture city has, which the test asserts before
+// it asserts anything else.
+const versionCheckRetryStepRef = versionCheckFormulaName + ".build.run.2"
+
+// createVersionCheckRetryBead creates a bead in the retry shape:
+// gc.formula_name naming the formula, and Ref plus gc.step_ref carrying a
+// STEP ref rather than a formula name. internal/dispatch/retry.go
+// retryAttemptBead mints exactly this -- `Ref: stepRef` over a wholesale
+// clone of the predecessor's metadata, so gc.formula_name survives onto a
+// bead whose Ref no longer names a formula.
+//
+// gc.attempt is set for fidelity to that shape and is read by nothing here.
+func createVersionCheckRetryBead(t *testing.T, cityDir, formulaName, hash string) string {
+	t.Helper()
+
+	store, err := openStoreAtForCity(cityDir, cityDir)
+	if err != nil {
+		t.Fatalf("openStoreAtForCity: %v", err)
+	}
+	created, err := store.Create(beads.Bead{
+		Title:  "retry-shaped version-check fixture",
+		Type:   "task",
+		Status: "open",
+		Ref:    versionCheckRetryStepRef,
+	})
+	if err != nil {
+		t.Fatalf("store.Create: %v", err)
+	}
+	for key, value := range map[string]string{
+		beadmeta.FormulaNameMetadataKey: formulaName,
+		beadmeta.FormulaHashMetadataKey: hash,
+		beadmeta.StepRefMetadataKey:     versionCheckRetryStepRef,
+		beadmeta.AttemptMetadataKey:     "2",
+	} {
+		if err := store.SetMetadata(created.ID, key, value); err != nil {
+			t.Fatalf("SetMetadata(%s): %v", key, err)
+		}
+	}
+	return created.ID
+}
+
+// TestFormulaVersionCheckPrefersFormulaNameMetadataOverAStepRef pins the
+// resolution ORDER, which is invisible on every other bead shape in this
+// file. On a molecule root Ref and gc.formula_name carry the same value, and
+// the metadata-only case leaves Ref empty, so both orderings agree on both
+// -- a suite made of those two cannot tell metadata-first from Ref-first,
+// and a mutant swapping them survives it.
+//
+// A retry bead is where they disagree. gc.formula_name has ONE writer,
+// internal/formula/compile.go's rootStep block, and is only ever a formula
+// name. Ref has several and is a step ref on any bead that is not a molecule
+// root. version-check hands the resolved string to formula.Compile, where a
+// step ref is not a wrong label but a refusal to answer at all, so metadata
+// is trusted first here. The two sibling resolvers
+// (internal/api/orders_feed.go workflowFormulaName,
+// cmd/gc/session_reconciler.go drainStepRootFormulaName) stay Ref-first on
+// purpose: both want a display label and any string will do.
+//
+// Both arms are driven because only the second establishes that the metadata
+// lookup reaches the hash comparison. A pass on the matching arm alone is
+// also produced by a command that resolves the step ref, fails to compile,
+// and errors -- which is exit 1, not exit 0, but a reader checking only that
+// the diverged arm exits 1 could not tell the two apart. The diverged arm
+// therefore asserts the on-disk hash is printed.
+func TestFormulaVersionCheckPrefersFormulaNameMetadataOverAStepRef(t *testing.T) {
+	cityDir, diskHash := writeVersionCheckCity(t)
+
+	// Without this the case is vacuous under either ordering: a formula
+	// file named for the step ref would let Ref-first compile and match.
+	strayFormula := filepath.Join(cityDir, "formulas", versionCheckRetryStepRef+".toml")
+	if _, err := os.Stat(strayFormula); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(%s) = %v, want not-exist; the step ref must name no formula on disk", strayFormula, err)
+	}
+
+	beadID := createVersionCheckRetryBead(t, cityDir, versionCheckFormulaName, diskHash)
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"--city", cityDir, "formula", "version-check", beadID}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("run(formula version-check) on a retry-shaped bead = %d, want 0; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), versionCheckFormulaName) {
+		t.Errorf("stdout = %q, want the formula named from %s", stdout.String(), beadmeta.FormulaNameMetadataKey)
+	}
+
+	// Same shape, a hash that cannot match: the metadata-named formula must
+	// reach the comparison and report the on-disk hash.
+	divergedID := createVersionCheckRetryBead(t, cityDir, versionCheckFormulaName, "deadbeefdeadbeefdeadbeefdeadbeef")
+	if divergedID == beadID {
+		t.Fatalf("fixture reused bead %s; the two arms must be distinct beads", beadID)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{"--city", cityDir, "formula", "version-check", divergedID}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("run(formula version-check) on a diverged retry-shaped bead = %d, want 1; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), diskHash) {
+		t.Errorf("stdout = %q, want the on-disk hash %s; a run that resolved the step ref instead never reaches the comparison", stdout.String(), diskHash)
+	}
+	if strings.Contains(stdout.String(), versionCheckRetryStepRef) || strings.Contains(stderr.String(), versionCheckRetryStepRef) {
+		t.Errorf("output named the step ref %s; stdout=%q stderr=%q", versionCheckRetryStepRef, stdout.String(), stderr.String())
+	}
+}
+
 // TestFormulaVersionCheck_MatchExitsZero covers the happy path: a bead
 // whose gc.formula_hash matches the current on-disk formula. The
 // command must print the "matches" line and return without error so

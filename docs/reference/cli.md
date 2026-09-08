@@ -1706,9 +1706,10 @@ against the current on-disk formula file. Exits 0 if they match, 1 if
 they diverge.
 
 The bead must have gc.formula_hash metadata (set during instantiation).
-The formula is named by the bead's Ref field, falling back to its
-gc.formula_name metadata, and is then located in the current formula
-search paths.
+The formula is named by the bead's gc.formula_name metadata, falling back
+to its Ref field, and is then located in the current formula search paths.
+Metadata is consulted first because Ref carries a step ref rather than a
+formula name on any bead that is not a molecule root.
 
 Use this to detect whether a running session's formula has been updated
 since it was spawned.
