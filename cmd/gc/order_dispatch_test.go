@@ -1710,6 +1710,86 @@ func TestOrderDispatchRespectsMaxDispatchesPerTick(t *testing.T) {
 	}
 }
 
+// TestOrderDispatchCeilingClearsTheCityCooldownDemand pins that one patrol
+// tick admits enough dispatches to keep the order schedule this fork's city
+// actually runs.
+//
+// The invariant is a RATE, so the assertion derives ticks-per-minute from
+// DaemonConfig's own default and compares the product against a demand figure
+// measured outside this repository. Reading defaultMaxOrderDispatchesPerTick
+// back and comparing it to 8 was rejected: that passes while some other
+// per-tick budget -- a close budget, a store-fanout bound, a future
+// exec-concurrency cap -- still holds the delivered rate at 4, which is the
+// failure this test exists to catch.
+//
+// THE RATE IT COMPUTES IS A LOWER BOUND ON THE REAL CEILING, deliberately.
+// runTick also fires on the debounced event poke, each poke tick carrying its
+// own fresh budget, so the live ceiling exceeds the patrol product -- measured
+// 2026-09-08 at the old cap of 4, single minutes reached 16 against a patrol
+// floor of 8. Crediting only the patrol ticker is the direction that cannot
+// flatter the implementation, and it is also the correct requirement: a
+// cooldown schedule is driven by the clock, so it must be met by the
+// clock-driven ticks rather than by event traffic uncorrelated with it.
+//
+// It is also the gc.upstream_probe for bead gs-33z. With the constant reverted
+// to upstream's 4 the tick admits 4, the ceiling is 8.00/min, and this fails;
+// a green means upstream's own ceiling clears our schedule and the fork's bump
+// is dead weight.
+func TestOrderDispatchCeilingClearsTheCityCooldownDemand(t *testing.T) {
+	// Measured 2026-09-08 from `gc order list --json` in
+	// /home/willie/projects/city -- 37 enabled cooldown orders, summed as
+	// 1/interval, the reduction doctor/order-capacity/run.sh performs there.
+	// A literal and NOT a re-read of that city: a test that asks the live city
+	// for its own expectation goes green the moment those orders are disabled.
+	const cityCooldownDemandPerMinute = 12.23
+
+	// More always-due orders than any plausible cap, so the cap bounds the
+	// tick rather than the supply of due orders. Were a future cap to exceed
+	// this, the measured ceiling would be UNDERSTATED and the guard below
+	// reds -- erring toward "the patch is still needed" rather than toward a
+	// false retirement.
+	const dueOrders = 24
+
+	store := beads.NewMemStore()
+	var aa []orders.Order
+	for i := 0; i < dueOrders; i++ {
+		aa = append(aa, orders.Order{
+			Name:     fmt.Sprintf("capacity-%d", i),
+			Trigger:  "cooldown",
+			Interval: "1m",
+			Exec:     "true",
+		})
+	}
+	ad := buildOrderDispatcherFromListExec(aa, store, nil, func(context.Context, string, string, []string) ([]byte, error) {
+		return []byte("ok\n"), nil
+	}, nil)
+	if ad == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+
+	ad.dispatch(context.Background(), t.TempDir(), time.Date(2026, 9, 8, 4, 0, 0, 0, time.UTC))
+	ad.drain(context.Background())
+
+	admitted := countOrderTrackingRuns(t, store)
+	if admitted >= dueOrders {
+		t.Fatalf("all %d due orders dispatched, so no per-tick cap bound this tick "+
+			"and the ceiling measured is not the dispatcher's -- raise dueOrders "+
+			"above the cap", dueOrders)
+	}
+
+	tick := (&config.DaemonConfig{}).PatrolIntervalDuration()
+	ceilingPerMinute := float64(admitted) * float64(time.Minute) / float64(tick)
+	if ceilingPerMinute < cityCooldownDemandPerMinute {
+		t.Fatalf("one %s patrol tick admitted %d dispatches, a patrol floor of "+
+			"%.2f/min, under the %.2f/min the city's cooldown schedule demands: "+
+			"the clock-driven ticks cannot keep a clock-driven schedule, so the "+
+			"deficit is the per-tick budget and not the host. Event poke ticks "+
+			"lift the live ceiling above this floor but arrive on event traffic, "+
+			"which is uncorrelated with the schedule they would be covering",
+			tick, admitted, ceilingPerMinute, cityCooldownDemandPerMinute)
+	}
+}
+
 func TestOrderDispatchBudgetRotatesAcrossAlwaysDueOrders(t *testing.T) {
 	store := beads.NewMemStore()
 	var aa []orders.Order
