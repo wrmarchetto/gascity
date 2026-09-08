@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-153 2026-09-08T01:30:18Z
+last_seen: gs-hi4 2026-09-08T01:35:14Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2368,3 +2368,44 @@ patrol/mayor matter, not a PM edit, noted here only because pm-log #7-#11
 tracked the same class of fault under gs-hph.
 
 Source: pm-log #73
+
+## 78. pm-epic-close gs-hi4: governor stays in-progress; drift since #77 is mayor-slack-bridge's gs-fn6 lineage closing (2026-09-07)
+
+Sixty-third ruling of this shape (pm-log #5 gs-8iv through #76 gs-0gj),
+re-verified against the stores this turn at 01:35Z rather than recalled.
+The closed set under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh,
+gs-nun -- 4 closed, 0 open/in-progress, criteria 1-6 verified in their
+close reasons, pm-log #5), and ci-waw3o7, read live in the city store,
+matches the #65-#76 readings exactly -- OPEN, updated 2026-09-07, owner
+gascity/lab.engineer-1, assignee human, gate ci-gbhkpa still OPEN (labels
+gate-no-readback, operator-paged), Willie's recorded answer still the
+2026-09-05T20:14Z "NOT YET" ruling about the evidence (deferred 48h,
+expired per #65). Per pm-log #4 governor stays in-progress and the bead
+that reopens it remains ci-waw3o7.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold.
+No page sent -- gate ci-gbhkpa already operator-pages the decision
+(pm-log #29 precedent against re-paging a parked question).
+
+Drift since last_seen (gs-153, set at pm-log #77): this summons itself,
+and gs-fn6's bridge lineage closing under epic:mayor-slack-bridge -- gs-fn6
+(P1, the five dropped isolation refusals) is now closed pass, alongside
+gs-lq9 (P1 bug, SLACK_BOT_TOKEN/SLACK_CHANNEL_ID collision), gs-2hl,
+gs-8ra, gs-eh2, and gs-wnn, matching the merge commit already visible in
+this session's git log (597c77f84). That is the epic's own work landing,
+not a placement or governor-criterion question, so it changes nothing in
+this ruling. mayor-slack-bridge's remaining open work is gs-228 (operator
+provisioning) and gs-z09 (round-trip demo), both re-read this turn. gs-a6j
+and gs-dzj are also still in_progress and unchanged from pm-log #77 --
+already labeled standalone, no epic to re-check them against.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress. No new pm-open entry:
+the wait is pm-open #2(a) and #2(b) was closed by pm-log #59. Residuals in
+pm-log #5 stand: no scheduled wake has yet run WITH the assessment layer,
+and a governor that assesses then reports something else is mechanically
+unobservable today.
+
+Source: roadmap governor
