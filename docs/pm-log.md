@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-dug 2026-09-08T01:02:58Z
+last_seen: gs-0gj 2026-09-08T01:21:22Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2281,6 +2281,47 @@ is in-progress with live work (gs-z09 round-trip demo and gs-228 operator
 provisioning open, re-read this turn; gs-fn6 closed as above). No new
 pm-open entry: the wait is pm-open #2(a) and #2(b) was closed by pm-log #59.
 Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
+assessment layer, and a governor that assesses then reports something else
+is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 76. pm-epic-close gs-0gj: governor stays in-progress; drift is
+epic-unmapped gs-153 on gs-a6j (2026-09-07)
+
+Sixty-second ruling of this shape (pm-log #5 gs-8iv through #75 gs-dug),
+filed about eighteen minutes after gs-dug. Re-verified against the stores
+this turn at 01:23Z rather than recalled: the closed set under
+epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun -- 4 closed, 0
+open/in-progress, criteria 1-6 verified in their close reasons, pm-log #5),
+and ci-waw3o7, read live in the city store, matches the #65-#75 readings
+exactly -- OPEN, updated 2026-09-07, owner gascity/lab.engineer-1, assignee
+human, gate ci-gbhkpa still OPEN (created 2026-09-05, untouched since,
+labels gate-no-readback/operator-paged), Willie's recorded answer still the
+2026-09-05T20:14Z "NOT YET" ruling about the evidence (deferred 48h,
+expired per #65). Per pm-log #4 governor stays in-progress and the bead
+that reopens it remains ci-waw3o7.
+
+Drift since last_seen: two beads, both new. gs-a6j (P2, in_progress,
+assignee gascity/lab.engineer-1, "widen the shell-lint sweep to the pack
+scripts the SDK ships -- one carries rm -rf on two possibly-empty
+variables", no epic label) and gs-153, the sweep's epic-unmapped summons
+about it, assigned to this PM. gs-153 is its own PM unit and wakes its own
+session; ruling gs-a6j's placement here would be a second unit inside this
+one, so it is left to that summons. On its title alone gs-a6j reads as the
+same shellcheck-gating lineage as gs-dzj (pm-log #73, fifth of the pm-open
+#3 class), but that classification is gs-153's to make, not asserted here.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold.
+No page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log
+#29 precedent against re-paging a parked question). No epic promoted and no
+DECOMP sent: the roadmap holds no status:open epic, and mayor-slack-bridge
+is in-progress with open work (gs-228 operator provisioning, gs-z09
+round-trip demo -- both re-read this turn, both still open). No new
+pm-open entry: the wait is pm-open #2(a) and #2(b) was closed by pm-log
+#59. Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
 assessment layer, and a governor that assesses then reports something else
 is mechanically unobservable today.
 
