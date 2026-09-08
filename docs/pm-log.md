@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-wdm 2026-09-08T18:15:37Z
+last_seen: gs-4qn 2026-09-08T18:29:19Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3821,6 +3821,32 @@ listing against the 2026-09-08T17:58:14Z stamp, swept across all
 statuses, returns only gs-wdm (this claim) -- gs-mot's own close-time
 update falls at or before that same stamp, so it does not reappear here.
 No other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress alongside governor by
+design (pm-log #59). No new pm-open entry: pm-open #2(a) already reads
+"the wait is purely human" as of #102, unchanged this turn.
+
+Source: roadmap governor
+
+## 117. pm-epic-close gs-4qn: governor stays in-progress; no drift from #116 (2026-09-08)
+
+Hundred-and-second ruling of this shape (pm-log #5 gs-8iv through #116
+gs-wdm), re-verified live at 18:30Z rather than recalled. The closed set
+under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 --
+5 closed, 0 open, 0 in progress; criteria 1-6 verified in their close
+reasons pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7,
+read live in the city store: still OPEN, assignee human, notes tail
+unchanged since #116 -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past
+Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN,
+still blocking ci-waw3o7 (the one entry under its depends-on), description
+unchanged from #102's rewrite. Per pm-log #4 governor stays in-progress
+and the bead that reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-wdm, set at pm-log #116 at 18:15:37Z): the
+updated-after listing against that stamp, swept across all statuses,
+returns only gs-4qn (this claim). No other bead in this rig's store moved.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open
 epic, and mayor-slack-bridge is already in-progress alongside governor by
