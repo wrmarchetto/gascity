@@ -1281,13 +1281,38 @@ type formulaVersionCheckResult struct {
 	FormulaPath   string `json:"formula_path,omitempty"`
 }
 
-// beadFormulaName resolves the formula a bead was cooked from. The durable
-// metadata fallback is required for stores that do not round-trip Bead.Ref.
+// beadFormulaName resolves the formula a bead was cooked from.
+//
+// gc.formula_name first, then Ref. That is the REVERSE of
+// internal/api/orders_feed.go workflowFormulaName and
+// cmd/gc/session_reconciler.go drainStepRootFormulaName, and deliberately:
+// those two want a display label, so any non-empty string will do, while
+// this one feeds formula.Compile, where the wrong string is not a wrong
+// label but a refusal to answer.
+//
+// Ref is not always a formula name. internal/dispatch/retry.go
+// retryAttemptBead and retryEvalBead mint every retry attempt with
+// `Ref: stepRef` -- the `<formula>.<step>.run.<attempt>` shape -- over a
+// wholesale clone of the predecessor's metadata, so gc.formula_name survives
+// onto a bead whose Ref no longer names anything compilable. Ref-first then
+// reported `compiling formula "deploy.build.run.2" from disk: ... not found
+// in search paths` for every retried step (gs-bkb, measured against the file
+// provider in cmd_formula_version_check_test.go
+// TestFormulaVersionCheckPrefersFormulaNameMetadataOverAStepRef). Where both
+// are set on a molecule root they carry the same value and the order does
+// not matter, which is why no other case in that file can see this.
+//
+// gc.formula_name has one writer, internal/formula/compile.go's rootStep
+// block, and is only ever a formula name.
+//
+// Deliberately does NOT carry those two callers' final fallback to the bead
+// ID. A bead ID names no formula, so it would report a missing formula
+// instead of a bead that never recorded one.
 func beadFormulaName(bead beads.Bead) string {
-	if name := strings.TrimSpace(bead.Ref); name != "" {
+	if name := strings.TrimSpace(bead.Metadata[beadmeta.FormulaNameMetadataKey]); name != "" {
 		return name
 	}
-	return strings.TrimSpace(bead.Metadata[beadmeta.FormulaNameMetadataKey])
+	return strings.TrimSpace(bead.Ref)
 }
 
 func newFormulaVersionCheckCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -1300,9 +1325,10 @@ against the current on-disk formula file. Exits 0 if they match, 1 if
 they diverge.
 
 The bead must have gc.formula_hash metadata (set during instantiation).
-The formula is named by the bead's Ref field, falling back to its
-gc.formula_name metadata, and is then located in the current formula
-search paths.
+The formula is named by the bead's gc.formula_name metadata, falling back
+to its Ref field, and is then located in the current formula search paths.
+Metadata is consulted first because Ref carries a step ref rather than a
+formula name on any bead that is not a molecule root.
 
 Use this to detect whether a running session's formula has been updated
 since it was spawned.`,
@@ -1343,7 +1369,7 @@ since it was spawned.`,
 			formulaName := beadFormulaName(bead)
 			if formulaName == "" {
 				return formulaCommandError(stderr, command, jsonOutput,
-					fmt.Errorf("bead %s records no formula name (neither Ref nor %s)", beadID, beadmeta.FormulaNameMetadataKey))
+					fmt.Errorf("bead %s records no formula name (neither %s nor Ref)", beadID, beadmeta.FormulaNameMetadataKey))
 			}
 
 			recipe, err := formula.Compile(cmd.Context(), formulaName, scope.searchPaths, nil)
