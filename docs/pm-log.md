@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-05nx 2026-09-08T19:49:36Z
+last_seen: gs-34gg 2026-09-08T20:06:04Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4011,6 +4011,46 @@ Drift since last_seen (gs-rzts, set at pm-log #121 at 19:34:16Z): the
 updated-after listing against that stamp, swept across all statuses,
 returns only gs-05nx (this claim). No other bead in this rig's store
 moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress alongside governor by
+design (pm-log #59). No new pm-open entry: pm-open #2(a) already reads
+"the wait is purely human" as of #102, unchanged this turn.
+
+Source: roadmap governor
+
+## 123. pm-epic-close gs-34gg: governor stays in-progress; drift: gs-9zu, gs-wqqn closed (2026-09-08)
+
+Hundred-and-eighth ruling of this shape (pm-log #5 gs-8iv through #122
+gs-05nx), re-verified live at 20:06Z rather than recalled. The closed set
+under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 --
+5 closed, 0 open, 0 in progress; criteria 1-6 verified in their close
+reasons pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7,
+read live in the city store: still OPEN, assignee human, notes tail
+unchanged since #122 -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past
+Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN,
+labels gate-no-readback and operator-paged, still blocking ci-waw3o7 (the
+one entry under its depends-on), description unchanged from #102's
+rewrite. Per pm-log #4 governor stays in-progress and the bead that
+reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-05nx, set at pm-log #122 at 19:49:36Z): the
+first updated-after sweep ran without an explicit --status and came back
+holding only this claim -- bd's default list filter drops closed issues,
+so it silently undercounts drift on exactly the runs where a bead closed.
+Re-run with --status covering every state, two movers surface: gs-9zu
+(the bd flag manifest gate, open and unmoved through #121) closed --
+manifest completed for all 17 subcommands, freshness check rebuilt to
+fail closed instead of skipping behind a build tag it had silently
+skipped since it was written; and gs-wqqn (bdargv.py's MarkHidden
+blindness, filed at #121) closed -- oracle rebuilt from bd's own source
+plus live parser probing, finding two of its own three live-consequence
+claims wrong by measurement (create/-m was never refused; the real
+refusal was on update, through a different gate than the one named).
+Neither bears on epic:governor's closed set; both are unlabeled substrate
+fixes of the pm-open #3 class, closed with no placement summons filed for
+either this interval.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open
 epic, and mayor-slack-bridge is already in-progress alongside governor by
