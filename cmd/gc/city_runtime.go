@@ -335,6 +335,12 @@ func newCityRuntime(p CityRuntimeParams) (*CityRuntime, error) {
 	// Retry with backoff as defense-in-depth against transient store
 	// errors immediately after ensureBeadsProvider returns (#753).
 	func() {
+		// The store opener resolves an empty city path from the process CWD,
+		// which can open and mutate an unrelated city's store. Keep this guard
+		// at the caller so test replacements for the opener cannot bypass it.
+		if p.CityPath == "" {
+			return
+		}
 		sweepStore, err := newCityRuntimeOpenSweepStore(p.CityPath, p.CityPath)
 		if err != nil {
 			fmt.Fprintf(p.Stderr, "gc start: order tracking sweep: %v\n", err) //nolint:errcheck // best-effort stderr
