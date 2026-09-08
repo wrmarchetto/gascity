@@ -7226,17 +7226,33 @@ func TestOrderTrackingRetentionWatchdog_LogsPrunedCount(t *testing.T) {
 	}
 }
 
-func TestOrderTrackingRetentionWatchdog_NilCfgSkipsWithoutPanic(_ *testing.T) {
+// The parameter was `_ *testing.T` until bead gs-mns: with no t, the only way
+// this case could report anything was by panicking, so the store open it was
+// actually performing -- against whatever city discovery found from the
+// process cwd -- was unreportable. stderr is a real buffer for the same
+// reason io.Discard was wrong: it is the only channel the watchdog uses to
+// say it failed. The no-store invariant this case is named for is pinned
+// separately in order_tracking_sweep_scope_test.go, which injects the opener.
+func TestOrderTrackingRetentionWatchdog_NilCfgSkipsWithoutPanic(t *testing.T) {
 	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	var stderrBuf bytes.Buffer
 	cr := &CityRuntime{
 		cityName:  "test-city",
 		cfg:       nil, // nil cfg: watchdog must not panic
 		stdout:    io.Discard,
-		stderr:    io.Discard,
+		stderr:    &stderrBuf,
 		logPrefix: "gc test",
 	}
 	// Must not panic.
 	cr.runOrderTrackingRetentionWatchdog(now)
+
+	// A storeless runtime has nothing to sweep, which is not a failure and so
+	// must be silent. Before gs-mns this wrote nothing either -- because the
+	// open SUCCEEDED against a real city -- so this assertion is the weaker
+	// half of the pair on purpose.
+	if got := stderrBuf.String(); got != "" {
+		t.Fatalf("stderr = %q, want empty: a nil-cfg watchdog must be inert and quiet", got)
+	}
 }
 
 func TestOrderTrackingRetentionWatchdog_StampsLastAfterFiring(t *testing.T) {
