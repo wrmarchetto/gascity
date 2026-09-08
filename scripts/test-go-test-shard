@@ -137,6 +137,9 @@ if [[ ${GO_TEST_MANIFEST+x} == x ]]; then
     echo "go test manifest is not readable: ${GO_TEST_MANIFEST}" >&2
     exit 1
   fi
+  # cmp only reads its operands, so nothing in this pipeline writes the
+  # manifest and the read-and-write warning does not apply.
+  # shellcheck disable=SC2094
   if ! LC_ALL=C tr -d '\000' < "$GO_TEST_MANIFEST" | cmp -s "$GO_TEST_MANIFEST" -; then
     echo "go test manifest contains NUL bytes or could not be validated: ${GO_TEST_MANIFEST}" >&2
     exit 1

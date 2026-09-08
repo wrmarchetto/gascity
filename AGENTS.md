@@ -456,6 +456,13 @@ Before considering any task complete:
 - Broader process/integration coverage uses the sharded targets documented in
   `TESTING.md` instead of one monolithic `go test ./...` sweep
 - `go vet ./...` clean
+- `make check-shell-lint` passes for any change to a shell script -- a `.sh`
+  file anywhere, a `.githooks/` hook, or an extensionless runner under
+  `scripts/`. The target installs the pinned shellcheck (`make install-tools`
+  does too) and FAILS CLOSED when the linter is missing, because a gate that
+  skips on an absent binary is green in every CI run. It also refuses a
+  `# shellcheck` directive that does not parse, anywhere in the tree: such a
+  directive silently aborts analysis of its whole file
 - `.githooks/pre-commit` is active locally (`git config core.hooksPath`
   prints `.githooks`) and has run for the staged change
 - `make dashboard-ci` passes for any change touching `internal/api/`,

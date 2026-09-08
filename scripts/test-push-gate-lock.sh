@@ -300,6 +300,9 @@ fi
 # must release the gate slot before removing the gate-owned Go temp directory.
 # Checking both links avoids accepting an unrelated release call or a cleanup
 # trap that silently abandons the semaphore.
+# $1 and $gate_fd belong to the child shell and to the file it greps, not to
+# this one; expanding either here would search for this script's values.
+# shellcheck disable=SC2016
 assert_true "wiring.releases_slot_on_exit" bash -c '
     grep -q "trap cleanup EXIT" "$1" &&
     grep -q "push_gate_release_slot \"\$gate_fd\"" "$1"
