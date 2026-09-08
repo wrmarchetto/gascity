@@ -473,6 +473,36 @@ func stubManagedDoltStoreOpeners(t *testing.T) {
 	})
 }
 
+func TestNewCityRuntimeWithNoCityPathOpensNoStartupSweepStore(t *testing.T) {
+	previousOpenSweepStore := newCityRuntimeOpenSweepStore
+	openCalls := 0
+	newCityRuntimeOpenSweepStore = func(scopeRoot, cityPath string) (beads.Store, error) {
+		openCalls++
+		t.Errorf("opened startup sweep store with scopeRoot=%q cityPath=%q; an empty city path must be declined before the opener", scopeRoot, cityPath)
+		return nil, errors.New("startup sweep opener must not be called")
+	}
+	t.Cleanup(func() { newCityRuntimeOpenSweepStore = previousOpenSweepStore })
+
+	cr, err := newCityRuntime(CityRuntimeParams{
+		CityName:          "test-city",
+		Cfg:               &config.City{},
+		SP:                runtime.NewFake(),
+		ManagedDoltHealth: func(string) error { return nil },
+		ManagedDoltOwned:  func(string) (bool, error) { return false, nil },
+		ManagedDoltPort:   func(string) string { return "" },
+		Stdout:            io.Discard,
+		Stderr:            io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("newCityRuntime: %v", err)
+	}
+	t.Cleanup(cr.shutdown)
+
+	if openCalls != 0 {
+		t.Fatalf("startup sweep store opens = %d, want 0", openCalls)
+	}
+}
+
 // newTestCityRuntime builds a CityRuntime and registers a cleanup that
 // cancels in-flight dispatched orders before invoking shutdown. Do NOT
 // add a duplicate t.Cleanup(cr.shutdown) in callers — t.Cleanup is LIFO,
