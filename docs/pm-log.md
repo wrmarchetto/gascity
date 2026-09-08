@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-4y8 2026-09-08T07:16:12Z
+last_seen: gs-y73 2026-09-08T07:31:55Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3193,6 +3193,48 @@ precedent against re-paging a parked question).
 Drift since last_seen (gs-s5k, set at pm-log #98): none besides the prior
 summons's own closure and this summons -- the updated-after listing against
 the 2026-09-08T07:06:34Z stamp returns exactly gs-s5k (closed) and gs-4y8
+(this claim, in_progress). No other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59, deliberately concurrent). No new pm-open entry: the wait is
+pm-open #2(a), unchanged. Residuals in pm-log #5 stand: no scheduled wake
+has yet run WITH the assessment layer, and a governor that assesses then
+reports something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 100. pm-epic-close gs-y73: governor stays in-progress; no drift from #99 (2026-09-08)
+
+Eighty-fifth ruling of this shape (pm-log #5 gs-8iv through #99 gs-4y8),
+re-verified against the stores this turn at 07:37Z rather than recalled. The
+closed set under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun --
+listed under --status all, exactly 4 closed, 0 open/0 in progress in the
+breakdown, criteria 1-6 verified in their close reasons, pm-log #5), and
+ci-waw3o7, read live in the city store, matches the #65-#99 readings exactly
+-- OPEN, updated 2026-09-07, owner gascity/lab.engineer-1, assignee human,
+Willie's recorded answer still the 2026-09-05T20:14Z "NOT YET" ruling about
+the evidence (deferred 48h, expired per #65). Gate ci-gbhkpa also read live
+this turn: OPEN, updated 2026-09-05, labels gate-no-readback and
+operator-paged, still blocking ci-waw3o7. Per pm-log #4 governor stays
+in-progress and the bead that reopens it remains ci-waw3o7.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question). Worth naming plainly at
+eighty-five rulings: that record has not been produced in the 35 rulings
+since #65 recorded the deferral's expiry (2026-09-07) -- ci-waw3o7's own
+`updated_at` has not moved since that date either, so no re-ask attempt is
+sitting unread; none has been made. That is a fact about the bead's owner,
+not a criterion this rig can waive, and raising a duplicate gate over an
+already-operator-paged question would repeat the mistake pm-log #29 already
+declined to make.
+
+Drift since last_seen (gs-4y8, set at pm-log #99): none besides the prior
+summons's own closure and this summons -- the updated-after listing against
+the 2026-09-08T07:16:12Z stamp returns exactly gs-4y8 (closed) and gs-y73
 (this claim, in_progress). No other bead in this rig's store moved.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
