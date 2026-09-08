@@ -340,7 +340,7 @@ test_manifest_names_every_selected_source_tree_scanner() {
     fi
     missing="$(comm -23 <(printf '%s\n' "$scanned") <(manifest_entries | sort))"
     if [ -n "$missing" ]; then
-        record_fail "$name" "packages match the source-tree scanner rule but are absent from the manifest: $(echo $missing)"
+        record_fail "$name" "packages match the source-tree scanner rule but are absent from the manifest: ${missing//$'\n'/ }"
         return
     fi
     record_pass "$name"
@@ -368,6 +368,11 @@ test_manifest_entries_are_real_packages() {
         record_fail "$name" "manifest is empty; a scoped gate would run no repo-wide scanner"
         return
     fi
+    # $entries is a newline-separated package list and go list must receive
+    # one argument per package. Quoting it passes the whole list as a single
+    # import path, which go list rejects, so this case would then report every
+    # manifest entry as stale rather than checking any of them.
+    # shellcheck disable=SC2086
     if ! out="$(cd "$REPO_ROOT" && go list $entries 2>&1)"; then
         record_fail "$name" "go list rejected an entry: $(echo "$out" | head -3)"
         return

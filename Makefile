@@ -1,5 +1,10 @@
 GOLANGCI_LINT_VERSION := 2.12.0
 BUILDX_VERSION := 0.21.2
+# Pinned so a shellcheck release cannot add a check and turn check-shell-lint
+# red on an unrelated PR. Bumping it means bumping the digest table in
+# scripts/install-shellcheck.sh, which TestShellLintGatePinsOneShellcheckVersion
+# requires to stay in step.
+SHELLCHECK_VERSION := 0.11.0
 
 # Detect OS and arch for binary download.
 GOOS   := $(shell go env GOOS)
@@ -7,6 +12,7 @@ GOARCH := $(shell go env GOARCH)
 
 BIN_DIR := $(shell go env GOPATH)/bin
 GOLANGCI_LINT := $(BIN_DIR)/golangci-lint
+SHELLCHECK := $(BIN_DIR)/shellcheck
 # golangci-lint stores findings keyed by absolute source paths. A shared cache
 # replays diagnostics from a different (and possibly deleted) worktree, so the
 # local default must be scoped to this checkout. Callers may still supply an
@@ -109,7 +115,7 @@ endif
 endif
 endif
 
-.PHONY: build check check-all check-bd check-docker check-docs check-dolt check-eventexport-isolation check-gomod-replace check-core-boundary check-native-dependency-surface check-routed-test-rows check-version-tag lint lint-full lint-new lint-changed lint-affected fmt-check fmt-check-changed fmt vet test test-ci-policy test-mac test-fast-parallel test-fsys-darwin-compile test-pack-registry-live test-native-doltlite-beads test-cmd-gc-process test-cmd-gc-process-shard test-cmd-gc-process-parallel test-productmetrics-testhook test-worker-core test-worker-core-phase2 test-worker-core-phase2-all test-worker-core-phase2-real-transport setup-worker-inference test-worker-inference test-worker-inference-phase3 test-acceptance test-bd-cli-contract test-acceptance-b test-acceptance-c test-acceptance-all test-tutorial-goldens test-tutorial-regression test-tutorial test-integration test-integration-shards test-integration-shards-parallel test-integration-shards-cover test-integration-packages test-integration-packages-cover test-integration-review-formulas test-integration-review-formulas-cover test-integration-review-formulas-basic test-integration-review-formulas-basic-cover test-integration-review-formulas-retries test-integration-review-formulas-retries-cover test-integration-review-formulas-recovery test-integration-review-formulas-recovery-cover test-integration-bdstore test-integration-bdstore-cover test-integration-rest test-integration-rest-cover test-integration-rest-smoke test-integration-rest-smoke-cover test-integration-rest-full test-integration-rest-full-cover test-local-full-parallel test-mail-wisp-insert test-mcp-mail test-openclaw-bridge test-docker test-k8s test-cover test-cover-mac test-cover-noncmdgc test-cover-cmdgc-shard cover check-self-contained install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev diagrams-excalidraw dashboard-smoke dashboard-e2e-go dashboard-e2e-play dashboard-e2e
+.PHONY: build check check-all check-bd check-docker check-docs check-dolt check-eventexport-isolation check-gomod-replace check-shell-lint check-core-boundary check-native-dependency-surface check-routed-test-rows check-version-tag lint lint-full lint-new lint-changed lint-affected fmt-check fmt-check-changed fmt vet test test-ci-policy test-mac test-fast-parallel test-fsys-darwin-compile test-pack-registry-live test-native-doltlite-beads test-cmd-gc-process test-cmd-gc-process-shard test-cmd-gc-process-parallel test-productmetrics-testhook test-worker-core test-worker-core-phase2 test-worker-core-phase2-all test-worker-core-phase2-real-transport setup-worker-inference test-worker-inference test-worker-inference-phase3 test-acceptance test-bd-cli-contract test-acceptance-b test-acceptance-c test-acceptance-all test-tutorial-goldens test-tutorial-regression test-tutorial test-integration test-integration-shards test-integration-shards-parallel test-integration-shards-cover test-integration-packages test-integration-packages-cover test-integration-review-formulas test-integration-review-formulas-cover test-integration-review-formulas-basic test-integration-review-formulas-basic-cover test-integration-review-formulas-retries test-integration-review-formulas-retries-cover test-integration-review-formulas-recovery test-integration-review-formulas-recovery-cover test-integration-bdstore test-integration-bdstore-cover test-integration-rest test-integration-rest-cover test-integration-rest-smoke test-integration-rest-smoke-cover test-integration-rest-full test-integration-rest-full-cover test-local-full-parallel test-mail-wisp-insert test-mcp-mail test-openclaw-bridge test-docker test-k8s test-cover test-cover-mac test-cover-noncmdgc test-cover-cmdgc-shard cover check-self-contained install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev diagrams-excalidraw dashboard-smoke dashboard-e2e-go dashboard-e2e-play dashboard-e2e
 .PHONY: check-release-dist-ignore
 
 ## build: compile gc binary with version metadata
@@ -247,6 +253,14 @@ check-eventexport-isolation:
 ## and neither is visible in the epic's round-trip demo.
 check-extmsg-bridge-isolation:
 	bash scripts/check-extmsg-bridge-isolation.sh
+
+## check-shell-lint: refuse unparseable shellcheck directives repo-wide, and
+## any shellcheck finding under scripts/ and .githooks/.
+## Depends on $(SHELLCHECK) rather than probing for a linter, because the gate
+## fails closed on a missing one: a skip would make every CI run green whether
+## or not shellcheck existed, which is the hole the gate was written to close.
+check-shell-lint: $(SHELLCHECK)
+	bash scripts/check-shell-lint.sh
 
 ## check-bd: verify bd (beads CLI) is installed
 check-bd:
@@ -771,8 +785,11 @@ test-cover-cmdgc-shard:
 cover: test-cover
 	go tool cover -func=coverage.txt
 
-## install-tools: install pinned golangci-lint + oapi-codegen
-install-tools: $(GOLANGCI_LINT) install-oapi-codegen
+## install-tools: install pinned golangci-lint + oapi-codegen + shellcheck
+install-tools: $(GOLANGCI_LINT) install-oapi-codegen $(SHELLCHECK)
+
+$(SHELLCHECK):
+	@bash scripts/install-shellcheck.sh $(SHELLCHECK_VERSION) $(BIN_DIR)
 
 $(GOLANGCI_LINT):
 	@echo "Installing golangci-lint v$(GOLANGCI_LINT_VERSION)..."

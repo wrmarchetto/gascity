@@ -27,23 +27,15 @@ if [[ ! -f "$lib" ]]; then
   exit 1
 fi
 
-# The wrapper must stay shellcheck-clean (and so must this suite). But the
-# linter is often a mise shim that refuses to run when the mise config is
-# untrusted in this subprocess (`go test` invokes us with a scratch $HOME,
-# so the shim can't reach its trust store). Probe that the linter can
-# actually execute before treating a non-zero exit as a lint finding;
-# otherwise a tooling failure masquerades as a script defect and blocks
-# commits city-wide. Degrade to a logged warning when the linter is
-# present-but-unrunnable, just as when it is absent.
-if shellcheck --version >/dev/null 2>&1; then
-  if ! shellcheck "$lib" "${BASH_SOURCE[0]}"; then
-    fail "shellcheck reported issues"
-  fi
-elif command -v shellcheck >/dev/null 2>&1; then
-  echo "warning: shellcheck on PATH but not runnable (untrusted mise shim?); skipping shell lint" >&2
-else
-  echo "note: shellcheck not installed; skipping lint" >&2
-fi
+# Shell lint is NOT done here. scripts/check-shell-lint.sh owns it for every
+# file under scripts/, this suite and the wrapper it exercises included, and
+# it fails closed when the linter is missing. The block this replaced probed
+# `shellcheck --version` first and degraded to a warning when the linter was
+# absent or was an unrunnable mise shim -- correct for not blocking commits
+# city-wide on a tooling fault, but it meant a host without shellcheck ran
+# this suite green with no lint at all, and that was the only shellcheck
+# wiring in the repo. The gate resolves the pinned binary from GOPATH/bin
+# rather than PATH, which is what makes the shim case moot.
 
 # The real test entrypoints must stay wired to the lib: each sources
 # test-slice.sh and re-execs through gc_test_slice_reexec.
