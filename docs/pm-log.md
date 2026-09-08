@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-d76 2026-09-08T19:20:20Z
+last_seen: gs-rzts 2026-09-08T19:34:16Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3954,5 +3954,39 @@ design (pm-log #59). The summons body's "Other open epics:
 mayor-slack-bridge" line remains stale on that same point, as #107-#119
 noted repeatedly. No new pm-open entry: pm-open #2(a) already reads "the
 wait is purely human" as of #102, unchanged this turn.
+
+Source: roadmap governor
+
+## 121. pm-epic-close gs-rzts: governor stays in-progress; no drift from #120 (2026-09-08)
+
+Hundred-and-sixth ruling of this shape (pm-log #5 gs-8iv through #120
+gs-d76), re-verified live at 19:34Z rather than recalled. The closed set
+under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 --
+5 closed, 0 open, 0 in progress; criteria 1-6 verified in their close
+reasons pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7,
+read live in the city store: still OPEN, assignee human, notes tail
+unchanged since #120 -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past
+Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN,
+labels gate-no-readback and operator-paged, still blocking ci-waw3o7 (the
+one entry under its depends-on), description unchanged from #102's
+rewrite. Per pm-log #4 governor stays in-progress and the bead that
+reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-d76, set at pm-log #120 at 19:20:20Z): the
+updated-after listing against that stamp, swept across all statuses,
+returns gs-d76 (the prior summons, closed), gs-rzts (this claim,
+in_progress), and three movers -- gs-bv0 and gs-mns, both P2 substrate
+bugs open at #120's check, now CLOSED; and gs-wqqn, a new P2 bug
+(bdargv.py's VALUE_FLAGS/BOOL_FLAGS tables omit bd's MarkHidden'd flags,
+so gc bd close -m and its siblings are refused fail-closed even though
+gc's own manifest now carries them per gs-9zu) -- a sibling defect to
+gs-9zu (#111, still open, unmoved this interval), same unlabeled
+substrate class. None of the three bear on epic:governor's closed set.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress alongside governor by
+design (pm-log #59). No new pm-open entry: pm-open #2(a) already reads
+"the wait is purely human" as of #102, unchanged this turn.
 
 Source: roadmap governor
