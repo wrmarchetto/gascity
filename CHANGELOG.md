@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`gc hook --claim --json` now reports unlanded sibling branches.** When a
+  claim commits, the result may carry a `sibling_branches` array naming the
+  local branches that already embed the claimed bead's id or the id of a bead
+  sharing one of its labels, each with the merge base against the claiming
+  worktree's HEAD, how far it is ahead, its last commit date, the state of its
+  bead, and the relation (`via`) that found it. Already-merged branches and the
+  claimant's own checked-out branch are excluded, and the key is absent
+  entirely when there is nothing to report. The core pool-worker and
+  graph-worker prompts tell agents to read it before starting work.
+
+  It is advisory and cannot refuse, delay, or fail a claim: a scan error,
+  panic, or timeout leaves the field absent and reports the claim unchanged.
+  A refusal was considered and rejected on measurement -- in the incident that
+  prompted this, refusing every duplicate branch would also have refused the
+  one branch that fixed the integration branch.
+
 ### Fixed
 
 - **The dolt pack's `run_bounded` python3 fallback now sends SIGTERM before
