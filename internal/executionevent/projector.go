@@ -162,7 +162,35 @@ func currentWorkAssociations(store beads.WorkStore, rootID, convoyID string) ([]
 	return associations, nil
 }
 
+// stepRow pairs a step's definition with the bead row it was derived from.
+//
+// The row is kept because the reconcile pass needs Status and the projection
+// metadata, and re-reading each row with Get costs one backend round trip per
+// step for data already in hand. It is a package-internal type rather than a
+// field on StepDefinition: StepDefinition is exported and compared BY VALUE in
+// projector_test.go, so a bead field there would make every such comparison
+// depend on row bytes the callers do not care about.
+type stepRow struct {
+	definition StepDefinition
+	row        beads.Bead
+}
+
+// currentSteps returns the step definitions of rootID, discarding the rows.
+// It is the definition-only view over currentStepRows; callers that need the
+// row itself take the latter.
 func currentSteps(store beads.GraphStore, rootID string) ([]StepDefinition, error) {
+	rows, err := currentStepRows(store, rootID)
+	if err != nil {
+		return nil, err
+	}
+	definitions := make([]StepDefinition, 0, len(rows))
+	for _, entry := range rows {
+		definitions = append(definitions, entry.definition)
+	}
+	return definitions, nil
+}
+
+func currentStepRows(store beads.GraphStore, rootID string) ([]stepRow, error) {
 	rows, err := store.ListByMetadata(
 		map[string]string{beadmeta.RootBeadIDMetadataKey: rootID},
 		0,
@@ -181,7 +209,7 @@ func currentSteps(store beads.GraphStore, rootID string) ([]StepDefinition, erro
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	steps := make([]StepDefinition, 0, len(ids))
+	steps := make([]stepRow, 0, len(ids))
 	for _, id := range ids {
 		row := byID[id]
 		if row.ID == rootID || !eventexport.IsOpaqueRef(row.ID) {
@@ -191,11 +219,14 @@ func currentSteps(store beads.GraphStore, rootID string) ([]StepDefinition, erro
 		if !validNativeStepID(stepID) {
 			continue
 		}
-		steps = append(steps, StepDefinition{
-			BeadID:           row.ID,
-			ExecutionRunID:   rootID,
-			StepID:           stepID,
-			DependsOnStepIDs: canonicalTopology(row.Metadata[beadmeta.NativeStepDependenciesMetadataKey], stepID),
+		steps = append(steps, stepRow{
+			definition: StepDefinition{
+				BeadID:           row.ID,
+				ExecutionRunID:   rootID,
+				StepID:           stepID,
+				DependsOnStepIDs: canonicalTopology(row.Metadata[beadmeta.NativeStepDependenciesMetadataKey], stepID),
+			},
+			row: row,
 		})
 	}
 	return steps, nil
@@ -308,79 +339,15 @@ func ReconcileCompleted(recorder events.Provider, graphStore beads.GraphStore, a
 }
 
 // ReconcileCompletedStores repairs completion facts across graph stores with
-// one journal read. The completed-fact index is updated after each append so
-// the pass remains idempotent even when more than one source is scanned.
+// one journal read, as one independent pass.
+//
+// It carries no memo: every call re-walks every root, so a returned 0 means
+// "nothing to repair" rather than "skipped". Existing callers and tests read
+// it that way. A long-lived controller should hold a [CompletedReconciler]
+// instead -- the walk it repeats here is 94% of a patrol tick on a city with
+// 58 settled roots (see reconciler.go for the measurement).
 func ReconcileCompletedStores(recorder events.Provider, graphStores []beads.GraphStore, actor string) int {
-	if recorder == nil {
-		return 0
-	}
-	hasStore := false
-	for _, graphStore := range graphStores {
-		if graphStore.Store != nil {
-			hasStore = true
-			break
-		}
-	}
-	if !hasStore {
-		return 0
-	}
-
-	existing, err := completedFacts(recorder)
-	if err != nil {
-		// If the journal cannot be read, avoid generating duplicate recovery
-		// facts. A later reconciliation pass can safely retry.
-		return 0
-	}
-	completed := make(map[completedFactKey]struct{}, len(existing))
-	for _, event := range existing {
-		if event.Type == events.ExecutionStepCompleted {
-			completed[completedFactKeyFor(event)] = struct{}{}
-		}
-	}
-
-	emitted := 0
-	for _, graphStore := range graphStores {
-		if graphStore.Store == nil {
-			continue
-		}
-		roots, err := graphStore.ListByMetadata(
-			map[string]string{beadmeta.KindMetadataKey: beadmeta.KindWorkflow},
-			0,
-			beads.IncludeClosed,
-			beads.WithBothTiers,
-		)
-		if err != nil {
-			continue
-		}
-		sort.Slice(roots, func(i, j int) bool { return roots[i].ID < roots[j].ID })
-		for _, root := range roots {
-			if root.Metadata[beadmeta.FormulaContractMetadataKey] != beadmeta.FormulaContractGraphV2 {
-				continue
-			}
-			definitions, err := currentSteps(graphStore, root.ID)
-			if err != nil {
-				continue
-			}
-			for _, definition := range definitions {
-				step, err := graphStore.Get(definition.BeadID)
-				if err != nil || !strings.EqualFold(strings.TrimSpace(step.Status), "closed") {
-					continue
-				}
-				event, ok := LifecycleEvent(events.ExecutionStepCompleted, root, step, actor)
-				if !ok {
-					continue
-				}
-				key := completedFactKeyFor(event)
-				if _, exists := completed[key]; exists {
-					continue
-				}
-				recorder.Record(event)
-				completed[key] = struct{}{}
-				emitted++
-			}
-		}
-	}
-	return emitted
+	return NewCompletedReconciler().Reconcile(recorder, graphStores, actor)
 }
 
 // completedFacts returns the retained completion journal, including a
