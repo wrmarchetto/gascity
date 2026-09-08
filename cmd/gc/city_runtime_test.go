@@ -503,6 +503,66 @@ func TestNewCityRuntimeWithNoCityPathOpensNoStartupSweepStore(t *testing.T) {
 	}
 }
 
+// TestNewCityRuntimeWithCityPathOpensStartupSweepStore is the fast-path half
+// of the guard above, and the reason it exists is that the refusal half
+// cannot detect an INVERTED guard on its own: `p.CityPath != ""` also opens
+// no store on an empty path, so the empty-path case stays green while every
+// real city silently loses its startup sweep. Nothing else in the package
+// covers this -- the watchdog tests build a CityRuntime literal and never
+// enter newCityRuntime, and stubManagedDoltStoreOpeners hands back a MemStore
+// for any argv without recording it.
+//
+// It asserts on the ARGUMENTS, not merely on a call count, because the whole
+// defect the guard was written for is an opener reaching a store the caller
+// did not name.
+func TestNewCityRuntimeWithCityPathOpensStartupSweepStore(t *testing.T) {
+	cityPath := t.TempDir()
+	tomlPath := filepath.Join(cityPath, "city.toml")
+	writeCityRuntimeConfig(t, tomlPath, "fake")
+
+	cfg, err := config.Load(osFS{}, tomlPath)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+
+	previousOpenSweepStore := newCityRuntimeOpenSweepStore
+	var gotScopeRoots, gotCityPaths []string
+	newCityRuntimeOpenSweepStore = func(scopeRoot, gotCityPath string) (beads.Store, error) {
+		gotScopeRoots = append(gotScopeRoots, scopeRoot)
+		gotCityPaths = append(gotCityPaths, gotCityPath)
+		return beads.NewMemStore(), nil
+	}
+	t.Cleanup(func() { newCityRuntimeOpenSweepStore = previousOpenSweepStore })
+
+	cr, err := newCityRuntime(CityRuntimeParams{
+		CityPath:          cityPath,
+		CityName:          "test-city",
+		TomlPath:          tomlPath,
+		Cfg:               cfg,
+		SP:                runtime.NewFake(),
+		Rec:               events.Discard,
+		ManagedDoltHealth: func(string) error { return nil },
+		ManagedDoltOwned:  func(string) (bool, error) { return false, nil },
+		ManagedDoltPort:   func(string) string { return "" },
+		Stdout:            io.Discard,
+		Stderr:            io.Discard,
+	})
+	if err != nil {
+		t.Fatalf("newCityRuntime: %v", err)
+	}
+	t.Cleanup(cr.shutdown)
+
+	if len(gotCityPaths) == 0 {
+		t.Fatalf("startup sweep store opens = 0, want at least 1; a non-empty city path must reach the opener, or the startup sweep never runs for any real city")
+	}
+	if gotCityPaths[0] != cityPath {
+		t.Errorf("startup sweep cityPath = %q, want %q", gotCityPaths[0], cityPath)
+	}
+	if gotScopeRoots[0] != cityPath {
+		t.Errorf("startup sweep scopeRoot = %q, want %q", gotScopeRoots[0], cityPath)
+	}
+}
+
 // newTestCityRuntime builds a CityRuntime and registers a cleanup that
 // cancels in-flight dispatched orders before invoking shutdown. Do NOT
 // add a duplicate t.Cleanup(cr.shutdown) in callers — t.Cleanup is LIFO,
