@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-gt1l 2026-09-08T21:04:00Z
+last_seen: gs-9h7u 2026-09-08T21:21:40Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4162,6 +4162,34 @@ in-progress and the bead that reopens it remains ci-waw3o7.
 Drift since last_seen (gs-hg9x, set at pm-log #126 at 20:51:00Z): the
 updated-after sweep across all statuses returns only gs-hg9x (the prior
 summons, closed) and gs-gt1l (this claim). No other bead in this rig's
+store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress alongside governor by
+design (pm-log #59). No new pm-open entry: pm-open #2(a) already reads
+"the wait is purely human" as of #102, unchanged this turn.
+
+Source: roadmap governor
+
+## 128. pm-epic-close gs-9h7u: governor stays in-progress; no drift from #127 (2026-09-08)
+
+Hundred-and-thirteenth ruling of this shape (pm-log #5 gs-8iv through #127
+gs-gt1l), re-verified live at 21:21Z rather than recalled. The closed set
+under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 --
+5 closed, 0 open, 0 in progress; criteria 1-6 verified in their close
+reasons pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7,
+read live in the city store: still OPEN, assignee human, notes tail
+unchanged since #127 -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past
+Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN,
+still blocking ci-waw3o7 (the one entry under its depends-on), description
+unchanged from #102's rewrite -- re-asked 2026-09-08T13:31Z, both
+operator-only blockers recorded cleared. Per pm-log #4 governor stays
+in-progress and the bead that reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-gt1l, set at pm-log #127 at 21:04:00Z): the
+updated-after sweep across all statuses returns only gs-gt1l (the prior
+summons, closed) and gs-9h7u (this claim). No other bead in this rig's
 store moved.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open
