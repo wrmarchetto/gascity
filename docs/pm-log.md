@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-5zm 2026-09-08T03:31:02Z
+last_seen: gs-epy 2026-09-08T03:49:30Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2656,6 +2656,48 @@ gs-z09 round-trip demo, both last updated 2026-09-07T16:19:20Z); gs-a6j is
 still in_progress, standalone-labeled (pm-log #77), last updated
 2026-09-08T03:01:49Z -- before the prior last_seen stamp, so even the
 stall-diagnosis note #84 read is not new this turn.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress. No new pm-open entry: the
+wait is pm-open #2(a) and #2(b) was closed by pm-log #59. Residuals in
+pm-log #5 stand: no scheduled wake has yet run WITH the assessment layer,
+and a governor that assesses then reports something else is mechanically
+unobservable today.
+
+Source: roadmap governor
+
+## 86. pm-epic-close gs-epy: governor stays in-progress; no drift from #85 (2026-09-08)
+
+Seventy-first ruling of this shape (pm-log #5 gs-8iv through #85 gs-5zm),
+re-verified against the stores this turn at 03:49Z rather than recalled. The
+closed set under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun --
+4 closed, 0 open/in-progress, criteria 1-6 verified in their close reasons,
+pm-log #5), and ci-waw3o7, read live in the city store, matches the #65-#85
+readings exactly -- OPEN, updated 2026-09-07, owner gascity/lab.engineer-1,
+assignee human, gate ci-gbhkpa still OPEN (labels gate-no-readback,
+operator-paged), Willie's recorded answer still the 2026-09-05T20:14Z "NOT
+YET" ruling about the evidence (deferred 48h, expired per #65). Per pm-log #4
+governor stays in-progress and the bead that reopens it remains ci-waw3o7.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question).
+
+Drift since last_seen (gs-5zm, set at pm-log #85): none besides this summons
+itself and its own closure -- confirmed with --status all against a full
+listing of every bead in this rig updated after the prior last_seen stamp,
+which returned exactly gs-5zm (closed) and gs-epy. mayor-slack-bridge's open
+work is unchanged (gs-228 operator provisioning, gs-z09 round-trip demo --
+neither appears in that listing). gs-a6j is still in_progress,
+standalone-labeled (pm-log #77); its own last-updated timestamp
+(2026-09-08T03:01:49Z) is unchanged and still predates the prior last_seen
+stamp, so its bead record carries nothing new -- but its lease, read live
+this turn, now shows heartbeat ~2h stale where #84/#85 read a holder parked
+on a permission dialog rather than crashed. Still a patrol/mayor matter, not
+a governor-criterion or placement question, so it does not change this
+ruling.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress. No new pm-open entry: the
