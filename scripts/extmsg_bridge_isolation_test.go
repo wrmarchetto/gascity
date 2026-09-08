@@ -13,10 +13,27 @@
 //
 // Every case below is a mutation. Each refusal the script implements gets a
 // fixture that trips exactly that refusal and must die; the accepting cases
-// (comments, test files) pin the false positives that would otherwise get the
-// gate suppressed the first week it fires. Two cases are the fail-closed arm --
-// an empty scan set and a missing role taxonomy both have to be loud, because
-// each turns the gate into a no-op that reports OK.
+// (comments, test files, component prose) pin the false positives that would
+// otherwise get the gate suppressed the first week it fires. Two cases are the
+// fail-closed arm -- an empty scan set and a missing role taxonomy both have to
+// be loud, because each turns the gate into a no-op that reports OK.
+//
+// WHY SO MANY CASES ASSERT THE MESSAGE AND NOT ONLY THE EXIT STATUS. The gate
+// is fail-fast over eight arms and the fixtures are small, so one arm readily
+// covers for another: every conversation-id case was first written as
+// `process.env.X || <id>`, which the inline-fallback arm also refuses while
+// echoing a line containing the id, and the whole literal arm could then be
+// deleted with this suite green. A mutation sweep over the script found it; a
+// reading of the suite did not. Each refusing case therefore names the arm that
+// must be the one to fire.
+//
+// The bead gs-fn6 additions -- the copied-seam refusal, component prose, knob
+// drift, the inline fallback, SLACK_BOT_TOKEN, hooks.slack.com and the widened
+// conversation-id shape -- came from the origin/main gate that lost the gs-8ra
+// add/add merge. Every one of them was watched to fail before it was watched to
+// pass, and the 17-mutant sweep that establishes it is recorded in the commit
+// body rather than kept as a script: it edits the gate in place, so a copy left
+// in the tree is a copy that can be run against the wrong checkout.
 //
 // Delegated elsewhere: whether the epic's measurement answers its question is
 // not here. That the gate RUNS on every push comes from scripts/ being listed
@@ -101,6 +118,25 @@ post({ target })
 `,
 		"contrib/demo-bridge/test/demo.test.mjs": `import { test } from 'node:test'
 test('fixture', () => {})
+`,
+		// The component's prose, carrying all three things the gate must
+		// NOT refuse in a README: a role name (criterion 5 is about
+		// source, and a README naming the session an operator binds is
+		// the criterion being SATISFIED), a credential placeholder, and
+		// a channel-id example. It sits in the baseline rather than in
+		// one overlay so that every case in this suite goes red if any
+		// of the three exclusions is lost -- the dedicated accepting
+		// case below is still not redundant, because a later edit to
+		// this baseline would silently retire the invariant with no
+		// test naming it.
+		"contrib/demo-bridge/README.md": `# demo-bridge
+
+Bind the session the deployment names -- in this city that is the mayor,
+but the bridge must not know it:
+
+    GC_TARGET_SESSION=mayor
+    BRIDGE_SLACK_BOT_TOKEN=xoxb-...
+    BRIDGE_SLACK_CHANNEL_ID=C09ABCDEFGH
 `,
 	}
 }
@@ -193,6 +229,12 @@ func TestExtmsgBridgeIsolationAcceptsTheCleanTree(t *testing.T) {
 // convenience default lands, so a gate that only reads route-naming files
 // would report OK over it.
 func TestExtmsgBridgeIsolationRefusesRoleNames(t *testing.T) {
+	// Asserted alongside the role name itself. Two of these fixtures spell the
+	// role as a default on a binding key, which the shape arm also refuses
+	// while echoing a line that contains the name -- so without this the name
+	// arm could be deleted with the table green.
+	const wantArm = "uses the role name"
+
 	cases := []struct {
 		name    string
 		overlay map[string]string
@@ -272,6 +314,9 @@ export default target
 			if !strings.Contains(out, tc.wantMsg) {
 				t.Errorf("refusal must name the offending role %q so the remedy is obvious:\n%s", tc.wantMsg, out)
 			}
+			if !strings.Contains(out, wantArm) {
+				t.Errorf("the name arm must be what refused this, not the shape arm:\n%s", out)
+			}
 		})
 	}
 }
@@ -348,7 +393,15 @@ export default channel
 // already knows; a pack-defined role is invisible to it. What is not invisible
 // is the SHAPE -- a binding key with a literal fallback -- so the gate refuses
 // that whatever the fallback spells.
+//
+// Every case asserts the MESSAGE, not just the exit status, and that is not
+// decoration. The inline-fallback refusal below trips on the same two .mjs
+// fixtures for a different reason, so a bare `if ok` here would stay green with
+// the whole shape arm deleted. The message is the only thing that says which
+// refusal fired.
 func TestExtmsgBridgeIsolationRefusesADefaultedBinding(t *testing.T) {
+	const wantMsg = "literal default"
+
 	cases := []struct {
 		name    string
 		overlay map[string]string
@@ -395,6 +448,9 @@ exec node demo-bridge.mjs "${GC_TARGET_AGENT:-archivist}"
 			if ok {
 				t.Fatalf("expected refusal of a defaulted binding, got pass:\n%s", out)
 			}
+			if !strings.Contains(out, wantMsg) {
+				t.Errorf("the shape arm must be what refused this, not another check:\n%s", out)
+			}
 		})
 	}
 }
@@ -427,10 +483,23 @@ export default { base, logDir }
 // Matching the real alerts id would need that id in the repo, which criterion 6
 // forbids, and a bridge with its own id hardcoded is broken anyway.
 func TestExtmsgBridgeIsolationRefusesTheAlertsSeam(t *testing.T) {
+	// The two arms this table drives, asserted per case. Exit status alone
+	// does not distinguish them, and the fixtures are close enough that one
+	// arm covers for the other: every conversation-id case was originally
+	// written as `process.env.GC_BRIDGE_CHANNEL || <id>`, which the
+	// inline-fallback refusal also trips, echoing a line that contains the id
+	// -- so the whole literal arm could be deleted with this table green.
+	// Caught by the mutation sweep, not by reading the suite.
+	const (
+		armSeam    = "reaches the alerts seam"
+		armLiteral = "conversation id or token literal"
+	)
+
 	cases := []struct {
 		name    string
 		overlay map[string]string
 		wantMsg string
+		wantArm string
 	}{
 		{
 			name: "reads the alert seam's channel key",
@@ -440,6 +509,7 @@ export default channel
 `,
 			},
 			wantMsg: "SLACK_CHANNEL_ID",
+			wantArm: armSeam,
 		},
 		{
 			name: "reads the alert seam's webhook key",
@@ -449,6 +519,54 @@ export default hook
 `,
 			},
 			wantMsg: "SLACK_WEBHOOK_URL",
+			wantArm: armSeam,
+		},
+		{
+			// The hole the merge left open. main's gate caught only the
+			// xoxb-/xapp- LITERALS, so a bridge reading the alert seam's
+			// own bot-token key by name passed it clean -- recorded on
+			// gs-fn6 as the one dropped refusal that was not a weaker
+			// restatement of something main already had.
+			name: "reads the alert seam's bot-token key",
+			overlay: map[string]string{
+				"contrib/demo-bridge/demo-bridge.mjs": `const token = process.env.SLACK_BOT_TOKEN
+export default token
+`,
+			},
+			wantMsg: "SLACK_BOT_TOKEN",
+			wantArm: armSeam,
+		},
+		{
+			// The hole in the exact spelling gs-fn6 names. Measured against
+			// the gate as it stood: this fixture exits 0 there and 1 here.
+			// Kept alongside the process.env spelling above because the two
+			// are what distinguishes closing the hole by NAME, over the whole
+			// scan set, from closing it by intersecting the seam's keys with
+			// the required() call sites -- the narrower form origin used,
+			// which the process.env case walks straight past.
+			name: "requires the alert seam's bot-token key",
+			overlay: map[string]string{
+				"contrib/demo-bridge/demo-bridge.mjs": `import { required } from './lib/gc-client.mjs'
+const token = required('SLACK_BOT_TOKEN')
+export default token
+`,
+			},
+			wantMsg: "SLACK_BOT_TOKEN",
+			wantArm: armSeam,
+		},
+		{
+			// A hardcoded incoming-webhook URL names none of the seam's
+			// env keys and carries no xoxb-/xapp- token, so every other
+			// arm passes it. The host is the alerts destination in its
+			// most direct form.
+			name: "hardcodes the alerts webhook host",
+			overlay: map[string]string{
+				"contrib/demo-bridge/demo-bridge.mjs": `const hook = 'https://hooks.slack.com/services/T01/B02/zzz'
+export default hook
+`,
+			},
+			wantMsg: "hooks.slack.com",
+			wantArm: armSeam,
 		},
 		{
 			name: "calls the alert seam",
@@ -458,6 +576,7 @@ exec assets/scripts/notify.sh "bridge up"
 `,
 			},
 			wantMsg: "notify.sh",
+			wantArm: armSeam,
 		},
 		{
 			name: "delegates to the alert seam's deliverer",
@@ -467,15 +586,50 @@ exec assets/scripts/slack-deliver.py "bridge up"
 `,
 			},
 			wantMsg: "slack-deliver",
+			wantArm: armSeam,
 		},
 		{
 			name: "carries a channel id literal",
 			overlay: map[string]string{
-				"contrib/demo-bridge/demo-bridge.mjs": `const channel = process.env.GC_BRIDGE_CHANNEL || 'C09ABCDEFGH'
+				"contrib/demo-bridge/demo-bridge.mjs": `const channel = 'C09ABCDEFGH'
 export default channel
 `,
 			},
 			wantMsg: "C09ABCDEFGH",
+			wantArm: armLiteral,
+		},
+		{
+			// The digit is not in position 2, which is the only position
+			// main's old C[0-9][A-Z0-9]{7,} would accept it in. Slack
+			// does not promise that position.
+			name: "carries a channel id whose digit is not second",
+			overlay: map[string]string{
+				"contrib/demo-bridge/demo-bridge.mjs": `const channel = 'CAB9DEFGHIJ'
+export default channel
+`,
+			},
+			wantMsg: "CAB9DEFGHIJ",
+			wantArm: armLiteral,
+		},
+		{
+			name: "carries a private-group id literal",
+			overlay: map[string]string{
+				"contrib/demo-bridge/demo-bridge.mjs": `const channel = 'G012ABCDEF'
+export default channel
+`,
+			},
+			wantMsg: "G012ABCDEF",
+			wantArm: armLiteral,
+		},
+		{
+			name: "carries a dm conversation id literal",
+			overlay: map[string]string{
+				"contrib/demo-bridge/demo-bridge.mjs": `const channel = 'D01ABCDEFG'
+export default channel
+`,
+			},
+			wantMsg: "D01ABCDEFG",
+			wantArm: armLiteral,
 		},
 		{
 			name: "carries a bot token literal",
@@ -485,6 +639,7 @@ export default token
 `,
 			},
 			wantMsg: "xoxb-",
+			wantArm: armLiteral,
 		},
 	}
 
@@ -497,6 +652,9 @@ export default token
 			}
 			if !strings.Contains(out, tc.wantMsg) {
 				t.Errorf("refusal must name %q:\n%s", tc.wantMsg, out)
+			}
+			if !strings.Contains(out, tc.wantArm) {
+				t.Errorf("the %q arm must be what refused this, not another check:\n%s", tc.wantArm, out)
 			}
 		})
 	}
@@ -518,12 +676,39 @@ func TestExtmsgBridgeIsolationAcceptsANamespacedBridgeKey(t *testing.T) {
 		"contrib/demo-bridge/demo-bridge.mjs": `import { required } from './lib/gc-client.mjs'
 const channel = required('BRIDGE_SLACK_CHANNEL_ID')
 const hook = required('BRIDGE_SLACK_WEBHOOK_URL')
-export default { channel, hook }
+const token = required('BRIDGE_SLACK_BOT_TOKEN')
+export default { channel, hook, token }
 `,
 	})
 	out, ok := f.run(t)
 	if !ok {
 		t.Fatalf("a bridge-owned key that merely contains a seam key must pass:\n%s", out)
+	}
+}
+
+// TestExtmsgBridgeIsolationAcceptsACapitalisedWord pins the digit requirement
+// on the conversation-id shape. [CGD] followed by eight or more uppercase
+// alphanumerics also matches ordinary shouted English -- CONVERSATION,
+// CREDENTIALS, DESTINATION -- and it does in this tree: a banner string reading
+// CONVERSATION in contrib/openclaw-bridge/demo-telegram.sh:203 is the only
+// shape-only hit across the whole scan set, measured 2026-09-07. An id carries
+// digits; a word in caps does not.
+//
+// ABSENCE, so the next reader does not think it was missed: an all-letter
+// conversation id walks past this refusal. Nothing distinguishes such a token
+// from prose, and buying it would cost every capitalized word on the bridge
+// path. The backstops are the seam arm above and the required() read that makes
+// a literal redundant in the first place.
+func TestExtmsgBridgeIsolationAcceptsACapitalisedWord(t *testing.T) {
+	f := newBridgeGateFixture(t, map[string]string{
+		"contrib/demo-bridge/run.sh": `#!/bin/sh
+echo "CHILD CONVERSATION -- DESTINATION unset, CREDENTIALS from secrets.env"
+exec node demo-bridge.mjs
+`,
+	})
+	out, ok := f.run(t)
+	if !ok {
+		t.Fatalf("a shouted English word is not a conversation id:\n%s", out)
 	}
 }
 
@@ -778,6 +963,286 @@ export const alertsKey = 'SLACK_CHANNEL_ID'
 		}
 		if !strings.Contains(out, "SLACK_CHANNEL_ID") {
 			t.Errorf("refusal must name the seam key:\n%s", out)
+		}
+	})
+}
+
+// TestExtmsgBridgeIsolationRefusesTheSeamCopiedIntoTheRepo is criterion 8's
+// other half, and the only refusal here that does not read the scan set. The
+// city's notify.sh cannot be checked for modification from a CI checkout that
+// has no city tree, so what is enforceable from here is the move that would
+// make it modifiable from here: landing a copy of the seam in this repository.
+// That arrives as a NEW FILE rather than as an edit, which every scan-set arm
+// misses -- a copy dropped outside any bridge component is in no scan set at
+// all, and the fixture puts it there deliberately.
+func TestExtmsgBridgeIsolationRefusesTheSeamCopiedIntoTheRepo(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{name: "notify.sh outside every component", path: "assets/scripts/notify.sh"},
+		{name: "slack-deliver.py outside every component", path: "tools/slack-deliver.py"},
+		{name: "notify.sh at the repository root", path: "notify.sh"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBridgeGateFixture(t, map[string]string{
+				tc.path: "#!/bin/sh\necho alert\n",
+			})
+			out, ok := f.run(t)
+			if ok {
+				t.Fatalf("expected refusal of a copied alert seam, got pass:\n%s", out)
+			}
+			if !strings.Contains(out, tc.path) {
+				t.Errorf("refusal must name the copy (%q):\n%s", tc.path, out)
+			}
+		})
+	}
+
+	// The match is anchored on a whole path component. Without the anchor a
+	// bridge's own bridge-notify.sh is refused as the city's seam, and the
+	// remedy an author reaches for then is to delete the check.
+	t.Run("a differently named script is not the seam", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/bridge-notify.sh": "#!/bin/sh\necho up\n",
+			"contrib/demo-bridge/slack-deliver.mjs": `export const deliver = () => 1
+`,
+		})
+		out, ok := f.run(t)
+		if !ok {
+			t.Fatalf("only notify.sh and slack-deliver.py are the seam:\n%s", out)
+		}
+	})
+}
+
+// TestExtmsgBridgeIsolationRefusesTheAlertsSeamInProse is the prose half of
+// criterion 8. A README telling an operator to set SLACK_WEBHOOK_URL unifies
+// the two channels exactly as effectively as code that reads it, and the
+// operator acts on the README.
+//
+// The scope is deliberately narrower than the code scan's: the COMPONENT arm
+// alone, never the repo-wide route match. docs/pm-log.md discusses both the
+// mayor and the alert seam's one-way decision at length and must never enter
+// it, which the accepting case below pins.
+//
+// Known over-refusal, in the same direction as the code arm's trailing-comment
+// refusal: prose documenting the prohibition ("never point this at
+// SLACK_WEBHOOK_URL") is refused too, because nothing mechanical separates a
+// warning from an instruction. The remedy is to name the city's alert seam
+// rather than its keys, and refusing too much is the survivable direction.
+func TestExtmsgBridgeIsolationRefusesTheAlertsSeamInProse(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		body    string
+		wantMsg string
+	}{
+		{
+			name:    "points the operator at the alerts webhook",
+			body:    "# demo-bridge\n\nReuse the alert webhook: SLACK_WEBHOOK_URL=https://...\n",
+			wantMsg: "SLACK_WEBHOOK_URL",
+		},
+		{
+			name:    "points the operator at the alerts channel key",
+			body:    "# demo-bridge\n\nSet SLACK_CHANNEL_ID to the same channel the alerts use.\n",
+			wantMsg: "SLACK_CHANNEL_ID",
+		},
+		{
+			name:    "tells the operator to call the seam",
+			body:    "# demo-bridge\n\nOn failure the bridge shells out to notify.sh.\n",
+			wantMsg: "notify.sh",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBridgeGateFixture(t, map[string]string{
+				"contrib/demo-bridge/README.md": tc.body,
+			})
+			out, ok := f.run(t)
+			if ok {
+				t.Fatalf("expected refusal of an alerts-seam instruction, got pass:\n%s", out)
+			}
+			if !strings.Contains(out, tc.wantMsg) {
+				t.Errorf("refusal must name the seam (%q):\n%s", tc.wantMsg, out)
+			}
+		})
+	}
+
+	// The whole reason the code scan excludes prose. Re-admitting .md
+	// repo-wide would refuse the project's own log for discussing the
+	// decision it records, and that finding is unactionable.
+	t.Run("prose outside every component is untouched", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"docs/pm-log.md": "#57 the mayor's alerts stay one-way: SLACK_WEBHOOK_URL and\n" +
+				"SLACK_CHANNEL_ID belong to notify.sh, and the bridge gets its own.\n",
+		})
+		out, ok := f.run(t)
+		if !ok {
+			t.Fatalf("the repo's own log must not be scanned as bridge prose:\n%s", out)
+		}
+	})
+
+	// The role arm must NOT follow the seam arm into prose. A README naming
+	// the session an operator binds is criterion 5 being satisfied -- it
+	// shows the identity arriving as configuration -- and the baseline
+	// fixture's README already carries one, so this case names what every
+	// other case in the suite is silently relying on.
+	t.Run("a role name in component prose is accepted", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/README.md": "# demo-bridge\n\nRun GC_TARGET_SESSION=mayor to bind the mayor's session.\n",
+		})
+		out, ok := f.run(t)
+		if !ok {
+			t.Fatalf("prose naming the bound session must pass:\n%s", out)
+		}
+	})
+
+	// Nor the credential and conversation-id literals. Documenting the shape
+	// of the value an operator must supply is how the README says the value
+	// is configuration; refusing the example teaches the next author to stop
+	// writing examples. contrib/openclaw-bridge/README.md:298-299 carries the
+	// two token placeholders verbatim. Its channel example is C012345, which
+	// is too short for the conversation-id shape to reach, so the full-length
+	// id here is the case the real tree does NOT yet exercise -- which is
+	// exactly why it is pinned rather than left to the real-tree arm.
+	t.Run("credential and channel placeholders in prose are accepted", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/README.md": "# demo-bridge\n\n" +
+				"    BRIDGE_SLACK_BOT_TOKEN=xoxb-...\n" +
+				"    BRIDGE_SLACK_APP_TOKEN=xapp-...\n" +
+				"    BRIDGE_SLACK_CHANNEL_ID=C09ABCDEFGH\n",
+		})
+		out, ok := f.run(t)
+		if !ok {
+			t.Fatalf("placeholders showing the operator what to supply must pass:\n%s", out)
+		}
+	})
+}
+
+// TestExtmsgBridgeIsolationRefusesKnobDrift pins the cross-file refusal, the
+// one no per-file arm can see. Requiredness is a property of the KNOB, not of
+// one call site: a convenience default added next to an existing required()
+// read -- in another file, which is why it survives review -- turns a missing
+// configuration into a silent bind to whatever the default names.
+func TestExtmsgBridgeIsolationRefusesKnobDrift(t *testing.T) {
+	t.Run("required in one file, defaulted in another", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/demo-bridge.mjs": `import { required } from './lib/gc-client.mjs'
+export default required('BRIDGE_DEMO_CHANNEL')
+`,
+			"contrib/demo-bridge/lib/slack.mjs": `import { env } from './gc-client.mjs'
+export const channel = env('BRIDGE_DEMO_CHANNEL', 'fallback')
+`,
+		})
+		out, ok := f.run(t)
+		if ok {
+			t.Fatalf("expected refusal of a knob that is required in one place and defaulted in another:\n%s", out)
+		}
+		if !strings.Contains(out, "BRIDGE_DEMO_CHANNEL") {
+			t.Errorf("refusal must name the drifting knob:\n%s", out)
+		}
+		if !strings.Contains(out, "read with required() in one place") {
+			t.Errorf("the knob-drift arm must be what refused this, not another check:\n%s", out)
+		}
+	})
+
+	// The boundary. Defaults are ordinary and required reads are ordinary;
+	// only the DISAGREEMENT is the violation. Without this case the refusal
+	// could be narrowed to "any env() default" and stay green.
+	t.Run("disjoint required and defaulted knobs are accepted", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/demo-bridge.mjs": `import { required } from './lib/gc-client.mjs'
+export default required('BRIDGE_DEMO_CHANNEL')
+`,
+			"contrib/demo-bridge/lib/slack.mjs": `import { env } from './gc-client.mjs'
+export const base = env('BRIDGE_DEMO_BASE_URL', 'http://127.0.0.1:8372')
+`,
+		})
+		out, ok := f.run(t)
+		if !ok {
+			t.Fatalf("a knob that is only ever defaulted, alongside one that is only ever required, must pass:\n%s", out)
+		}
+	})
+}
+
+// TestExtmsgBridgeIsolationRefusesAnInlineEnvFallback is the evasion knob drift
+// cannot see: a fallback written straight onto a raw process.env read, so the
+// knob never appears in an env() call at all. Forbidding the SHAPE means the
+// refusal holds whatever the default spells and whatever the key is named --
+// the existing shape arm covers only keys that name what they bind, and this
+// one covers the rest.
+func TestExtmsgBridgeIsolationRefusesAnInlineEnvFallback(t *testing.T) {
+	// The key deliberately does not end in SESSION/AGENT/TARGET/HANDLE/ROLE,
+	// so the binding-shape arm cannot be what refuses it.
+	t.Run("or-default on a raw read", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/lib/slack.mjs": `export const room = process.env.BRIDGE_DEMO_ROOM || 'general'
+`,
+		})
+		out, ok := f.run(t)
+		if ok {
+			t.Fatalf("expected refusal of an inline fallback on a raw read:\n%s", out)
+		}
+		if !strings.Contains(out, "BRIDGE_DEMO_ROOM") {
+			t.Errorf("refusal must show the offending line:\n%s", out)
+		}
+		if !strings.Contains(out, "fallback on a raw process.env read") {
+			t.Errorf("the inline arm must be what refused this, not the shape arm:\n%s", out)
+		}
+	})
+
+	t.Run("nullish default on a raw read", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/lib/slack.mjs": `export const room = process.env.BRIDGE_DEMO_ROOM ?? 'general'
+`,
+		})
+		out, ok := f.run(t)
+		if ok {
+			t.Fatalf("expected refusal of an inline nullish fallback:\n%s", out)
+		}
+	})
+
+	// The one sanctioned exception, exempted by its DEFINITION TEXT rather
+	// than by filename, so a second default hidden elsewhere in that same
+	// file is still refused. It cannot itself hide a default: its fallback is
+	// its own second argument, supplied by the caller the gate is reading.
+	//
+	// The exemption is inert against the helper as written today --
+	// contrib/openclaw-bridge/lib/gc-client.mjs:12 spells the fallback with
+	// !== tests rather than ?? and matches nothing. It is carried because the
+	// obvious simplification of that line, `process.env[k] ?? d`, does match,
+	// and a gate that refuses the one place defaults are allowed to live gets
+	// deleted rather than obeyed.
+	t.Run("the env helper's own definition is accepted", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/lib/gc-client.mjs": `export const post = (m) =>
+  fetch('/extmsg/inbound', { method: 'POST', body: JSON.stringify(m) })
+export const env = (k, d) => process.env[k] ?? d
+`,
+		})
+		out, ok := f.run(t)
+		if !ok {
+			t.Fatalf("the one sanctioned default helper must pass:\n%s", out)
+		}
+	})
+
+	// Scope boundary, derived from the EXTENSION and not from a list of
+	// exempt filenames. The extensionless stand-ins under the component --
+	// fake-imsg/imsg and fake-telegram/bot-api in the real tree -- are
+	// separate programs spawned by a demo launcher. They load node builtins
+	// alone and read only their own FAKE_* knobs, so they can bind neither a
+	// session nor a channel, and the fix for refusing them would be to import
+	// a bridge module into a stand-in, which is worse than the thing refused.
+	// A stand-in rewritten as a .mjs and imported is in scope the moment it
+	// is. Measured 2026-09-07: those two files are the only inline-fallback
+	// hits in the real scan set.
+	t.Run("an extensionless stand-in keeps its own default", func(t *testing.T) {
+		f := newBridgeGateFixture(t, map[string]string{
+			"contrib/demo-bridge/fake-chat/chat-api": `#!/usr/bin/env node
+const PORT = Number(process.env.FAKE_CHAT_PORT || 8932)
+console.log(PORT)
+`,
+		})
+		out, ok := f.run(t)
+		if !ok {
+			t.Fatalf("a stand-in outside the module graph keeps its own default:\n%s", out)
 		}
 	})
 }
