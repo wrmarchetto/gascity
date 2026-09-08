@@ -7,8 +7,8 @@ import (
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/coordclass"
 	"github.com/gastownhall/gascity/internal/doctor"
-	"github.com/gastownhall/gascity/internal/mail/beadmail"
 )
 
 // backlogDepthCheck reports the city store's claimable backlog depth by
@@ -59,12 +59,27 @@ func isControlPlaneBacklogBead(b beads.Bead) bool {
 	return b.Type == sessionBeadType || hasLabel(b.Labels, sessionBeadLabel)
 }
 
-// isNotificationBacklogBead reports whether a bead is a short-lived delivery
-// chore (nudge or mail) rather than durable backlog. It mirrors the
-// nudge-mail-reaper notification predicate: the nudge:/mail: title prefix, the
-// gc:nudge label, and the mail bead type.
+// isNotificationBacklogBead reports whether a bead is a delivery item -- mail,
+// a nudge, or one of the external-messaging families -- rather than durable
+// backlog an agent could claim.
+//
+// The class membership is coordclass's, not this file's. It used to be a local
+// list (type=message, the gc:nudge label, the nudge:/mail: title prefixes), and
+// that list did not know about extmsg: an inbound chat message is minted
+// type=task with a gc:extmsg-* label (internal/extmsg/transcript_service.go)
+// and satisfies none of the three. 101 such rows entered the claimable count on
+// 2026-09-08, taking unclaimable-work from "3 of 8" to "101 of 108" and burying
+// three real findings under them (ci-3bktll). coordclass already answered this
+// correctly -- ClassMessaging is documented as mail plus every gc:extmsg-*
+// family -- so the defect was two predicates for one question, and the repair
+// is to keep one. A local copy would go stale again at the next family added.
+//
+// The title prefixes stay. They match beads that carry no type or label saying
+// what they are, which is a shape coordclass cannot classify and which the
+// nudge-mail-reaper still produces.
 func isNotificationBacklogBead(b beads.Bead) bool {
-	if beadmail.IsMessageBead(b) || hasLabel(b.Labels, nudgeBeadLabel) {
+	switch coordclass.Classify(b) {
+	case coordclass.ClassMessaging, coordclass.ClassNudges:
 		return true
 	}
 	title := strings.TrimSpace(b.Title)

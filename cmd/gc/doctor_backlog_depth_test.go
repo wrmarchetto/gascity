@@ -127,3 +127,51 @@ func TestBacklogDepthCheckStoreErrorIsGraceful(t *testing.T) {
 		t.Errorf("CanFix = true, want false (read-only observability check)")
 	}
 }
+
+// TestClassifyBacklogCountsEveryExtmsgFamilyAsNotification pins the boundary
+// against the transcript families. The predicate used to be a hand-kept list --
+// type=message, the gc:nudge label, and the nudge:/mail: title prefixes -- and
+// an inbound chat message satisfies none of them: extmsg mints it type=task
+// with a gc:extmsg-* label and a title of its own shape. 101 such rows reached
+// the claimable count on 2026-09-08 (ci-3bktll), taking unclaimable-work from
+// "3 of 8" to "101 of 108" and burying three real findings.
+//
+// Every row here is in readyIDs on purpose. The old predicate's whole failure
+// was that these beads ARE ready, so a fixture that left them out of the ready
+// set would land in `other` and pass over a predicate that still called them
+// work.
+//
+// The label prefix rather than the four family labels one by one: the
+// classifier owns that list (internal/coordclass, labelExtmsgPrefix), and a
+// second copy here would go stale at the next family added.
+func TestClassifyBacklogCountsEveryExtmsgFamilyAsNotification(t *testing.T) {
+	open := []beads.Bead{
+		{
+			ID: "T-1", Title: "slack/default/C0C0JPH5E2Y#3", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-transcript"},
+		},
+		{
+			ID: "T-2", Title: "slack/default/C0C0JPH5E2Y/state", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-transcript-state"},
+		},
+		{
+			ID: "T-3", Title: "slack binding", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-binding"},
+		},
+		{
+			ID: "T-4", Title: "slack delivery", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-delivery"},
+		},
+		{ID: "R-1", Title: "fix the thing", Type: "task", Status: "open"},
+	}
+	readyIDs := map[string]bool{"T-1": true, "T-2": true, "T-3": true, "T-4": true, "R-1": true}
+
+	b := classifyBacklog(open, readyIDs)
+
+	if b.notification != 4 {
+		t.Errorf("notification = %d, want 4 (every extmsg family)", b.notification)
+	}
+	if len(b.real) != 1 || b.real[0].ID != "R-1" {
+		t.Errorf("real = %v, want only R-1; an extmsg bead is not work an agent claims", b.real)
+	}
+}
