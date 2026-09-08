@@ -312,6 +312,124 @@ func TestExtMsgAdapterRegisterIdempotentReplay(t *testing.T) {
 	}
 }
 
+// TestExtMsgAdapterRegisterReplayStillRegistersTheAdapter pins that a replayed
+// register leaves the adapter IN the registry, not merely reports that it is.
+//
+// withIdempotency replays a completed entry without calling create(), and
+// create() is where reg.Register lives. Registration is a lease in practice --
+// contrib/openclaw-bridge re-registers every 30 s -- so the sequence below is
+// the ordinary reconnect path, not an exotic one: register, unregister,
+// register again inside the 30 minute cache TTL. Before this fix the replay
+// answered 201 {"status":"registered"} over an EMPTY registry, and every
+// outbound publish afterwards failed "no adapter for /" against a caller that
+// had been told it was registered.
+//
+// The event assertion is the other half and must not be dropped. The reason
+// the endpoint is idempotent at all is to suppress a duplicate
+// ExtMsgAdapterAdded on retry, so a fix that simply stopped replaying would
+// pass the registry assertion and undo the thing the endpoint wanted.
+//
+// Not folded into TestExtMsgAdapterRegisterIdempotentReplay: that test cannot
+// see this defect at all, because it never removes the adapter between the two
+// posts and so cannot tell a registry the replay refreshed from one it left
+// alone.
+func TestExtMsgAdapterRegisterReplayStillRegistersTheAdapter(t *testing.T) {
+	state := newFakeState(t)
+	state.adapterReg = extmsg.NewAdapterRegistry()
+	h := newTestCityHandler(t, state)
+
+	body := `{"provider":"slack","account_id":"T123","callback_url":"http://127.0.0.1:9/cb"}`
+	key := extmsg.AdapterKey{Provider: "slack", AccountID: "T123"}
+
+	first := postIdempotent(t, h, cityURL(state, "/extmsg/adapters"), "adapter-release-1", body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first register: status = %d, want 201; body = %s", first.Code, first.Body.String())
+	}
+	if state.adapterReg.Lookup(key) == nil {
+		t.Fatalf("first register left no adapter in the registry")
+	}
+
+	del := newDeleteRequestWithBody(cityURL(state, "/extmsg/adapters"),
+		`{"provider":"slack","account_id":"T123"}`)
+	delRec := httptest.NewRecorder()
+	h.ServeHTTP(delRec, del)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("unregister: status = %d, want 200; body = %s", delRec.Code, delRec.Body.String())
+	}
+	if state.adapterReg.Lookup(key) != nil {
+		t.Fatalf("unregister left the adapter in the registry, so the replay below proves nothing")
+	}
+
+	replay := postIdempotent(t, h, cityURL(state, "/extmsg/adapters"), "adapter-release-1", body)
+	if replay.Code != http.StatusCreated {
+		t.Fatalf("replay: status = %d, want 201; body = %s", replay.Code, replay.Body.String())
+	}
+	if replay.Body.String() != first.Body.String() {
+		t.Fatalf("replay body = %s, want %s", replay.Body.String(), first.Body.String())
+	}
+	if state.adapterReg.Lookup(key) == nil {
+		t.Fatalf("replay answered %q but registered nothing; every publish would fail \"no adapter\"", replay.Body.String())
+	}
+
+	ep := state.eventProv.(*events.Fake)
+	evts, err := ep.List(events.Filter{Type: events.ExtMsgAdapterAdded})
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(evts) != 1 {
+		t.Fatalf("ExtMsgAdapterAdded fired %d times, want 1 (the replay re-emitted)", len(evts))
+	}
+}
+
+// TestExtMsgAdapterRegisterMismatchRegistersNothing pins the ordering the
+// reconcile hook exists to preserve.
+//
+// The cheap way to make a replay re-register is to hoist reg.Register out of
+// create() and run it before withIdempotency. That reads identically for every
+// case this suite otherwise covers, and it moves the registration IN FRONT of
+// the same-key/different-body guard: the second post below would register a
+// second adapter and then be rejected 422, leaving a registration the caller
+// was told did not happen. Running the effect through the helper's replay
+// branch keeps it behind that guard.
+//
+// The assertion is on the SECOND body's key, not on the first. The first
+// adapter must survive -- rejecting a mismatched retry says nothing about the
+// registration that succeeded -- so a test that asserted an empty registry
+// would pass against a handler that had torn down the wrong one.
+func TestExtMsgAdapterRegisterMismatchRegistersNothing(t *testing.T) {
+	state := newFakeState(t)
+	state.adapterReg = extmsg.NewAdapterRegistry()
+	h := newTestCityHandler(t, state)
+
+	first := postIdempotent(t, h, cityURL(state, "/extmsg/adapters"), "adapter-mismatch-1",
+		`{"provider":"slack","account_id":"T123","callback_url":"http://127.0.0.1:9/cb"}`)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first register: status = %d, want 201; body = %s", first.Code, first.Body.String())
+	}
+
+	second := postIdempotent(t, h, cityURL(state, "/extmsg/adapters"), "adapter-mismatch-1",
+		`{"provider":"slack","account_id":"T999","callback_url":"http://127.0.0.1:9/cb"}`)
+	if second.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("mismatched retry: status = %d, want 422; body = %s", second.Code, second.Body.String())
+	}
+	if state.adapterReg.Lookup(extmsg.AdapterKey{Provider: "slack", AccountID: "T999"}) != nil {
+		t.Fatalf("a retry rejected 422 still registered its adapter")
+	}
+	if state.adapterReg.Lookup(extmsg.AdapterKey{Provider: "slack", AccountID: "T123"}) == nil {
+		t.Fatalf("the rejected retry tore down the registration that succeeded")
+	}
+}
+
+// newDeleteRequestWithBody is the DELETE counterpart of newPostRequest for the
+// extmsg endpoints, whose unregister takes its key in a body rather than in
+// the path. newDeleteRequest sends none.
+func newDeleteRequestWithBody(url, body string) *http.Request {
+	req := httptest.NewRequest("DELETE", url, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GC-Request", "true")
+	return req
+}
+
 // countingInitializer wraps fakeInitializer to count Scaffold invocations for
 // the supervisor city-create replay test.
 type countingInitializer struct {
