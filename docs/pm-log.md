@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-j9o 2026-09-08T14:07:52Z
+last_seen: gs-8tm 2026-09-08T14:26:28Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3383,6 +3383,37 @@ in_progress assigned to gascity/lab.engineer-1, lease expired, heartbeat
 12 hours old, the same dangerous-rm permission-dialog stall condition #12
 named in ci-waw3o7's interval record. Operational, not roadmap; no action
 mine. No other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). No new pm-open entry: pm-open #2(a) already reads "the wait
+is purely human" as of #102, and nothing advanced past that this turn.
+
+Source: roadmap governor
+
+## 104. pm-epic-close gs-8tm: governor stays in-progress; no drift from #103 (2026-09-08)
+
+Eighty-ninth ruling of this shape (pm-log #5 gs-8iv through #103 gs-j9o),
+re-verified live at 14:26Z rather than recalled. The closed set under
+epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 -- 5
+closed, 0 open; criteria 1-6 verified in their close reasons pm-log #5,
+criterion 7's interval record pm-log #102). ci-waw3o7, read live in the
+city store: still OPEN, assignee human, carrying the gs-r76 interval record
+in its notes (stamped 2026-09-08T13:31Z) and no answer past Willie's
+2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN, labels
+gate-no-readback and operator-paged, still blocking ci-waw3o7, description
+unchanged from #102's rewrite. Per pm-log #4 governor stays in-progress and
+the bead that reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-j9o, set at pm-log #103): the updated-after
+listing against the 2026-09-08T14:07:52Z stamp returns exactly gs-j9o
+(the prior summons, closed), gs-8tm (this claim, in_progress), and gs-hph.
+gs-hph is a long-closed P2 bug (the formula version-check defect, seed of
+the pm-open #3 standalone class) whose updated stamp moved with no
+substantive change visible -- close reason unchanged, newest note still
+2026-09-05, no epic label. Metadata touch, operational noise; no action
+mine. gs-a6j did not move this interval. No other bead in this rig's store
+changed.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress alongside governor by design
