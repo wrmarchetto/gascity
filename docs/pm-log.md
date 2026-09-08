@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-z1p 2026-09-08T00:13:38Z
+last_seen: gs-1iv 2026-09-08T00:29:59Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2132,6 +2132,41 @@ One state flip observed directly in the epic list: gs-fn6 now reads
 in_progress rather than open -- the sling-gs-fn6 convoy gs-e5n (pm-log #70)
 has dispatched it. That is the epic's work moving, not a placement or scope
 question, so it changes nothing in this ruling.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question). No epic promoted and no
+DECOMP sent: the roadmap holds no status:open epic, and mayor-slack-bridge
+is in-progress with live work (gs-fn6 in progress, gs-228 operator
+provisioning and gs-z09 round-trip demo open -- all re-read this turn). No
+new pm-open entry: the wait is pm-open #2(a) and #2(b) was closed by pm-log
+#59. Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
+assessment layer, and a governor that assesses then reports something else
+is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 72. pm-epic-close gs-1iv: governor stays in-progress; drift is gs-dzj shellcheck gate and its placement summons gs-nv0 (2026-09-07)
+
+Fifty-ninth ruling of this shape, filed about sixteen minutes after gs-z1p
+(pm-log #71). Re-verified against the stores this turn at 00:30Z rather than
+recalled: the closed set under epic:governor is unchanged (gs-o9i, gs-x0k,
+gs-xeh, gs-nun -- criteria 1-6 verified in their close reasons, pm-log #5),
+and ci-waw3o7, read live in the city store, matches the #65-#71 readings
+exactly -- OPEN, updated 2026-09-07, owner gascity/lab.engineer-1, assignee
+human, gate ci-gbhkpa still OPEN on its DEPENDS ON line, Willie's recorded
+answer still the 2026-09-05T20:14Z "NOT YET" ruling about the evidence. Per
+pm-log #4 governor stays in-progress and the bead that reopens it remains
+ci-waw3o7.
+
+Two beads moved in this rig since last_seen besides this summons: gs-dzj
+(gate scripts/ on shellcheck, P2, in_progress -- substrate tooling work of
+the pm-open #3 class) and gs-nv0 (open, the sweep's epic-unmapped summons
+about gs-dzj). gs-nv0 is its own PM unit and wakes its own session; ruling
+on gs-dzj's placement here would be a second unit inside this one, so it is
+recorded as drift and left to that summons.
 
 The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
 (gascity/lab.engineer-1) carrying the interval record the bead's notes
