@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-rzts 2026-09-08T19:34:16Z
+last_seen: gs-05nx 2026-09-08T19:49:36Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3983,6 +3983,34 @@ so gc bd close -m and its siblings are refused fail-closed even though
 gc's own manifest now carries them per gs-9zu) -- a sibling defect to
 gs-9zu (#111, still open, unmoved this interval), same unlabeled
 substrate class. None of the three bear on epic:governor's closed set.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress alongside governor by
+design (pm-log #59). No new pm-open entry: pm-open #2(a) already reads
+"the wait is purely human" as of #102, unchanged this turn.
+
+Source: roadmap governor
+
+## 122. pm-epic-close gs-05nx: governor stays in-progress; no drift from #121 (2026-09-08)
+
+Hundred-and-seventh ruling of this shape (pm-log #5 gs-8iv through #121
+gs-rzts), re-verified live at 19:49Z rather than recalled. The closed set
+under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 --
+5 closed, 0 open, 0 in progress; criteria 1-6 verified in their close
+reasons pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7,
+read live in the city store: still OPEN, assignee human, notes tail
+unchanged since #121 -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past
+Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN,
+labels gate-no-readback and operator-paged, still blocking ci-waw3o7 (the
+one entry under its depends-on), description unchanged from #102's
+rewrite. Per pm-log #4 governor stays in-progress and the bead that
+reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-rzts, set at pm-log #121 at 19:34:16Z): the
+updated-after listing against that stamp, swept across all statuses,
+returns only gs-05nx (this claim). No other bead in this rig's store
+moved.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open
 epic, and mayor-slack-bridge is already in-progress alongside governor by
