@@ -40,23 +40,48 @@ func TestSplitGlobalFlagsSkipsGlobalFlagValues(t *testing.T) {
 	}
 }
 
-// TestGlobalValueFlagsIsComplete pins the global value-flag set against bd's
-// own persistent-flag list. A flag missing from this table silently reopens the
-// bypass below: SplitGlobalFlags would read that flag's value as the verb, and
-// every guard keyed off the verb stops firing — with no test failing.
+// TestSplitGlobalFlagsSkipsEveryGlobalValue pins that SplitGlobalFlags
+// consumes the value of every flag the manifest declares value-consuming, so
+// none of them can be read as the verb. Getting that wrong reopens the bypass
+// TestRefusalFiresBehindAGlobalFlag covers: every guard keyed off the verb
+// stops firing, with nothing failing.
 //
-// Sourced from `bd --help` (bd 1.1.0). bd declares exactly four persistent
-// flags that consume the next argument; -C and --directory are the two spellings
-// of one of them. Every other persistent flag (--global, --ignore-schema-skew,
-// --json, --profile, -q/--quiet, --readonly, --sandbox, -v/--verbose, -h/--help,
-// -V/--version) is boolean and consumes nothing.
-func TestGlobalValueFlagsIsComplete(t *testing.T) {
-	want := map[string]bool{
-		"--actor": true, "--db": true, "-C": true, "--directory": true,
-		"--dolt-auto-commit": true,
+// Driven from GlobalValueFlags() rather than a hand-written expectation. This
+// test previously carried its own copy of the table and asserted bd declares
+// "exactly four" persistent value flags. bd declares seven -- --database,
+// --format and --mem-profile were missing from both the copy and the manifest
+// -- and the copy is what made the omission look deliberate (gs-9zu).
+//
+// Completeness of the set itself is NOT this test's job and cannot be: a flag
+// deleted from the manifest disappears from the loop below instead of failing
+// it. TestBdGlobalFlagManifestMatchesModuleSource in flags_source_test.go is
+// the authority, deriving the set from bd's own persistent-flag registrations.
+// What is pinned here is the pair of flags whose bypass was actually observed,
+// so an emptied manifest cannot pass this file either.
+func TestSplitGlobalFlagsSkipsEveryGlobalValue(t *testing.T) {
+	globals := GlobalValueFlags()
+	if len(globals) == 0 {
+		t.Fatal("GlobalValueFlags() is empty; SplitGlobalFlags would read any global flag's value as the verb")
 	}
-	if got := GlobalValueFlags(); !reflect.DeepEqual(got, want) {
-		t.Errorf("GlobalValueFlags() = %v, want %v; re-check `bd --help` persistent flags", got, want)
+	for _, required := range []string{"--actor", "-C"} {
+		if !globals[required] {
+			t.Errorf("GlobalValueFlags() is missing %s, whose value was read as the verb in the observed bypass", required)
+		}
+	}
+
+	for flag := range globals {
+		t.Run(flag, func(t *testing.T) {
+			// The value is spelled like a bd verb on purpose: a scanner that
+			// fails to skip it returns "update" and looks correct on any
+			// assertion weaker than an exact verb match.
+			verb, rest := SplitGlobalFlags([]string{flag, "update", "close", "gcy-dv7"})
+			if verb != "close" {
+				t.Errorf("SplitGlobalFlags with %s: verb = %q, want %q -- the flag's value was read as the verb", flag, verb, "close")
+			}
+			if !reflect.DeepEqual(rest, []string{"gcy-dv7"}) {
+				t.Errorf("SplitGlobalFlags with %s: rest = %v, want [gcy-dv7]", flag, rest)
+			}
+		})
 	}
 }
 
