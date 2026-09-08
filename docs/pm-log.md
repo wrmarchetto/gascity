@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-4qn 2026-09-08T18:29:19Z
+last_seen: gs-l03 2026-09-08T18:45:46Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3852,5 +3852,43 @@ No epic promoted and no DECOMP sent: the roadmap holds no status:open
 epic, and mayor-slack-bridge is already in-progress alongside governor by
 design (pm-log #59). No new pm-open entry: pm-open #2(a) already reads
 "the wait is purely human" as of #102, unchanged this turn.
+
+Source: roadmap governor
+
+## 118. pm-epic-close gs-l03: governor stays in-progress; no drift from #117 (2026-09-08)
+
+Hundred-and-third ruling of this shape (pm-log #5 gs-8iv through #117
+gs-4qn), re-verified live at 18:47Z rather than recalled. The closed set
+under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 --
+5 closed, 0 open, 0 in progress; criteria 1-6 verified in their close
+reasons pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7,
+read live in the city store: still OPEN, assignee human, notes tail
+unchanged since #117 -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past
+Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN,
+labels gate-no-readback and operator-paged, still blocking ci-waw3o7 (the
+one entry under its depends-on), description unchanged from #102's
+rewrite. Per pm-log #4 governor stays in-progress and the bead that
+reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-4qn, set at pm-log #117 at 18:29:19Z): the
+updated-after listing against that stamp, swept across all statuses,
+returns gs-4qn (the prior summons, closed), gs-l03 (this claim,
+in_progress), gs-9zu (#111's unlabeled substrate bug, unchanged -- did not
+move again this interval), and one new mover: gs-mns, a P2 bug (make test
+intermittently exits 1 -- TestOrderTrackingRetentionWatchdog_NilCfgSkips-
+WithoutPanic leaks a real dolt server rooted in the cmd/gc source tree,
+caught by the leak guard's ownership arm), owner mayor, assignee
+gascity/lab.engineer-2, in_progress, unlabeled. Same shape as gs-9zu and
+gs-33z before it: substrate work outside epic:governor's closed set, so it
+does not bear on this ruling; its epic-vs-standalone placement is the
+unlabeled-bead sweep's question under pm-open #3's standing class.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress alongside governor by
+design (pm-log #59). The summons body's "Other open epics:
+mayor-slack-bridge" line remains stale on that same point, as #111-#117
+noted repeatedly. No new pm-open entry: pm-open #2(a) already reads "the
+wait is purely human" as of #102, unchanged this turn.
 
 Source: roadmap governor
