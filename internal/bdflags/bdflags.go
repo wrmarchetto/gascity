@@ -6,30 +6,57 @@
 // each other. The command-name list (commands.go) backs the gate that stops a
 // verb gc handles itself from silently shadowing one of bd's.
 //
-// The two halves have different provenance and different freshness gates, so
-// do not reason from one to the other. Flag manifests are transcribed from
-// bd <sub> --help output (2026-07-13, bd v1.1.0) and checked against an
-// installed binary only under the integration tag (freshness_test.go), which
-// SKIPS when bd is absent -- tolerable because a stale flag manifest degrades
-// a lint check. Command names are re-derived from the beads module source on
-// every ordinary test run and NEVER skip, because a stale name list is the
-// defect itself (ci-mosn).
+// Both halves are re-derived from the beads module source at the version
+// go.mod pins, on every ordinary test run, and NEVER skip: command names by
+// commands_source_test.go (ci-mosn), flag manifests by flags_source_test.go
+// (gs-9zu). Editing an entry by hand without the source agreeing fails the
+// build.
+//
+// The flag half was a hand transcription of bd <sub> --help checked only
+// under the integration tag, on a skip when bd was absent. It went green on
+// every ordinary run while the manifest was missing flags on all 17 known
+// subcommands -- including bd's --if-assignee/--if-status compare-and-swap
+// guards, whose absence made cmd/gc refuse the write outright. The reasoning
+// that permitted the skip, that a stale manifest merely degrades a lint
+// check, was false by the time it was written: the write-mutation guard fails
+// CLOSED, so a manifest gap refuses a legitimate command rather than
+// weakening a warning.
+//
+// A --help transcript is also the wrong oracle regardless of the skip. It
+// cannot see a MarkHidden'd flag -- bd hides four value-consuming aliases on
+// close alone -- and it prints an optionally-valued flag (NoOptDefVal, e.g.
+// list's --deps) indistinguishably from one that consumes a token.
 package bdflags
 
 import "sort"
 
 // globalValueFlags are accepted by every bd subcommand and consume the next
 // argument as their value.
+//
+// --format is MarkHidden'd by bd and appears in no --help transcript. It is a
+// persistent String on the root command all the same, and bd consumes the
+// token after it like any other value flag.
+//
+// -V/--version is deliberately absent: bd registers it on rootCmd.Flags(),
+// not PersistentFlags(), so `bd update -V` is rejected as an unknown
+// shorthand. Adding it here would describe a flag no subcommand argv can
+// carry.
 var globalValueFlags = map[string]bool{
-	"--actor": true, "--db": true, "-C": true, "--directory": true,
-	"--dolt-auto-commit": true,
+	"--actor": true, "--database": true, "--db": true, "-C": true,
+	"--directory": true, "--dolt-auto-commit": true, "--format": true,
+	"--mem-profile": true,
 }
 
 // globalBoolFlags are accepted by every bd subcommand and take no value.
+//
+// -h/--help is not registered anywhere in bd's source -- cobra adds it to
+// every command -- so the source-derived gate cannot supply it and it is kept
+// here by hand.
 var globalBoolFlags = map[string]bool{
-	"--global": true, "--ignore-schema-skew": true, "--json": true,
-	"--profile": true, "-q": true, "--quiet": true, "--readonly": true,
-	"--sandbox": true, "-v": true, "--verbose": true, "-h": true, "--help": true,
+	"--cpu-profile": true, "--global": true, "--ignore-schema-skew": true,
+	"--json": true, "--no-color": true, "--profile": true, "-q": true,
+	"--quiet": true, "--readonly": true, "--sandbox": true, "-v": true,
+	"--verbose": true, "-h": true, "--help": true,
 }
 
 // valueFlagsBySub holds each subcommand's value-consuming flags (beyond the
@@ -39,30 +66,44 @@ var globalBoolFlags = map[string]bool{
 var valueFlagsBySub = map[string]map[string]bool{
 	"create": {
 		"--acceptance": true, "--append-notes": true, "-a": true, "--assignee": true,
-		"--body-file": true, "--context": true, "--defer": true, "--deps": true,
+		"--body": true, "--body-file": true, "--context": true, "--defer": true,
+		"--deps": true, "--description-file": true,
 		"-d": true, "--description": true, "--design": true, "--design-file": true,
 		"--due": true, "-e": true, "--estimate": true, "--event-actor": true,
 		"--event-category": true, "--event-payload": true, "--event-target": true,
 		"--external-ref": true, "-f": true, "--file": true, "--graph": true,
-		"--id": true, "-l": true, "--labels": true, "--metadata": true,
+		"--id": true, "--label": true, "-l": true, "--labels": true,
+		"-m": true, "--message": true, "--metadata": true,
 		"--mol-type": true, "--notes": true, "--parent": true, "-p": true,
 		"--priority": true, "--repo": true, "--skills": true, "--spec-id": true,
 		"-s": true, "--status": true, "--title": true, "-t": true, "--type": true, "--waits-for": true,
 		"--waits-for-gate": true, "--wisp-type": true,
 	},
+	// --if-assignee and --if-status are bd's compare-and-swap guards. Their
+	// absence here refused every `gc bd update --if-assignee` in a city with a
+	// [beads] pre_write_command, which is where a guarded reassignment was the
+	// documented remedy -- gs-9zu.
 	"update": {
-		"--acceptance": true, "--add-label": true, "--append-notes": true,
-		"-a": true, "--assignee": true, "--await-id": true, "--body-file": true,
-		"--defer": true, "-d": true, "--description": true, "--design": true,
+		"--acceptance": true, "--acceptance-criteria": true, "--add-label": true,
+		"--append-notes": true,
+		"-a":             true, "--assignee": true, "--await-id": true, "--body": true,
+		"--body-file": true,
+		"--defer":     true, "-d": true, "--description": true,
+		"--description-file": true, "--design": true,
 		"--design-file": true, "--due": true, "-e": true, "--estimate": true,
-		"--external-ref": true, "--metadata": true, "--notes": true,
+		"--external-ref": true, "--if-assignee": true, "--if-status": true,
+		"-m": true, "--message": true, "--metadata": true, "--notes": true,
 		"--parent": true, "-p": true, "--priority": true, "--remove-label": true,
 		"--session": true, "--set-labels": true, "--set-metadata": true,
 		"-s": true, "--status": true, "-t": true, "--type": true,
 		"--title": true, "--spec-id": true, "--unset-metadata": true,
 	},
+	// --resolution, --comment and -m/--message are MarkHidden'd aliases for
+	// --reason. Hidden from --help, ordinary value flags to bd's parser.
 	"close": {
-		"-r": true, "--reason": true, "--reason-file": true, "--session": true,
+		"--comment": true, "-m": true, "--message": true, "-r": true,
+		"--reason": true, "--reason-file": true, "--resolution": true,
+		"--session": true,
 	},
 	"reopen": {
 		"-r": true, "--reason": true,
@@ -73,7 +114,9 @@ var valueFlagsBySub = map[string]map[string]bool{
 	"ready": {
 		"-a": true, "--assignee": true, "--exclude-label": true, "--exclude-type": true,
 		"--has-metadata-key": true, "-l": true, "--label": true, "--label-any": true,
-		"-n": true, "--limit": true, "--metadata-field": true, "--mol": true,
+		"--label-pattern": true, "--label-regex": true,
+		"-n": true, "--limit": true, "--max-rows": true,
+		"--metadata-field": true, "--mol": true,
 		"--mol-type": true, "--offset": true, "--parent": true, "-p": true,
 		"--priority": true, "-s": true, "--sort": true, "-t": true, "--type": true,
 	},
@@ -82,12 +125,16 @@ var valueFlagsBySub = map[string]map[string]bool{
 		"--created-after": true, "--created-before": true, "--defer-after": true,
 		"--defer-before": true, "--desc-contains": true, "--due-after": true,
 		"--due-before": true, "--exclude-label": true, "--exclude-type": true,
-		"--format": true, "--has-metadata-key": true, "--id": true, "-l": true,
+		"--external-contains": true, "--external-ref": true,
+		"--filter-parent": true,
+		"--format":        true, "--has-metadata-key": true, "--id": true, "-l": true,
 		"--label": true, "--label-any": true, "--label-pattern": true,
-		"--label-regex": true, "-n": true, "--limit": true, "--metadata-field": true,
-		"--mol-type": true, "--notes-contains": true, "--offset": true,
+		"--label-regex": true, "-n": true, "--limit": true, "--max-rows": true,
+		"--metadata-field": true,
+		"--mol-type":       true, "--notes-contains": true, "--offset": true,
 		"--parent": true, "-p": true, "--priority": true, "--priority-max": true,
 		"--priority-min": true, "--sort": true, "--spec": true, "-s": true,
+		"--state":  true,
 		"--status": true, "--title": true, "--title-contains": true, "-t": true,
 		"--type": true, "--updated-after": true, "--updated-before": true,
 		"--wisp-type": true,
@@ -124,12 +171,14 @@ var valueFlagsBySub = map[string]map[string]bool{
 // global set. Same keying convention as valueFlagsBySub.
 var boolFlagsBySub = map[string]map[string]bool{
 	"create": {
-		"--dry-run": true, "--ephemeral": true, "--force": true, "--no-history": true,
+		"--allow-empty-description": true, "--dry-run": true, "--ephemeral": true,
+		"--force": true, "--no-history": true,
 		"--no-inherit-labels": true, "--silent": true, "--stdin": true, "--validate": true,
 	},
 	"update": {
 		"--allow-empty-description": true, "--claim": true, "--ephemeral": true,
-		"--history": true, "--no-history": true, "--persistent": true, "--stdin": true,
+		"--force": true, "--history": true, "--no-history": true,
+		"--persistent": true, "--stdin": true,
 	},
 	"close": {
 		"--claim-next": true, "--continue": true, "-f": true, "--force": true,
@@ -143,8 +192,13 @@ var boolFlagsBySub = map[string]map[string]bool{
 		"--claim": true, "--explain": true, "--gated": true, "--include-deferred": true,
 		"--include-ephemeral": true, "--plain": true, "--pretty": true, "-u": true, "--unassigned": true,
 	},
+	// --deps is registered as a String but carries NoOptDefVal="scheduling", so
+	// a bare --deps consumes nothing and the token after it stays positional.
+	// Filed here rather than with the value flags for that reason -- `bd list
+	// --help` prints "--deps string" and would put it in the wrong set.
 	"list": {
-		"--all": true, "--deferred": true, "--empty-description": true, "--flat": true,
+		"--all": true, "--deferred": true, "--deps": true,
+		"--empty-description": true, "--flat": true,
 		"--include-gates": true, "--include-infra": true, "--include-templates": true,
 		"--long": true, "--no-assignee": true, "--no-labels": true, "--no-pager": true,
 		"--no-parent": true, "--no-pinned": true, "--overdue": true, "--pinned": true,
@@ -164,7 +218,7 @@ var boolFlagsBySub = map[string]map[string]bool{
 		"--dry-run": true, "--root-only": true,
 	},
 	"mol burn": {
-		"--dry-run": true, "--force": true,
+		"--dry-run": true, "--force": true, "-y": true, "--yes": true,
 	},
 	"gate check": {
 		"--dry-run": true, "-e": true, "--escalate": true,

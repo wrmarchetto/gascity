@@ -38,27 +38,34 @@ func parseHelpFlagNames(help string) map[string]bool {
 	return names
 }
 
-// TestBdFlagManifestCurrent guards against the bd CLI growing a flag that
-// this package's hardcoded manifest doesn't know about. It shells the real
-// installed bd binary's --help output per known subcommand and fails
-// loudly — fail-closed, the same posture as bdMutationWriteIDs in
-// cmd/gc/cmd_bd.go — if the live CLI declares a flag the manifest is
-// MISSING.
+// TestBdFlagManifestCurrent reports skew between the manifest and the bd
+// binary on PATH, which can be NEWER than the beads version go.mod pins. It
+// shells that binary's --help output per known subcommand and fails if the
+// live CLI declares a flag the manifest is MISSING.
+//
+// It is NOT the authority on manifest currency and must not be treated as
+// one: flags_source_test.go is, deriving every manifest from the pinned bd
+// source with no binary and no skip. This check exists for the one thing the
+// source cannot answer -- whether the bd the fleet actually runs has moved
+// ahead of the pin. Its skip is acceptable only because of that division; it
+// was the whole gate once, and being behind a tag and on a skip is how the
+// manifest came to be missing flags on all 17 known subcommands (gs-9zu).
+//
+// It also cannot see a MarkHidden'd flag at all, so a green run here says
+// nothing about the hidden aliases bd registers on close, create and update.
 //
 // It deliberately does not fail on the reverse (the manifest listing flags
-// the installed bd lacks). The manifest is intentionally the newest-known
-// superset of bd's flags — see its dated-provenance comment — and its two
-// consumers, the `gc lint` bd-flag check (scan.go) and the cmd_bd
-// write-mutation ID guard, only misbehave when a real flag is missing from
-// the manifest, never when the manifest is ahead of the installed bd. The
-// bd binary is version-pinned independently of the manifest's provenance:
-// CI installs the stable bd release via BD_VERSION while the manifest
-// tracks the newer bd the fleet runs, so a manifest ahead of the installed
-// bd is expected and benign. That skew is reported, not failed.
+// the installed bd lacks). The manifest is a superset allowlist, and its two
+// consumers -- the `gc lint` bd-flag check (scan.go) and the cmd_bd
+// write-mutation ID guard -- only misbehave when a real flag is MISSING from
+// it, never when it is ahead. CI installs the stable bd release via
+// BD_VERSION while the manifest tracks the pinned beads module, so a manifest
+// ahead of the installed bd is expected and benign. That skew is reported,
+// not failed.
 //
-// If bd is not in PATH, the test is skipped with a clear message rather
-// than failing, since manifest currency can't be checked without a bd
-// binary to check it against.
+// If bd is not in PATH the check is skipped, which is tolerable ONLY because
+// flags_source_test.go answers manifest currency without a binary and never
+// skips. Do not restore this file to being the only flag gate.
 func TestBdFlagManifestCurrent(t *testing.T) {
 	bdPath, err := exec.LookPath("bd")
 	if err != nil {
