@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-qcu 2026-09-08T19:04:29Z
+last_seen: gs-d76 2026-09-08T19:20:20Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3919,6 +3919,39 @@ No epic promoted and no DECOMP sent: the roadmap holds no status:open
 epic, and mayor-slack-bridge is already in-progress alongside governor by
 design (pm-log #59). The summons body's "Other open epics:
 mayor-slack-bridge" line remains stale on that same point, as #107-#118
+noted repeatedly. No new pm-open entry: pm-open #2(a) already reads "the
+wait is purely human" as of #102, unchanged this turn.
+
+Source: roadmap governor
+
+## 120. pm-epic-close gs-d76: governor stays in-progress; no drift from #119 (2026-09-08)
+
+Hundred-and-fifth ruling of this shape (pm-log #5 gs-8iv through #119
+gs-qcu), re-verified live at 19:19Z rather than recalled. The closed set
+under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 --
+5 closed, 0 open, 0 in progress; criteria 1-6 verified in their close
+reasons pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7,
+read live in the city store: still OPEN, assignee human, notes tail
+unchanged since #119 -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past
+Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN,
+labels gate-no-readback and operator-paged, still blocking ci-waw3o7 (the
+one entry under its depends-on), description unchanged from #102's
+rewrite. Per pm-log #4 governor stays in-progress and the bead that
+reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-qcu, set at pm-log #119 at 19:04:29Z): the
+updated-after listing against that stamp, swept across all statuses,
+returns gs-d76 (this claim, in_progress), gs-qcu (its own close, pm-log
+#119), and gs-bv0 (P2 bug, newCityRuntime empty-CityPath sweep hazard,
+assignee gascity/lab.engineer-codex-1, in_progress with an expired lease
+heartbeating 8 minutes back) -- ordinary engineer activity, not a PM
+matter. No other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open
+epic, and mayor-slack-bridge is already in-progress alongside governor by
+design (pm-log #59). The summons body's "Other open epics:
+mayor-slack-bridge" line remains stale on that same point, as #107-#119
 noted repeatedly. No new pm-open entry: pm-open #2(a) already reads "the
 wait is purely human" as of #102, unchanged this turn.
 
