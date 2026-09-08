@@ -450,3 +450,29 @@ func TestUnclaimableWorkReportsAnUnanswerableStoreAsUnknown(t *testing.T) {
 		})
 	}
 }
+
+// TestUnclaimableWorkIsNotSwampedByInboundChatTranscripts pins the composition:
+// the extmsg exclusion has to survive all the way to the reported set, not just
+// to classifyBacklog. A transcript bead has no assignee and no route, which is
+// exactly the shape this check reports, so nothing but the work predicate keeps
+// it out -- and on 2026-09-08 nothing did: 101 of the 108 rows it named were
+// inbound Slack messages and the three real findings were unreadable under them
+// (ci-3bktll).
+//
+// The real row is here for the same reason: an exclusion that also hid W-1
+// would turn a swamped instrument into a silent one, which is the worse of the
+// two failures.
+func TestUnclaimableWorkIsNotSwampedByInboundChatTranscripts(t *testing.T) {
+	got := unclaimableIDs(t, poolAgentCfg(4), []beads.Bead{
+		{
+			ID: "T-1", Title: "slack/default/C0C0JPH5E2Y#3", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-transcript"},
+		},
+		{
+			ID: "T-2", Title: "slack/default/C0C0JPH5E2Y/state", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-transcript-state"},
+		},
+		{ID: "W-1", Title: "forgotten route", Type: "task", Status: "open"},
+	}, nil)
+	assertUnclaimable(t, got, "W-1")
+}
