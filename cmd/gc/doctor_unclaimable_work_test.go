@@ -301,6 +301,38 @@ func TestUnclaimableWorkPassesNonClaimableBacklog(t *testing.T) {
 	assertUnclaimable(t, got)
 }
 
+// TestUnclaimableWorkPassesExtmsgFabricRows reproduces the three rows a Slack
+// adapter left behind on 2026-09-08 (ci-fdr7cf) and requires the check to pass
+// over them while still reporting a real doorless bead standing beside them.
+//
+// The fixture is the observed shape, not a reduced one: type "task", no
+// assignee, no route, no description, titled the way the fabric titles its
+// rows. That is indistinguishable from work nobody picked up on every field
+// the check reads, which is why the check was right to fire and why the fix
+// had to be the ready-exclusion label rather than anything here.
+//
+// W-1 is the half that makes this a test rather than an assertion that the
+// check reports nothing: an exclusion wide enough to swallow it would pass an
+// extmsg-only fixture.
+func TestUnclaimableWorkPassesExtmsgFabricRows(t *testing.T) {
+	got := unclaimableIDs(t, poolAgentCfg(4), []beads.Bead{
+		{
+			ID: "X-1", Title: "slack/default/C0C0JPH5E2Y", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-binding"},
+		},
+		{
+			ID: "X-2", Title: "mayor -> slack/default/C0C0JPH5E2Y", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-membership"},
+		},
+		{
+			ID: "X-3", Title: "slack/default/C0C0JPH5E2Y/state", Type: "task", Status: "open",
+			Labels: []string{"gc:extmsg-transcript-state"},
+		},
+		{ID: "W-1", Title: "forgotten route", Type: "task", Status: "open"},
+	}, nil)
+	assertUnclaimable(t, got, "W-1")
+}
+
 // TestUnclaimableWorkExcludesTopologyWithoutHidingTasks pins the workflow
 // topology boundary: generated specs and machine-closed gates carry structure,
 // not work an agent may claim. An ordinary ready task alongside them must still

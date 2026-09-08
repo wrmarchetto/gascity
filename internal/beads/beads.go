@@ -493,8 +493,8 @@ func IsReadyExcludedBead(b Bead) bool {
 }
 
 // HasReadyExcludedLabel reports whether a bead carries a label that marks it
-// as infrastructure bookkeeping (session continuity, order tracking) rather
-// than actionable Ready work. Distinct from IsReadyExcludedType: a bead may be
+// as infrastructure bookkeeping (session continuity, order tracking,
+// external-messaging fabric rows) rather than actionable Ready work. Distinct from IsReadyExcludedType: a bead may be
 // label-excluded regardless of its type. Callers that have already constrained
 // the bead's type (e.g. iterating known-convoy beads) use this to test only
 // the label dimension.
@@ -502,6 +502,30 @@ func HasReadyExcludedLabel(b Bead) bool {
 	for _, label := range b.Labels {
 		switch label {
 		case "gc:session", "gc:order-tracking", "order-tracking":
+			return true
+		// The external-messaging fabric's locator labels, one per family.
+		// Every row internal/extmsg writes is type "task" with no assignee
+		// and no description, so nothing about its shape tells it apart from
+		// work nobody has picked up: a Slack adapter created and deleted
+		// inside eight seconds on 2026-09-08 left a binding, a membership and
+		// a transcript-state row that the city's unclaimable-work check then
+		// counted as three claimable beads reaching no pool door (ci-fdr7cf).
+		//
+		// Enumerated rather than tested with strings.HasPrefix on
+		// "gc:extmsg-", which is what a reader would reach for and is a
+		// second copy of a set internal/extmsg owns -- beads must stay a leaf
+		// (extmsg imports it), so importing the constants is not available.
+		// TestEveryExtmsgLocatorLabelIsReadyExcluded in that package holds the
+		// copy in step by scanning extmsg's own source, and reddens on a new
+		// family the moment its literal is written.
+		case "gc:extmsg-binding",
+			"gc:extmsg-delivery",
+			"gc:extmsg-group",
+			"gc:extmsg-group-participant",
+			"gc:extmsg-participant",
+			"gc:extmsg-membership",
+			"gc:extmsg-transcript",
+			"gc:extmsg-transcript-state":
 			return true
 		}
 	}
