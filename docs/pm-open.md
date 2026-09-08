@@ -97,6 +97,17 @@ descent-is-not-coverage standard that kept gs-z39 out of epic:governor. The
 standing question below is unchanged, and the class growing to five is
 itself evidence for settling it.
 
+Update 2026-09-07 (pm-log #77): gs-a6j (widen the shell-lint sweep to the
+pack scripts the SDK ships) joins the class, sixth after gs-z39, gs-c6f,
+gs-eep, gs-olu, and gs-dzj. Summons gs-153 ruled it standalone: gs-a6j is
+gs-dzj's own widening, scoped from scripts/ and .githooks/ out to
+internal/bootstrap/packs, the SDK-shipped pack scripts (one carries a live
+rm -rf hazard on two possibly-empty variables) -- and neither epic names
+shell-lint sweep scope in its acceptance criteria. One link further down a
+chain pm-log #73 already placed outside the roadmap, not a fresh descent
+question. The class growing to six is itself further evidence for settling
+the standing question below.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?

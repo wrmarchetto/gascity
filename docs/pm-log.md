@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-0gj 2026-09-08T01:21:22Z
+last_seen: gs-153 2026-09-08T01:30:18Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2326,3 +2326,45 @@ assessment layer, and a governor that assesses then reports something else
 is mechanically unobservable today.
 
 Source: roadmap governor
+
+## 77. epic-unmapped gs-153: gs-a6j ruled standalone, sixth of the pm-open #3 class (2026-09-07)
+
+Sweep summons gs-153 caught open work bead gs-a6j (widen the shell-lint
+sweep to the pack scripts the SDK ships -- one carries rm -rf on two
+possibly-empty variables, P2, in_progress, assignee gascity/lab.engineer-1)
+carrying no epic:<slug> label. Ruled standalone and labeled this turn; the
+label is verified present on the bead.
+
+gs-a6j's own description names its lineage directly: gs-dzj (pm-log #73)
+landed scripts/check-shell-lint.sh scoped to scripts/ and .githooks/ only,
+so a shellcheck finding anywhere else in the tree was refused by nothing;
+gs-a6j is the widening of that same sweep to internal/bootstrap/packs, the
+subset that ships to users in the core pack. The bead's own measured
+finding is the reason it is a bead and not a note: jsonl-export.sh line 705
+runs `rm -rf "$ARCHIVE_REPO/$db"`, and with both variables empty that is
+`rm -rf /` shipped in code the SDK distributes.
+
+Why not epic:governor or epic:mayor-slack-bridge: neither epic's acceptance
+criteria mention shell-lint sweep scope, and gs-a6j touches neither bridge
+code nor governor behavior -- it hardens a repo-wide tooling gate gs-dzj
+itself already established as out-of-epic (pm-log #73). This is not the
+gs-fn6 shape (pm-log #69, placed IN mayor-slack-bridge because criterion 8
+closed over that specific gate hole): gs-a6j's hole is in a pack script's
+own argument handling, not in the bridge's alerts/secrets guarantees.
+Descent from an already-standalone bead is not coverage by itself either,
+so this ruling re-applies pm-log #73's standard rather than inheriting
+gs-dzj's label by proximity.
+
+Why standalone rather than opening the epic it implies: substrate tooling
+of exactly the pm-open #3 class, joining gs-z39, gs-c6f, gs-eep, gs-olu,
+and gs-dzj as sixth member. pm-open #3 updated in this commit; no new
+courtesy ping, since that entry's ping was delivered once at its creation
+(pm-log #15) and a second page for the same standing question would be a
+re-page of something Willie already has parked (pm-log #16 precedent).
+Summons gs-153 closed with this verdict. The bead stays in_progress on its
+assignee and this ruling does not touch its dispatch -- though its lease
+reads expired (heartbeat ~19 minutes back at claim time), which is a
+patrol/mayor matter, not a PM edit, noted here only because pm-log #7-#11
+tracked the same class of fault under gs-hph.
+
+Source: pm-log #73
