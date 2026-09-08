@@ -1714,6 +1714,34 @@ func (cr *CityRuntime) orderTrackingSweepStores() ([]beads.Store, []orderTrackin
 			store = rigStores[sweepTarget.target.RigName]
 		}
 		if store == nil {
+			// A target with no scope root has no location to open, and the
+			// real opener does NOT fail on one: openStoreAtForCity ->
+			// openStoreResultAtForCityWithConfig substitutes
+			// cityForStoreDir("") (main.go:1403), which walks up from the
+			// PROCESS CWD looking for a city marker (bd_env.go:1859,
+			// city_discovery.go:25). Under `go test` that cwd is the package
+			// source directory, so the reachable outcomes are a managed dolt
+			// server spawned into the source tree, or -- when a real city
+			// encloses the checkout -- an open against THAT city's store,
+			// which both watchdogs then mutate. Measured 2026-09-08: the
+			// retention watchdog reached a live city and listed 76364 closed
+			// order-tracking runs (bead gs-mns).
+			//
+			// Declining rather than erroring: an unscoped target is nothing
+			// to sweep, not a failure, and the callers treat a non-nil error
+			// as one worth printing. The rig arm already skips an empty
+			// rig.Path when building targets (order_store.go:600); this is
+			// the same absence, never applied to the city arm.
+			//
+			// The refusal is deliberately here and NOT in
+			// orderTrackingSweepTargetsForConfig. Dropping the city target
+			// whenever cityPath is empty would also drop it for a
+			// CityRuntime holding an in-memory standaloneCityStore, which is
+			// how the watchdog suites exercise the sweep at all -- they would
+			// then sweep nothing and pass.
+			if strings.TrimSpace(sweepTarget.target.ScopeRoot) == "" {
+				return nil, nil
+			}
 			fresh, openErr := newCityRuntimeOpenSweepStore(sweepTarget.target.ScopeRoot, cr.cityPath)
 			if openErr == nil {
 				freshlyOpened = append(freshlyOpened, fresh)

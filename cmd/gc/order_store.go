@@ -673,6 +673,17 @@ func orderTrackingSweepStoresFromTargets(targets []orderTrackingSweepTarget, ope
 			errs = append(errs, fmt.Errorf("opening %s order store: %w", sweepTarget.label, err))
 			continue
 		}
+		// A nil store with a nil error is the opener DECLINING this target --
+		// it has no scope root to open. It must be skipped and not wrapped:
+		// orderTrackingSweepScopedStore embeds beads.Store, so a nil inner
+		// store still yields a non-nil interface value that sails through
+		// every `store == nil` guard in the sweep functions
+		// (sweepClosedOrderTrackingRetentionBounded,
+		// sweepStaleOrderTrackingWithOptionsLimit) and nil-panics inside one
+		// of them instead.
+		if store == nil {
+			continue
+		}
 		stores = append(stores, orderTrackingSweepScopedStore{
 			Store: store,
 			label: sweepTarget.label,
