@@ -214,17 +214,26 @@ func TestReconcileCompletedStoresStaysStatelessAcrossCalls(t *testing.T) {
 	// independent pass. A memo hidden in package state would make the second
 	// call's 0 mean "skipped" instead of "nothing to repair", and every
 	// existing caller and test reads that 0 as the latter.
+	// THREE calls, not two, and the third is the one that matters. A memo
+	// hidden in package state would not show up by the second call either:
+	// the first call emits, and a pass that emitted deliberately does not
+	// settle, so the second call walks fully whether the memo is shared or
+	// not. Two calls left this guard alive through a mutation sweep on
+	// 2026-09-08; the third call is what kills it.
 	graph, recorder, _ := settledFixture(t)
 	stores := []beads.GraphStore{{Store: graph}}
 	if got := ReconcileCompletedStores(recorder, stores, "execution-reconcile"); got != 1 {
 		t.Fatalf("first ReconcileCompletedStores = %d, want 1", got)
 	}
-	before := graph.metadataScans
 	if got := ReconcileCompletedStores(recorder, stores, "execution-reconcile"); got != 0 {
 		t.Fatalf("second ReconcileCompletedStores = %d, want 0", got)
 	}
+	before := graph.metadataScans
+	if got := ReconcileCompletedStores(recorder, stores, "execution-reconcile"); got != 0 {
+		t.Fatalf("third ReconcileCompletedStores = %d, want 0", got)
+	}
 	if walked := graph.metadataScans - before; walked < 2 {
-		t.Fatalf("second stateless call made %d scans, want a full walk: "+
+		t.Fatalf("third stateless call made %d scans, want a full walk: "+
 			"it must not inherit another call's memo", walked)
 	}
 }
