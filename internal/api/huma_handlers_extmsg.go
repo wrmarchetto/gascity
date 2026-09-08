@@ -575,6 +575,37 @@ func (s *Server) humaHandleExtMsgAdapterRegister(_ context.Context, input *ExtMs
 }
 
 // humaHandleExtMsgAdapterUnregister is the Huma-typed handler for DELETE /v0/extmsg/adapters.
+//
+// DELETE removes a TRANSPORT, not a CONVERSATION. The binding, its transcript
+// membership and the conversation transcript state deliberately survive it,
+// and nothing here reaches the bead store.
+//
+// The alternative a future editor will reach for is reaping the conversation
+// rows here, on the reading that the adapter going away means the conversation
+// is over. It does not, and the reaping version breaks two things. First, the
+// registry is in-memory and does not survive a controller restart
+// (internal/extmsg/adapter_registry.go), so out-of-process adapters
+// re-register on every reconnect; reaping would make an explicit disconnect
+// destructive while the identical crash path stays harmless. Second, rows are
+// keyed on ConversationRef and AdapterKey is exactly its {Provider, AccountID}
+// prefix, so a re-POST resumes them intact -- that resumption is the reconnect
+// contract. A caller that really means "this binding is over" has its own
+// verb, POST /extmsg/unbind, so nothing is unreachable under this reading.
+//
+// What this contract does NOT buy: changing a conversation's target across a
+// reconnect. Bind conflicts when the new target differs from the active one,
+// and replace=true is reachable only over HTTP -- contrib/openclaw-bridge
+// never sends it and gc extmsg bind has no --replace -- so a bridge pointed
+// at a different agent hits a permanent 409 its retry loop reads as
+// transient. That is a caller-side gap, tracked separately; it is not a
+// reason to reap here.
+//
+// Pinned by TestExtMsgAdapterDeleteLeavesConversationStateIntact and
+// TestExtMsgReconnectRebindsSameAgentWithoutReplace.
+//
+// events.ExtMsgAdapterRemoved has no subscriber, and is not meant to. Events
+// here are best-effort infrastructure records for humans and agents to watch
+// (see the internal/events package doc), never a work-dispatch path.
 func (s *Server) humaHandleExtMsgAdapterUnregister(_ context.Context, input *ExtMsgAdapterUnregisterInput) (*OKResponse, error) {
 	reg, err := s.humaExtmsgAdapterRegistry()
 	if err != nil {

@@ -682,6 +682,16 @@ Phase 1 retention defaults:
 - closed group participant beads: purge after 30 days
 - closed group beads: purge after 90 days
 
+Transcript state is deliberately absent from that list. A
+`gc:extmsg-transcript-state` row is permanent for the life of its
+conversation: it carries `next_sequence` and
+`earliest_available_sequence`, `findStateLocked` skips closed rows, and
+`ensureState` recreates a missing row at `next_sequence = 1`. Closing one
+while any transcript entry survives therefore hands the conversation a
+second entry numbered 1. Nothing closes it today -- not `Unbind()`, which
+closes only the binding and its membership -- and nothing should. A
+retention rule for it needs a transcript-entry purge to key off first.
+
 Expiry enforcement:
 
 - `ResolveByConversation` treats an expired binding as a miss
@@ -689,6 +699,45 @@ Expiry enforcement:
 - `Unbind()` closes the binding before returning and then attempts
   synchronous delivery cleanup; a cleanup failure leaves stale delivery
   state to be reaped lazily on the next `Resolve()`
+
+### Adapter lifecycle vs conversation lifecycle
+
+`DELETE /v0/extmsg/adapters` removes a transport. It does NOT end
+conversations: the binding, its transcript membership and the transcript
+state all survive, and the handler never touches the bead store.
+
+The adapter registry is in-memory and does not survive a controller
+restart, so out-of-process adapters re-register routinely. A DELETE that
+reaped conversation rows would make an explicit disconnect destructive
+while the identical crash path stayed harmless, and would reset transcript
+sequence numbering on every reconnect. Rows are keyed on `ConversationRef`
+and `AdapterKey` is exactly its `{Provider, AccountID}` prefix, so a
+re-POST of the same provider/account resumes them intact.
+
+Two consequences worth stating, because both have been read as defects:
+
+- A surviving binding does not block the reconnect idiom. `Bind()`
+  conflicts only when the new target DIFFERS from the active one, so
+  re-binding the same agent or session succeeds. Confirmed live on
+  2026-09-08: `.gc/events.jsonl` carries one `adapter_removed` at 16:55:32
+  and a successful `extmsg.bound` for the same conversation and agent at
+  17:31:40.
+- Changing the target IS gated, and the gate is currently unreachable from
+  the callers that need it. `replace=true` exists on the HTTP bind body
+  and nowhere else: `contrib/openclaw-bridge` never sends it, and
+  `gc extmsg bind` has no `--replace` (`gc extmsg handoff` covers only
+  agent targets, not session ones). So reconfiguring a bridge onto a
+  different agent hits a permanent 409 that its retry loop treats as
+  transient. Do not cite `replace` as the answer to a conflict without
+  checking that the caller in question can actually send it.
+- A session-scoped binding has one more conflict window the agent-scoped
+  case does not: a respawned session gets a fresh bead ID, so a bind with
+  the new ID conflicts until the reaper reassigns.
+- With no adapter registered, outbound publish fails loudly with
+  `no adapter for <provider>/<account>` and heals the moment one
+  re-registers. Nothing is silently dropped.
+
+A caller that means "this binding is over" uses `POST /extmsg/unbind`.
 
 ## Routing Model
 
