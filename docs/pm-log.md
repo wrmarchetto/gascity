@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-8tm 2026-09-08T14:26:28Z
+last_seen: gs-c3q 2026-09-08T14:42:27Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3414,6 +3414,43 @@ substantive change visible -- close reason unchanged, newest note still
 2026-09-05, no epic label. Metadata touch, operational noise; no action
 mine. gs-a6j did not move this interval. No other bead in this rig's store
 changed.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). No new pm-open entry: pm-open #2(a) already reads "the wait
+is purely human" as of #102, and nothing advanced past that this turn.
+
+Source: roadmap governor
+
+## 105. pm-epic-close gs-c3q: governor stays in-progress; drift: gs-bkb filed (2026-09-08)
+
+Ninetieth ruling of this shape (pm-log #5 gs-8iv through #104 gs-8tm),
+re-verified live at 14:42Z rather than recalled. The closed set under
+epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 -- 5
+closed, 0 open; criteria 1-6 verified in their close reasons pm-log #5,
+criterion 7's interval record pm-log #102). ci-waw3o7, read live in the
+city store: still OPEN, assignee human, carrying the gs-r76 interval record
+in its notes and no answer past Willie's 2026-09-05T20:14Z NOT YET; the
+notes now end on the ci-lbaesr addendum, which gates trusting failed-wake
+in later records, not his answer. Gate ci-gbhkpa, read live: still OPEN,
+labels gate-no-readback and operator-paged, still blocking ci-waw3o7,
+description unchanged from #102's rewrite. Per pm-log #4 governor stays
+in-progress and the bead that reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-8tm, set at pm-log #104): the updated-after
+listing against the 2026-09-08T14:26:28Z stamp returns exactly gs-c3q
+(this claim, in_progress) and gs-bkb. gs-bkb is NEW: a P2 bug bead filed
+by toolsmith-1, assignee toolsmith -- beadFormulaName in
+cmd/gc/cmd_formula.go reads bead.Ref before gc.formula_name, so
+version-check on a retry bead hands formula.Compile a step ref and reports
+a missing formula instead of a hash verdict. Its provenance is the
+superseded fix/gs-hph-formula-version-check salvage branch (the gs-z39 /
+pm-open #3 lineage), and its citation of gs-hph
+gc.merge_disposition=superseded is consistent with #104's
+otherwise-unexplained gs-hph metadata touch. Substrate bug with no epic
+label, owned and queued to the toolsmith: nothing is mine this turn.
+Placement, if it needs a ruling, arrives as the label sweep's own summons,
+and pm-open #3 already carries the class question.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress alongside governor by design
