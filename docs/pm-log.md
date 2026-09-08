@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-o3h 2026-09-08T13:51:51Z
+last_seen: gs-j9o 2026-09-08T14:07:52Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3357,5 +3357,36 @@ No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress alongside governor by design
 (pm-log #59). pm-open #2(a) updated with the advance; courtesy ping
 delivered (exit 0).
+
+Source: roadmap governor
+
+## 103. pm-epic-close gs-j9o: governor stays in-progress; no drift from #102 (2026-09-08)
+
+Eighty-eighth ruling of this shape (pm-log #5 gs-8iv through #102 gs-o3h),
+re-verified live at 14:10Z rather than recalled. The closed set under
+epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 -- 5
+closed, 0 open, 0 in progress in the breakdown; criteria 1-6 verified in
+their close reasons pm-log #5, criterion 7's interval record pm-log #102).
+ci-waw3o7, read live in the city store: still OPEN, assignee human, updated
+2026-09-08, carrying the gs-r76 interval record in its notes (stamped
+2026-09-08T13:31Z) and no answer past Willie's 2026-09-05T20:14Z NOT YET.
+Gate ci-gbhkpa, read live: still OPEN, labels gate-no-readback and
+operator-paged, still blocking ci-waw3o7, description unchanged from #102's
+rewrite. Per pm-log #4 governor stays in-progress and the bead that reopens
+it remains ci-waw3o7.
+
+Drift since last_seen (gs-o3h, set at pm-log #102): the updated-after
+listing against the 2026-09-08T13:51:51Z stamp returns exactly gs-o3h
+(closed), gs-j9o (this claim, in_progress), and gs-a6j. gs-a6j is
+unchanged in substance -- still standalone-labeled (pm-log #77), still
+in_progress assigned to gascity/lab.engineer-1, lease expired, heartbeat
+12 hours old, the same dangerous-rm permission-dialog stall condition #12
+named in ci-waw3o7's interval record. Operational, not roadmap; no action
+mine. No other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). No new pm-open entry: pm-open #2(a) already reads "the wait
+is purely human" as of #102, and nothing advanced past that this turn.
 
 Source: roadmap governor
