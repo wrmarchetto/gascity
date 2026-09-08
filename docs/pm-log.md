@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-c3q 2026-09-08T14:42:27Z
+last_seen: gs-0lj 2026-09-08T14:58:42Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3451,6 +3451,39 @@ otherwise-unexplained gs-hph metadata touch. Substrate bug with no epic
 label, owned and queued to the toolsmith: nothing is mine this turn.
 Placement, if it needs a ruling, arrives as the label sweep's own summons,
 and pm-open #3 already carries the class question.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). No new pm-open entry: pm-open #2(a) already reads "the wait
+is purely human" as of #102, and nothing advanced past that this turn.
+
+Source: roadmap governor
+
+## 106. pm-epic-close gs-0lj: governor stays in-progress; drift: gs-bkb closed fixed (2026-09-08)
+
+Ninety-first ruling of this shape (pm-log #5 gs-8iv through #105 gs-c3q),
+re-verified live at 14:59Z rather than recalled. The closed set under
+epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 -- 5
+closed, 0 open, 0 in progress; criteria 1-6 verified in their close reasons
+pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7, read live
+in the city store: still OPEN, assignee human, updated 2026-09-08, carrying
+the gs-r76 interval record in its notes (stamped 2026-09-08T13:31Z) and no
+answer past Willie's 2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live:
+still OPEN, labels gate-no-readback and operator-paged, still blocking
+ci-waw3o7, description unchanged from #102's rewrite. Per pm-log #4 governor
+stays in-progress and the bead that reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-c3q, set at pm-log #105): the updated-after
+listing against the 2026-09-08T14:42:27Z stamp, swept across all five
+statuses, returns exactly gs-c3q (the prior summons, closed 14:46Z), gs-0lj
+(this claim, in_progress), and gs-bkb. gs-bkb -- the P2 version-check bug
+#105 recorded as newly filed -- is now CLOSED by toolsmith-1: fixed on
+gascity branch fix/gs-bkb-version-check-metadata-first commit 7ce7ae31c,
+test-first with the red run recorded, whole-package go test and vet clean,
+upstream probe declared. Standalone-class substrate bug (pm-open #3
+lineage), no epic label, owned end to end by the toolsmith: nothing is mine
+this turn. Placement, if the label sweep wants a ruling, arrives as its own
+summons. No other bead in this rig's store moved.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress alongside governor by design
