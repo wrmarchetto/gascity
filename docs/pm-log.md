@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-w5l 2026-09-08T00:44:58Z
+last_seen: gs-dug 2026-09-08T01:02:58Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2245,5 +2245,43 @@ turn). No new pm-open entry: the wait is pm-open #2(a) and #2(b) was closed
 by pm-log #59. Residuals in pm-log #5 stand: no scheduled wake has yet run
 WITH the assessment layer, and a governor that assesses then reports
 something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 75. pm-epic-close gs-dug: governor stays in-progress; drift is gs-fn6 landing (2026-09-07)
+
+Sixty-first ruling of this shape, filed seventeen minutes after gs-w5l
+(pm-log #74). Re-verified against the stores this turn at 01:05Z rather than
+recalled: the closed set under epic:governor is unchanged (gs-o9i, gs-x0k,
+gs-xeh, gs-nun -- criteria 1-6 verified in their close reasons, pm-log #5),
+and ci-waw3o7, read live in the city store, matches the #65-#74 readings
+exactly -- OPEN, updated 2026-09-07T21:02Z, owner gascity/lab.engineer-1,
+assignee human, gate ci-gbhkpa still OPEN on its DEPENDS ON line. Per pm-log
+#4 governor stays in-progress and the bead that reopens it remains
+ci-waw3o7.
+
+Drift since last_seen, with a correction to the query that finds it: a bare
+`bd list` excludes closed beads, so the first sweep saw only this summons.
+Re-run including closed: gs-w5l closed 00:47Z (pm-log #74's own turn),
+gs-fn6 closed 00:49:38Z, and its convoy gs-e5n drained 00:49:41Z. gs-fn6
+(epic:mayor-slack-bridge, placed by pm-log #69) landed all five dropped
+bridge-isolation refusals plus the channel-id widening on e73943b09, pushed,
+push-gate sweep green. Its one recorded deviation: the alert-knob hole is
+closed by boundary-matching SLACK_BOT_TOKEN over the whole scan set instead
+of origin's comm -12 intersection, strictly broader, with both spellings
+pinned as cases so the narrower form cannot return unnoticed.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question). No epic promoted and no
+DECOMP sent: the roadmap holds no status:open epic, and mayor-slack-bridge
+is in-progress with live work (gs-z09 round-trip demo and gs-228 operator
+provisioning open, re-read this turn; gs-fn6 closed as above). No new
+pm-open entry: the wait is pm-open #2(a) and #2(b) was closed by pm-log #59.
+Residuals in pm-log #5 stand: no scheduled wake has yet run WITH the
+assessment layer, and a governor that assesses then reports something else
+is mechanically unobservable today.
 
 Source: roadmap governor
