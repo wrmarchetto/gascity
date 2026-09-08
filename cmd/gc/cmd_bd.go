@@ -540,6 +540,14 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	if runUpstreamProbeCloseGate(bdArgs, guardStore, guardBeads, stderr) {
 		return 1
 	}
+	// Reason-discard gate (ci-yh6v84): beads' close is guarded by the row's own
+	// status, so a re-close discards a new --reason while printing success and
+	// exiting 0. Refuse rather than forward, and reuse the beads the write-ID
+	// guard already read for their status. Runs after the gates above so a
+	// close that fails a contract fails on the contract, not on its reason.
+	if runCloseReasonDiscardGate(bdArgs, cityPath, guardBeads, target.ScopeRoot, stderr) {
+		return 1
+	}
 
 	reapStaleBdExportJSONL(target.ScopeRoot)
 	warnExternalBdOverrideDrift(stderr, cityPath, target)
