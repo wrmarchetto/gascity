@@ -88,6 +88,32 @@ func extractBeadID(t *testing.T, jsonOut string) string {
 	return issue.ID
 }
 
+// closeReasonOf returns the close_reason bd currently stores for id. bd show
+// --json emits an ARRAY even for one id, so decoding into a bare object yields
+// the zero value and reads every stored reason as empty.
+func closeReasonOf(t *testing.T, dir, id string) string {
+	t.Helper()
+	out := requireBD(t, dir, "show", "--json", id)
+	idx := strings.Index(out, "[")
+	if idx < 0 {
+		t.Fatalf("bd show returned no JSON array:\n%s", out)
+	}
+	var issues []struct {
+		ID          string `json:"id"`
+		CloseReason string `json:"close_reason"`
+	}
+	if err := json.Unmarshal([]byte(out[idx:]), &issues); err != nil {
+		t.Fatalf("parsing bd show --json: %v\n%s", err, out)
+	}
+	for _, issue := range issues {
+		if issue.ID == id {
+			return issue.CloseReason
+		}
+	}
+	t.Fatalf("bd show returned no row for %s:\n%s", id, out)
+	return ""
+}
+
 // --- Contract tests ---
 
 // TestBdBasicCRUD exercises all basic CRUD operations against a single
@@ -566,6 +592,50 @@ func TestBdBasicCRUD(t *testing.T) {
 		}
 		if issues[0].Status != "closed" {
 			t.Fatalf("bead status after close = %q, want %q", issues[0].Status, "closed")
+		}
+	})
+
+	// CloseReasonRewriteIsDiscarded characterizes an upstream DEFECT, not a
+	// behavior gastown wants: `bd close --reason` against an already-closed
+	// issue prints its success line naming the new reason, exits 0, and keeps
+	// the old reason in the store (ci-yh6v84). beads' close is one UPDATE
+	// guarded by the row's own status (internal/storage/issueops/close.go
+	// closeIssueInTx: `WHERE id = ? AND status != 'closed'`), so the
+	// close_reason write is discarded along with the redundant status write.
+	//
+	// It is asserted here BECAUSE it is a defect. gc works around it in
+	// cmd/gc/close_reason_discard_gate.go, and this test is that workaround's
+	// retirement experiment: it FAILS the moment a beads bump persists the new
+	// reason, which is the signal to delete the gate. Prose recording the same
+	// thing would expire silently, because every step that could notice it
+	// declares the file untouched.
+	//
+	// Assert on the STORED reason, never on bd's output: the output is the
+	// half that is already correct, and a test reading it passes over the
+	// defect entirely.
+	t.Run("CloseReasonRewriteIsDiscarded", func(t *testing.T) {
+		id := createBead(t, dir, "close reason rewrite bead")
+		const first = "first reason, the one that persists"
+		const second = "second reason, silently discarded upstream"
+
+		requireBD(t, dir, "close", id, "--reason", first)
+		if got := closeReasonOf(t, dir, id); got != first {
+			t.Fatalf("first close did not record its reason: got %q, want %q", got, first)
+		}
+
+		// Exits 0 and echoes `second`. Both are the defect, so neither is
+		// asserted -- only that bd does not refuse, which is what makes the
+		// discard silent.
+		requireBD(t, dir, "close", id, "--reason", second)
+
+		got := closeReasonOf(t, dir, id)
+		if got == second {
+			t.Fatalf("bd now persists a rewritten close reason (%q). Upstream fixed the defect "+
+				"cmd/gc/close_reason_discard_gate.go works around: delete that gate and its suite, "+
+				"then delete this subtest.", got)
+		}
+		if got != first {
+			t.Fatalf("re-close left a third value in close_reason: got %q, want either %q (still discarding) or %q (fixed upstream)", got, first, second)
 		}
 	})
 

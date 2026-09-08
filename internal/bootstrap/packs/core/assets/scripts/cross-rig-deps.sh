@@ -20,7 +20,11 @@ __SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$__SCRIPT_DIR/_bd_trace.sh" "cross-rig-deps"
 
-CITY="${GC_CITY:-.}"
+# No CITY here on purpose. Most scripts in this directory open with the
+# CITY="${GC_CITY:-.}" boilerplate because they build filesystem paths
+# from the city root; this one reaches the city only through `gc bd`,
+# which resolves it. Pasting the boilerplate back in reintroduces SC2034
+# and fails make check-shell-lint.
 LOOKBACK="${CROSS_RIG_LOOKBACK:-15m}"
 
 # Step 1: Find recently closed issues.

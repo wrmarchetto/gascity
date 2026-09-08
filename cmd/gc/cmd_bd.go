@@ -540,6 +540,14 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 	if runUpstreamProbeCloseGate(bdArgs, guardStore, guardBeads, stderr) {
 		return 1
 	}
+	// Reason-discard gate (ci-yh6v84): beads' close is guarded by the row's own
+	// status, so a re-close discards a new --reason while printing success and
+	// exiting 0. Refuse rather than forward, and reuse the beads the write-ID
+	// guard already read for their status. Runs after the gates above so a
+	// close that fails a contract fails on the contract, not on its reason.
+	if runCloseReasonDiscardGate(bdArgs, cityPath, guardBeads, target.ScopeRoot, stderr) {
+		return 1
+	}
 
 	reapStaleBdExportJSONL(target.ScopeRoot)
 	warnExternalBdOverrideDrift(stderr, cityPath, target)
@@ -953,8 +961,49 @@ func doBdReleaseIfCurrent(cityPath string, cfg *config.City, target execStoreTar
 		fmt.Fprintln(stdout, "released") //nolint:errcheck // best-effort stdout
 		return 0
 	}
-	fmt.Fprintln(stdout, "skipped") //nolint:errcheck // best-effort stdout
+	// The skip is diagnosed from the snapshot already read above, not from a
+	// second Get. A re-read would describe the store at a third moment and
+	// could report a holder that arrived after the CAS refused.
+	fmt.Fprintln(stdout, bdReleaseSkipReason(id, expectedAssignee, item, getErr != nil)) //nolint:errcheck // best-effort stdout
 	return 0
+}
+
+// bdReleaseSkipReason explains a release-if-current that changed nothing.
+//
+// beads.ReleaseIfCurrent answers (false, nil) for three unrelated conditions
+// -- the bead is gone, it holds no claim, or a DIFFERENT agent holds it -- and
+// this used to print one word for all three. The third is a displaced agent's
+// only contact with the truth: an operator assign takes a live claim
+// unconditionally (humaHandleBeadAssign, ci-q5spdz item 1), the former holder
+// is mid-turn believing it still owns the bead, and its hand-back is where it
+// finds out. ci-32fp1p decided the holder learns at the boundary it already
+// crosses rather than by mail or a nudge from inside a bead write, which makes
+// this string the notification and not merely a nicer log line.
+//
+// STATUS IS CHECKED BEFORE ASSIGNEE, and the order is the same judgment the
+// assign handler makes: an open bead carries an ADDRESS, not a claim, so
+// re-addressing parked work is routine and must not be reported as a
+// displacement. Only an in_progress claim was taken from anyone.
+//
+// Every line still begins with "skipped" so a caller matching the old
+// one-word output by prefix or substring keeps working. Pinned by
+// TestReleaseIfCurrentSkipKeepsItsFirstToken.
+func bdReleaseSkipReason(id, expectedAssignee string, item beads.Bead, missing bool) string {
+	if missing {
+		return fmt.Sprintf("skipped: bead %s does not exist in this store", id)
+	}
+	if item.Status != "in_progress" {
+		return fmt.Sprintf("skipped: %s is %s, not in_progress, so no claim was held", id, item.Status)
+	}
+	if held := strings.TrimSpace(item.Assignee); held != expectedAssignee {
+		return fmt.Sprintf("skipped: %s is held by %q, not %q -- that claim was taken over, so stop work on this bead and do not close or commit against it", id, held, expectedAssignee)
+	}
+	// The snapshot matched and the CAS still refused, so the assignee moved
+	// inside the window between them. Reported as its own outcome rather than
+	// folded into the displacement case above: the two need different next
+	// steps, and a caller told "held by X" when the snapshot said otherwise
+	// would be chasing a name this process never actually read.
+	return fmt.Sprintf("skipped: %s changed hands between the read and the write; re-run to see who holds it now", id)
 }
 
 func resolveBdCity(cityName string) (string, error) {

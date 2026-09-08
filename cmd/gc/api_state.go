@@ -93,9 +93,15 @@ type controllerState struct {
 	extmsgSvc              *extmsg.Services
 	adapterReg             *extmsg.AdapterRegistry
 	maintenanceLoop        *supervisor.StoreMaintenanceLoop // nil when [maintenance.dolt] enabled=false
-	updateMu               sync.Mutex                       // serializes rebuild+swap so stale reloads cannot overtake newer mutations
-	beadEventStartSeq      uint64
-	beadEventStartSeqOK    bool // false when LatestSeq errored at construction; 0+true = genuinely empty log
+	// executionReconciler carries the completion-fact pass's settled-root memo
+	// across patrol ticks. It has to live here rather than inside the phase:
+	// a reconciler constructed per tick has an empty memo, so the tick pays
+	// the full N+1 walk every time -- 94% of a 42.3s tick on a city with 58
+	// settled roots (ci-sbdsjh). Created lazily under mu.
+	executionReconciler *executionevent.CompletedReconciler
+	updateMu            sync.Mutex // serializes rebuild+swap so stale reloads cannot overtake newer mutations
+	beadEventStartSeq   uint64
+	beadEventStartSeqOK bool // false when LatestSeq errored at construction; 0+true = genuinely empty log
 
 	// emergencyCh receives emergency.Record values from the gc emergency
 	// subsystem. startEmergencyEventRelay drains this channel and mirrors
@@ -548,8 +554,14 @@ func (cs *controllerState) startBeadEventWatcher(ctx context.Context) {
 
 // reconcileExecutionCompletions repairs graph.v2 completion facts from the
 // authoritative graph store. It is safe to call at startup and on patrol ticks:
-// ReconcileCompleted uses the event journal's exact fact as its idempotency
-// record, so repeated passes do not duplicate lifecycle events.
+// the pass uses the event journal's exact fact as its idempotency record, so
+// repeated passes do not duplicate lifecycle events.
+//
+// The reconciler is held on controllerState rather than built here, because
+// its settled-root memo is the whole reason a tick is cheap after the first
+// one. Reaching for executionevent.ReconcileCompletedStores here instead would
+// build a fresh empty memo per tick and silently restore the N+1 walk with
+// every test still green -- the emitted count is 0 either way.
 func (cs *controllerState) reconcileExecutionCompletions() {
 	ep := cs.EventProvider()
 	if ep == nil {
@@ -595,7 +607,13 @@ func (cs *controllerState) reconcileExecutionCompletions() {
 		}
 		graphStores = append(graphStores, beads.GraphStore{Store: store})
 	}
-	executionevent.ReconcileCompletedStores(ep, graphStores, "execution-reconcile")
+	cs.mu.Lock()
+	if cs.executionReconciler == nil {
+		cs.executionReconciler = executionevent.NewCompletedReconciler()
+	}
+	reconciler := cs.executionReconciler
+	cs.mu.Unlock()
+	reconciler.Reconcile(ep, graphStores, "execution-reconcile")
 }
 
 // uncachedBeadStore peels the controller's policy/cache read layers so a

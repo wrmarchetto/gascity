@@ -87,8 +87,53 @@ const (
 	// peak cadence; an order whose last run is older than the window misses
 	// the index and pays one LIMIT-1 LastRun fallback (itself limit-pushed
 	// now), after which cachedLastRun remembers it across ticks and rebuilds.
-	orderTrackingHistoryIndexLimit   = 256
-	defaultMaxOrderDispatchesPerTick = 4
+	orderTrackingHistoryIndexLimit = 256
+	// defaultMaxOrderDispatchesPerTick bounds the dispatches ONE tick admits.
+	// budgetSpent is local to dispatch(), so every tick gets a fresh budget --
+	// and ticks are not only the patrol ticker. runTick fires from three
+	// triggers in cmd/gc/city_runtime.go: "patrol" (the
+	// DaemonConfig.PatrolIntervalDuration() ticker, 30s by default),
+	// "startup-poke", and the debounced "poke" that event and control-dispatch
+	// traffic arms. So the per-minute ceiling is this number times
+	// ticks-per-minute, and ticks-per-minute has a FLOOR of 2 rather than a
+	// value of 2.
+	//
+	// DO NOT read 8 x 2 = 16/min as the ceiling. It is the floor of the
+	// ceiling -- what the patrol ticker alone delivers on a city receiving no
+	// pokes. Measured on the live city 2026-09-08 at the former cap of 4, over
+	// a 60m window of 531 dispatches: 32 of 60 minutes sat at EXACTLY 8 (two
+	// patrol ticks, budget exhausted on both), and 15 minutes ran 9-16 on
+	// extra poke ticks, clustering at multiples of 4 as a fresh budget per
+	// tick predicts. Mean 8.85/min. An earlier reading of this comment claimed
+	// supply never exceeded 8.3/min; that was the 60m AGGREGATE mistaken for a
+	// bound, and single minutes reach 16.
+	//
+	// WHAT SIZES THE NUMBER is the patrol floor, not the mean, and that is the
+	// deliberate choice: a cooldown schedule is driven by the clock, so it must
+	// be met by the clock-driven ticks. Sizing against poke ticks would make
+	// capacity depend on event traffic that is uncorrelated with the schedule
+	// it has to serve. The city demanded 12.23 dispatches/min on 2026-09-08 --
+	// 37 enabled cooldown orders, summed as 1/interval from
+	// `gc order list --json`. 8 x 2 = 16.00/min clears it on patrol alone,
+	// 1.31x. The former 4 gave a patrol floor of 8.00/min, under demand, and
+	// the pile-up at exactly 8 above is what a saturated budget looks like:
+	// the cap, not the host, was the binding constraint (bead gs-33z).
+	//
+	// THAT MARGIN EXPIRES WHEN THE ORDER SCHEDULE GROWS. It is margin
+	// against one schedule, not headroom in general, and past ~16/min this
+	// number is wrong again. Nothing here notices; the city's
+	// doctor/order-capacity check does, because it recomputes demand from
+	// the controller's own resolution of every pack layer on every run.
+	//
+	// A CONFIG FIELD WAS REJECTED. Plumbing this through OrdersConfig buys a
+	// knob nobody has asked for a second value of, and an operator who
+	// wants the ceiling moved without the constant has `patrol_interval`
+	// already -- at the cost of moving the whole reconciler cadence with it.
+	//
+	// Verified by TestOrderDispatchCeilingClearsTheCityCooldownDemand, which
+	// drives a real tick rather than reading this constant back, and which
+	// asserts against the patrol floor for the reason above.
+	defaultMaxOrderDispatchesPerTick = 8
 	orderTrackingSweepCloseBudget    = 4
 
 	// orderTrackingRetentionWatchdogInterval is the minimum time between

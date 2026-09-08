@@ -59,6 +59,11 @@ type hookClaimOps struct {
 	// EmitClaimRejected publishes a bead.claim_rejected event when a claim is
 	// lost to a different live claimant (ADR-0009). Best-effort.
 	EmitClaimRejected hookEmitClaimRejectedFunc
+	// ResolveSiblingBranches returns the unlanded local branches of the
+	// worker's worktree (dir) that already name the claimed bead or a bead
+	// sharing one of its labels. Reported to the claimant as a signal only:
+	// hook_claim_sibling_branches.go records why a refusal was rejected.
+	ResolveSiblingBranches hookResolveSiblingBranchesFunc
 	// ResolveWorkBranch returns the git branch of the worker's worktree (dir),
 	// stamped onto the bead as gc.work_branch at claim time. Empty result (no
 	// repo / detached HEAD) omits the branch key — the session back-reference is
@@ -108,6 +113,11 @@ type hookClaimJSONResult struct {
 	ContinuationGroup    string   `json:"continuation_group,omitempty"`
 	ContinuationAssigned []string `json:"continuation_assigned,omitempty"`
 	DrainAcknowledged    bool     `json:"drain_acknowledged,omitempty"`
+	// SiblingBranches names unlanded local branches already covering this
+	// bead's condition. Omitted entirely rather than emitted empty: an
+	// always-present key trains a reader to skim past a field that only
+	// sometimes matters.
+	SiblingBranches []hookClaimSiblingBranch `json:"sibling_branches,omitempty"`
 }
 
 // hookClaimResult is the outcome of attempting a claim against one store's
@@ -221,6 +231,9 @@ func (ops *hookClaimOps) applyDefaults() {
 	}
 	if ops.ResolveWorkBranch == nil {
 		ops.ResolveWorkBranch = hookResolveWorkBranch
+	}
+	if ops.ResolveSiblingBranches == nil {
+		ops.ResolveSiblingBranches = hookResolveSiblingBranches
 	}
 	if ops.StampWorkMeta == nil {
 		ops.StampWorkMeta = hookStampWorkMetaWithBdStore
@@ -573,6 +586,10 @@ func writeHookClaimWorkResultForBead(result hookClaimJSONResult, bead beads.Bead
 	} else {
 		result.ContinuationAssigned = assigned
 	}
+	// Also a field OF the report, so it is resolved before the write. Unlike
+	// the preassign above it can never change `code`: it mutates nothing, and
+	// a claim reported as failed is retried by the startup wrapper.
+	result.SiblingBranches = reportHookClaimSiblingBranches(bead, opts, ops, dir, stderr)
 	// The report goes out whatever happened above. The claim committed, so the
 	// bead is assigned and in_progress and has already left every ready query; a
 	// bare nonzero exit would leave the one session that owns it unable to name

@@ -13,6 +13,9 @@ fi
 gotmpdir_val="$(mktemp -d -p /var/tmp gc-gotmp.XXXXXX)"
 child_pid=""
 
+# Both handlers below are reached only through the trap lines that follow
+# them, which shellcheck does not count as a call site.
+# shellcheck disable=SC2329  # invoked by `trap cleanup EXIT`
 cleanup() {
   local status=$?
   trap - EXIT
@@ -20,6 +23,7 @@ cleanup() {
   exit "$status"
 }
 
+# shellcheck disable=SC2329  # invoked by the INT and TERM traps below
 terminate() {
   local signal=$1 status=$2
   if [[ -n "$child_pid" ]]; then

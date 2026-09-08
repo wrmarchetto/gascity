@@ -56,6 +56,25 @@ re-ask is owed by the bead's owner (gascity/lab.engineer-1) carrying the
 interval record its notes require (pm-log #62). (b) was settled by pm-log
 #59: mayor-slack-bridge is the epic after governor and is in-progress.
 
+Update 2026-09-08 (pm-log #101): the (a) wait had a demand gap. The re-ask
+is owed by gascity/lab.engineer-1, but that pool identity sat at zero
+sessions with no bead assigning it the work, so 35 identical rulings
+(pm-log #65-#100) waited on an act nothing would trigger. gs-r76 (this
+rig, epic:governor, assignee gascity/lab.engineer-1) now carries it:
+produce the post-assessment interval record, put it on ci-waw3o7, re-ask.
+(a) itself remains open until Willie rules on ci-waw3o7.
+
+Update 2026-09-08 (pm-log #102): gs-r76 is closed -- the record exists and
+the re-ask is made. The 65.1-hour interval record (40 wakes, all with the
+assessment layer, 14 real conditions relayed, 0 false relays reached the
+mayor) is on ci-waw3o7's notes as of 2026-09-08T13:31Z, and gate
+ci-gbhkpa's description now points to it as superseding the old 1.5-hour
+soak summary. Both operator-only blockers are recorded cleared on the gate
+itself. Nothing is owed by any agent anymore: (a) is now solely Willie's
+ruling on ci-waw3o7, standing paged via ci-gbhkpa. Until he rules, the
+15-minute pm-epic-close sweep is the watch -- each summons re-reads
+ci-waw3o7 and re-closes if unruled.
+
 ## 3. Substrate maintenance beads have no epic home; gs-z39 ruled standalone (2026-09-05)
 
 gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or
@@ -87,6 +106,26 @@ rot the pm-log #57 survey found, covered by no epic:mayor-slack-bridge
 acceptance criterion. The mayor dropped the epic label without adding
 standalone, sweep summons gs-wm2 caught the unlabeled bead, and the label
 was added there. The standing question below is unchanged.
+
+Update 2026-09-07 (pm-log #73): gs-dzj (gate scripts/ on shellcheck) joins
+the class, fifth after gs-z39, gs-c6f, gs-eep, and gs-olu. Sweep summons
+gs-nv0 ruled it standalone: repo-wide lint gating whose seed defect gs-fn6's
+bridge work FOUND -- a malformed directive had left a gate script unparsed
+-- but that no epic:mayor-slack-bridge criterion closes over. Same
+descent-is-not-coverage standard that kept gs-z39 out of epic:governor. The
+standing question below is unchanged, and the class growing to five is
+itself evidence for settling it.
+
+Update 2026-09-07 (pm-log #77): gs-a6j (widen the shell-lint sweep to the
+pack scripts the SDK ships) joins the class, sixth after gs-z39, gs-c6f,
+gs-eep, gs-olu, and gs-dzj. Summons gs-153 ruled it standalone: gs-a6j is
+gs-dzj's own widening, scoped from scripts/ and .githooks/ out to
+internal/bootstrap/packs, the SDK-shipped pack scripts (one carries a live
+rm -rf hazard on two possibly-empty variables) -- and neither epic names
+shell-lint sweep scope in its acceptance criteria. One link further down a
+chain pm-log #73 already placed outside the roadmap, not a fresh descent
+question. The class growing to six is itself further evidence for settling
+the standing question below.
 
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes

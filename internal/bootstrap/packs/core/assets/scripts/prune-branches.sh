@@ -8,7 +8,9 @@
 # Runs as an exec order (no LLM, no agent, no wisp).
 set -euo pipefail
 
-CITY="${GC_CITY:-.}"
+# No CITY here on purpose -- see the note in cross-rig-deps.sh. Rig paths
+# come from `gc rig list`, so nothing in this script builds a path from
+# the city root.
 PRUNED=0
 
 # Get all rig paths.

@@ -21,7 +21,8 @@ __SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$__SCRIPT_DIR/_bd_trace.sh" "wisp-compact"
 
-CITY="${GC_CITY:-.}"
+# No CITY here on purpose -- see the note in cross-rig-deps.sh. Every bead
+# operation below goes through `gc bd`.
 
 # Get all ephemeral beads.
 ALL=$(gc bd list --json --all -n 0 2>/dev/null) || exit 0

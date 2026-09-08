@@ -4,8 +4,17 @@
 # Exit codes: 0=OK, 1=Warning, 2=Error
 # stdout: first line=message, rest=details
 
+# jq is the only HARD dependency of the core maintenance orders. gh is
+# deliberately not in this set: missing gh only skips the GitHub gate
+# checks, which is a warning, so it is probed separately below.
+#
+# Spelled as an array because a literal `for bin in jq` is SC2043 -- the
+# linter cannot tell a one-item list from a failed expansion. The loop
+# stays for a set that grows.
+REQUIRED_BINARIES=(jq)
+
 missing=()
-for bin in jq; do
+for bin in "${REQUIRED_BINARIES[@]}"; do
     if ! command -v "$bin" >/dev/null 2>&1; then
         missing+=("$bin")
     fi

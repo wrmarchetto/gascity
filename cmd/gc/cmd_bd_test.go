@@ -3542,8 +3542,13 @@ func TestDoBdReleaseIfCurrentUpdatesOnlyMatchingAssignment(t *testing.T) {
 	if got := doBdReleaseIfCurrent(cityDir, nil, target, created.ID, "worker-2", &stdout, &stderr); got != 0 {
 		t.Fatalf("doBdReleaseIfCurrent wrong assignee = %d, want 0; stderr=%q", got, stderr.String())
 	}
-	if strings.TrimSpace(stdout.String()) != "skipped" {
-		t.Fatalf("wrong-assignee output = %q, want skipped", stdout.String())
+	// Prefix, not equality: the skip line now carries WHICH condition skipped
+	// it, because `skipped` alone conflated a displaced claim with a bead that
+	// held none (ci-32fp1p). This suite owns the CAS, so it asserts only that
+	// the outcome is still a skip; the content is
+	// bd_release_if_current_displaced_test.go's subject.
+	if !strings.HasPrefix(strings.TrimSpace(stdout.String()), "skipped") {
+		t.Fatalf("wrong-assignee output = %q, want a skipped line", stdout.String())
 	}
 	got, err := store.Get(created.ID)
 	if err != nil {
