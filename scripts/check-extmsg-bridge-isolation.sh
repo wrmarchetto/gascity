@@ -61,11 +61,15 @@
 # city tree, and reading one when present would be a skip-on-absence that goes
 # green in every CI run. What IS enforced here is the threat the criterion
 # names -- the mirror pointed at the alerts channel -- because the bridge does
-# that from files this repository owns.
+# that from files this repository owns. It is reached four ways and all four
+# are refused: by naming a seam key or script in CODE, by instructing an
+# operator to do so in the component's PROSE, by carrying a conversation id or
+# credential as a LITERAL, and by copying the seam's own scripts INTO this
+# repository, which arrives as a new file rather than as an edit.
 #
 # Sources: docs/roadmap.md (epic:mayor-slack-bridge, criteria 5 and 8),
 # docs/pm-log.md #57 (the alert seam's one-way rejection) and #58 (Socket Mode,
-# assistant-turns-only), bead gs-8ra.
+# assistant-turns-only), beads gs-8ra and gs-fn6.
 set -euo pipefail
 
 list_only=0
@@ -159,9 +163,19 @@ tracked_matching_route() {
 # entrypoint-names-no-route hole the npm arm closes.
 component_markers() {
     { git ls-files | grep -E '(^|/)package\.json$' | sed 's|/package\.json$||'; } || true
+    #
+    # `while read` rather than `xargs -n1 dirname`: GNU xargs runs its command
+    # once with NO arguments when its input is empty, so a tree whose Go files
+    # declare no main package printed two lines of `dirname: missing operand`
+    # on stderr before every OK. Harmless to the verdict -- the `|| true`
+    # absorbs the status -- but a gate that prints an error while passing is a
+    # gate that gets read as broken. `xargs -r` is the GNU spelling of the fix
+    # and this script runs in the Mac unit sweep too.
     {
         git ls-files -- '*.go' | xargs grep -l '^package main' 2>/dev/null |
-            xargs -n1 dirname
+            while IFS= read -r gofile; do
+                [ -n "$gofile" ] && dirname "$gofile"
+            done
     } || true
 }
 
@@ -182,9 +196,17 @@ components=$(
 
 scan_set=$(
     {
-        # shellcheck disable=SC2086 -- word splitting is the point: each
-        # component is a separate pathspec, and component paths cannot
-        # contain whitespace (they are package.json directories).
+        # Word splitting is the point: each component is a separate
+        # pathspec, and component paths cannot contain whitespace (they are
+        # package.json directories).
+        #
+        # The directive carries the code ALONE. Trailing prose after it is
+        # SC1072/SC1073 and aborts the parse of the whole FILE, so the form
+        # this line used to have left the script linted by nothing --
+        # measured 2026-09-07 against v0.10.0. A comment merely OPENING with
+        # the linter's name is read as a directive too, so this paragraph
+        # does not.
+        # shellcheck disable=SC2086
         [ -z "$components" ] || git ls-files -- $components
         tracked_matching_route
     } | { grep -vE "$skip_re" || true; } | { grep -vE "$test_re" || true; } |
@@ -204,9 +226,76 @@ if [ -z "$scan_set" ]; then
   Re-derive by hand:       git ls-files -z | xargs -0 grep -lE '$route_re'"
 fi
 
+# The bridge components' own prose, scanned by the alerts-seam arm ALONE.
+#
+# Derived from the COMPONENT arm only, never from derivation 2's repo-wide
+# route match. That is the whole reason skip_re keeps .md out of the code scan:
+# docs/pm-log.md discusses both the mayor and the alert seam's one-way decision
+# at length, and refusing the project's own log for recording the decision is
+# an unactionable finding. A component's README is the opposite -- it is the
+# instruction an operator acts on, so a line telling them to set
+# SLACK_WEBHOOK_URL unifies the two channels exactly as effectively as code
+# that reads it.
+#
+# NOT filtered by test_re, unlike the code scan. A README under a test
+# directory still ships with the component and still reads as instruction; the
+# test exclusion exists for role names in FIXTURES, which prose has none of.
+#
+# Deliberately absent from --list, which stays a dump of the code scan set:
+# TestExtmsgBridgeIsolationDerivationAnchors asserts no .md is in it, and that
+# assertion is what catches the prose exclusion collapsing. The prose count is
+# printed on the OK line instead.
+prose_set=$(
+    if [ -n "$components" ]; then
+        # Same word splitting as the scan set.
+        # shellcheck disable=SC2086
+        git ls-files -- $components | { grep -E '\.md$' || true; }
+    fi
+)
+
+# The .mjs half of the scan set, which is the scope of the two configuration
+# refusals below. Their remedy is a helper -- lib/gc-client.mjs's env() -- that
+# only a module importing it can use, and the component also ships extensionless
+# stand-ins (fake-imsg/imsg, fake-telegram/bot-api) that a demo launcher spawns
+# as separate programs. Those load node builtins alone and read only their own
+# FAKE_* knobs, so they can bind neither a session nor a channel; refusing their
+# `process.env.FAKE_TG_PORT || 8932` would refuse something that is not a
+# violation, and the fix would be to import a bridge module into a stand-in --
+# worse than the thing refused. Measured 2026-09-07: those two files are the
+# only inline-fallback hits in the whole scan set.
+#
+# The EXTENSION is the derivation, NOT a list of exempt filenames. A stand-in
+# rewritten as a .mjs and imported is in scope the moment it is.
+module_set=$(printf '%s\n' "$scan_set" | { grep -E '\.mjs$' || true; })
+
 if [ "$list_only" -eq 1 ]; then
     printf '%s\n' "$scan_set"
     exit 0
+fi
+
+# --- criterion 8, the half that reads no scan set ---
+#
+# The city's notify.sh cannot be checked for modification from here, so this
+# refuses the move that would make it modifiable from here: copying the seam
+# into this repository. That lands as a NEW FILE rather than as an edit, which
+# every arm below misses -- a copy dropped outside every bridge component is in
+# no scan set at all.
+#
+# Matched on a whole path component rather than as a substring, which is the
+# opposite of how the seam's names are matched in code. There the reference is
+# reached through a path and has no boundary before it (assets/scripts/
+# notify.sh); here the FILENAME is the whole question, and refusing a bridge's
+# own bridge-notify.sh as the city's seam is how this check gets deleted.
+seam_copies=$(git ls-files | { grep -E '(^|/)(notify\.sh|slack-deliver\.py)$' || true; })
+if [ -n "$seam_copies" ]; then
+    echo "$seam_copies" >&2
+    fail "the city's alert seam is tracked in this repository (see above).
+  notify.sh and slack-deliver.py live in the city repo and the alerts channel
+  is one-way by decision (pm-log #57). A copy here is that unification arriving
+  as a new file instead of as an edit, and it puts the seam somewhere this
+  repository can change it.
+  Remedy: delete the copy and call the city's seam, or -- if the new file is
+  not the alert seam -- rename it so it does not read as one."
 fi
 
 # --- the role taxonomy ---
@@ -253,6 +342,80 @@ code_of() {
     sed -E 's/^[[:space:]]+//' "$1" | grep -vE '^(//|#|\*|/\*)' || true
 }
 
+# --- criterion 8, the alerts seam by name ---
+
+# The seam's destination keys and its two scripts. SLACK_BOT_TOKEN is here
+# because it was the one hole the gs-8ra merge left open: the literal arm below
+# catches xoxb- and xapp- STRINGS, so a bridge reading the alert seam's own
+# bot-token key by name passed the whole gate clean (gs-fn6).
+#
+# hooks.slack.com is the same threat with no env key at all -- a hardcoded
+# incoming-webhook URL names none of the three keys and carries no xoxb- token,
+# so every other arm passes it.
+#
+# The three destination keys match on identifier boundaries, the scripts and
+# the host as substrings, and the asymmetry is load-bearing. Criterion 8
+# REQUIRES the bridge to carry keys of its own, and the shape they take in
+# contrib/openclaw-bridge/slack-bridge.mjs is BRIDGE_SLACK_CHANNEL_ID and
+# BRIDGE_SLACK_BOT_TOKEN -- each contains a seam key, so a substring match
+# refuses the correct isolation and reads as a real criterion-8 violation. The
+# scripts stay substrings because they are reached through a path, and there is
+# no boundary before notify.sh in assets/scripts/notify.sh.
+#
+# Rejected: dropping the keys from this list once the bridge grew its own. A
+# later edit could then read the alert destination directly, which is the whole
+# of the criterion. What separates the bridge's key from the alerts key is the
+# boundary, not the presence of the name.
+# Pinned by TestExtmsgBridgeIsolationAcceptsANamespacedBridgeKey.
+#
+# Rejected as redundant, and recorded so it is not re-proposed: origin's
+# refusal 7, a comm -12 of these three names against the knobs the module graph
+# reads through required(). Boundary-matching the names over the whole scan set
+# is strictly broader -- it also refuses process.env.SLACK_BOT_TOKEN, a shell
+# ${SLACK_BOT_TOKEN}, and any file the module graph does not reach -- so the
+# intersection would only restate a subset of what this already refuses.
+alert_seam=(
+    SLACK_CHANNEL_ID SLACK_WEBHOOK_URL SLACK_BOT_TOKEN
+    notify.sh slack-deliver hooks.slack.com
+)
+
+# Run over two different texts, because criterion 8 is reachable two ways.
+#
+# For CODE the text is comment-stripped: documenting the prohibition is the
+# expected thing for an engineer to do, and refusing that comment would get
+# this check deleted rather than obeyed.
+#
+# For PROSE the text is the raw file, and the same allowance is NOT made. A
+# README has no code for a comment to sit beside -- it is instruction, and
+# nothing mechanical separates "never point this at SLACK_WEBHOOK_URL" from
+# "point this at SLACK_WEBHOOK_URL". The over-refusal is in the same direction
+# as the trailing-comment refusal above, the remedy is to name the city's alert
+# seam rather than its keys, and refusing too much is the survivable direction.
+refuse_alerts_seam() {
+    local path=$1 text=$2 kind=$3 seam hit remedy
+
+    case "$kind" in
+        prose) remedy="Remedy: describe the boundary by naming the city's alert seam, not the
+  keys or scripts that reach it -- an operator acts on this file." ;;
+        *)     remedy="Remedy: the bridge needs its own BRIDGE_SLACK_* keys, and must not call
+  notify.sh or slack-deliver.py." ;;
+    esac
+
+    for seam in "${alert_seam[@]}"; do
+        case "$seam" in
+            SLACK_*) hit=$(printf '%s\n' "$text" | grep -nE -- "\\b${seam}\\b") || continue ;;
+            *)       hit=$(printf '%s\n' "$text" | grep -nF -- "$seam") || continue ;;
+        esac
+        echo "$hit" >&2
+        fail "$path reaches the alerts seam through '$seam' (see above).
+  The alerts channel is one-way by decision, not by oversight (pm-log #57), and
+  the two channels are deliberately not unified. SLACK_CHANNEL_ID,
+  SLACK_WEBHOOK_URL and SLACK_BOT_TOKEN name the ALERT destination in
+  city assets/scripts/slack-deliver.py.
+  $remedy"
+    done
+}
+
 # A binding key is one whose name ends in what it binds. That convention is
 # what makes the shape arm possible: GC_TARGET_SESSION and GC_SESSION_NAME
 # match, GC_SESSION_LOG_DIR does not, so an ordinary default on an ordinary key
@@ -265,6 +428,26 @@ default_forms=(
     "process\\.env\\[['\"]${bind_key}['\"]\\][[:space:]]*(\\|\\||\\?\\?)[[:space:]]*['\"][^'\"]+['\"]"
     "\\\$\\{${bind_key}:-[^}]+\\}"
 )
+
+# --- configuration knobs, accumulated across the module files ---
+#
+# Requiredness is a property of the KNOB, not of one call site, so the two sets
+# are built as the loop below walks the module files and compared once it ends.
+# The refusal cannot be a per-file arm: the failure it names is a convenience
+# default added in ANOTHER file next to the required() read that already
+# exists, which is exactly why it survives review.
+#
+# The loop reaches these through the same `*.mjs` test module_set is built
+# from, rather than iterating module_set separately, so the readability guard
+# and the comment stripping apply to them once each.
+#
+# Both sets come from the source itself, so no list is kept here and a knob
+# added tomorrow is covered the moment it is read. Both quote styles are
+# accepted because nothing in this repository lints quote style, and a set
+# built from one style silently omits every knob written in the other.
+knob_ident='[A-Z_][A-Z0-9_]*'
+required_knobs=
+defaulted_knobs=
 
 # `while read` rather than `for path in $scan_set`: word splitting would turn
 # one path containing a space into two paths that do not exist, and grep
@@ -312,58 +495,150 @@ while IFS= read -r path; do
         fi
     done
 
-    # Criterion 8: the alerts seam. Its destination keys and its two scripts,
-    # matched against comment-stripped code -- documenting the prohibition is
-    # the expected thing for an engineer to do, and refusing that comment
-    # would get this check deleted rather than obeyed.
+    # Criterion 5, third arm, and the evasion the second one cannot see: a
+    # fallback written straight onto a raw process.env read, so the knob never
+    # reaches env() at all and its name never has to end in what it binds.
+    # Forbidding the SHAPE means the refusal holds whatever the default spells.
     #
-    # The two destination keys match on identifier boundaries, the two scripts
-    # as substrings, and the asymmetry is load-bearing. Criterion 8 REQUIRES
-    # the bridge to carry a channel key of its own, and the shape that takes in
-    # contrib/openclaw-bridge/slack-bridge.mjs is BRIDGE_SLACK_CHANNEL_ID --
-    # which contains SLACK_CHANNEL_ID, so a substring match refuses the correct
-    # isolation and reads as a real criterion-8 violation. The scripts stay
-    # substrings because they are reached through a path, and there is no
-    # boundary before notify.sh in assets/scripts/notify.sh.
+    # lib/gc-client.mjs's `export const env =` line is the ONE sanctioned
+    # exception, exempted by its definition TEXT rather than by filename, so a
+    # second default hidden elsewhere in that same file is still refused. It
+    # cannot itself hide a default: its fallback is its own second argument,
+    # supplied by the caller this gate is reading.
     #
-    # Rejected: dropping the two keys from this list once the bridge grew its
-    # own. A later edit could then read the alert destination directly, which
-    # is the whole of the criterion. What separates the bridge's key from the
-    # alerts key is the boundary, not the presence of the name.
-    # Pinned by TestExtmsgBridgeIsolationAcceptsANamespacedBridgeKey.
-    for seam in SLACK_CHANNEL_ID SLACK_WEBHOOK_URL notify.sh slack-deliver; do
-        case "$seam" in
-            SLACK_*) matcher=(grep -nE -- "\\b${seam}\\b") ;;
-            *)       matcher=(grep -nF -- "$seam") ;;
-        esac
-        if hit=$(printf '%s\n' "$code" | "${matcher[@]}"); then
-            echo "$hit" >&2
-            fail "$path reaches the alerts seam through '$seam' (see above).
-  The alerts channel is one-way by decision, not by oversight (pm-log #57), and
-  the two channels are deliberately not unified. SLACK_CHANNEL_ID and
-  SLACK_WEBHOOK_URL name the ALERT destination in
-  city assets/scripts/slack-deliver.py -- the bridge needs its own channel key,
-  and must not call notify.sh or slack-deliver.py."
-        fi
-    done
+    # That exemption is inert against the helper as written today --
+    # contrib/openclaw-bridge/lib/gc-client.mjs:12 spells the fallback with
+    # !== tests and matches nothing, measured 2026-09-07. It is carried because
+    # the obvious simplification of that line, `process.env[k] ?? d`, does
+    # match, and a gate that refuses the one place defaults are allowed to live
+    # gets deleted rather than obeyed.
+    case "$path" in
+        *.mjs)
+            if hit=$(printf '%s\n' "$code" | grep -nE -- 'process\.env[^=]*(\|\||\?\?|\?)' |
+                grep -v 'export const env ='); then
+                echo "$hit" >&2
+                fail "$path puts a fallback on a raw process.env read (see above).
+  A default written inline is invisible to the knob-drift refusal, which reads
+  env() and required() call sites, so the knob can be required elsewhere and
+  silently defaulted here.
+  Remedy: route the default through env(name, default) from lib/gc-client.mjs,
+  which is the one place a bridge default is written, or use required(name)
+  when there must not be one."
+            fi
 
-    # Credential and channel literals, over the WHOLE file rather than the
-    # comment-stripped code: a token in a comment is still a token in the
-    # repository. Channel ids only (C-prefixed). A user or DM id is
-    # deliberately not matched -- a mirror pointed at a DM is not the
-    # alerts-channel threat this criterion names, and the token patterns cover
-    # the credential half.
-    if hit=$(grep -nE "\\bC[0-9][A-Z0-9]{7,}\\b|xox[bpa]-|xapp-" -- "$path"); then
-        echo "$hit" >&2
-        fail "$path carries a Slack channel id or token literal (see above).
-  Credentials and channel ids live in \${GC_HOME}/secrets.env, never in
-  city.toml and never in the repository (criterion 6). A hardcoded channel id
-  is also how the mirror silently becomes a second writer to the alerts
-  channel.
-  Remedy: read the id from the environment the supervisor provides."
+            required_knobs="$required_knobs$(printf '%s\n' "$code" |
+                { grep -oE "required\\(['\"]${knob_ident}['\"]" || true; } |
+                sed -E "s/.*['\"](${knob_ident})['\"].*/\\1/")"$'\n'
+            defaulted_knobs="$defaulted_knobs$(printf '%s\n' "$code" |
+                { grep -oE "env\\(['\"]${knob_ident}['\"][[:space:]]*," || true; } |
+                sed -E "s/.*['\"](${knob_ident})['\"].*/\\1/")"$'\n'
+            ;;
+    esac
+
+    refuse_alerts_seam "$path" "$code" code
+
+    # Credential and conversation-id literals, over the WHOLE file rather than
+    # the comment-stripped code: a token in a comment is still a token in the
+    # repository.
+    #
+    # A Slack conversation id is C, G or D followed by eight or more uppercase
+    # alphanumerics. All three prefixes are refused: a mirror pointed at a
+    # private group or a DM is not the alerts channel, but it is still a
+    # destination bound in code instead of in configuration, and the narrower
+    # C-only form also required the DIGIT in position two, which Slack does not
+    # promise.
+    #
+    # The digit is required somewhere in the token instead, and that filter is
+    # what makes the widened shape usable: the shape alone matches shouted
+    # English -- CONVERSATION, CREDENTIALS, DESTINATION -- and it does here.
+    # Measured 2026-09-07 across the whole scan set, the only shape-only hit is
+    # a banner string reading CONVERSATION in
+    # contrib/openclaw-bridge/demo-telegram.sh:203. An id carries digits; a
+    # word in caps does not.
+    #
+    # ABSENCE: an all-letter conversation id walks past this. Nothing
+    # distinguishes such a token from prose, and buying it would cost every
+    # capitalized word on the bridge path. The backstops are the seam arm above
+    # and the required() read that makes a literal redundant in the first place.
+    #
+    # `grep -o` prints line:match and awk keeps the matches carrying a digit,
+    # so the two greps cannot be one: awk always exits 0, and folding the token
+    # patterns into the same pipeline would make their verdict unreadable.
+    id_hit=$(grep -noE "\\b[CGD][A-Z0-9]{8,}\\b" -- "$path" | awk -F: '$NF ~ /[0-9]/' || true)
+    tok_hit=$(grep -nE "xox[bpa]-|xapp-" -- "$path" || true)
+    if [ -n "$id_hit$tok_hit" ]; then
+        printf '%s\n' "$id_hit" "$tok_hit" | grep -v '^$' >&2 || true
+        fail "$path carries a Slack conversation id or token literal (see above).
+  Credentials and conversation ids live in \${GC_HOME}/secrets.env, never in
+  city.toml and never in the repository (criterion 6). A hardcoded id is also
+  how the mirror silently becomes a second writer to the alerts channel.
+  Remedy: read the id from the environment the supervisor provides. If this is
+  not a conversation id, rename the constant so it does not read as one."
     fi
 done <<<"$scan_set"
 
-printf 'check-extmsg-bridge-isolation: OK (%s bridge-path files, %s role names, alerts seam unreachable)\n' \
+# --- criterion 8 in the components' prose ---
+#
+# Only the seam arm runs here. The role arm must NOT follow it in: a README
+# naming the session an operator binds is criterion 5 being SATISFIED -- it
+# shows the identity arriving as configuration -- and neither must the literal
+# arm, because a placeholder is how a README tells an operator the shape of
+# the value to supply, and refusing the example teaches the next author to
+# stop writing examples. The measured case is the credential half:
+# contrib/openclaw-bridge/README.md:298-299 carries
+# BRIDGE_SLACK_APP_TOKEN=xapp-... and BRIDGE_SLACK_BOT_TOKEN=xoxb-..., which
+# the token pattern matches. Its channel example is BRIDGE_SLACK_CHANNEL_ID=
+# C012345, one character too short for the conversation-id shape to reach, so
+# that half of the exclusion is not exercised by this tree -- it is here for
+# the full-length example the next author writes, on the same reasoning.
+#
+# The readability guard is the same one the code loop carries, for the same
+# reason: a tracked file deleted from the worktree without staging the deletion
+# would leave the prose scan silently while the count below still included it.
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ ! -r "$path" ]; then
+        fail "$path is in the derived prose set but is not readable, so it was
+  never inspected. A tracked file deleted from the worktree without staging
+  the deletion produces exactly this.
+  Remedy: restore it, or stage the deletion so it leaves the scan."
+    fi
+    refuse_alerts_seam "$path" "$(cat "$path")" prose
+done <<<"$prose_set"
+
+# --- a required knob never acquires a default ---
+#
+# Reached only when every per-file arm above passed, because this script is
+# fail-fast. That ordering is deliberate: a per-file violation names one line,
+# and this one names a knob whose two halves sit in different files, so the
+# specific finding should be the one an author sees first.
+#
+# `grep -v '^$'` on the comm output is load-bearing. Both accumulators end in a
+# newline and are empty on a tree with no module files, so without it comm
+# reports the empty line as common to both sets and every clean tree is refused
+# for a knob with no name.
+knob_drift=$(
+    comm -12 \
+        <(printf '%s\n' "$required_knobs" | sort -u) \
+        <(printf '%s\n' "$defaulted_knobs" | sort -u) |
+        grep -v '^$' || true
+)
+if [ -n "$knob_drift" ]; then
+    echo "$knob_drift" >&2
+    fail "the knob(s) above are read with required() in one place and given a
+  default in another. A required knob that acquires a default stops failing
+  fast on a missing configuration and starts binding to the default instead,
+  which is how a role name lands under a key this gate's role list does not
+  carry.
+  Remedy: keep the knob required everywhere, or make it optional everywhere
+  and say in the README what the default binds to."
+fi
+
+# Four counts, because a scope that silently collapsed to a handful of files is
+# the one way every refusal above passes while checking almost nothing, and
+# these numbers are the only place that shows.
+printf 'check-extmsg-bridge-isolation: OK (%s bridge-path files, %s in the module graph, %s component docs, %s role names, alerts seam unreachable)\n' \
     "$(printf '%s\n' "$scan_set" | grep -c .)" \
+    "$(printf '%s\n' "$module_set" | grep -c .)" \
+    "$(printf '%s\n' "$prose_set" | grep -c .)" \
     "$(printf '%s\n' "$roles" | grep -c .)"
