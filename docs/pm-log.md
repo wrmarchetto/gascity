@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-y20 2026-09-08T17:09:14Z
+last_seen: gs-mot 2026-09-08T17:58:14Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3754,5 +3754,48 @@ and mayor-slack-bridge is already in-progress alongside governor by design
 line remains stale on that same point, as #113 noted again. No new pm-open
 entry: pm-open #2(a) already reads "the wait is purely human" as of #102,
 and nothing advanced past that this turn.
+
+Source: roadmap governor
+
+## 115. pm-epic-close gs-mot: governor stays in-progress; branch blocker cleared, no ruling yet (2026-09-08)
+
+Hundredth ruling of this shape (pm-log #5 gs-8iv through #114 gs-y20),
+re-verified live at 17:58Z rather than recalled. Two sessions between #114
+and this one (gs-0kp, gs-1ir) closed with NO verdict: the rig root sat on
+feature branch fix/gs-33z-order-dispatch-tick-cap, and PM state commits go
+straight to the mainline. That condition is cleared -- the root was
+confirmed on main and clean at claim this turn, and the branch's work is
+merged as 69e695450.
+
+The closed set under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh,
+gs-nun, gs-r76 -- 5 closed, 0 open, 0 in progress; criteria 1-6 verified in
+their close reasons pm-log #5, criterion 7's interval record pm-log #102).
+ci-waw3o7, read live in the city store: still OPEN, assignee human, its
+notes tail read this turn -- the interval record's closing section and the
+ci-lbaesr addendum, with no ruling after either and no answer past Willie's
+2026-09-05T20:14Z NOT YET. Gate ci-gbhkpa, read live: still OPEN, labels
+gate-no-readback and operator-paged, still blocking ci-waw3o7 (the one
+entry under its depends-on), description unchanged from #102's rewrite
+(re-ask stamped 2026-09-08T13:31Z, both operator blockers recorded
+cleared). Per pm-log #4 governor stays in-progress and the bead that
+reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-y20, set at pm-log #114): the updated-after
+listing against the 2026-09-08T17:09:14Z stamp, swept across all five
+statuses, returns gs-y20 (the prior summons, closed), gs-0kp and gs-1ir
+(the two no-verdict aborts, closed), gs-mot (this claim, in_progress), and
+one real mover: gs-33z, a P1 substrate bug closed and merged -- the order
+dispatch per-tick cap raised 4 -> 8 so the patrol ticker alone can keep a
+12.23/min cooldown schedule. Unlabeled substrate work outside
+epic:governor's closed set, so it does not bear on this ruling; its
+placement is the unlabeled-bead sweep's question under pm-open #3's
+standing class. gs-9zu, #111's substrate bug, did not move this interval.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). The summons body's "Other open epics: mayor-slack-bridge"
+line remains stale on that same point, as #114 noted. No new pm-open entry:
+pm-open #2(a) already reads "the wait is purely human" as of #102, and
+nothing advanced past that this turn.
 
 Source: roadmap governor
