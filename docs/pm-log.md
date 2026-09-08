@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-z17 2026-09-08T16:06:41Z
+last_seen: gs-dbe 2026-09-08T16:21:31Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3621,6 +3621,43 @@ No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress alongside governor by design
 (pm-log #59). The summons body's "Other open epics: mayor-slack-bridge"
 line remains stale on that same point, as #109 noted again. No new pm-open
+entry: pm-open #2(a) already reads "the wait is purely human" as of #102,
+and nothing advanced past that this turn.
+
+Source: roadmap governor
+
+## 111. pm-epic-close gs-dbe: governor stays in-progress; drift is one new substrate bug (2026-09-08)
+
+Ninety-sixth ruling of this shape (pm-log #5 gs-8iv through #110 gs-z17),
+re-verified live at 16:22Z rather than recalled. The closed set under
+epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun, gs-r76 -- 5
+closed, 0 open, 0 in progress; criteria 1-6 verified in their close reasons
+pm-log #5, criterion 7's interval record pm-log #102). ci-waw3o7, read live
+in the city store: still OPEN, assignee human, updated 2026-09-08, notes
+verified this turn to carry Willie's 2026-09-05T20:14Z NOT YET followed by
+the gs-r76 interval record and re-ask (stamped 13:31Z) with no ruling after
+either. Gate ci-gbhkpa, read live: still OPEN, still blocking ci-waw3o7,
+description unchanged from #102's rewrite (re-ask stamped
+2026-09-08T13:31Z, both operator blockers recorded cleared). Per pm-log #4
+governor stays in-progress and the bead that reopens it remains ci-waw3o7.
+
+Drift since last_seen (gs-z17, set at pm-log #110): the updated-after
+listing against the 2026-09-08T16:06:41Z stamp, swept across all five
+statuses, returns gs-z17 (the prior summons, closed), gs-dbe (this claim,
+in_progress), and one real mover: gs-9zu, a new P2 bug filed and started
+2026-09-08 (in_progress, owner toolsmith-1, assignee gascity/lab.engineer-1,
+lease live) -- gc bd update --if-assignee refused before bd runs because
+internal/bdflags omits bd's compare-and-swap flags, so the fail-closed
+prewrite arm fires. Substrate work with no epic label, outside
+epic:governor's closed set, so it does not bear on this ruling. Its
+epic-vs-standalone placement is the unlabeled-bead sweep's question and
+pm-open #3's standing class; being actively worked, it needs nothing from
+this summons.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59). The summons body's "Other open epics: mayor-slack-bridge"
+line remains stale on that same point, as #110 noted again. No new pm-open
 entry: pm-open #2(a) already reads "the wait is purely human" as of #102,
 and nothing advanced past that this turn.
 
