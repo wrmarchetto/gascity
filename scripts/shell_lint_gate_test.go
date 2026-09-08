@@ -30,7 +30,11 @@
 //
 // Delegated elsewhere: whether each individual script is correct (their own
 // suites, e.g. scripts/test-push-gate-lock.sh), and the sweep's coverage
-// beyond scripts/ and .githooks/ (stated as a bound in the gate script).
+// beyond the directories in SWEEP_PATHS (stated as a bound in the gate
+// script). The sweep's membership is not delegated: sweepPaths below reads it
+// out of the gate, so a test that means "outside the sweep" says so against
+// the real list rather than against a directory name that was outside it on
+// the day the test was written.
 //
 // Run: go test ./scripts -run ShellLint
 //      go test ./scripts -run Shellcheck
@@ -132,6 +136,14 @@ func fixtureRepo(t *testing.T, files map[string]string) string {
 const cleanScript = `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "ok"
+`
+
+// dirtyScript carries one ordinary finding (SC2086) and no directive, so a red
+// verdict on it can only have come from the sweep.
+const dirtyScript = `#!/usr/bin/env bash
+set -euo pipefail
+run() { echo $1; }
+run "$@"
 `
 
 // scriptWithDirective puts the directive under test on line 2, ahead of the
@@ -375,7 +387,7 @@ func TestShellLintGateAcceptsOnlyFormsShellcheckParses(t *testing.T) {
 func TestShellLintGateRefusesOrdinaryFindings(t *testing.T) {
 	shellcheckBin(t)
 	root := fixtureRepo(t, map[string]string{
-		"scripts/unquoted.sh": "#!/usr/bin/env bash\nset -euo pipefail\nrun() { echo $1; }\nrun \"$@\"\n",
+		"scripts/unquoted.sh": dirtyScript,
 	})
 	out, code := runGate(t, root)
 	if code == 0 {
@@ -419,21 +431,33 @@ func TestShellLintGateSweepsExtensionlessScripts(t *testing.T) {
 }
 
 // TestShellLintGateChecksDirectivesOutsideTheSweepScope pins the gate's two
-// different scopes. The sweep covers scripts/ and .githooks/ only -- 51 of the
-// 138 tracked shell files in this repo are dirty and cleaning them is separate
-// work -- but the directive check costs nothing and needs no linter, so it runs
-// over every tracked shell file. Nothing else in this suite would notice if it
-// silently narrowed to the sweep's scope, because inside that scope the sweep
-// catches a malformed directive too.
+// different scopes. The sweep covers SWEEP_PATHS only, because the rest of the
+// tree is not clean yet and cleaning it is separate work -- but the directive
+// check costs nothing and needs no linter, so it runs over every tracked shell
+// file. Nothing else in this suite would notice if it silently narrowed to the
+// sweep's scope, because inside that scope the sweep catches a malformed
+// directive too.
+//
+// The fixture's directory is asserted to be outside SWEEP_PATHS rather than
+// assumed. examples/ is unswept today and is the obvious candidate for the
+// next widening; once it is swept the sweep itself would refuse this fixture
+// and the test would keep passing while proving nothing, so the check below
+// fails loudly on that day instead.
 //
 // The colon form is chosen deliberately: it is the one a whole-word detector
 // missed, and inside the sweep's scope the sweep hid the miss. Mutation
 // survivor until this test existed.
 func TestShellLintGateChecksDirectivesOutsideTheSweepScope(t *testing.T) {
 	shellcheckBin(t)
+	const outside = "examples"
+	for _, swept := range sweepPaths(t) {
+		if outside == swept {
+			t.Fatalf("this test's fixture directory %q is now in SWEEP_PATHS, so a refusal no longer proves the directive check ran outside the sweep; move the fixture to a directory that is still unswept", outside)
+		}
+	}
 	root := fixtureRepo(t, map[string]string{
-		"scripts/ok.sh":     cleanScript,
-		"examples/thing.sh": scriptWithDirective("# shellcheck: disable=SC2086"),
+		"scripts/ok.sh":       cleanScript,
+		outside + "/thing.sh": scriptWithDirective("# shellcheck: disable=SC2086"),
 	})
 	out, code := runGate(t, root)
 	if code == 0 {
@@ -444,6 +468,81 @@ func TestShellLintGateChecksDirectivesOutsideTheSweepScope(t *testing.T) {
 	}
 	if !strings.Contains(out, "unparseable shellcheck directive token") {
 		t.Errorf("refusal came from the sweep rather than the directive check:\n%s", out)
+	}
+}
+
+// sweepPaths reads SWEEP_PATHS out of the gate script. A test that reasons
+// about what is inside or outside the sweep has to ask the gate, not restate
+// the list: this suite's own docstrings stated the scope as prose, and
+// widening the sweep made that prose wrong with nothing failing to say so.
+//
+// Every match is collected rather than the first returned. Bash takes the
+// LAST assignment, so returning the first would hand back a stale list with
+// total confidence; a second assignment is a shape this parser refuses
+// outright instead of guessing which one the gate runs on. Comment lines are
+// skipped because the gate's own header quotes the assignment as an example.
+func sweepPaths(t *testing.T) []string {
+	t.Helper()
+	gate, err := os.ReadFile(filepath.Join(repoRoot(t), "scripts", "check-shell-lint.sh"))
+	if err != nil {
+		t.Fatalf("read gate: %v", err)
+	}
+	var found []string
+	for _, line := range strings.Split(string(gate), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		rest, ok := strings.CutPrefix(trimmed, "SWEEP_PATHS=(")
+		if !ok {
+			continue
+		}
+		rest, ok = strings.CutSuffix(rest, ")")
+		if !ok {
+			t.Fatalf("SWEEP_PATHS assignment is not one line, so this parser cannot read it: %q", line)
+		}
+		if found != nil {
+			t.Fatalf("gate script has more than one SWEEP_PATHS assignment; bash would use the last and this parser will not guess: %q", line)
+		}
+		found = strings.Fields(rest)
+		if len(found) == 0 {
+			t.Fatal("SWEEP_PATHS parsed as empty")
+		}
+	}
+	if found == nil {
+		t.Fatal("gate script has no SWEEP_PATHS assignment")
+	}
+	return found
+}
+
+// TestShellLintGateSweepsThePackPayload pins the one swept directory that is
+// not this repo's own tooling. internal/bootstrap/packs/ is the core pack the
+// SDK ships, so an ordinary finding there reaches a user's machine instead of
+// CI; gs-a6j cleared the six findings it carried and widened the sweep to hold
+// it clean.
+//
+// The fixture carries an ORDINARY finding, not a malformed directive. A
+// directive fixture would be refused by check 1 from any path in the tree, so
+// it would stay red with the pack payload dropped from SWEEP_PATHS and prove
+// nothing about the sweep. Nothing else here would notice that revert either:
+// narrowing the sweep only removes findings, so
+// TestShellLintGatePassesOnThisRepo goes green over it -- measured, by
+// dropping the path and running both.
+func TestShellLintGateSweepsThePackPayload(t *testing.T) {
+	shellcheckBin(t)
+	const subject = "internal/bootstrap/packs/core/assets/scripts/subject.sh"
+	root := fixtureRepo(t, map[string]string{
+		"scripts/ok.sh": cleanScript,
+		subject:         dirtyScript,
+	})
+	out, code := runGate(t, root)
+	if code == 0 {
+		t.Fatalf("gate accepted an ordinary finding in the shipped pack payload:\n%s", out)
+	}
+	// The exit code alone would also be non-zero if the sweep had found no
+	// targets at all, which is the shape a broken selector produces.
+	if !strings.Contains(out, "SC2086") {
+		t.Errorf("gate exited non-zero without reporting the finding, so %s was not linted:\n%s", subject, out)
 	}
 }
 

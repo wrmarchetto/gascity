@@ -176,11 +176,24 @@ if [ ! -f "$DOLT_PORT_RESOLVE_SCRIPT" ]; then
     DOLT_PORT_RESOLVE_SCRIPT="$DOLT_SYSTEM_PACKS_DIR/bd/dolt/assets/scripts/port_resolve.sh"
 fi
 if [ ! -f "$DOLT_PORT_RESOLVE_SCRIPT" ] && [ -n "${SCRIPT_DIR:-}" ]; then
-    DOLT_SOURCE_SCRIPT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../../../../../../examples/bd/dolt/assets/scripts" 2>/dev/null && pwd || true)
+    # CDPATH is cleared for the duration of the cd so an operator's CDPATH
+    # cannot resolve this relative path somewhere else, and so cd does not
+    # print the directory it landed in into the command substitution. The
+    # empty value is spelled '' rather than bare: `CDPATH= cd` is SC1007,
+    # which shellcheck raises because it cannot tell the prefix from a
+    # mistyped assignment.
+    DOLT_SOURCE_SCRIPT_DIR=$(CDPATH='' cd -- "$SCRIPT_DIR/../../../../../../examples/bd/dolt/assets/scripts" 2>/dev/null && pwd || true)
     if [ -n "$DOLT_SOURCE_SCRIPT_DIR" ]; then
         DOLT_PORT_RESOLVE_SCRIPT="$DOLT_SOURCE_SCRIPT_DIR/port_resolve.sh"
     fi
 fi
+# SC1090 is correct here: the path is whichever of the three candidates
+# above exists, so it cannot be made constant. The rejected alternative was
+# a `source=` directive naming the examples/ copy -- that is the LAST-resort
+# development fallback, and an installed city sources one of the two
+# system-pack copies instead, neither of which exists in this checkout. It
+# would point the linter at a file production never reads.
+# shellcheck disable=SC1090
 . "${DOLT_PORT_RESOLVE_SCRIPT:?port_resolve.sh not resolved}"
 if [ -n "${DOLT_PROVIDER_STATE_FILE:-}" ]; then
     GC_DOLT_PORT="$(resolve_dolt_port_or_die "$DOLT_STATE_FILE" "$DOLT_PROVIDER_STATE_FILE" "$GC_CITY_PATH/.beads/dolt" "$GC_CITY_PATH")" || exit $?

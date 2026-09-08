@@ -702,8 +702,17 @@ commit_archive_snapshot() {
 discard_failed_db_outputs() {
     local db="$1"
 
-    rm -rf "$ARCHIVE_REPO/$db"
-    rm -f "$ARCHIVE_REPO/$db.jsonl"
+    # Both expansions carry :? so an empty variable aborts instead of
+    # widening the target. Neither can be empty today: ARCHIVE_REPO is built
+    # from a :- default with a literal path suffix, and every caller passes a
+    # $DB the export loop already put through valid_database_identifier,
+    # which refuses the empty string and anything outside [A-Za-z0-9_-]. The
+    # guard is here because a caller added without that gate reaches this
+    # silently -- measured on the unguarded body, an empty $db deleted the
+    # whole archive repo and exited 0. Only the rm -rf is SC2115; the rm -f
+    # is guarded with it so the pair cannot drift apart.
+    rm -rf "${ARCHIVE_REPO:?}/${db:?}"
+    rm -f "${ARCHIVE_REPO:?}/${db:?}.jsonl"
 
     if git -C "$ARCHIVE_REPO" cat-file -e "HEAD:$db/issues.jsonl" 2>/dev/null; then
         git -C "$ARCHIVE_REPO" restore --source=HEAD --worktree -- "$db" >/dev/null 2>&1 || true
