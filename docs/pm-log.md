@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ob8 2026-09-08T04:17:46Z
+last_seen: gs-6g9 2026-09-08T04:33:16Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -2785,5 +2785,44 @@ in-progress epics at once. No new pm-open entry: the wait is pm-open #2(a)
 and #2(b) was closed by pm-log #59. Residuals in pm-log #5 stand: no
 scheduled wake has yet run WITH the assessment layer, and a governor that
 assesses then reports something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 89. pm-epic-close gs-6g9: governor stays in-progress; no drift from #88 (2026-09-08)
+
+Seventy-fourth ruling of this shape (pm-log #5 gs-8iv through #88 gs-ob8),
+re-verified against the stores this turn at 04:35Z rather than recalled. The
+closed set under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun --
+4 closed, 0 open/in-progress under --status all, criteria 1-6 verified in
+their close reasons, pm-log #5), and ci-waw3o7, read live in the city store,
+matches the #65-#88 readings exactly -- OPEN, updated 2026-09-07, owner
+gascity/lab.engineer-1, assignee human, Willie's recorded answer still the
+2026-09-05T20:14Z "NOT YET" ruling about the evidence (deferred 48h, expired
+per #65). Gate ci-gbhkpa was also read live this turn, not just via the
+dependency line: OPEN, updated 2026-09-05. Per pm-log #4 governor stays
+in-progress and the bead that reopens it remains ci-waw3o7.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question).
+
+Drift since last_seen (gs-ob8, set at pm-log #88): none besides the prior
+summons's own closure and this summons -- the updated-after listing against
+the 04:17:46Z stamp returns exactly gs-ob8 (closed) and gs-6g9. mayor-slack-
+bridge's open work is unchanged (gs-228 operator provisioning, gs-z09
+round-trip demo -- neither appears in that listing), and gs-a6j does not
+appear either, so its record carries nothing new since #88's read (holder
+parked on a human rm -rf permission dialog -- a patrol/mayor matter, not a
+governor-criterion or placement question).
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59, deliberately concurrent). No new pm-open entry: the wait is
+pm-open #2(a) and #2(b) was closed by pm-log #59. Residuals in pm-log #5
+stand: no scheduled wake has yet run WITH the assessment layer, and a
+governor that assesses then reports something else is mechanically
+unobservable today.
 
 Source: roadmap governor
