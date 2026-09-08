@@ -134,3 +134,18 @@ have a declared home?
 Would settle it: Willie's call in a `gc city pm plan` or `gc city pm chat`
 sitting -- either a maintenance epic with acceptance criteria, or a recorded
 policy that substrate fixes stay `standalone` by default.
+
+## 4. Should gascity ever build a provider-neutral reply mechanism for non-mirrored providers? (2026-09-08)
+
+Ruled "not now" on pm-log #129 (bead gs-3shj): epic:mayor-slack-bridge's own criterion 2
+resolved the mayor's reply-path problem with a per-provider mirror, not a CLI, and no
+epic asks for a shared `gc extmsg reply` wrapper over the existing
+POST /v0/city/{city}/extmsg/outbound endpoint. That default holds only against today's
+roadmap, which has exactly one provider integration. No prior entry, before or after this
+one, has ruled on whether such a capability is wanted in principle for a FUTURE provider
+that does not want a full mirror daemon -- pm-log #129 explicitly found this is new
+ground, not a reversal.
+
+Would settle it: a future provider integration that needs to reply without adopting the
+contrib/openclaw-bridge mirror shape, or a `gc city pm plan`/`gc city pm chat` sitting
+where Willie decides the policy ahead of that need rather than at the moment it bites.

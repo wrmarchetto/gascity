@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-9h7u 2026-09-08T21:21:40Z
+last_seen: gs-3shj 2026-09-08T23:30:41Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4198,3 +4198,68 @@ design (pm-log #59). No new pm-open entry: pm-open #2(a) already reads
 "the wait is purely human" as of #102, unchanged this turn.
 
 Source: roadmap governor
+
+## 129. pm-question gs-3shj: drop the broken reply instruction; no new reply CLI for now (2026-09-08)
+
+Answered gs-77tn's question (bead gs-3shj, filed via ask-pm.py, blocking gs-77tn): what
+the generic inbound-conversation reminder (internal/api/handler_extmsg.go) should say
+instead of the nonexistent `gc <provider> reply-current`. Verified rather than taken on
+the asking engineer's word, since the ruling touches a seam every provider session reads:
+
+- No provider has ever had a working `reply-current`: the engineer's own git-log search
+  (no string literal, no registered Cobra command, any provider, any ref) is independently
+  corroborated by pm-log #57's repo survey -- filed a full day earlier, for an unrelated
+  feasibility question -- which already found "NOTHING mirrors output automatically...
+  output reaches a conversation only when the agent chooses to reply": the only reply path
+  that ever existed was manual, and it pointed at a command that never existed.
+- The stated blocker on dropping the instruction does not hold. gs-77tn cites gs-t0d8 for
+  "removing the instruction leaves an agent with no reply path at all," but gs-t0d8's own
+  text (read directly, not through gs-77tn's characterization) measures a mirror ALREADY
+  delivering 92 messages in the same window gs-3shj cites, and frames its own defect as
+  content quality (narration vs. answering turn) on a mirror that is already delivering --
+  never as the absence of a reply path. gs-77tn's blocking claim about gs-t0d8 is not
+  supported by gs-t0d8's own text.
+- The cited precedent checks out at the diff level: commit d7373594b
+  (internal/api/handler_extmsg.go, same hunk) both templated the hardcoded
+  `gc discord reply-current` into `gc %s reply-current` AND dropped a sibling
+  `gc transcript read --ack` hint, with the commit's own stated reason "there is no
+  `gc transcript` CLI subcommand on origin/main." Dropping a reference to a command that
+  does not exist is this repo's own established fix for this defect class -- that commit
+  just never applied the check to `reply-current` itself.
+
+Ruling: drop the reply instruction from the reminder, for every provider, not a
+mayor-only patch -- satisfies epic:mayor-slack-bridge criterion 2 ("no reply action
+required of the mayor") rather than merely avoiding conflict with it, and removes a
+reference that has never pointed at working behavior for anyone. Do not add a
+provider-neutral `gc extmsg reply` CLI as separate scope now: no acceptance criterion of
+epic:mayor-slack-bridge's nine covers a CLI or a non-mirror reply path (criterion 2 is
+scoped to the Slack mirror specifically), and under this rig's own established
+epic-membership test (pm-log #60 gs-olu, #69 gs-fn6, #73 gs-dzj: acceptance-criteria
+coverage decides membership, not descent from the epic's own work) it would not qualify
+as in-epic scope even if built -- it would need a standalone bead or a new epic. No prior
+entry has ever ruled on whether gascity wants that capability, in either direction; this is
+new ground, not a reversal. Declining it costs nothing today: the HTTP endpoint it would
+wrap (POST /v0/city/{city}/extmsg/outbound) already exists and is usable without a CLI.
+Option (iii) (gate the instruction on mirror-bound status) stands correctly ruled out by
+the engineer's own reasoning -- the SDK has no mirror awareness, mirrors live in contrib.
+
+Data-integrity note, not load-bearing for this ruling: gs-3shj's own stored description is
+truncated at exactly 4000 characters IN THE STORED FIELD ITSELF, not by any render path --
+confirmed by reading the bd JSON directly. The lost middle sentence (introducing the
+"second correction" gs-77tn's argument promised) is unrecoverable; assets/scripts/ask-pm.py,
+the script the bead says filed it, is not present in this checkout, tracked or historical,
+so its truncation behavior could not be inspected. The surviving text on both sides of the
+gap was sufficient to rule; flagging the truncation itself as a latent filing-path defect
+for whoever next touches ask-pm.py.
+
+Catch-up since last_seen (gs-9h7u, 2026-09-08T21:21:40Z): nine records moved, eight of them
+epic:mayor-slack-bridge. Closed: gs-a9bm (supervise the adapter/mirror across restarts),
+gs-z09 (cold round-trip demo), gs-228 (Slack app provisioning). Open, held: gs-msc2
+(operator activation of the supervised adapter, hold:external -- canonical label, city
+policy forbids agents restarting managed infrastructure). In progress: gs-77tn and gs-t0d8
+(this session's subject and its sibling bug, both unresolved by this ruling alone). Not
+evaluating epic:mayor-slack-bridge's overall status from this -- that is a close-report or
+epic-close question, not this one -- recorded here only so the next session does not
+re-discover it as drift.
+
+Source: roadmap mayor-slack-bridge
