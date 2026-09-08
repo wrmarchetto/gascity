@@ -56,6 +56,14 @@ re-ask is owed by the bead's owner (gascity/lab.engineer-1) carrying the
 interval record its notes require (pm-log #62). (b) was settled by pm-log
 #59: mayor-slack-bridge is the epic after governor and is in-progress.
 
+Update 2026-09-08 (pm-log #101): the (a) wait had a demand gap. The re-ask
+is owed by gascity/lab.engineer-1, but that pool identity sat at zero
+sessions with no bead assigning it the work, so 35 identical rulings
+(pm-log #65-#100) waited on an act nothing would trigger. gs-r76 (this
+rig, epic:governor, assignee gascity/lab.engineer-1) now carries it:
+produce the post-assessment interval record, put it on ci-waw3o7, re-ask.
+(a) itself remains open until Willie rules on ci-waw3o7.
+
 ## 3. Substrate maintenance beads have no epic home; gs-z39 ruled standalone (2026-09-05)
 
 gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or

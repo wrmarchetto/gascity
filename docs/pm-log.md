@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-y73 2026-09-08T07:31:55Z
+last_seen: gs-hk9 2026-09-08T07:48:11Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3243,5 +3243,57 @@ and mayor-slack-bridge is already in-progress alongside governor by design
 pm-open #2(a), unchanged. Residuals in pm-log #5 stand: no scheduled wake
 has yet run WITH the assessment layer, and a governor that assesses then
 reports something else is mechanically unobservable today.
+
+Source: roadmap governor
+
+## 101. pm-epic-close gs-hk9: governor stays in-progress; demand bead gs-r76 files the owed re-ask (2026-09-08)
+
+Eighty-sixth ruling of this shape, re-verified live at 07:48Z rather than
+recalled. The closed set under epic:governor is unchanged (gs-o9i, gs-x0k,
+gs-xeh, gs-nun -- 4 closed, 0 open, criteria 1-6 verified in their close
+reasons, pm-log #5). ci-waw3o7, read live in the city store: OPEN, updated
+2026-09-07, owner gascity/lab.engineer-1, assignee human, Willie's recorded
+answer still the 2026-09-05T20:14Z NOT YET (deferral expired per #65). Gate
+ci-gbhkpa, read live: OPEN, operator-paged, still blocking ci-waw3o7. Per
+pm-log #4 governor stays in-progress and the bead that reopens it remains
+ci-waw3o7.
+
+New this turn, and why it departs from the #65-#100 wait: those thirty-five
+rulings each restated the #62 position -- the re-ask is owed by ci-waw3o7's
+owner carrying the interval record -- while no re-ask happened, and the
+reason is mechanical, not judgmental: gascity/lab.engineer-1 is a pool
+identity at zero sessions, owning a city bead wakes nobody, and no bead in
+any store assigned it the work. The owed act had no demand behind it, so
+another identical ruling could not converge. Filed gs-r76 in this rig's
+store -- assignee gascity/lab.engineer-1, label epic:governor, P2, not
+slung -- under the cold-pool provision (a bead is the only channel that
+reaches a pool agent at zero sessions and raises demand). It instructs:
+produce the interval record, put it on ci-waw3o7, and re-ask -- no new
+gate, per the #29 precedent, since ci-gbhkpa already pages the decision.
+The assessment layer has been in place since 2026-09-05, so the record is
+finally able to say whether scheduled wakes have run WITH it -- the #5
+residual -- instead of restating the 1.5-hour pre-assessment bound.
+
+Alternative rejected: mailing the mayor to mint the bead. An extra hop
+through an agent holding none of the interval context, and the label
+placement is settled by the criterion itself: gs-nun ends by asking, the
+ask is unmade, so this is a criterion-coverage gap, not orphan scope -- the
+same standard that ruled gs-z39 OUT of the epic (pm-open #3) rules this in.
+
+Side effect, intended: gs-r76 open under epic:governor makes the
+pm-epic-close sweep's condition false, so the 15-minute summons loop
+(#96-#100 landed 10-20 minutes apart) quiets while the record is produced.
+If gs-r76 closes with Willie still unruled, the sweep correctly resumes.
+
+Drift since last_seen (gs-y73, set at pm-log #100): none besides the prior
+summons's own closure and this summons -- the updated-after listing against
+the 2026-09-08T07:31:55Z stamp returns exactly gs-y73 (closed) and gs-hk9
+(this claim, in_progress). No other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59, deliberately concurrent). pm-open #2(a) updated with the
+demand-gap finding and gs-r76; courtesy ping sent per the pm-open append
+rule, one factual line, not a re-page of the parked ruling.
 
 Source: roadmap governor
