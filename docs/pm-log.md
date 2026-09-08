@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-8mw 2026-09-08T06:29:09Z
+last_seen: gs-jcl 2026-09-08T06:47:45Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -3086,6 +3086,41 @@ Drift since last_seen (gs-gs0, set at pm-log #95): none besides the prior
 summons's own closure and this summons -- the updated-after listing against
 the 2026-09-08T06:14:14Z stamp returns exactly gs-gs0 (closed) and gs-8mw. No
 other bead in this rig's store moved.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
+and mayor-slack-bridge is already in-progress alongside governor by design
+(pm-log #59, deliberately concurrent). No new pm-open entry: the wait is
+pm-open #2(a) and #2(b) was closed by pm-log #59. Residuals in pm-log #5
+stand: no scheduled wake has yet run WITH the assessment layer, and a
+governor that assesses then reports something else is mechanically
+unobservable today.
+
+Source: roadmap governor
+
+## 97. pm-epic-close gs-jcl: governor stays in-progress; no drift from #96 (2026-09-08)
+
+Eighty-second ruling of this shape (pm-log #5 gs-8iv through #96 gs-8mw),
+re-verified against the stores this turn at 06:47Z rather than recalled. The
+closed set under epic:governor is unchanged (gs-o9i, gs-x0k, gs-xeh, gs-nun --
+4 closed, 0 open/in-progress under --status all, criteria 1-6 verified in
+their close reasons, pm-log #5), and ci-waw3o7, read live in the city store,
+matches the #65-#96 readings exactly -- OPEN, updated 2026-09-07, owner
+gascity/lab.engineer-1, assignee human, Willie's recorded answer still the
+2026-09-05T20:14Z "NOT YET" ruling about the evidence (deferred 48h, expired
+per #65). Gate ci-gbhkpa also read live this turn: OPEN, updated 2026-09-05,
+still blocking ci-waw3o7. Per pm-log #4 governor stays in-progress and the
+bead that reopens it remains ci-waw3o7.
+
+The #62 position stands: the re-ask on ci-waw3o7 is owed by its owner
+(gascity/lab.engineer-1) carrying the interval record the bead's notes
+require -- wakes, findings, how many real -- which this PM does not hold. No
+page sent -- gate ci-gbhkpa already operator-pages the decision (pm-log #29
+precedent against re-paging a parked question).
+
+Drift since last_seen (gs-8mw, set at pm-log #96): none besides the prior
+summons's own closure and this summons -- the updated-after listing against
+the 2026-09-08T06:29:09Z stamp returns exactly gs-8mw (closed 06:31:01Z) and
+gs-jcl (claimed 06:47:45Z). No other bead in this rig's store moved.
 
 No epic promoted and no DECOMP sent: the roadmap holds no status:open epic,
 and mayor-slack-bridge is already in-progress alongside governor by design
