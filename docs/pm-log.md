@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-3shj 2026-09-08T23:30:41Z
+last_seen: gs-xcs9 2026-09-08T23:36:36Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4263,3 +4263,60 @@ epic-close question, not this one -- recorded here only so the next session does
 re-discover it as drift.
 
 Source: roadmap mayor-slack-bridge
+
+## 130. pm-question gs-xcs9: keep mirroring every assistant text turn, narration included (2026-09-08)
+
+Answered gs-t0d8's linked question (bead gs-xcs9, filed via ask-pm.py by
+gascity/lab.engineer-2 while investigating gs-t0d8's flood report): should
+the mayor-Slack mirror narrow to turn-ending assistant messages only, or
+keep publishing every assistant text turn including inter-tool narration?
+Not a question about the flood -- the engineer had already found and fixed
+that separately, and independently of this ruling: a backlog-replay bug,
+not narration volume (branch fix/gs-t0d8-mirror-backlog-replay, suite
+48/48, mutation sweep 7/7 dead, verified live against the running city's
+own stream with the outbound leg stubbed).
+
+The bead's own "why the documents do not settle it" argument cites only
+docs/roadmap.md criterion 2 and the epic's tmux-window framing sentence.
+It does not reach pm-log #57 and #58 (lines 1669 and 1715) -- the actual
+design-decision entries the roadmap epic names as its source, 1600+ lines
+into this log and easy to miss from the roadmap's summary alone. Read
+directly, they settle it:
+
+- #57 already frames the mirror daemon's baseline mechanism as "posting
+  EACH assistant turn to /extmsg/outbound" -- each, not the answering one
+  -- and puts a binary design question to Willie: "assistant turns only"
+  vs "every turn the mayor sees" (the latter including tool output, per
+  #57's own SSE-stream framing).
+- #58 is Willie's ruling, verbatim: "Mirror scope: ASSISTANT TURNS ONLY.
+  The mirror carries the mayor's own output -- no tool output, no inbound
+  traffic from other agents." The axis he decided was assistant output as
+  a whole versus tool output and other-agent traffic -- never a further
+  split between narration and a final answer. "Each assistant turn" was
+  already #57's proposed mechanism before this ruling; #58 only layers
+  the two named exclusions on top of it.
+
+Ruling: keep mirroring every assistant text turn, unqualified, per #58 as
+written. Narrowing to answering-turns-only would be a NEW restriction that
+nothing on record ever proposed or adopted, not a stricter reading of an
+existing one. This also sidesteps the silent-failure mode the engineer
+flagged: narrowing needs a stop_reason-based filter, and a Codex-backed
+target's stream carries no stop_reason, so every message there would
+project as non-ending and that target's mirror would silently publish
+nothing. Keeping every turn means that filter, and its Codex gap, is not
+built at all, so no Codex-specific answer is needed.
+
+Does not decide gs-77tn (explicit reply CLI, in progress on
+lab.engineer-1): if that lands, whether the mirror's answering turn and an
+explicit reply would both post to the channel is a separate question for
+whoever closes that bead, not resolved here.
+
+Data-integrity note, same defect pm-log #129 already flagged: gs-xcs9's own
+stored description is also truncated at exactly 4000 characters in the
+stored field itself (confirmed via `bd show gs-xcs9 --json`), losing the
+middle of the engineer's argument. Not load-bearing here -- pm-log #57/#58
+settle this independent of that argument -- but it is the second bead
+through assets/scripts/ask-pm.py to hit the identical cut, corroborating
+#129's flag rather than a one-off.
+
+Source: pm-log #58
