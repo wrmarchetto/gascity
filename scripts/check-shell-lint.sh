@@ -15,25 +15,34 @@
 #      the malformed directive AND refuses any directive that disables the
 #      diagnostics which report one.
 #
-#   2. THE SWEEP, over scripts/ and .githooks/ only. Everything the linter
-#      finds, at its default severity, with `-x` so sourced libraries are
-#      analyzed in context rather than reported as SC1091.
+#   2. THE SWEEP, over scripts/, .githooks/ and internal/bootstrap/packs/.
+#      Everything the linter finds, at its default severity, with `-x` so
+#      sourced libraries are analyzed in context rather than reported as
+#      SC1091. Note what `-x` does NOT do, measured on 0.11.0: a sourced file
+#      supplies context only, and its own findings are not reported against
+#      the file that sources it. So a swept script may source an unswept one
+#      without dragging that file's debt in -- and without covering it either.
 #
-# WHY THE TWO SCOPES DIFFER. Measured 2026-09-07 on the tree this file lands
-# in, shellcheck 0.11.0 linux.x86_64, with the same `-x -P SCRIPTDIR` the sweep
-# uses: 140 tracked shell files, 104 clean, 36 dirty -- and every one of the 36
-# is outside scripts/ and .githooks/ (20 examples/, 6 internal/, 4 test/, 4
-# contrib/, 1 schemas/, 1 .github/). Cleaning those is separate work, so the
-# sweep is scoped to the repo's own gate and tooling scripts, which is where
-# the incident that produced this file happened, while check 1 costs nothing
-# and runs everywhere.
+# WHY THE SCOPES DIFFER. Measured 2026-09-07 on the tree this file lands
+# in, with shellcheck 0.11.0 linux.x86_64 and the same `-x -P SCRIPTDIR` the
+# sweep uses: 140 tracked shell files, 64 inside SWEEP_PATHS, 110 clean and
+# 30 dirty -- and every one of the 30 is outside SWEEP_PATHS (20 examples/,
+# 4 test/, 4 contrib/, 1 schemas/, 1 .github/). Cleaning those is separate
+# work, so the sweep is scoped to the repo's own gate and tooling scripts plus
+# the pack payload, while check 1 costs nothing and runs everywhere.
+#
+# internal/bootstrap/packs/ is the one swept directory that is NOT this repo's
+# own tooling: it is the core pack the SDK ships, so a finding there lands on
+# a user's machine rather than in CI. That is why it was worth clearing the
+# six findings it carried to get it in, and why it is pinned behaviorally by
+# TestShellLintGateSweepsThePackPayload -- narrowing SWEEP_PATHS only removes
+# findings, so no other check in the suite notices a revert.
 #
 # THE BOUND ON THAT, so it does not go unnoticed: an ordinary shellcheck
-# finding in a file outside scripts/ and .githooks/ is refused by NOTHING.
-# That includes the pack scripts the SDK ships -- one of them carries an
-# SC2115 on `rm -rf "$ARCHIVE_REPO/$db"`. Widen SWEEP_PATHS as those
-# directories are cleaned. The count above describes the tree at THIS commit
-# and nothing later; re-measure before quoting it.
+# finding in a file outside SWEEP_PATHS is refused by NOTHING. Widen
+# SWEEP_PATHS as those directories are cleaned; examples/ is the large one
+# and is a bead of its own. The counts above describe the tree at THIS commit
+# and nothing later; re-measure before quoting them.
 #
 # The rejected alternative was a skip when shellcheck is absent. Every CI run
 # would then be green whether or not the linter existed, which is the failure
@@ -69,9 +78,14 @@ cd "$root"
 
 # --- scope ---
 
-# Directories whose shell files must be shellcheck-clean. Both are this repo's
-# own tooling: the gate scripts, the test runners, and the git hooks.
-SWEEP_PATHS=(scripts .githooks)
+# Directories whose shell files must be shellcheck-clean. The first two are
+# this repo's own tooling -- the gate scripts, the test runners, the git hooks.
+# The third is the core pack payload, which ships to users.
+#
+# Adding a path here is not free: every shell file under it must already be
+# clean or the gate goes red for everyone. Measure first with
+# `SWEEP_PATHS=(<candidate>)` before committing the widening.
+SWEEP_PATHS=(scripts .githooks internal/bootstrap/packs)
 
 # testdata holds deliberately-broken fixtures (internal/beads/exec/testdata,
 # and this gate's own cases), so linting it would refuse the fixtures for
