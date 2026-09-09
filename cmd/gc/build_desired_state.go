@@ -1242,6 +1242,11 @@ func collectAssignedWorkBeadsWithStores(
 		storeRefs []string
 		readyIDs  map[string]bool
 		errs      []error
+		// barePool holds the open beads addressed to a configured pool's own
+		// name that no other pass captures. They are kept OUT of the beads
+		// slice on purpose: they carry no readiness verdict, and the only
+		// thing taken from them is their assignee.
+		barePool []beads.Bead
 	}
 	results := make([]storeAssignedWorkResult, len(stores))
 	var wg sync.WaitGroup
@@ -1305,15 +1310,18 @@ func collectAssignedWorkBeadsWithStores(
 			// appendOpenRoutedWorkUnique never markReadyAssigned (see the
 			// skipReadyAssignees note below), and releaseOrphanedPoolAssignments'
 			// own live re-read (liveWorkAssignmentStillReleasable) skips it.
+			var barePool []beads.Bead
 			if openRouted, err := listBothTiersForControllerDemand(source.store, beads.ListQuery{Status: "open"}); err == nil {
 				appendOpenRoutedWorkUnique(&result, &resultStores, &resultStoreRefs, openRouted, seen, source.store, source.ref)
+				barePool = barePoolAssignedOpenWork(cfg, openRouted)
 			} else {
 				errs = append(errs, fmt.Errorf("List(open): %w", err))
 				if beads.IsPartialResult(err) && len(openRouted) > 0 {
 					appendOpenRoutedWorkUnique(&result, &resultStores, &resultStoreRefs, openRouted, seen, source.store, source.ref)
+					barePool = barePoolAssignedOpenWork(cfg, openRouted)
 				}
 			}
-			results[idx] = storeAssignedWorkResult{ref: source.ref, beads: result, stores: resultStores, storeRefs: resultStoreRefs, readyIDs: readyIDs, errs: errs}
+			results[idx] = storeAssignedWorkResult{ref: source.ref, beads: result, stores: resultStores, storeRefs: resultStoreRefs, readyIDs: readyIDs, errs: errs, barePool: barePool}
 		}()
 	}
 	wg.Wait()
@@ -1327,10 +1335,12 @@ func collectAssignedWorkBeadsWithStores(
 	// + bead ID (storeScopedBeadKey).
 	readyAssigned := make(map[storeScopedBeadKey]bool)
 	var partial bool
+	var barePoolCandidates []beads.Bead
 	for _, r := range results {
 		result = append(result, r.beads...)
 		resultStores = append(resultStores, r.stores...)
 		resultStoreRefs = append(resultStoreRefs, r.storeRefs...)
+		barePoolCandidates = append(barePoolCandidates, r.barePool...)
 		for id := range r.readyIDs {
 			readyAssigned[storeScopedBeadKey{StoreRef: r.ref, ID: id}] = true
 		}
@@ -1351,6 +1361,22 @@ func collectAssignedWorkBeadsWithStores(
 	expandSkipAssigneesWithSessionIdentities(skipReadyAssignees, sessionBeads)
 	assignees := readyAssignedWorkAssignees(cfg, sessionBeads, skipReadyAssignees)
 	assignees = appendBarePoolAssignees(assignees, cfg, result, skipReadyAssignees)
+	// ...and from the open beads no pass captured. A plain open task carrying a
+	// pool's own name and no gc.routed_to entered none of them -- the molecule
+	// pass wants Ephemeral/NoHistory/gc.kind=workflow, the routed pass wants a
+	// route, and the call above only promotes assignees already present in what
+	// those two captured -- so no Ready(assignee=) probe ever ran for it and it
+	// never reached this snapshot at all (ci-efjuzz). This is the addressing
+	// mode the city's own mayor prompt teaches.
+	//
+	// The ASSIGNEE is promoted, never the bead. Capturing the bead here would
+	// stamp readiness on a row that has passed no dependency gate, which is the
+	// gc-ft31x/EB-42o8 hole the pass split exists to close and which the
+	// rejected alternative in appendBarePoolAssignees' own comment names.
+	// Routing through Ready() keeps the dependency gate as the single authority:
+	// a blocked bead promotes its assignee, returns no ready row, and raises
+	// nothing.
+	assignees = appendBarePoolAssignees(assignees, cfg, barePoolCandidates, skipReadyAssignees)
 	if len(skipReadyAssignees) > 0 && len(assignees) == 0 {
 		return result, resultStores, resultStoreRefs, readyAssigned, partial
 	}
@@ -1531,6 +1557,37 @@ func expandSkipAssigneesWithSessionIdentities(skip map[string]struct{}, sessionB
 // below fans out over every active store. The figure that grows is distinct
 // pool-assigned assignees -- a busy city pays for every pool holding open
 // work, not merely for the ones with running sessions.
+// barePoolAssignedOpenWork returns the beads whose assignee names a configured
+// pool, from a store's open list.
+//
+// Only the assignee is ever read off these, so the filter is deliberately the
+// narrowest thing that preserves one: a bead whose assignee names no pool can
+// promote nothing, and keeping it would carry a whole store's open list across
+// the goroutine boundary for no reader.
+//
+// It is a BOUND, not a verdict, and removing it survives the suite's mutation
+// sweep for that reason. A surplus assignee reaches the Ready probe list and
+// finds work that maps to no pool template, so it changes no session count;
+// with the readyDemandCache the per-assignee reads are filterReadySnapshot
+// over one cached snapshot, so it does not even cost a store probe. What it
+// costs is this slice and that filtering, per store, per tick.
+func barePoolAssignedOpenWork(cfg *config.City, beadList []beads.Bead) []beads.Bead {
+	if cfg == nil {
+		return nil
+	}
+	var out []beads.Bead
+	for _, b := range beadList {
+		if strings.TrimSpace(b.Assignee) == "" {
+			continue
+		}
+		if !assigneeNamesConfiguredPool(cfg, b.Assignee) {
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
 func appendBarePoolAssignees(assignees []string, cfg *config.City, work []beads.Bead, skip map[string]struct{}) []string {
 	if cfg == nil {
 		return assignees
