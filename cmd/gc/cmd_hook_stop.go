@@ -227,8 +227,28 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	if strings.EqualFold(strings.TrimSpace(f.sessionOrigin), sessionOriginEphemeral) {
 		b.WriteString("\nThen, as your final action:\n  gc runtime drain-ack\n")
 	}
-	b.WriteString("\nIf the work cannot be completed, close it as failed with a")
-	b.WriteString(" failure class rather than leaving it open. If you need a")
+	// The parked exit comes FIRST, and the order is the instruction. A session
+	// that has already read "close it as failed" has an answer and stops
+	// reading, which is how astoria-zephyr az-lmrn was closed
+	// failure_class=scope-decision-pending while it was merely waiting on a
+	// decision (ci-dvxubd). Closing such a bead destroys the wake path -- a
+	// closed bead is woken by nothing, so the answer lands against nobody --
+	// and a failure class on work that did not fail corrupts every later query
+	// filtering on one.
+	//
+	// This says "waiting on" rather than naming a bead id or a command: the
+	// exact invocation differs per agent for the reason given above, and the
+	// condition is what the reader has to recognize. `blocked` is the state
+	// astoria-zephyr az-dbe and az-qe33 already use for this, and it is what
+	// the mayor used on ci-rup0vw the night az-lmrn was lost.
+	b.WriteString("\nIf it is waiting on something -- an open question, another")
+	b.WriteString(" bead, an operator -- do NOT close it. Set it blocked,")
+	b.WriteString(" keeping the assignee, and name the release trigger in the")
+	b.WriteString(" bead. It stays yours and the thing it waits on can still")
+	b.WriteString(" wake it.\n")
+	b.WriteString("\nOnly if the work genuinely cannot be done, close it as")
+	b.WriteString(" failed with a failure class rather than leaving it open. A")
+	b.WriteString(" bead that is merely waiting has not failed. If you need a")
 	b.WriteString(" decision before you can close it, mail the mayor and say so")
 	b.WriteString(" in the close reason -- but do not end the turn with the bead")
 	b.WriteString(" still on your hook.\n")

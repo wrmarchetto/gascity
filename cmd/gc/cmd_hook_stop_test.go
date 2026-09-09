@@ -652,3 +652,79 @@ func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
 		})
 	}
 }
+
+// TestStopGateOutstandingReasonNamesTheParkedExit pins that the refusal offers
+// a correct move for work that is legitimately waiting rather than unfinished.
+//
+// THE INCIDENT (ci-dvxubd, 2026-09-09). astoria-zephyr az-lmrn was closed
+// FAILED with failure_class=scope-decision-pending by a session that quoted
+// this message as its reason: "The stop hook requires az-lmrn not remain
+// assigned and open, so I am closing it failed". The refusal it read names
+// exactly two exits -- finish the work, or close it as failed -- and for a bead
+// that is waiting on somebody else neither is correct. Closing it destroys the
+// wake path, and a failure_class on a bead that did not fail corrupts every
+// later query that filters on one.
+//
+// THE GATE ITSELF IS INNOCENT and this test does not claim otherwise; the
+// message is the whole defect. Measured by hand 2026-09-09 against a live
+// session, same bead, one variable changed:
+//
+//	parked on an OPEN assigned question   gc hook stop -> exit 0
+//	the same bead, question CLOSED        gc hook stop -> exit 2, this message
+//
+// So a bead genuinely parked on a PM question never reaches this text, by
+// either route: evaluateStopGate returns early on parkedOnOpenAssignedQuestion
+// when the asker is still in_progress, and assets/scripts/ask-pm.py in fact
+// leaves the asker BLOCKED, which stopGateHeldClaimsQuery (in_progress and open
+// only) does not list at all. az-lmrn's own question az-hrud closed at
+// 06:39:29Z and a NEW session claimed the unblocked bead at 06:45:57Z, so the
+// refusal that session saw at ~06:52Z was CORRECT -- it was holding genuinely
+// actionable work.
+//
+// What remains true, and is what this pins: other designed waits DO reach this
+// text, and it offers them no compliant move. The mayor hit it the same night
+// on ci-rup0vw -- open, assigned, no question link -- and resolved it by
+// setting the bead blocked with the release trigger named in the body, the
+// shape astoria-zephyr az-dbe and az-qe33 already use. That move was correct
+// and the message did not mention it.
+//
+// The assertions are on MEANING, not on wording: the text must name the
+// blocked exit, and must not present closing-as-failed without it. A test that
+// pinned the exact sentence would fail on every honest rewording and teach the
+// next editor to delete it.
+func TestStopGateOutstandingReasonNamesTheParkedExit(t *testing.T) {
+	reason := stopGateOutstandingReason(stopGateHoldingWork())
+
+	// The header line is "Stop blocked: ..." on every refusal, so searching the
+	// whole string for "blocked" is a TAUTOLOGY -- it matched before this arm
+	// was written and the first draft of this test passed against the very text
+	// it was meant to reject. Everything below reads the body only.
+	_, body, found := strings.Cut(reason, "\n")
+	if !found {
+		t.Fatalf("block reason has no body after its header line: %q", reason)
+	}
+
+	if !strings.Contains(body, "blocked") {
+		t.Errorf("block reason offers no parked exit, so a session holding "+
+			"work that is waiting on someone else has no compliant move: %q", body)
+	}
+	// Naming the STATE without naming the CONDITION it is for leaves the reader
+	// to guess when it applies, and the guess this message has already produced
+	// once was close-as-failed.
+	if !strings.Contains(body, "waiting") {
+		t.Errorf("block reason names no condition under which the parked exit "+
+			"is the right one: %q", body)
+	}
+	// The failure exit must still be offered -- work that genuinely cannot be
+	// done still closes failed -- so this asserts the pair, not a removal.
+	if !strings.Contains(body, "close it as failed") {
+		t.Errorf("block reason dropped the close-as-failed exit: %q", body)
+	}
+	// The ordering is the instruction. A reader who has already met "close it
+	// as failed" has an answer and stops; the parked exit has to come first or
+	// the session that needs it never reaches it.
+	if strings.Index(body, "blocked") > strings.Index(body, "close it as failed") {
+		t.Errorf("the parked exit is offered after close-as-failed, so the "+
+			"session that needs it has already been given a wrong answer: %q", body)
+	}
+}
