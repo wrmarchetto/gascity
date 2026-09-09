@@ -137,16 +137,7 @@ func releaseOrphanedPoolAssignments(
 		log.Printf("releaseOrphanedPoolAssignments: assigned work/store-ref length mismatch: work=%d storeRefs=%d", len(assignedWorkBeads), len(assignedWorkStoreRefs))
 	}
 
-	openIdentifiers := makeOpenSessionStoreRefIndex(cityPath, cfg, openSessionInfos, storeRefAware)
-	legacyOpenIdentifiers := make(map[string]struct{}, len(openSessionInfos)*5)
-	for _, info := range openSessionInfos {
-		if info.Closed {
-			continue
-		}
-		for _, id := range sessionBeadAssigneeIdentitiesInfo(info) {
-			legacyOpenIdentifiers[id] = struct{}{}
-		}
-	}
+	ownership := newOpenSessionOwnership(cityPath, cfg, openSessionInfos, storeRefAware)
 
 	var released []releasedPoolAssignment
 	for i, wb := range assignedWorkBeads {
@@ -195,7 +186,7 @@ func releaseOrphanedPoolAssignments(
 			if storeRefAware {
 				workStoreRef = assignedWorkStoreRefs[i]
 			}
-			if openSessionOwnsWork(legacyOpenIdentifiers, openIdentifiers, assignee, workStoreRef, storeRefAware) {
+			if ownership.ownsWork(assignee, workStoreRef) {
 				continue
 			}
 			if assigneePreservesNamedSessionRoute(cfg, cityPath, template, assignee, workStoreRef, storeRefAware) {
@@ -314,6 +305,50 @@ const unresolvedOpenSessionStoreRef = "\x00unresolved"
 // store (vp-kvp), so openSessionOwnsWork matches it against any work store-ref.
 // The \x00 prefix cannot collide with a real rig name.
 const crossStoreOpenSessionStoreRef = "\x00crossstore"
+
+// openSessionOwnership answers one question for the controller: does this work
+// bead's assignee name a session whose bead is still open? Both consumers of
+// that answer share this type on purpose -- releaseOrphanedPoolAssignments
+// reopens a claim when it is false, and claimLeaseRenewalTargets pushes the
+// claim's bd lease forward when it is true. Two independently-built indexes
+// would let the controller reap a claim whose lease it was itself renewing.
+type openSessionOwnership struct {
+	// legacy is the flat identity set, consulted when the caller has no
+	// per-bead store refs to scope against.
+	legacy map[string]struct{}
+	// scoped maps each identity to the store refs its session can reach.
+	scoped map[string]map[string]struct{}
+	// storeRefAware records which of the two indexes above is authoritative;
+	// it is NOT derivable from their emptiness, since a caller with store refs
+	// and no open sessions builds an empty scoped index too.
+	storeRefAware bool
+}
+
+// newOpenSessionOwnership indexes every open session's identity forms. Closed
+// sessions are skipped: a closed session bead is exactly the controller's
+// definition of a holder that is gone.
+func newOpenSessionOwnership(cityPath string, cfg *config.City, openSessionInfos []session.Info, storeRefAware bool) openSessionOwnership {
+	o := openSessionOwnership{
+		legacy:        make(map[string]struct{}, len(openSessionInfos)*5),
+		scoped:        makeOpenSessionStoreRefIndex(cityPath, cfg, openSessionInfos, storeRefAware),
+		storeRefAware: storeRefAware,
+	}
+	for _, info := range openSessionInfos {
+		if info.Closed {
+			continue
+		}
+		for _, id := range sessionBeadAssigneeIdentitiesInfo(info) {
+			o.legacy[id] = struct{}{}
+		}
+	}
+	return o
+}
+
+// ownsWork reports whether an open session holds the work bead assigned to
+// assignee and living in workStoreRef.
+func (o openSessionOwnership) ownsWork(assignee, workStoreRef string) bool {
+	return openSessionOwnsWork(o.legacy, o.scoped, assignee, workStoreRef, o.storeRefAware)
+}
 
 func makeOpenSessionStoreRefIndex(cityPath string, cfg *config.City, openSessionInfos []session.Info, storeRefAware bool) map[string]map[string]struct{} {
 	index := make(map[string]map[string]struct{}, len(openSessionInfos)*5)
