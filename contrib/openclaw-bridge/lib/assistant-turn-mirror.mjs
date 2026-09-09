@@ -56,22 +56,71 @@ export function chunkAssistantTurn(text, maxMessageLength = defaultMaxMessageLen
   }
 }
 
-// createAssistantTurnMirror returns a stateful SSE-frame consumer. Stable
-// structured message IDs make snapshot/upsert replay harmless during one daemon
-// lifetime. The lifecycle component owns process restart persistence.
+// createAssistantTurnMirror returns a stateful SSE-frame consumer.
+//
+// A RESTATED TRANSCRIPT IS A WATERMARK, NOT CONTENT. The stream answers a
+// request carrying no resume cursor with the target's WHOLE transcript in one
+// frame (the empty-token branch of buildStructuredStreamUpdate,
+// internal/api/session_structured_stream.go), and this consumer sends none.
+// Every turn in such a frame is recorded as settled and never published.
+// Measured 2026-09-08 on one start against a two-hour-old transcript: 91 turns
+// posted in 43s, 2.1/s against a ~1/s per-channel ceiling, four rate-limit
+// retries.
+//
+// EVERY RESTATEMENT IS THE SAME FRAME BY ANOTHER NAME, so the rule is keyed on
+// the operation and not on which frame came first. operation:"upsert" is the
+// only one that EXTENDS the transcript; a reconnect opens a new connection and
+// so begins with another full snapshot, and a cursor the server cannot honor is
+// answered with operation:"reset" carrying the whole projection again. Both
+// restate under ids the consumer may never have settled -- a resumed target
+// writes a fresh transcript file, so its entry ids are new even though its
+// content is old -- and nothing but the operation separates that from a
+// transcript that genuinely grew.
+//
+// AN UNRECOGNIZED OPERATION WATERMARKS. The field is required and enum-
+// constrained on the wire, so this is a wire change rather than a normal state;
+// between the two failures it chooses silence, which an operator notices and
+// can recover, over a flood that rate-limits a channel shared with other
+// publishers.
+//
+// THE REJECTED ALTERNATIVE is a persisted resume cursor passed as after_cursor
+// on every connect, which is what a future editor reaches for and what the
+// stream is built to accept. It is worth having for continuity but does NOT
+// replace the watermark: the cases that invalidate a cursor are answered with a
+// reset, so the flood returns by that door. Deferred, and only additive.
+//
+// WHAT IS DELIBERATELY GIVEN UP: a turn completed while the consumer was not
+// reading the stream -- process down, or connection dropped -- is never
+// delivered. Publishing it would mean telling a turn the consumer missed from
+// one that merely predates it, and a restating frame expresses neither. The
+// rejected softer rule, publishing the unsettled tail of a RECONNECT snapshot
+// while watermarking only the first, buys those turns and reopens the flood:
+// the reconnect that follows a respawn restates a whole transcript under ids
+// that are new because the file is new.
 export function createAssistantTurnMirror({ conversation, sessionID, publish, maxMessageLength = defaultMaxMessageLength }) {
   if (!conversation || typeof conversation !== 'object') throw new TypeError('conversation is required')
   if (typeof sessionID !== 'string' || sessionID === '') throw new TypeError('sessionID is required')
   if (typeof publish !== 'function') throw new TypeError('publish is required')
-  const publishedIDs = new Set()
+  // Settled: delivered, or watermarked as predating this process. Pending:
+  // accepted for delivery and not yet acknowledged, which is the one thing a
+  // restating frame must still publish -- otherwise a refused post becomes
+  // silent loss the moment the stream reconnects.
+  const settledIDs = new Set()
+  const pendingIDs = new Set()
 
   async function handleStructuredEvent(event) {
     const messages = event?.structured_messages
     if (!Array.isArray(messages)) return
+    const restatesTranscript = event?.operation !== 'upsert'
     for (const message of messages) {
       const id = typeof message?.id === 'string' ? message.id : ''
       const text = finalAssistantText(message)
-      if (id === '' || text === '' || publishedIDs.has(id)) continue
+      if (id === '' || text === '' || settledIDs.has(id)) continue
+      if (restatesTranscript && !pendingIDs.has(id)) {
+        settledIDs.add(id)
+        continue
+      }
+      pendingIDs.add(id)
       const chunks = chunkAssistantTurn(text, maxMessageLength)
       for (const [index, chunk] of chunks.entries()) {
         await publish({
@@ -81,7 +130,8 @@ export function createAssistantTurnMirror({ conversation, sessionID, publish, ma
           idempotency_key: `assistant-turn:${id}:${index + 1}`,
         })
       }
-      publishedIDs.add(id)
+      pendingIDs.delete(id)
+      settledIDs.add(id)
     }
   }
 
