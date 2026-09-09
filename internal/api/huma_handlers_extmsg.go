@@ -536,32 +536,49 @@ func (s *Server) humaHandleExtMsgAdapterList(_ context.Context, _ *ExtMsgAdapter
 
 // humaHandleExtMsgAdapterRegister is the Huma-typed handler for POST /v0/extmsg/adapters.
 func (s *Server) humaHandleExtMsgAdapterRegister(_ context.Context, input *ExtMsgAdapterRegisterInput) (*ExtMsgAdapterRegisterOutput, error) {
-	// Idempotency: register at most once per Idempotency-Key. Register itself
-	// is an add-or-replace upsert; the win is suppressing a duplicate
-	// ExtMsgAdapterAdded event on retry. The cached value is the resolved
-	// adapter name — the other body fields are echoes of the input, which the
-	// body hash pins to be identical on replay.
-	name, err := withIdempotency(s.idem, "/v0/extmsg/adapters", input.IdempotencyKey, input.Body,
+	// The registration itself, which must run on the replay path too. Register
+	// is an add-or-replace upsert and the registry is in-memory, so a caller
+	// that unregistered and reconnected inside the cache TTL — the ordinary
+	// lease renewal, contrib/openclaw-bridge does it every 30 s — would
+	// otherwise be told "registered" over an empty registry and see every
+	// publish fail "no adapter".
+	register := func() (string, error) {
+		reg, regErr := s.humaExtmsgAdapterRegistry()
+		if regErr != nil {
+			return "", regErr
+		}
+
+		resolved := input.Body.Name
+		if resolved == "" {
+			resolved = input.Body.Provider + "/" + input.Body.AccountID
+		}
+
+		adapter := extmsg.NewHTTPAdapter(resolved, input.Body.CallbackURL, input.Body.Capabilities)
+		key := extmsg.AdapterKey{Provider: input.Body.Provider, AccountID: input.Body.AccountID}
+		reg.Register(key, adapter)
+		return resolved, nil
+	}
+
+	// Idempotency suppresses the ANNOUNCEMENT and nothing else: one
+	// ExtMsgAdapterAdded per Idempotency-Key however many times the key is
+	// retried. The cached value is the resolved adapter name — the other body
+	// fields are echoes of the input, which the body hash pins to be identical
+	// on replay.
+	name, err := withIdempotencyReplaying(s.idem, "/v0/extmsg/adapters", input.IdempotencyKey, input.Body,
 		func() (string, error) {
-			reg, regErr := s.humaExtmsgAdapterRegistry()
+			resolved, regErr := register()
 			if regErr != nil {
 				return "", regErr
 			}
-
-			resolved := input.Body.Name
-			if resolved == "" {
-				resolved = input.Body.Provider + "/" + input.Body.AccountID
-			}
-
-			adapter := extmsg.NewHTTPAdapter(resolved, input.Body.CallbackURL, input.Body.Capabilities)
-			key := extmsg.AdapterKey{Provider: input.Body.Provider, AccountID: input.Body.AccountID}
-			reg.Register(key, adapter)
-
 			s.extmsgEmitEvent()(events.ExtMsgAdapterAdded, resolved, extmsg.AdapterEventPayload{
 				Provider:  input.Body.Provider,
 				AccountID: input.Body.AccountID,
 			})
 			return resolved, nil
+		},
+		func() error {
+			_, regErr := register()
+			return regErr
 		})
 	if err != nil {
 		return nil, err
