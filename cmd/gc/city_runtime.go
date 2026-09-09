@@ -88,6 +88,11 @@ type CityRuntime struct {
 	orderRescanLast         time.Time
 	trace                   *sessionReconcilerTraceManager
 
+	// clr renews the bd claim lease on work beads whose holder is still
+	// around, so lease expiry keeps meaning "the holder is gone" for the
+	// consumers that read it. Lazily built on the first tick that needs it.
+	clr *claimLeaseRenewer
+
 	orderSweepWatchdogLast             time.Time
 	orderTrackingRetentionWatchdogLast time.Time
 	nudgeMailSweepWatchdogLast         time.Time
@@ -2409,6 +2414,12 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, result DesiredStat
 		emitDeadAssigneeReopenedEvents(cr.rec, assignedWorkBeads, released, time.Now())
 		assignedWorkBeads, assignedWorkStoreRefs = filterReleasedAssignedWorkSnapshot(assignedWorkBeads, assignedWorkStoreRefs, released)
 	}
+	phaseStart = time.Now()
+	renewed := cr.renewLiveClaimLeases(ctx, sessionBeads.OpenInfos(), assignedWorkBeads, assignedWorkStoreRefs, result)
+	recordPhase(TraceSiteControllerTickPhase, "bead_reconcile.renew_claim_leases", phaseStart, map[string]any{
+		"renewed_count": renewed,
+	})
+
 	// Squatter guard (gastownhall/gascity#2930): a foreign Dolt that has bound
 	// this city's managed port returns zero demand, indistinguishable from a
 	// genuinely-idle fleet — and would drain every running pool. This runs on
