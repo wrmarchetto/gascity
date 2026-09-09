@@ -3516,3 +3516,94 @@ func TestRigAddRollbackRestoresThroughCityTomlSymlink(t *testing.T) {
 	}
 	assertCityTomlSymlinkRestored(t, link, target, symlinkedCityTomlOriginal)
 }
+
+// countingListProvider records how many times ListRunning is called, and
+// REFUSES nothing else: it embeds a nil runtime.Provider, so any other method
+// the code under test reaches panics rather than quietly answering. A fake
+// that satisfied every call would hand a pass to whatever this test forgot to
+// script, which is the failure mode that leaves a subprocess budget unguarded.
+type countingListProvider struct {
+	runtime.Provider
+	calls   int
+	running []string
+}
+
+func (c *countingListProvider) ListRunning(prefix string) ([]string, error) {
+	c.calls++
+	if prefix == "" {
+		return c.running, nil
+	}
+	var out []string
+	for _, n := range c.running {
+		if strings.HasPrefix(n, prefix) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
+}
+
+// TestDoRigListJSONSessionListingIsIndependentOfAgentCount pins the SUBPROCESS
+// BUDGET of the rig-list running-status probe, not its output.
+//
+// Each ListRunning on the tmux provider is one fork+exec of
+// `tmux -u -L <socket> list-sessions -F "#{session_name}"`, and every call in
+// one pass asks the identical question. Measured on the live city 2026-09-09
+// with a PATH shim counting execs exactly: 84 of them for a single
+// `gc rig list --json`, stable across three runs, against 126 configured
+// agents of which 94 declare no max_active_sessions (ci-jcbdd6).
+//
+// PARAMETERIZED OVER N AND COMPARED ACROSS N, rather than asserting today's
+// number. A test pinning a constant goes green again the moment the fan-out is
+// merely made narrower, and the defect is the per-agent TERM, not its size.
+// Requiring the three counts to be EQUAL is what fails on any term that scales
+// with the agent count.
+//
+// The sibling TestDoRigListJSONBuildsSessionProviderOnce guards the rig axis of
+// the same N+1; this one guards the agent axis, which that fix did not reach.
+func TestDoRigListJSONSessionListingIsIndependentOfAgentCount(t *testing.T) {
+	countFor := func(t *testing.T, agents int) int {
+		t.Helper()
+		cityPath := t.TempDir()
+		rigPath := filepath.Join(t.TempDir(), "rig-a")
+		if err := os.MkdirAll(rigPath, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var b strings.Builder
+		b.WriteString("[workspace]\nname = \"test-city\"\n")
+		// No max_active_sessions on purpose: that is the unlimited-capacity
+		// shape whose expansion consults the session provider, and it is what
+		// every agent in the imported roles pack looks like.
+		for i := 0; i < agents; i++ {
+			fmt.Fprintf(&b, "\n[[agent]]\nname = %q\ndir = \"rig-a\"\n",
+				fmt.Sprintf("worker-%d", i))
+		}
+		fmt.Fprintf(&b, "\n[[rigs]]\nname = \"rig-a\"\npath = %q\n", rigPath)
+		if err := os.WriteFile(filepath.Join(cityPath, "city.toml"),
+			[]byte(b.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		counter := &countingListProvider{}
+		orig := rigListSessionProvider
+		rigListSessionProvider = func() (runtime.Provider, error) { return counter, nil }
+		t.Cleanup(func() { rigListSessionProvider = orig })
+
+		var stdout, stderr bytes.Buffer
+		if code := doRigList(fsys.OSFS{}, cityPath, true, &stdout, &stderr); code != 0 {
+			t.Fatalf("doRigList returned %d, stderr: %s", code, stderr.String())
+		}
+		return counter.calls
+	}
+
+	counts := map[int]int{}
+	for _, n := range []int{1, 20, 100} {
+		counts[n] = countFor(t, n)
+		t.Logf("agents=%d listRunning calls=%d", n, counts[n])
+	}
+	if counts[1] != counts[20] || counts[20] != counts[100] {
+		t.Fatalf("session listings scale with the agent count: "+
+			"1 agent -> %d calls, 20 -> %d, 100 -> %d; want one listing per "+
+			"pass regardless of N",
+			counts[1], counts[20], counts[100])
+	}
+}
