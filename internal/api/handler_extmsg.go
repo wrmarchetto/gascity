@@ -236,21 +236,6 @@ func (s *Server) extmsgNotifyInboundMembers(ctx context.Context, msg extmsg.Exte
 	s.extmsgNotifyMembers(ctx, msg.Conversation, msg.Actor.DisplayName, actorKind, msg.Text, "", msg.ExplicitTarget)
 }
 
-// titleCaseProvider uppercases the first ASCII byte of a provider name.
-// Used to avoid a golang.org/x/text/cases dependency just for one
-// capitalization in the inbound nudge — provider names are always
-// short lowercase ASCII identifiers (slack, discord, ...).
-func titleCaseProvider(name string) string {
-	if name == "" {
-		return ""
-	}
-	first := name[0]
-	if first >= 'a' && first <= 'z' {
-		return string(first-'a'+'A') + name[1:]
-	}
-	return name
-}
-
 // extmsgNotifyReminder collects the inputs the inbound-message
 // <system-reminder> block is constructed from. Externally-supplied fields
 // (ActorDisplay, Text, ExplicitTarget) are sanitized via
@@ -288,8 +273,6 @@ type extmsgNotifyReminder struct {
 // a discriminator line is appended so peer sessions can self-silence on
 // messages addressed to a different agent. See gastownhall/gascity#2484.
 func formatExtmsgNotifyReminder(r extmsgNotifyReminder) string {
-	providerCLI := strings.ToLower(r.Provider)
-	providerDisplay := titleCaseProvider(providerCLI)
 	safeActor := extmsg.SanitizeForSystemReminder(r.ActorDisplay)
 	safeText := extmsg.SanitizeForSystemReminder(r.Text)
 
@@ -308,12 +291,8 @@ func formatExtmsgNotifyReminder(r extmsgNotifyReminder) string {
 		)
 	}
 	fmt.Fprintf(&b,
-		"To reply in %s, write your response to a file and run:\n"+
-			"  gc %s reply-current --conversation-id %s --body-file <path>\n"+
-			"Prefix your reply with your agent handle in bold (e.g., **%s:** your message).\n"+
+		"Prefix your reply with your agent handle in bold (e.g., **%s:** your message).\n"+
 			"</system-reminder>",
-		providerDisplay,
-		providerCLI, r.ConversationID,
 		r.Handle,
 	)
 	return b.String()
