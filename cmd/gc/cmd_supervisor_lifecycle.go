@@ -1475,8 +1475,10 @@ KillMode=process
 ExecStart={{systemdpath .GCPath}} supervisor run
 Restart=always
 RestartSec=5s
-# A duplicate supervisor that loses the shared API port exits with this code.
-# Restarting it would just crash-loop forever (see ga-ceq), so don't.
+# A duplicate supervisor exits with this code -- whether it lost the shared
+# API port or found the control socket already answering. Restarting it would
+# just crash-loop forever (ga-ceq, and ci-nncach where the socket-guard case
+# returned a bare 1 and did exactly that, 5733 times).
 RestartPreventExitStatus={{.PortInUseExitCode}}
 StandardOutput=append:{{.LogPath}}
 StandardError=append:{{.LogPath}}

@@ -313,11 +313,19 @@ var supervisorLoadConfig = supervisor.LoadConfig
 // the escalation.
 const supervisorHardExitCodeRepeatedShutdown = 130
 
-// supervisorExitCodePortInUse is returned when the API port is already bound
-// by another supervisor. Only one supervisor may own the port machine-wide, so
-// a collision means this process is a duplicate install. The generated systemd
-// unit lists this code in RestartPreventExitStatus so the duplicate exits once
-// with a clear diagnostic instead of crash-looping on the shared port forever.
+// supervisorExitCodePortInUse is returned when this process is a duplicate
+// supervisor, by either of the two ways that is discovered: the API port is
+// already bound (EADDRINUSE, confirmed to be another gc supervisor), or the
+// control socket already answers a liveness ping before we bind anything at
+// all (the guard at the top of runSupervisor). Only one supervisor may own
+// the port machine-wide, so both mean the same thing about this process.
+//
+// The generated systemd unit lists this code in RestartPreventExitStatus so
+// a duplicate exits once with a clear diagnostic instead of crash-looping
+// forever. The name predates the socket-guard case and is kept because the
+// unit template renders it through PortInUseExitCode; what matters is that
+// exactly one constant is both returned and suppressed, so the guard and
+// the unit cannot disagree.
 const supervisorExitCodePortInUse = 3
 
 // supervisorAddrInUse reports whether err indicates the listen address was
@@ -1300,9 +1308,30 @@ func notifySdState(stderr io.Writer, state string) {
 // starts a control socket, reads the registry, starts CityRuntimes,
 // and runs until canceled.
 func runSupervisor(stdout, stderr io.Writer) int {
+	// EXIT CODE IS THE BEHAVIOR HERE, not the message. This is the
+	// ExecStart of the generated systemd unit, which runs it under
+	// Restart=always with RestartSec=5s and suppresses restarts only for
+	// the code in RestartPreventExitStatus. Returning a bare 1 -- the same
+	// code a config error returns -- made systemd relaunch a duplicate
+	// that could never acquire the socket, every five seconds, forever:
+	// measured NRestarts=5733 against 5587 copies of this line in
+	// supervisor.log, which the unit itself opens via
+	// StandardOutput=append, so the loop wrote its own evidence and a
+	// reader counting the lines correctly read a crash loop (ci-nncach).
+	//
+	// NOT silenced and NOT dropped to debug, which is what the symptom
+	// invites. The line is the only visible trace of the loop, and muting
+	// it leaves systemd spinning with nothing on record -- trading a
+	// visible defect for an invisible one. The line was never the bug.
+	//
+	// The message deliberately promises nothing about restart behavior:
+	// launchd's KeepAlive has no per-exit-code equivalent, so a
+	// "without restart" claim would be false on darwin. That asymmetry is
+	// stated once, in supervisorPortInUseMessage, and is not repeated
+	// here where it would be a second copy free to drift.
 	if pid := supervisorAlive(); pid != 0 {
-		fmt.Fprintf(stderr, "gc supervisor: supervisor already running (PID %d)\n", pid) //nolint:errcheck
-		return 1
+		fmt.Fprintf(stderr, "gc supervisor: supervisor already running (PID %d); this instance is a duplicate and is exiting\n", pid) //nolint:errcheck
+		return supervisorExitCodePortInUse
 	}
 
 	// Ensure ~/.gc/ exists. doSupervisorStart does this when invoked

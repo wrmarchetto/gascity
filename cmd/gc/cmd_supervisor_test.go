@@ -4137,6 +4137,21 @@ func TestDoSupervisorStartDetectsSupervisorOnFallbackSocket(t *testing.T) {
 	}
 }
 
+// TestRunSupervisorRejectsSupervisorOnFallbackSocket pins the exit code of
+// the duplicate guard, not merely that it refuses.
+//
+// The code is the whole behavior here. `gc supervisor run` is what the
+// generated systemd unit puts in ExecStart, under Restart=always with
+// RestartSec=5s, and the only thing that stops that loop is the unit's
+// RestartPreventExitStatus -- which lists supervisorExitCodePortInUse. A
+// duplicate that exits 1 is therefore relaunched every five seconds
+// forever: measured on the Gas City host 2026-09-09 at NRestarts=5733 with
+// ExecMainStatus=1, one log line per restart, which reads to every later
+// reader as a crash loop because it IS one (ci-nncach).
+//
+// Asserted against the constant rather than the literal 3 so the unit
+// template and this guard cannot drift apart -- the template renders the
+// same constant through PortInUseExitCode.
 func TestRunSupervisorRejectsSupervisorOnFallbackSocket(t *testing.T) {
 	gcHome := shortTempDir(t, "gc-home-")
 	runtimeDir := shortTempDir(t, "gc-run-")
@@ -4153,11 +4168,18 @@ func TestRunSupervisorRejectsSupervisorOnFallbackSocket(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := runSupervisor(&stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("runSupervisor code = %d, want 1", code)
+	if code != supervisorExitCodePortInUse {
+		t.Fatalf("runSupervisor code = %d, want %d (the code the unit's "+
+			"RestartPreventExitStatus lists; 1 crash-loops under "+
+			"Restart=always)", code, supervisorExitCodePortInUse)
 	}
 	if !strings.Contains(stderr.String(), "already running") {
 		t.Fatalf("stderr = %q, want already running message", stderr.String())
+	}
+	// The line has to say the process is giving up, or a reader counting
+	// occurrences cannot tell one refusal from a restart loop.
+	if !strings.Contains(stderr.String(), "duplicate") {
+		t.Fatalf("stderr = %q, want the line to name itself a duplicate", stderr.String())
 	}
 }
 
