@@ -4494,3 +4494,51 @@ the epic text when it lands in the roadmap):
    this entry as current.
 
 Source: Willie, pm-chat sitting gs-6v5n
+
+## 135. Chat sitting gs-6v5n: account-identity principle, affinity spread constraint, memory-drift finding (2026-09-10)
+
+Two decisions and one verified finding, same sitting:
+
+1. ACCOUNT IDENTITY PRINCIPLE (Willie): no pooled account may carry
+   configuration or context the others do not have -- the six account homes
+   must be interchangeable. Any divergence is a mistake to remediate, not a
+   feature.
+
+2. AFFINITY SPREAD CONSTRAINT (Willie): the account-affinity design must
+   NOT use a blind hash of agent name over accounts. Requirement: agent
+   types are spread evenly across accounts so two high-usage types never
+   stack on one account while another sits unused. Affinity remains a
+   preference that yields when the preferred account is at its usage
+   limit. Mechanism (explicit map vs computed balanced assignment vs
+   usage-aware placement) is left to decomposition under this constraint.
+
+3. MEMORY-DRIFT FINDING (verified this turn, correcting a mis-relayed
+   figure in chat: the PM had called it "a 57KB MEMORY.md on account4" --
+   wrong; 57,029 chars was the whole instructions block in the mapping
+   agent's comparison, and the drift is broader than one account).
+   Measured inventory of Claude Code per-account-home persistent memory:
+   account1 holds 41 files/80.0KB and account4 39 files/85.6KB for the
+   city project, account0 7 files/10.4KB for the same; account4 also holds
+   4 files/5.2KB for the gascity rig project; accounts 2/3/5 hold smaller
+   sets for astoria-sel4, dart, and astoria-zephyr. This is organic drift
+   from the harness memory feature under account rotation, not deliberate
+   config: knowledge saved on one account is invisible to spawns landing
+   on the other five, and it violates the standing AGENTS.md rule "Use bd
+   remember for persistent knowledge -- do NOT use MEMORY.md files".
+   Under decision 1 it is a mistake. Recommended remedy (pending Willie's
+   confirm in this sitting): harvest anything still valuable into bd/docs,
+   delete the memory dirs, and gate the invariant mechanically so it
+   cannot silently re-accumulate; placed in the efficiency epic under
+   instructions-block hygiene, since account-interchangeability is what
+   affinity and per-account cache equivalence rest on.
+
+Also verified this turn for the effort discussion: bench-engineer runs THE
+SAME prompt template as the lab engineer (agents/bench-engineer/agent.toml
+sets prompt_template to packs/lab/agents/engineer/prompt.template.md;
+description "Authors bench work as procedure + check script + capture
+manifest, and analyzes completed bench runs", opus-5, max_active_sessions
+1). It is engineer-class cognition scoped to bench authorship/analysis --
+the technician entries execute the serialized hardware steps -- so the
+same xhigh reasoning applies to both engineers.
+
+Source: Willie, pm-chat sitting gs-6v5n
