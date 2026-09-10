@@ -640,59 +640,59 @@ func normalizeWaitIdleNudgeSource(source string) string {
 	return source
 }
 
-func (m *Manager) tryWaitIdleNudgeLocked(ctx context.Context, id string, b beads.Bead, source, sessName, message, resumeCommand string, hints runtime.Config) (bool, error) {
+func (m *Manager) tryWaitIdleNudgeLocked(ctx context.Context, id string, b beads.Bead, source, sessName, message, resumeCommand string, hints runtime.Config) (bool, NudgeSkip, error) {
 	if transportFromMetadata(b) == "acp" {
 		if err := m.ensureRunning(ctx, id, b, sessName, resumeCommand, hints); err != nil {
-			return false, err
+			return false, NudgeSkipNotRunning, err
 		}
 		if err := m.nudgeSession(ctx, sessName, message, false); err != nil {
-			return false, err
+			return false, NudgeSkipNudgeWriteFailed, err
 		}
-		return true, nil
+		return true, NudgeSkipNone, nil
 	}
 	if err := m.ensureRunning(ctx, id, b, sessName, resumeCommand, hints); err != nil {
-		return false, err
+		return false, NudgeSkipNotRunning, err
 	}
 	if providerKind(b) != "claude" {
-		return false, nil
+		return false, NudgeSkipProviderUnsupported, nil
 	}
 	waiter, ok := m.sp.(runtime.IdleWaitProvider)
 	if !ok {
-		return false, nil
+		return false, NudgeSkipNoIdleWait, nil
 	}
 	if err := waiter.WaitForIdle(ctx, sessName, waitIdleNudgeTimeout); err != nil {
-		return false, nil
+		return false, ClassifyIdleWaitFailure(err), nil
 	}
 	if err := m.nudgeSession(ctx, sessName, formatWaitIdleReminder(normalizeWaitIdleNudgeSource(source), message), true); err != nil {
-		return false, nil
+		return false, NudgeSkipNudgeWriteFailed, nil
 	}
-	return true, nil
+	return true, NudgeSkipNone, nil
 }
 
-func (m *Manager) tryWaitIdleNudgeLiveOnlyLocked(ctx context.Context, b beads.Bead, source, sessName, message string) (bool, error) {
+func (m *Manager) tryWaitIdleNudgeLiveOnlyLocked(ctx context.Context, b beads.Bead, source, sessName, message string) (bool, NudgeSkip, error) {
 	if !m.sp.IsRunning(sessName) {
-		return false, nil
+		return false, NudgeSkipNotRunning, nil
 	}
 	if transportFromMetadata(b) == "acp" {
 		if err := m.nudgeSession(ctx, sessName, message, false); err != nil {
-			return false, err
+			return false, NudgeSkipNudgeWriteFailed, err
 		}
-		return true, nil
+		return true, NudgeSkipNone, nil
 	}
 	if providerKind(b) != "claude" {
-		return false, nil
+		return false, NudgeSkipProviderUnsupported, nil
 	}
 	waiter, ok := m.sp.(runtime.IdleWaitProvider)
 	if !ok {
-		return false, nil
+		return false, NudgeSkipNoIdleWait, nil
 	}
 	if err := waiter.WaitForIdle(ctx, sessName, waitIdleNudgeTimeout); err != nil {
-		return false, nil
+		return false, ClassifyIdleWaitFailure(err), nil
 	}
 	if err := m.nudgeSession(ctx, sessName, formatWaitIdleReminder(normalizeWaitIdleNudgeSource(source), message), true); err != nil {
-		return false, nil
+		return false, NudgeSkipNudgeWriteFailed, nil
 	}
-	return true, nil
+	return true, NudgeSkipNone, nil
 }
 
 func (m *Manager) pendingInteractionLocked(sessName string) error {
@@ -832,36 +832,40 @@ func (m *Manager) SendImmediateLiveOnly(ctx context.Context, id, message string)
 
 // TryWaitIdleNudge delivers a best-effort session nudge at a provider-defined
 // safe boundary. It resumes supported runtimes if needed, then reports whether
-// live delivery actually happened. Unsupported providers return (false, nil)
-// so higher layers can fall back to queue semantics without treating that as
-// an operational error.
-func (m *Manager) TryWaitIdleNudge(ctx context.Context, id, source, message, resumeCommand string, hints runtime.Config) (bool, error) {
+// live delivery actually happened and, when it did not, which [NudgeSkip]
+// declined it. Every decline returns a nil error so higher layers can fall
+// back to queue semantics without treating it as an operational failure; the
+// skip is what tells them apart.
+func (m *Manager) TryWaitIdleNudge(ctx context.Context, id, source, message, resumeCommand string, hints runtime.Config) (bool, NudgeSkip, error) {
 	var delivered bool
+	var skip NudgeSkip
 	err := withSessionMutationLock(id, func() error {
 		b, sessName, err := m.sessionBead(id)
 		if err != nil {
 			return err
 		}
-		delivered, err = m.tryWaitIdleNudgeLocked(ctx, id, b, source, sessName, message, resumeCommand, hints)
+		delivered, skip, err = m.tryWaitIdleNudgeLocked(ctx, id, b, source, sessName, message, resumeCommand, hints)
 		return err
 	})
-	return delivered, err
+	return delivered, resolveNudgeSkip(delivered, skip, err), err
 }
 
 // TryWaitIdleNudgeLiveOnly delivers a best-effort nudge at a safe boundary
 // only when the runtime is already live. It never resumes or restarts the
-// session.
-func (m *Manager) TryWaitIdleNudgeLiveOnly(ctx context.Context, id, source, message string) (bool, error) {
+// session. Like [Manager.TryWaitIdleNudge] it names the declining [NudgeSkip]
+// rather than collapsing every decline to a bare false.
+func (m *Manager) TryWaitIdleNudgeLiveOnly(ctx context.Context, id, source, message string) (bool, NudgeSkip, error) {
 	var delivered bool
+	var skip NudgeSkip
 	err := withSessionMutationLock(id, func() error {
 		b, sessName, err := m.sessionBead(id)
 		if err != nil {
 			return err
 		}
-		delivered, err = m.tryWaitIdleNudgeLiveOnlyLocked(ctx, b, source, sessName, message)
+		delivered, skip, err = m.tryWaitIdleNudgeLiveOnlyLocked(ctx, b, source, sessName, message)
 		return err
 	})
-	return delivered, err
+	return delivered, resolveNudgeSkip(delivered, skip, err), err
 }
 
 // StopTurn issues a provider-appropriate interrupt for the currently running

@@ -179,9 +179,16 @@ type NudgeRequest struct {
 	Wake     NudgeWakePolicy `json:"wake,omitempty"`
 }
 
-// NudgeResult reports whether the requested live delivery actually happened.
+// NudgeResult reports whether the requested live delivery actually happened
+// and, when it did not, which [sessionpkg.NudgeSkip] declined it.
+//
+// Skip is empty exactly when Delivered is true. A caller that reads only
+// Delivered still behaves as before; the field exists because "not delivered"
+// alone was not enough for `gc mail send --notify` to tell its sender anything
+// useful, and a mid-turn recipient was reported as a success (ci-7b1ueb).
 type NudgeResult struct {
-	Delivered bool `json:"delivered"`
+	Delivered bool                 `json:"delivered"`
+	Skip      sessionpkg.NudgeSkip `json:"skip,omitempty"`
 }
 
 // NudgeWakePolicy controls whether a nudge may wake a stopped session.

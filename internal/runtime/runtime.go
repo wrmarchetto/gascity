@@ -49,6 +49,19 @@ var ErrSessionNotFound = errors.New("session not found")
 // the error preserves the missing observation for diagnostics.
 var ErrNudgeSubmitUnconfirmed = errors.New("nudge submit delivered but not confirmed")
 
+// ErrIdleTimeout reports that a session was live and reachable but did not
+// reach an idle prompt before the caller's timeout expired -- the session is
+// mid-turn, not broken and not unsupported.
+//
+// It exists as a runtime-level sentinel so callers above the provider boundary
+// can tell "busy" apart from "this runtime cannot wait for idle at all"
+// (ErrInteractionUnsupported). Classifying on the message text was the
+// alternative and it is what let a mid-turn recipient be reported as a
+// successful delivery: every WaitForIdle failure collapsed to one unnamed
+// case. Providers that own their own spelling alias this one rather than
+// declaring a second error, so errors.Is holds across the boundary.
+var ErrIdleTimeout = errors.New("agent not idle before timeout")
+
 // ErrExecUnsupported reports that a provider implements [ExecProvider] but the
 // underlying runtime does not implement the RPP `exec` wire op (it answered
 // exit 2). Carriers treat this as "fall back to the legacy driving op".
