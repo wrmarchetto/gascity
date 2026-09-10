@@ -39,11 +39,19 @@ const Namespace = "gc."
 // cmd/. Keep this block sorted by identifier; the Go compiler rejects duplicate
 // identifiers, giving us a free compile-time uniqueness guarantee.
 const (
-	AttemptLogMetadataKey                = "gc.attempt_log"
-	AttemptMetadataKey                   = "gc.attempt"
-	BondMetadataKey                      = "gc.bond"
-	BondVarsMetadataKey                  = "gc.bond_vars"
-	BrainParentSIDMetadataKey            = "gc.brain_parent_sid"
+	AttemptLogMetadataKey     = "gc.attempt_log"
+	AttemptMetadataKey        = "gc.attempt"
+	BondMetadataKey           = "gc.bond"
+	BondVarsMetadataKey       = "gc.bond_vars"
+	BrainParentSIDMetadataKey = "gc.brain_parent_sid"
+	// BriefDigestMetadataKey pins the title+description a worker was handed
+	// when it claimed the bead, so a later edit to either -- the one channel
+	// guaranteed to be about the work in hand -- can be detected at close
+	// time. Stamped once at claim and never refreshed by a re-claim: a
+	// re-stamp would silently re-baseline the very edit the close gate
+	// exists to catch. The value is produced and compared by the
+	// brief-redirect close gate in cmd/gc.
+	BriefDigestMetadataKey               = "gc.brief_digest"
 	CancelRequestedMetadataKey           = "gc.cancel_requested"
 	CheckInfraRetryMetadataKey           = "gc.check_infra_retry"
 	CheckModeMetadataKey                 = "gc.check_mode"
@@ -331,6 +339,7 @@ var KnownMetadataKeys = []string{
 	BondMetadataKey,
 	BondVarsMetadataKey,
 	BrainParentSIDMetadataKey,
+	BriefDigestMetadataKey,
 	CancelRequestedMetadataKey,
 	CheckInfraRetryMetadataKey,
 	CheckModeMetadataKey,
