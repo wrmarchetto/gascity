@@ -24,6 +24,12 @@ func writeProviderHookContextForEvent(stdout io.Writer, format, eventName, conte
 		return json.NewEncoder(stdout).Encode(codexHookOutput(eventName, content))
 	case hookOutputFormatGemini:
 		return json.NewEncoder(stdout).Encode(geminiHookAdditionalContext(content))
+	case hookOutputFormatClaude:
+		// Only PostToolUse is shaped; every other Claude event keeps the
+		// plain-stdout convention and falls through to the writer below.
+		if payload := claudeHookOutput(eventName, content); payload != nil {
+			return json.NewEncoder(stdout).Encode(payload)
+		}
 	}
 	_, err := io.WriteString(stdout, content)
 	return err

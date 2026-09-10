@@ -297,6 +297,7 @@ for another session after verifying their IDs with gc nudge status.`,
 func newNudgeDrainCmd(stdout, stderr io.Writer) *cobra.Command {
 	var inject bool
 	var hookFormat string
+	var hookEvent string
 	cmd := &cobra.Command{
 		Use:    "drain [session]",
 		Short:  "Deliver queued nudges for a session",
@@ -304,7 +305,7 @@ func newNudgeDrainCmd(stdout, stderr io.Writer) *cobra.Command {
 		Args:   cobra.MaximumNArgs(1),
 		Hidden: true,
 		RunE: func(_ *cobra.Command, args []string) error {
-			if cmdNudgeDrainWithFormat(args, inject, hookFormat, stdout, stderr) != 0 {
+			if cmdNudgeDrainWithFormat(args, inject, hookFormat, hookEvent, stdout, stderr) != 0 {
 				return errExit
 			}
 			return nil
@@ -312,6 +313,7 @@ func newNudgeDrainCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&inject, "inject", false, "emit <system-reminder> output for hook injection")
 	cmd.Flags().StringVar(&hookFormat, "hook-format", "", "format hook output for a provider")
+	cmd.Flags().StringVar(&hookEvent, "hook-event", "", "provider hook event this invocation runs on (default UserPromptSubmit)")
 	return cmd
 }
 
@@ -475,7 +477,19 @@ func cmdNudgeAck(ids []string, targetID string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdout, stderr io.Writer) int {
+func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat, hookEvent string, stdout, stderr io.Writer) int {
+	hookEvent = normalizeNudgeHookEvent(hookEvent)
+	// A mid-turn drain carries the nudge and NOTHING else. The clock line, the
+	// context-pressure guidance and the active formula step below are
+	// prompt-boundary orientation: useful once, when a turn starts, and noise
+	// on every tool call of a turn already under way. Worse than noise on this
+	// event -- Claude Code's only mid-turn injection shape is a refusal
+	// (hook_output_claude.go), so an unconditional clock line would interrupt
+	// the agent on every single tool call to tell it the time.
+	//
+	// The consequence is the invariant this event exists for: with no queued
+	// nudge, a mid-turn drain writes nothing and the tool call is untouched.
+	midTurn := isMidTurnNudgeHookEvent(hookEvent)
 	// On every prompt, emit a live clock (operator-local + UTC + epoch) and
 	// the agent's active formula step (if any) as UserPromptSubmit hook context.
 	// When a nudge also fires we fold everything into that nudge's single
@@ -487,7 +501,7 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 	var wispExtra string // set after target resolution; captured by defer closure
 	emittedHookContext := false
 	var injectPrefix string
-	if inject {
+	if inject && !midTurn {
 		// Read the provider hook input once (UserPromptSubmit JSON on stdin,
 		// pipe-only — see readHookStdin) and build the shared inject prefix:
 		// the clock line plus, when context pressure crosses its threshold,
@@ -497,7 +511,7 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 			if !emittedHookContext {
 				line := injectPrefix + wispExtra
 				if line != "" {
-					_ = writeProviderHookContextForEvent(stdout, hookFormat, "UserPromptSubmit", line)
+					_ = writeProviderHookContextForEvent(stdout, hookFormat, hookEvent, line)
 				}
 			}
 		}()
@@ -525,7 +539,7 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 		fmt.Fprintf(stderr, "gc nudge drain: %v\n", err) //nolint:errcheck
 		return 1
 	}
-	if inject {
+	if inject && !midTurn {
 		wispExtra = wispStepInjectionContent(target.cityPath)
 	}
 
@@ -587,9 +601,12 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 	}
 
 	var out string
-	if inject {
+	switch {
+	case inject && midTurn:
+		out = formatNudgeMidTurnInjectOutput(items)
+	case inject:
 		out = formatNudgeInjectOutput(items)
-	} else {
+	default:
 		out = formatNudgeRuntimeMessage(items)
 	}
 	var writeErr error
@@ -598,7 +615,7 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 		// provider-formatted payload carries all; this is the one place the
 		// combined context is written.
 		emittedHookContext = true
-		writeErr = writeProviderHookContextForEvent(stdout, hookFormat, "UserPromptSubmit", injectPrefix+out+wispExtra)
+		writeErr = writeProviderHookContextForEvent(stdout, hookFormat, hookEvent, injectPrefix+out+wispExtra)
 	} else {
 		_, writeErr = io.WriteString(stdout, out)
 	}
