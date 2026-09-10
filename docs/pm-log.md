@@ -4463,3 +4463,34 @@ as they apply to this city's Claude Code-provider setup:
    measured token counts, not inferred billing.
 
 Source: Willie, pm-chat sitting gs-6v5n
+
+## 134. Chat sitting gs-6v5n: efficiency epic queued open; explicit model+effort policy; first per-agent assignments (2026-09-10)
+
+Three more decisions from the same sitting, taken after the spawn-path
+mapping report (Explore agent, this sitting; key figures to be carried into
+the epic text when it lands in the roadmap):
+
+1. SEQUENCING. The efficiency epic enters docs/roadmap.md as status: open
+   and is promoted by the normal epic-close path when mayor-slack-bridge
+   closes. No parallel DECOMP; one decomposition in flight at a time stays
+   the rig's working convention.
+
+2. CONFIG POLICY. Every agent definition names its model and effort
+   explicitly -- no agent may rely on the provider default (currently
+   effort=max) or on account settings.json model inheritance (the
+   silent-inherit trap the mapping confirmed for governor, analyst-fable,
+   adversarial-reader-claude). Max effort is eliminated as a standing
+   level: nothing in this city runs --effort max after the epic lands.
+
+3. PER-AGENT ASSIGNMENTS decided so far: governor, analyst-fable, and
+   adversarial-reader-claude move to Fable models at effort high; mayor is
+   opus-5 at xhigh. Left open in this entry, pending PM recommendation and
+   Willie's confirm in the same sitting: lab engineer (Willie leaning
+   xhigh), bench-engineer (Willie asked medium vs high), and the PM's own
+   level (unaddressed; currently fable-5 at default max). Note for the
+   decomposition: the Fable moves also shift those agents' burn onto the
+   Fable usage-credits pool recorded as unmetered at pm-log #4 (2026-09-05)
+   -- re-verify that pool's status at execution time rather than citing
+   this entry as current.
+
+Source: Willie, pm-chat sitting gs-6v5n
