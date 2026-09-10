@@ -41,6 +41,35 @@ import (
 // and it closes exactly as it did before -- which is why this gate needs no
 // warn-only migration period, unlike the work-record gate beside it.
 //
+// COVERAGE, and it is this gate's binding limit. It fires only on closes that
+// route through `gc bd`. `bd` is a separate binary on PATH, not a shim onto
+// this dispatch, so a bare `bd close` never reaches here -- and bare `bd close`
+// is what most of this city's agent prompts and formulas currently mandate.
+// Counted 2026-09-09 across the fleet's agent transcripts: 528 `gc bd close`
+// against 907 bare `bd close`, and for the bench-engineer in the incident
+// above, 2 against 88. The incident's own close was bare, so as the city stands
+// this gate would not have caught the case it was written for. Routing those
+// prompts and formulas at `gc bd close` is the other half and is filed
+// separately, because `gc bd`'s scope resolution has to be verified per agent
+// before every close in the city depends on it.
+//
+// Also outside it, and deliberately: the dashboard API
+// (internal/api/huma_handlers_beads.go), internal/dispatch, molecule autoclose,
+// convoy close, sling, and gc's own bd-store-bridge all close beads without
+// passing here. Those are control-plane closes made on a worker's behalf, by
+// code that never read a brief and cannot be redirected by editing one.
+//
+// UNPROVEN, and it bounds every negative this gate reports. The comparison
+// reads the description through gc's Go store while the mayor's edit arrives
+// through a bd subprocess -- two seams. If that read can serve a cached
+// pre-edit description then current == claimed and the close passes silently
+// on exactly the redirect the gate exists for, which is the dangerous
+// direction to fail in. A 22-second cache-reconcile lag was observed in the
+// long-lived controller on 2026-09-09; whether a one-shot `gc bd` process can
+// see one is NOT established. The experiment that settles it: edit a live
+// bead's description, then close it through `gc bd close` within 30 seconds
+// and record whether store.Get returned the pre- or the post-edit text.
+//
 // Invariants pinned by brief_redirect_gate_test.go and, for the claim-time
 // stamp-once rule, by cmd_hook_claim_brief_digest_test.go.
 

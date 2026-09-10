@@ -140,7 +140,11 @@ func TestBriefRedirectGateIgnoresNonCloseWrites(t *testing.T) {
 	}
 }
 
-func TestBeadBriefDigestFramesTheTitleLength(t *testing.T) {
+func TestBriefRedirectDigestFramesTheTitleLength(t *testing.T) {
+	// Named for the suite prefix, not for the function under test. The first
+	// mutation sweep ran with -run BriefRedirect and this test, then called
+	// TestBeadBriefDigest..., matched nothing: the framing guard read green
+	// having never executed, and only the sweep's SURVIVED row showed it.
 	// Concatenating title and description with a separator collides whenever
 	// the boundary moves across a separator the title itself contains: with a
 	// bare "\n" join, title "a\nb"/desc "c" and title "a"/desc "b\nc" hash
