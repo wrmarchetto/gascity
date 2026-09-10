@@ -47,11 +47,18 @@ import (
 // is what most of this city's agent prompts and formulas currently mandate.
 // Counted 2026-09-09 over 2770 agent transcripts (Bash tool_use commands,
 // command-position match): 579 `gc bd close` against 1017 bare `bd close`,
-// and for the bench-engineer in the incident above, 2 against 92. The incident's own close was bare, so as the city stands
-// this gate would not have caught the case it was written for. Routing those
-// prompts and formulas at `gc bd close` is the other half and is filed
-// separately, because `gc bd`'s scope resolution has to be verified per agent
-// before every close in the city depends on it.
+// and for the bench-engineer in the incident above, 2 against 92. The
+// incident's own close was bare, so as the city stood this gate would not have
+// caught the case it was written for.
+//
+// That other half has since landed (ci-ac97yz): ten close instructions across
+// five agent templates and three formulas were routed at `gc bd close`, after
+// measuring per agent that `gc bd` and bare `bd` resolve the same store from
+// each one's own work_dir -- the verification this was blocked on, since a
+// wrong scope does not error. A city doctor check now refuses the bare form in
+// agent-facing text. What that does NOT reach is an agent typing `bd close`
+// from habit rather than from a prompt, so this paragraph remains the gate's
+// binding limit, just a smaller one.
 //
 // Also outside it, and deliberately: the dashboard API
 // (internal/api/huma_handlers_beads.go), internal/dispatch, molecule autoclose,
@@ -59,16 +66,36 @@ import (
 // passing here. Those are control-plane closes made on a worker's behalf, by
 // code that never read a brief and cannot be redirected by editing one.
 //
-// UNPROVEN, and it bounds every negative this gate reports. The comparison
-// reads the description through gc's Go store while the mayor's edit arrives
-// through a bd subprocess -- two seams. If that read can serve a cached
-// pre-edit description then current == claimed and the close passes silently
-// on exactly the redirect the gate exists for, which is the dangerous
-// direction to fail in. A 22-second cache-reconcile lag was observed in the
-// long-lived controller on 2026-09-09; whether a one-shot `gc bd` process can
-// see one is NOT established. The experiment that settles it: edit a live
-// bead's description, then close it through `gc bd close` within 30 seconds
-// and record whether store.Get returned the pre- or the post-edit text.
+// THE CACHE-LAG HAZARD WAS MEASURED AND DOES NOT APPLY HERE (ci-ac97yz). The
+// comparison reads the description through gc's Go store while the mayor's
+// edit arrives through a bd subprocess -- two seams -- and a read serving a
+// cached pre-edit description would make current == claimed and pass the close
+// silently on exactly the redirect this gate exists for. Run against the live
+// city store on 2026-09-09: a description edited through `bd update -d` was
+// read POST-edit by a fresh `gc bd close` 0.5 s later, which refused and
+// printed the new text; metadata stamped 0.1 s earlier was likewise seen.
+// Sub-second is the worst case for a stale read, so no delay sweep was run --
+// a longer wait can only be fresher.
+//
+// The control arms are what let those refusals attribute anything. A bead with
+// no stamped digest closed cleanly, and the same bead closed cleanly again once
+// the new digest was acknowledged, so the rig produces both verdicts and
+// "refused" is not this gate refusing everything.
+//
+// Corroborated, differently in kind rather than by a second look at the same
+// thing: openStoreResultAtForCityWithConfig (cmd/gc/main.go) never wraps the
+// store in beads.CachingStore. Only cmd/gc/api_state.go and
+// dispatch_control_ready.go do, and both are long-lived processes -- which is
+// where the 22-second reconcile lag observed on 2026-09-09 actually lives. A
+// one-shot `gc bd` opens the backing store directly and has no cache to be
+// stale.
+//
+// WHAT STILL BOUNDS IT. The probe bead was not held by a running agent, where
+// the docstring's original experiment placed it. Holding changes no read seam
+// -- store.Get is the same call, and a holder's cache lives in a different
+// process -- but it was not measured. The negative also expires if `gc bd`
+// ever grows a CachingStore on its open path; that, not the elapsed time, is
+// the condition to re-check.
 //
 // Invariants pinned by brief_redirect_gate_test.go and, for the claim-time
 // stamp-once rule, by cmd_hook_claim_brief_digest_test.go.
