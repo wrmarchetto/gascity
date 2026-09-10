@@ -30,6 +30,19 @@
       "items": {
         "type": "string"
       }
+    },
+    "formula_source": {
+      "type": "string",
+      "enum": [
+        "ref",
+        "working-tree"
+      ],
+      "description": "Which formula source the running supervisor resolves from. ABSENT when the supervisor did not answer the formularef probe -- every build predating it is silent, and absence must not be read as \"working-tree\"."
+    },
+    "formula_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The committed git ref formulas resolve from. Present only when formula_source is \"ref\"."
     }
   },
   "additionalProperties": true
