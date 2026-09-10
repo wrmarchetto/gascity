@@ -117,6 +117,75 @@ Depends on: a Slack app provisioned by Willie (bot token plus app-level
 token with connections:write; the new channel created), credentials landed
 in ${GC_HOME}/secrets.env. No hardware, no upstream rig.
 
+## epic:agent-efficiency -- Agent session efficiency: time and usage headroom
+
+status: open
+
+Make the agent fleet cheaper in the two currencies that actually bind this
+city: wall-clock time and usage-window headroom. The city runs on Claude
+Code subscription usage, not metered API tokens, so no dollar figure exists
+anywhere in this epic; every lever is measured in our own token counts and
+latency (pm-log #133). Grounding from the spawn-path mapping (pm-log
+#133-#136): sessions cold-spawn per bead as `claude --effort <level>
+--model <id> --settings ... '<rendered prompt>'`; a 139-character
+per-session SessionStart beacon sits ahead of ~31K tokens of byte-stable
+payload (28.5KB rendered prompt, 14KB skill listing, 73KB
+CLAUDE.md/AGENTS.md stack) and defeats prompt-cache reuse at every spawn,
+~157 cold spawns per observed window; nearly every Claude agent runs
+effort=max; six-account rotation fragments what cache could exist; and
+~200KB of per-account harness memory drift violates the accounts-identical
+principle (pm-log #135).
+
+Acceptance:
+
+- Observability: per-session input / cache-read / cache-creation / output
+  token counts and wall-clock, attributable to agent type (and bead where
+  one is held), extracted from our own session records and paired with the
+  existing tokens-by-role analytic. A baseline over a representative
+  window is recorded BEFORE any other criterion's change lands.
+- Prefix hygiene, measured: the redundant SessionStart hook beacon and the
+  per-prompt clock line no longer precede the stable payload on the spawn
+  path, and a second consecutive spawn of the same agent slot on the same
+  account shows nonzero cache_read_input_tokens in its own session record.
+  The criterion is the measured read, not the removal.
+- Explicit model+effort everywhere: every agent definition names model and
+  effort; nothing runs effort=max. Assignments of record (pm-log #136):
+  lab engineer and bench-engineer xhigh; mayor opus-5 xhigh; governor,
+  analyst-fable, adversarial-reader-claude fable at high; PM fable-5 at
+  high; technician class sonnet at high. An unrecognized model or effort
+  value fails config load loudly instead of silently degrading to the
+  provider default (today a typo degrades to max with no error).
+- Canary, not harness: no retrospective bead-replay rig is built (pm-log
+  #136). After the new levels land, a 1-2 week window compares per-bead
+  tokens, wall-clock, and rework signals (reopened beads, failure classes,
+  gate failures, skeptic rejections) against the baseline, with a named
+  revert criterion per agent; results recorded.
+- Account affinity: a reshuffle script, run at initial setup and whenever
+  an account hits its limit, reassigns agent-type-to-account affinity from
+  available 5h/7d usage paired with tokens-by-role -- highest-usage type
+  gets the most-available account, types spread evenly across accounts,
+  never stacking two high-usage types while an account idles, never a
+  blind hash (pm-log #135). Affinity is a preference that yields at usage
+  limits, and a reshuffle binds future spawns only -- it never stops or
+  migrates an in-flight session. Sequenced after prefix hygiene: until the
+  prefix is stable there is no cache to come back to.
+- Memory-drift remediation: account-home Claude memory harvested into
+  bd/docs where still valuable, the directories emptied, and a mechanical
+  gate keeping the accounts-identical invariant from silently
+  re-accumulating (a rule without a gate is how it reached ~200KB).
+- Prompt-instruction audit: role templates, appended fragments, and the
+  CLAUDE.md/AGENTS.md stack audited against the anti-pattern checklist
+  (verification rituals, thoroughness boosters, mandatory scaffolds, stale
+  examples, contradictory rules -- pm-log #133), each finding
+  dispositioned fix or keep-with-reason (load-bearing guards stay), with
+  the instructions stack's token size recorded before and after.
+
+Depends on: mayor-slack-bridge closing (normal promotion path, pm-log
+#134). A queryable per-account 5h/7d usage-availability signal for the
+reshuffle script -- verify at decomposition. Edits to ~/.claude/CLAUDE.md
+are Willie's own (it lives outside every rig), so audit findings there are
+proposals to him, not beads.
+
 ## Abandoned
 
 None yet.

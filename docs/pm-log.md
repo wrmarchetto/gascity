@@ -4542,3 +4542,35 @@ the technician entries execute the serialized hardware steps -- so the
 same xhigh reasoning applies to both engineers.
 
 Source: Willie, pm-chat sitting gs-6v5n
+
+## 136. Chat sitting gs-6v5n: package confirmed, affinity reshuffle sketch, epic:agent-efficiency lands in roadmap (2026-09-10)
+
+Willie confirmed the full package, closing every open item from #134/#135:
+
+1. Effort/model assignments of record: lab engineer AND bench-engineer
+   xhigh (bench-engineer shares the engineer template, #135); mayor opus-5
+   xhigh; governor, analyst-fable, adversarial-reader-claude fable models
+   at high; PM fable-5 high; technician class sonnet high; every agent
+   names model and effort explicitly; nothing runs max.
+2. The retrospective spot-check harness is dropped. Evidence mechanism is
+   the prospective canary: baseline first, apply levels, 1-2 week window
+   on real-work quality signals, named revert criterion per agent.
+3. Account affinity is in the epic, sequenced after prefix hygiene, under
+   the #135 even-spread constraint.
+4. Memory-drift remediation is in the epic: harvest into bd/docs, delete
+   the dirs, mechanical gate on the accounts-identical invariant.
+
+Affinity mechanism, Willie's initial design (iterable, recorded as the
+starting spec): a reshuffle script run at initial setup and whenever an
+account hits its limit. Inputs: available 5h/7d usage per account paired
+with the existing tokens-by-role analytic. Assignment: highest-usage agent
+type gets the account with the most available usage, types spread evenly.
+A reshuffle binds FUTURE spawns only -- it never stops or migrates an
+in-flight session off the account it is running on.
+
+Epic landed this turn: docs/roadmap.md gains epic:agent-efficiency at
+status: open (promotion by the normal epic-close path when
+mayor-slack-bridge closes, per #134). No DECOMP sent -- the epic is open,
+not in-progress. pm-open #5 is resolved by this entry.
+
+Source: Willie, pm-chat sitting gs-6v5n

@@ -190,3 +190,7 @@ instruction audit; metric is time and usage-limit headroom, not dollars) as
 the post-bridge epic in chat sitting gs-6v5n. This entry closes when the
 epic's text lands in docs/roadmap.md with acceptance criteria, later in
 that same sitting or a follow-up.
+
+Update 2026-09-10 (pm-log #136): RESOLVED. epic:agent-efficiency is in
+docs/roadmap.md at status: open with seven acceptance criteria, queued for
+normal promotion when mayor-slack-bridge closes.
