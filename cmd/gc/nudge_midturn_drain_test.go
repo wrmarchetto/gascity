@@ -158,7 +158,11 @@ func TestMidTurnDrainConsumesTheNudgeSoItDoesNotRefireEveryToolCall(t *testing.T
 	}
 }
 
-func TestPromptBoundaryDrainStillEmitsItsOrientationContext(t *testing.T) {
+func TestMidTurnDrainSuppressionDoesNotLeakOntoThePromptBoundary(t *testing.T) {
+	// Named under the suite prefix, not for what it asserts. Called
+	// TestPromptBoundaryDrain... it matched no alternative of the -run filter
+	// the sweep used and had never executed once -- the second test in this
+	// branch to read green by not running.
 	// The suppression must be keyed on the mid-turn event, not applied to
 	// every drain: a UserPromptSubmit drain with an empty queue still owes the
 	// session its clock line, and losing that silently is the regression the
@@ -186,5 +190,48 @@ func TestMidTurnDrainDefaultEventIsUnchanged(t *testing.T) {
 	}
 	if !isMidTurnNudgeHookEvent("PostToolUse") {
 		t.Fatal("PostToolUse was not classified as mid-turn")
+	}
+}
+
+func TestMidTurnDrainOmitsTheActiveFormulaStep(t *testing.T) {
+	// The formula-step line SURVIVED its mutation in the first sweep: with no
+	// active step in the fixture, wispStepInjectionContent returns "" and
+	// suppressing it changes nothing, so the assertion was vacuous. This
+	// fixture seeds an in-progress molecule and step assigned to the agent --
+	// the shape clock_inject_test.go uses -- so the suppression has something
+	// to suppress.
+	cityDir, sessionID, store := midTurnDrainCity(t)
+	// wispStepInjectionContent matches the active step's assignee against this.
+	t.Setenv("GC_ALIAS", "worker")
+	mol := mustCreateInProgressStore(t, store, beads.Bead{
+		Title: "Formula: mol-worker", Type: "molecule", Assignee: "worker",
+	})
+	mustCreateInProgressStore(t, store, beads.Bead{
+		Title: "Step 1: implement the widget", Description: "Write the widget code",
+		Type: "step", Assignee: "worker", ParentID: mol.ID,
+	})
+	midTurnDrainEnqueue(t, cityDir, sessionID, "REDIRECT: stop building it", store)
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdNudgeDrainWithFormat([]string{sessionID}, true, hookOutputFormatClaude,
+		claudeHookEventPostToolUse, &stdout, &stderr); code != 0 {
+		t.Fatalf("drain = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("stdout is not one JSON document (%v): %q", err, stdout.String())
+	}
+	reason, _ := payload["reason"].(string)
+	if !strings.Contains(reason, "REDIRECT: stop building it") {
+		t.Fatalf("reason = %q, want the queued message", reason)
+	}
+	// The step is the agent's own current work. Restating it mid-turn is at
+	// best noise and, since the only mid-turn shape is a refusal, arrives as
+	// an interruption telling the agent what it is already doing.
+	if strings.Contains(reason, "implement the widget") || strings.Contains(reason, "Write the widget code") {
+		t.Fatalf("mid-turn refusal carries the active formula step: %q", reason)
+	}
+	if strings.Contains(reason, "Current time:") {
+		t.Fatalf("mid-turn refusal carries the clock line: %q", reason)
 	}
 }
