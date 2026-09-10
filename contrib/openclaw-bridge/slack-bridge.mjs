@@ -8,7 +8,7 @@
 import { SocketModeClient } from '@slack/socket-mode'
 import { WebClient } from '@slack/web-api'
 import { makeSlackForward, makeSlackSocketHandler } from './lib/slack.mjs'
-import { env, makeAdapterRegistrar, makeGcClient, makeNamedSessionBinder, makeShutdown, startCallbackServer } from './lib/gc-client.mjs'
+import { cityName, env, makeAdapterRegistrar, makeGcClient, makeNamedSessionBinder, makeShutdown, startCallbackServer } from './lib/gc-client.mjs'
 
 const required = (name) => {
   const value = process.env[name]
@@ -19,7 +19,15 @@ const required = (name) => {
   return value
 }
 
-const CITY = required('GC_CITY')
+// The city NAME, not the city path: see cityName in lib/gc-client.mjs for why
+// GC_CITY alone is not enough under [[service]] supervision.
+let CITY
+try {
+  CITY = cityName()
+} catch (err) {
+  console.error(`[slack-bridge] ${err.message}`)
+  process.exit(2)
+}
 const APP_TOKEN = required('BRIDGE_SLACK_APP_TOKEN')
 const BOT_TOKEN = required('BRIDGE_SLACK_BOT_TOKEN')
 const CHANNEL_ID = required('BRIDGE_SLACK_CHANNEL_ID')

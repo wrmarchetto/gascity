@@ -93,11 +93,21 @@ auto-detects remote-host wrappers) and start `bridge.mjs` with `GC_CITY`,
 
 ## Bridge configuration (env)
 
+`GC_CITY_NAME` and `GC_CITY` are not interchangeable. Every `/v0/city/{name}/...`
+route resolves the URL segment through a name-keyed registry with no path
+fallback, while gc's own launchers define `GC_CITY` as the city PATH -- it is a
+synonym for `GC_CITY_PATH`, not for the name. A bridge that read `GC_CITY` as a
+name therefore worked when hand-run with `GC_CITY=lab` and 404ed forever under
+`[[service]]` supervision, which is how it shipped (ci-azvlhn). `GC_CITY` stays
+a fallback for the hand-run form below and is REFUSED when it looks like a
+path, so the failure is one startup message rather than a silent retry loop.
+
 | var | default | meaning |
 |---|---|---|
-| `GC_CITY` | (required) | city name for `/v0/city/{name}/...` |
+| `GC_CITY_NAME` | (required) | city NAME for `/v0/city/{name}/...`; gc launchers export it |
+| `GC_CITY` | (fallback) | accepted as the name only when it is not a path -- gc sets it to the city PATH |
 | `GC_BASE_URL` | `http://127.0.0.1:8372` | gc API base (supervisor default port) |
-| `GC_SCOPE_ID` | `$GC_CITY` | `scope_id` stamped on every ConversationRef |
+| `GC_SCOPE_ID` | the resolved city name | `scope_id` stamped on every ConversationRef |
 | `BRIDGE_PORT` | `8930` | callback server gc publishes to |
 | `BRIDGE_PROVIDER` / `BRIDGE_ACCOUNT_ID` | `imessage` / `default` | adapter identity |
 | `IMSG_CLI_PATH` | `./fake-imsg/imsg` | imsg binary (must be an explicit path on non-Mac — openclaw rejects a bare `imsg` off-macOS) |
@@ -194,11 +204,12 @@ Bot API servers — so the connector code path is identical to production.
 
 | var | default | meaning |
 |---|---|---|
-| `GC_CITY` | (required) | city name for `/v0/city/{name}/...` |
+| `GC_CITY_NAME` | (required) | city NAME for `/v0/city/{name}/...`; gc launchers export it |
+| `GC_CITY` | (fallback) | accepted as the name only when it is not a path -- gc sets it to the city PATH |
 | `TELEGRAM_BOT_TOKEN` | (required) | BotFather token (or the fake server token) |
 | `TELEGRAM_API_ROOT` | `https://api.telegram.org` | Bot API root; point at the fake for demos |
 | `GC_BASE_URL` | `http://127.0.0.1:8372` | gc API base (supervisor default port) |
-| `GC_SCOPE_ID` | `$GC_CITY` | `scope_id` stamped on every ConversationRef |
+| `GC_SCOPE_ID` | the resolved city name | `scope_id` stamped on every ConversationRef |
 | `BRIDGE_PORT` | `8931` | callback server gc publishes to |
 | `BRIDGE_PROVIDER` / `BRIDGE_ACCOUNT_ID` | `telegram` / `default` | adapter identity |
 | `ALLOW_FROM` | (empty = allow all) | comma-separated telegram user ids and/or usernames; other senders are dropped at the edge with a log line, never reaching gc |

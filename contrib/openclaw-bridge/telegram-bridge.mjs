@@ -16,12 +16,16 @@
 // Routing policy stays in gc.
 
 import { loadTelegramConnector } from './lib/openclaw.mjs'
-import { env, makeGcClient, startCallbackServer, makeAdapterRegistrar, makeShutdown } from './lib/gc-client.mjs'
+import { cityName, env, makeAdapterRegistrar, makeGcClient, makeShutdown, startCallbackServer } from './lib/gc-client.mjs'
 import { forwardWithRetry, drainBatch } from './lib/inbound.mjs'
 
-const CITY = process.env.GC_CITY
-if (!CITY) {
-  console.error('[tg-bridge] GC_CITY is required (gas city name for /v0/city/{name}/... routes)')
+// The city NAME, not the city path: see cityName in lib/gc-client.mjs for why
+// GC_CITY alone is not enough under [[service]] supervision.
+let CITY
+try {
+  CITY = cityName()
+} catch (err) {
+  console.error(`[tg-bridge] ${err.message}`)
   process.exit(2)
 }
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN

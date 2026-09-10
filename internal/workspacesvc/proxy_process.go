@@ -214,6 +214,20 @@ func (p *proxyProcessInstance) start(now time.Time) error {
 		"GC_SERVICE_SECRETS_DIR="+filepath.Join(p.absStateRoot, "secrets"),
 		"GC_SERVICE_RUN_ROOT="+filepath.Join(p.absStateRoot, "run"),
 		"GC_SERVICE_SOCKET="+p.socketPath,
+		// The city NAME, alongside the PATH that citylayout seeds into GC_CITY
+		// and GC_CITY_PATH above. A service child that calls the city API needs
+		// this: every /v0/city/{cityName}/... route resolves through a
+		// name-keyed registry (cmd/gc/city_registry.go) with no path fallback,
+		// so a child with only GC_CITY has no name to send. The supervised
+		// Slack bridge sent the path and got 404 sixty times per process life,
+		// respawning every ~100s for two hours (ci-azvlhn).
+		//
+		// Exported unconditionally, empty name included, rather than being
+		// omitted when CityName() is blank: an absent variable is
+		// indistinguishable from an old gc, so a child cannot tell "no name
+		// available" from "launcher too old to send one" and has no reason to
+		// refuse rather than fall back to the path.
+		"GC_CITY_NAME="+p.rt.CityName(),
 		"GC_SERVICE_URL_PREFIX="+citylayout.PublicServiceMountPath(p.rt.CityName(), p.svc.Name),
 		"GC_SERVICE_PUBLIC_URL="+p.publication.URL,
 		"GC_SERVICE_VISIBILITY="+p.publication.Visibility,

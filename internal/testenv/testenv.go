@@ -138,6 +138,7 @@ var LeakVectorVars = []string{
 	"GC_BEADS_SCOPE_ROOT",
 	"GC_BIN",
 	"GC_CITY",
+	"GC_CITY_NAME",
 	"GC_CITY_PATH",
 	"GC_CITY_ROOT",
 	"GC_CITY_RUNTIME_DIR",

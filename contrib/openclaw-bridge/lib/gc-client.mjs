@@ -11,6 +11,37 @@ import http from 'node:http'
 // env(k, d): process.env[k] when it is set and non-empty, otherwise the default.
 export const env = (k, d) => (process.env[k] !== undefined && process.env[k] !== '' ? process.env[k] : d)
 
+// cityName resolves the city NAME for the /v0/city/{cityName}/... routes from
+// an env bag (process.env by default).
+//
+// GC_CITY_NAME is preferred because gc's own launchers define GC_CITY as the
+// city PATH -- internal/citylayout/runtime.go seeds GC_CITY and GC_CITY_PATH
+// from the same city root -- while the API resolves the URL segment through a
+// name-keyed registry with no path fallback. Reading GC_CITY as a name is why
+// the supervised Slack bridge POSTed the city path and 404ed once a second for
+// two hours before dying and being respawned, ~60 attempts per life (ci-azvlhn).
+//
+// GC_CITY stays the fallback rather than being dropped: the README's hand-run
+// form is `GC_CITY=lab node slack-bridge.mjs`, and the demo scripts use it.
+//
+// A path-shaped value is REFUSED instead of sent. A city name occupies one URL
+// segment, so a value containing "/" cannot be a name and no number of retries
+// makes it resolve -- registerWithRetry treats 404 as transient and would spend
+// its whole 60-attempt budget on it. Refusing at startup is what turns that
+// silent loop into one message naming the variable to set.
+export function cityName(bag = process.env) {
+  const named = bag.GC_CITY_NAME
+  if (named !== undefined && named !== '') return named
+  const legacy = bag.GC_CITY
+  if (legacy === undefined || legacy === '') {
+    throw new Error('GC_CITY_NAME is required (the gas city name used in /v0/city/{name}/... routes); GC_CITY is accepted only when it is a name, not a path')
+  }
+  if (legacy.includes('/')) {
+    throw new Error(`GC_CITY_NAME is required: GC_CITY is ${JSON.stringify(legacy)}, which is a city PATH and cannot resolve as a city name -- set GC_CITY_NAME to the city name (gc launchers export it; \`gc status\` prints it)`)
+  }
+  return legacy
+}
+
 // makeGcClient binds a gcFetch to one city. gcFetch throws on any non-2xx with
 // the HTTP status attached as err.status, and lets transport errors / timeouts
 // propagate with no status, so callers can classify transient (retry) vs

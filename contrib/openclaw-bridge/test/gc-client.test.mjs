@@ -8,7 +8,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { env, makeGcClient, startCallbackServer, makeAdapterRegistrar, makeNamedSessionBinder } from '../lib/gc-client.mjs'
+import { cityName, env, makeGcClient, startCallbackServer, makeAdapterRegistrar, makeNamedSessionBinder } from '../lib/gc-client.mjs'
 
 // listen starts a one-off server on an ephemeral port and resolves { server, port }.
 function listen(handler) {
@@ -348,4 +348,51 @@ test('makeNamedSessionBinder still retries a transient failure', async () => {
   } finally {
     await close(server)
   }
+})
+
+// --- city name resolution ---
+//
+// These pin the seam that produced ci-azvlhn: gc's launchers define GC_CITY as
+// the city PATH (internal/citylayout/runtime.go sets GC_CITY and GC_CITY_PATH
+// to the same city root), while every /v0/city/{cityName}/... route resolves
+// through a name-keyed registry. The bridges used to read GC_CITY as a name,
+// so under [[service]] supervision they sent the path and 404ed once a second
+// for two hours. Asserted here rather than in the entrypoints because all four
+// executables share this resolution through lib/gc-client.mjs.
+
+test('cityName prefers GC_CITY_NAME over the path-valued GC_CITY', () => {
+  assert.equal(cityName({ GC_CITY_NAME: 'city', GC_CITY: '/home/willie/projects/city' }), 'city')
+})
+
+test('cityName falls back to GC_CITY for the documented hand-run form', () => {
+  // README: `GC_CITY=lab node slack-bridge.mjs`. Dropping this fallback would
+  // break every hand-run invocation and every demo script.
+  assert.equal(cityName({ GC_CITY: 'lab' }), 'lab')
+})
+
+test('cityName rejects a GC_CITY that is a path, naming the remedy', () => {
+  // Fails at startup instead of retrying a URL that can never resolve: a city
+  // name is one URL segment, so a value containing "/" is not a name and no
+  // amount of retrying makes it one. This is the exact live value.
+  assert.throws(() => cityName({ GC_CITY: '/home/willie/projects/city' }), (err) => {
+    assert.match(err.message, /GC_CITY_NAME/)
+    return true
+  })
+})
+
+test('cityName rejects an empty environment rather than requesting /v0/city//', () => {
+  // An empty name builds /v0/city//extmsg/adapters, which the router answers
+  // with a 307 to a different path -- a failure mode even harder to read than
+  // the 404 it replaced.
+  assert.throws(() => cityName({}), (err) => {
+    assert.match(err.message, /GC_CITY_NAME/)
+    return true
+  })
+})
+
+test('cityName ignores an empty GC_CITY_NAME and falls through to GC_CITY', () => {
+  // proxy_process exports GC_CITY_NAME unconditionally, so a launcher that
+  // cannot determine the name exports it EMPTY rather than omitting it. An
+  // empty value must not shadow a usable GC_CITY.
+  assert.equal(cityName({ GC_CITY_NAME: '', GC_CITY: 'lab' }), 'lab')
 })
