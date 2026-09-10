@@ -32,6 +32,27 @@
 // unconditionally registered: an unwired gate costs nothing, and a city
 // wiring one that does not exist is the worse failure.
 //
+// WHAT IT DOES NOT INSPECT: the working tree. stopGateFacts is the complete
+// input -- the bead store, two session signals, the provider flag -- and it
+// carries no path, no work_dir and no git state. A session that closes its
+// bead, acknowledges its drain and ends the turn with work staged and
+// uncommitted therefore passes cleanly, every time
+// (TestStopGateAllowsEphemeralSessionThatAcknowledgedDrain). Closing the bead
+// is not what evades the gate: no branch here reads a tree, so an outstanding
+// bead would only have held the turn open one more round, and the block text
+// it prints says close the bead, never commit the work. Observed 2026-09-10 on
+// astoria-sel4/lab.engineer-codex-1, which closed as-tkt5 naming a branch and
+// left that fix staged in the rig's shared root for ~90 minutes (city
+// ci-5xqu9t).
+//
+// Adding a dirty-tree condition here breaks constraint 3 below. A rig root is
+// shared, so tracked dirt in it is not provably THIS session's, and the block
+// would carry no remedy the reader can safely run -- committing a live
+// sibling's edits is the outcome the city's own rig-root-branch-check.py
+// withholds its remedy over. That detection belongs where it can join tree
+// dirt against the live session list and a false positive costs a report
+// rather than a wedged turn.
+//
 // Editing constraints, each of which can make this worse than the bug it
 // fixes. TestStopGate* in cmd_hook_stop_test.go pins all four:
 //
