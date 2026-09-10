@@ -528,6 +528,16 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 		}
 	}
 
+	// Brief-redirect close gate (ci-tdk1lv): a close whose bead's title or
+	// description was rewritten after the claim that stamped gc.brief_digest is
+	// refused with the current brief printed, because nothing else reaches a
+	// session mid-turn. It runs FIRST of the close gates on purpose -- a close
+	// against withdrawn instructions must fail on the withdrawal, not on a
+	// work-record field the worker would then go and satisfy.
+	if runBriefRedirectCloseGate(bdArgs, guardStore, guardBeads, stderr) {
+		return 1
+	}
+
 	// Work-record close gate (ADR-0009): a close routed through the SDK seam
 	// must satisfy the typed work-record contract (gc.work_outcome present;
 	// shipped ⇒ gc.work_commit reachable on gc.work_branch). Warn-only by default;
