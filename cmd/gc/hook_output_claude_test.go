@@ -64,7 +64,10 @@ func TestClaudeHookOutputMatchesEventNameCaseInsensitively(t *testing.T) {
 	}
 }
 
-func TestWriteProviderHookContextForEventEmitsClaudePostToolUseJSON(t *testing.T) {
+func TestClaudeHookOutputWriterEmitsPostToolUseJSON(t *testing.T) {
+	// Named for the suite prefix, not for the function it exercises. As
+	// TestWriteProviderHookContextForEvent... it matched no alternative of the
+	// -run filter this suite is verified and swept with, and never executed.
 	// The end of the wire: what gc actually prints on stdout is what the
 	// harness parses, so assert on the encoded bytes rather than the map.
 	var out strings.Builder
@@ -80,7 +83,7 @@ func TestWriteProviderHookContextForEventEmitsClaudePostToolUseJSON(t *testing.T
 	}
 }
 
-func TestWriteProviderHookContextForEventKeepsClaudeBoundaryEventsUnwrapped(t *testing.T) {
+func TestClaudeHookOutputWriterKeepsBoundaryEventsUnwrapped(t *testing.T) {
 	var out strings.Builder
 	if err := writeProviderHookContextForEvent(&out, hookOutputFormatClaude, "UserPromptSubmit", "plain text"); err != nil {
 		t.Fatalf("write: %v", err)
