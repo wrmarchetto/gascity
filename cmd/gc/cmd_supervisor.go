@@ -26,6 +26,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/convergence"
 	"github.com/gastownhall/gascity/internal/events"
+	"github.com/gastownhall/gascity/internal/formula"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
 	"github.com/gastownhall/gascity/internal/logutil"
@@ -655,7 +656,9 @@ func startSupervisorSocket(sockPath string, requestShutdown func(supervisorShutd
 
 // handleSupervisorConn reads from a connection and dispatches commands.
 // Supported: "stop" (shutdown), "ping" (liveness check, returns PID),
-// "reload" (trigger immediate reconciliation of all cities).
+// "packhash" (the running image's bundled-pack hash), "formularef" (the
+// formula source this process resolves from), "reload" (trigger immediate
+// reconciliation of all cities).
 //
 // For "stop", the handler first sends "ok\n" (backward compatible ACK),
 // then — if the client keeps the connection open — blocks until shutdown
@@ -711,6 +714,29 @@ func handleSupervisorConn(conn net.Conn, requestShutdown func(supervisorShutdown
 			// os.Executable() names a path whose contents have since moved
 			// on. Read by doctor's supervisor-pack-drift check.
 			fmt.Fprintf(conn, "%s\n", builtinpacks.SyntheticCacheKeyComponent()) //nolint:errcheck
+		case "formularef":
+			// Answers the formula source THIS PROCESS resolves from, which
+			// is the only way to learn it: applySupervisorFormulaRef pins
+			// the supervisor with os.Setenv, Go keeps its own copy of the
+			// environment, and /proc/<pid>/environ is a snapshot taken at
+			// exec -- so the pin reaches every child while reading as
+			// absent to any check made against the live process
+			// (ci-fn48qz). supervisorChildEnv makes that check truthful for
+			// `gc supervisor start`, which has a fork to seed; a
+			// `gc supervisor run` under systemd or launchd has none.
+			//
+			// Two answers, never three: "ref:<name>" and "working-tree".
+			// Set-empty and unset are both the working tree and are NOT
+			// distinguished, because the question this answers is whether
+			// an uncommitted formula edit is live, and for that they are
+			// one state. The alias set is formula.EffectiveRef's, not a
+			// copy -- a report disagreeing with the resolver is worse than
+			// no report.
+			if ref, pinned := formula.EffectiveRefFromEnv(); pinned {
+				fmt.Fprintf(conn, "ref:%s\n", ref) //nolint:errcheck
+			} else {
+				fmt.Fprint(conn, "working-tree\n") //nolint:errcheck
+			}
 		case "reload":
 			req := reconcileRequest{done: make(chan struct{})}
 			select {
@@ -834,6 +860,121 @@ func supervisorBundledPackHashOverConn(conn net.Conn, budget time.Duration) (str
 		return "", false
 	}
 	return hash, true
+}
+
+// supervisorFormulaSourceAtPath asks the supervisor at sockPath which
+// formula source it resolves from. Returns (ref, pinned, ok), with ok=false
+// when the dial fails, when the supervisor answers nothing (every build
+// predating the "formularef" command), or when the answer is not one this
+// client understands.
+//
+// ok=false is deliberately NOT collapsed into "working-tree". Silence and
+// "the working tree is live" are different facts and only one is something
+// an operator should act on: told "working tree" by a supervisor that never
+// said so, an agent edits a formula, sees nothing happen, and has no way to
+// tell a broken formula from an uncommitted one -- the failure this command
+// exists to end.
+//
+// DELIBERATELY NOT given the no-argument sibling supervisorBundledPackHash
+// has. That one resolves the socket itself because doctor calls it cold;
+// every caller here has already pinged the socket to establish liveness, so
+// a second resolution would be a second answer to a question just asked.
+func supervisorFormulaSourceAtPath(sockPath string, budget time.Duration) (string, bool, bool) {
+	conn, err := net.DialTimeout("unix", sockPath, budget)
+	if err != nil {
+		return "", false, false
+	}
+	defer conn.Close() //nolint:errcheck
+	return supervisorFormulaSourceOverConn(conn, budget)
+}
+
+// supervisorFormulaSourceOverConn is the round trip itself, split from the
+// dial for the same reason as its packhash sibling: test/test-resources.toml
+// ratchets the untagged net.Listen count down and forbids growth, and every
+// answer worth testing -- silence, an unknown line, an empty ref -- is a
+// property of what comes back over an established connection.
+//
+// Returns (ref, pinned, ok).
+func supervisorFormulaSourceOverConn(conn net.Conn, budget time.Duration) (string, bool, bool) {
+	conn.Write([]byte("formularef\n"))           //nolint:errcheck
+	conn.SetReadDeadline(time.Now().Add(budget)) //nolint:errcheck
+	// 512 leaves room for a long branch name without letting a wedged
+	// socket stream unboundedly.
+	buf := make([]byte, 512)
+	n, _ := conn.Read(buf)
+	answer := strings.TrimSpace(string(buf[:n]))
+	switch {
+	case answer == supervisorFormulaWorkingTree:
+		return "", false, true
+	case strings.HasPrefix(answer, supervisorFormulaRefPrefix):
+		ref := strings.TrimSpace(strings.TrimPrefix(answer, supervisorFormulaRefPrefix))
+		// An empty ref after the prefix is a malformed answer, not a pin to
+		// nothing. Accepting it would print `pinned to ""` and send an
+		// operator looking for a ref that was never named. A read error is
+		// not inspected separately: a closed connection, a timeout and a
+		// partial answer all land here as a line that is not one of the two
+		// forms.
+		if ref == "" {
+			return "", false, false
+		}
+		return ref, true, true
+	default:
+		return "", false, false
+	}
+}
+
+// The two answers the "formularef" command gives, spelled once so the
+// handler and its client cannot drift apart on a literal.
+const (
+	supervisorFormulaWorkingTree = "working-tree"
+	supervisorFormulaRefPrefix   = "ref:"
+)
+
+// addSupervisorFormulaSource records the supervisor's formula source on a
+// status payload, and records NOTHING when ok is false.
+//
+// The absence is the contract. Defaulting an unanswered probe to
+// "working-tree" would restate the exact false negative this reporting
+// exists to remove, in JSON, where a consumer would trust it more than the
+// /proc read it replaces.
+func addSupervisorFormulaSource(payload map[string]any, answer string, ok bool) {
+	if !ok {
+		return
+	}
+	if ref := strings.TrimPrefix(answer, supervisorFormulaRefPrefix); ref != answer && ref != "" {
+		payload["formula_source"] = "ref"
+		payload["formula_ref"] = ref
+		return
+	}
+	if answer == supervisorFormulaWorkingTree {
+		payload["formula_source"] = supervisorFormulaWorkingTree
+	}
+}
+
+// supervisorFormulaSourceAnswerAtPath is supervisorFormulaSourceAtPath
+// returning the raw answer line rather than its parse, so status can hand
+// the same string to both the JSON and the text renderer and they cannot
+// disagree about it.
+func supervisorFormulaSourceAnswerAtPath(sockPath string, budget time.Duration) (string, bool) {
+	ref, pinned, ok := supervisorFormulaSourceAtPath(sockPath, budget)
+	if !ok {
+		return "", false
+	}
+	if pinned {
+		return supervisorFormulaRefPrefix + ref, true
+	}
+	return supervisorFormulaWorkingTree, true
+}
+
+// supervisorFormulaSourceLine renders one answer for an operator. The
+// working-tree wording says what it MEANS -- an uncommitted formula edit is
+// live -- because "working-tree" alone is the fact the reader already has
+// and not the one they came for.
+func supervisorFormulaSourceLine(answer string) string {
+	if ref := strings.TrimPrefix(answer, supervisorFormulaRefPrefix); ref != answer && ref != "" {
+		return fmt.Sprintf("committed ref %s (an uncommitted formula edit does nothing)", ref)
+	}
+	return "the working tree (an uncommitted formula edit is live)"
 }
 
 // isBundledPackHash reports whether s is a whole "sha256:" + 64 hex digest,
@@ -1052,6 +1193,13 @@ func supervisorStatusWithOptions(stdout, stderr io.Writer, asJSON bool) int {
 			running, pidSource = true, "api"
 		}
 	}
+	// Probed only when the control socket answered a ping. The formularef
+	// round trip is a second dial, and on the service-manager / API
+	// liveness fallbacks there is no reachable socket to make it on.
+	formulaAnswer, formulaOK := "", false
+	if sockPath != "" {
+		formulaAnswer, formulaOK = supervisorFormulaSourceAnswerAtPath(sockPath, 3*time.Second)
+	}
 	if asJSON {
 		payload := map[string]any{
 			"schema_version": "1",
@@ -1060,6 +1208,7 @@ func supervisorStatusWithOptions(stdout, stderr io.Writer, asJSON bool) int {
 			"socket_path":    sockPath,
 			"checked_paths":  supervisorSocketPathCandidates(),
 		}
+		addSupervisorFormulaSource(payload, formulaAnswer, formulaOK)
 		if pidSource != "" {
 			payload["pid_source"] = pidSource
 		}
@@ -1079,6 +1228,12 @@ func supervisorStatusWithOptions(stdout, stderr io.Writer, asJSON bool) int {
 	switch {
 	case pid > 0:
 		fmt.Fprintf(stdout, "Supervisor is running (PID %d)\n", pid) //nolint:errcheck
+		// A SECOND line, leaving the first byte-identical: monitoring and
+		// several tests match on "running (PID". An unanswered probe prints
+		// nothing at all rather than a guess -- see addSupervisorFormulaSource.
+		if formulaOK {
+			fmt.Fprintf(stdout, "Formulas resolve from: %s\n", supervisorFormulaSourceLine(formulaAnswer)) //nolint:errcheck
+		}
 		return 0
 	case running:
 		fmt.Fprintf(stdout, "Supervisor is running (pid unavailable: control socket unreachable; liveness confirmed via %s)\n", pidSource) //nolint:errcheck

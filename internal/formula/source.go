@@ -366,14 +366,57 @@ func (g gitRepoAwareFallback) ListDir(dir string) ([]string, error) {
 // want a hard-coded default ref regardless of env should construct
 // the Source directly.
 func SourceFromEnv() Source {
-	ref := strings.TrimSpace(os.Getenv("GC_FORMULA_REF"))
-	switch ref {
-	case "", "working-tree", "HEAD":
+	ref, pinned := EffectiveRefFromEnv()
+	if !pinned {
 		return FSSource{}
-	default:
-		return gitRepoAwareFallback{
-			git: NewGitRefSource(ref),
-			fs:  FSSource{},
-		}
 	}
+	return gitRepoAwareFallback{
+		git: NewGitRefSource(ref),
+		fs:  FSSource{},
+	}
+}
+
+// workingTreeRefAliases are the GC_FORMULA_REF spellings that select the
+// live working tree rather than a committed ref. "" is here because an
+// operator who exports the key empty has chosen the working tree, and
+// "HEAD" because resolving the checked-out commit through git would be
+// slower and no more stable than reading the files.
+//
+// NOT case-folded, and the omission is load-bearing: "head" and
+// "Working-Tree" are ordinary ref names a repository may legitimately
+// carry, and folding would silently resolve one of them to the working
+// tree. Pinned by TestEffectiveRefAgreesWithSourceFromEnvOnEveryValue.
+var workingTreeRefAliases = map[string]bool{
+	"":             true,
+	"working-tree": true,
+	"HEAD":         true,
+}
+
+// EffectiveRef reports the committed ref a raw GC_FORMULA_REF value
+// resolves formulas from, and whether it pins anything at all. An unpinned
+// result means the live working tree, and its ref is empty.
+//
+// It exists because the alias set above has a SECOND consumer: the
+// supervisor reports its own effective formula source over the control
+// socket, since os.Setenv does not rewrite /proc/<pid>/environ and the pin
+// is otherwise unreadable from outside the process (ci-38p2ky). That
+// consumer must not carry its own copy of the aliases -- a report that
+// disagrees with the resolver is worse than no report, because an operator
+// told "pinned" wrongly commits a formula edit that was already live.
+//
+// The returned ref is trimmed, matching what SourceFromEnv hands
+// NewGitRefSource, so a caller printing it names a ref that resolves.
+func EffectiveRef(raw string) (string, bool) {
+	ref := strings.TrimSpace(raw)
+	if workingTreeRefAliases[ref] {
+		return "", false
+	}
+	return ref, true
+}
+
+// EffectiveRefFromEnv is EffectiveRef over this process's own
+// GC_FORMULA_REF. Reading the live environment rather than a cached value
+// is the point: the supervisor pins itself with os.Setenv after start.
+func EffectiveRefFromEnv() (string, bool) {
+	return EffectiveRef(os.Getenv("GC_FORMULA_REF"))
 }
