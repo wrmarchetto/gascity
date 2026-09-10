@@ -1,6 +1,11 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/gastownhall/gascity/internal/extmsg"
+)
 
 // The provider hook event a `gc nudge drain` invocation is running on, and the
 // one distinction gc has to draw between them.
@@ -39,4 +44,47 @@ func normalizeNudgeHookEvent(event string) string {
 // instead of needing its own branch at each write site.
 func isMidTurnNudgeHookEvent(event string) bool {
 	return strings.EqualFold(strings.TrimSpace(event), claudeHookEventPostToolUse)
+}
+
+// formatNudgeMidTurnInjectOutput renders queued nudges for delivery INSIDE a
+// turn, where the boundary wording is not merely off-tone but actively wrong.
+//
+// The prompt-boundary text (formatNudgeInjectOutput) closes with "Handle them
+// after this turn." Delivered mid-turn that instruction reproduces the exact
+// defect this delivery path was built for: the agent receives the mayor's
+// redirect, defers it past the close, and lands the superseded work anyway
+// (ci-tdk1lv). The message has to say act NOW.
+//
+// The "not a tool failure" line is not padding either. Claude Code's only
+// mid-turn injection shape is a refusal (hook_output_claude.go), so the text
+// arrives where a tool error would. Measured 2026-09-09 against 2.1.267: with
+// a bare token as the reason, the model reported "a post-command hook error"
+// and suggested checking the hooks configuration; with the message framed as
+// an incoming message it went and looked for the message instead. The framing
+// is what turns a delivered string into a read one.
+//
+// Sanitization mirrors formatNudgeInjectOutput and is not optional: the
+// message body is attacker-controllable, and without it a sender can close the
+// system-reminder block and break out (gastownhall/gascity#2195).
+func formatNudgeMidTurnInjectOutput(items []queuedNudge) string {
+	var sb strings.Builder
+	sb.WriteString("<system-reminder>\n")
+	sb.WriteString("Your tool call SUCCEEDED. This is not a tool failure and nothing is wrong ")
+	sb.WriteString("with your command -- an incoming message is being delivered mid-task, ")
+	sb.WriteString("which this runtime can only do by interrupting a tool call.\n\n")
+	if len(items) == 1 {
+		sb.WriteString("Message:\n\n")
+	} else {
+		fmt.Fprintf(&sb, "%d messages:\n\n", len(items))
+	}
+	for _, item := range items {
+		source := extmsg.SanitizeForSystemReminder(item.Source)
+		message := extmsg.SanitizeForSystemReminder(item.Message)
+		fmt.Fprintf(&sb, "- [%s] %s\n", source, message)
+	}
+	sb.WriteString("\nAct on this NOW, before your next step. It may supersede what you are ")
+	sb.WriteString("doing. Do NOT defer it to the end of the turn -- work finished against ")
+	sb.WriteString("superseded instructions is why this channel exists.\n")
+	sb.WriteString("</system-reminder>\n")
+	return sb.String()
 }

@@ -601,9 +601,12 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat, hookEvent s
 	}
 
 	var out string
-	if inject {
+	switch {
+	case inject && midTurn:
+		out = formatNudgeMidTurnInjectOutput(items)
+	case inject:
 		out = formatNudgeInjectOutput(items)
-	} else {
+	default:
 		out = formatNudgeRuntimeMessage(items)
 	}
 	var writeErr error
