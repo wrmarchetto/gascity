@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ietr 2026-09-10T12:59:00Z
+last_seen: gs-6v5n 2026-09-10T14:23:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4428,3 +4428,38 @@ gs-ietr and the city store answered every read. Catch-up since last_seen
 close (logged at #131) and this summons.
 
 Source: roadmap governor
+
+## 133. Chat sitting gs-6v5n: efficiency epic decided as the post-bridge epic; metric is time and usage limits, not dollars (2026-09-10)
+
+Two decisions from the pm-chat sitting, working through the lessons of
+Anthropic's cost/performance post
+(claude.com/blog/reducing-cost-and-improving-performance-with-claude-platform)
+as they apply to this city's Claude Code-provider setup:
+
+1. Willie's three efficiency questions -- prompt-cache use at agent spin-up,
+   effort-level calibration for agent definitions, and a prompt-instruction
+   review against the post's anti-pattern list -- will be shaped as a roadmap
+   epic, and that epic is the intended answer to pm-open #5 (what gascity
+   builds after mayor-slack-bridge). Epic text, slug, and acceptance criteria
+   are being worked out in this same sitting; pm-open #5 stays open until the
+   epic is actually written into the roadmap.
+
+2. The efficiency metric for this epic is TIME AND USAGE-LIMIT HEADROOM, not
+   dollars. This city runs on Claude Code subscription usage, not metered API
+   tokens: there is no per-task dollar cost, so every "cost" figure in the
+   post translates here to token consumption against usage windows and to
+   wall-clock latency. Consequences recorded now so the decomposition does
+   not import inapplicable levers: the post's Batch API lever drops out
+   entirely (no batch path in Claude Code sessions); `/claude-api`
+   cost-optimize/prompt-audit tooling is not assumed available in worker
+   sessions -- any prompt audit bead specifies the anti-pattern checklist by
+   content (verification rituals, thoroughness boosters, mandatory
+   scaffolds, stale examples, contradictory rules), tool-agnostic; and
+   measurement beads count tokens and wall-clock from our own session
+   records rather than dollars from a billing API. Cache reads and lowered
+   effort remain fully applicable -- both stretch usage windows and cut
+   latency -- with the caveat that Anthropic's exact usage-limit weighting
+   of cache reads is not public, so acceptance evidence uses our own
+   measured token counts, not inferred billing.
+
+Source: Willie, pm-chat sitting gs-6v5n

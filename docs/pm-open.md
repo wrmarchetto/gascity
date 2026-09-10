@@ -183,3 +183,10 @@ Would settle it: a `gc city pm plan gascity '<epic>'` sitting. pm-open #3's
 standing question (a maintenance epic, or a declared standalone-by-default
 policy for substrate fixes) is one candidate answer that sitting could fold
 in.
+
+Update 2026-09-10 (pm-log #133): decided in principle -- Willie chose an
+efficiency epic (prompt caching at spin-up, effort calibration, prompt
+instruction audit; metric is time and usage-limit headroom, not dollars) as
+the post-bridge epic in chat sitting gs-6v5n. This entry closes when the
+epic's text lands in docs/roadmap.md with acceptance criteria, later in
+that same sitting or a follow-up.
