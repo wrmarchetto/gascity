@@ -180,17 +180,20 @@ func TestWaitIdleNudgeDeliversAndReportsNoSkip(t *testing.T) {
 // drifted from each other once -- they are near-identical bodies, and a fix
 // applied to one is easy to miss on the other.
 func TestEveryUndeliveredWaitIdleNudgeNamesASkipReason(t *testing.T) {
-	waits := map[string]error{
-		"delivered":   nil,
-		"busy":        runtime.ErrIdleTimeout,
-		"unsupported": runtime.ErrInteractionUnsupported,
-		"failed":      errors.New("capture pane failed"),
+	waits := map[string]struct {
+		waitErr error
+		want    NudgeSkip
+	}{
+		"delivered":   {nil, NudgeSkipNone},
+		"busy":        {runtime.ErrIdleTimeout, NudgeSkipBusy},
+		"unsupported": {runtime.ErrInteractionUnsupported, NudgeSkipNoIdleWait},
+		"failed":      {errors.New("capture pane failed"), NudgeSkipIdleWaitFailed},
 	}
-	for name, waitErr := range waits {
+	for name, tc := range waits {
 		for _, liveOnly := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/liveOnly=%v", name, liveOnly), func(t *testing.T) {
 				mgr, sp, info := startedClaudeSession(t)
-				sp.WaitForIdleErrors[info.SessionName] = waitErr
+				sp.WaitForIdleErrors[info.SessionName] = tc.waitErr
 
 				var delivered bool
 				var skip NudgeSkip
@@ -205,6 +208,16 @@ func TestEveryUndeliveredWaitIdleNudgeNamesASkipReason(t *testing.T) {
 				}
 				if delivered != (skip == NudgeSkipNone) {
 					t.Fatalf("delivered = %v with skip = %q; the two must agree", delivered, skip)
+				}
+				// The SPECIFIC reason, not merely a non-empty one.
+				// resolveNudgeSkip turns a lost reason into
+				// NudgeSkipUnclassified, which satisfies both the agreement
+				// check above and any non-emptiness check -- so a path that
+				// stopped naming its reason survived this case until the
+				// mutation sweep caught it (spec row
+				// session-layer-drops-the-busy-reason).
+				if skip != tc.want {
+					t.Fatalf("skip = %q, want %q", skip, tc.want)
 				}
 				if !delivered && skip.Explain() == "" {
 					t.Fatalf("skip %q explains nothing, so a sender is told delivery failed and not why", skip)

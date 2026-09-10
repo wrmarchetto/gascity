@@ -136,10 +136,23 @@ replace = '''	if stderr == nil {
 	}'''
 expect_output = ["TestMailSendPrintsNothingExtraOnALiveDelivery"]
 
-# The help text goes back to promising only the wake.
+# The help text goes back to promising only the wake. The string is identical
+# on send and on reply, so each row carries the preceding line as its anchor --
+# without one the driver cannot attribute a red gate to either site.
 [[mutation]]
-id = "help-text-promises-only-the-wake"
+id = "send-help-text-promises-only-the-wake"
 path = "cmd/gc/cmd_mail.go"
-find = '''"request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed"'''
-replace = '''"request a recipient turn (including a managed wake if not running), even with earlier unread mail"'''
-expect_output = ["TestMailNotifyHelpDocumentsManagedWake"]
+find = '''	}
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed")'''
+replace = '''	}
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn (including a managed wake if not running), even with earlier unread mail")'''
+expect_output = ["TestMailNotifyHelpDocumentsManagedWake/send"]
+
+[[mutation]]
+id = "reply-help-text-promises-only-the-wake"
+path = "cmd/gc/cmd_mail.go"
+find = '''	cmd.Flags().StringVarP(&message, "message", "m", "", "reply body text")
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed")'''
+replace = '''	cmd.Flags().StringVarP(&message, "message", "m", "", "reply body text")
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn (including a managed wake if not running), even with earlier unread mail")'''
+expect_output = ["TestMailNotifyHelpDocumentsManagedWake/reply"]
