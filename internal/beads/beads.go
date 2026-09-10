@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -492,41 +493,81 @@ func IsReadyExcludedBead(b Bead) bool {
 	return IsReadyExcludedType(b.Type) || HasReadyExcludedLabel(b)
 }
 
+// readyExcludeLabels enumerates the labels that mark a bead as infrastructure
+// bookkeeping -- session continuity, order tracking, external-messaging fabric
+// rows -- rather than actionable Ready work.
+//
+// A slice rather than the switch statement this used to be, because the set
+// now has a second consumer: `gc bd ready` forwards it to the bd binary as
+// --exclude-label so the CLI view matches the Ready() the stores compute
+// (cmd/gc/bd_ready_exclusion.go). A switch cannot be enumerated, so that
+// consumer would have had to carry its own copy, and the copy that rots is
+// always the one a reader never opens -- a family added here and not there
+// leaves the operator's view missing exactly the rows somebody just found
+// noisy enough to exclude.
+//
+// The external-messaging entries are the fabric's locator labels, one per
+// family. Every row internal/extmsg writes is type "task" with no assignee
+// and no description, so nothing about its shape tells it apart from work
+// nobody has picked up: a Slack adapter created and deleted inside eight
+// seconds on 2026-09-08 left a binding, a membership and a transcript-state
+// row that the city's unclaimable-work check then counted as three claimable
+// beads reaching no pool door (ci-fdr7cf).
+//
+// Enumerated rather than tested with strings.HasPrefix on "gc:extmsg-", which
+// is what a reader would reach for and is a second copy of a set
+// internal/extmsg owns -- beads must stay a leaf (extmsg imports it), so
+// importing the constants is not available.
+// TestEveryExtmsgLocatorLabelIsReadyExcluded in that package holds the copy in
+// step by scanning extmsg's own source, and reddens on a new family the moment
+// its literal is written.
+var readyExcludeLabels = []string{
+	"gc:session",
+	"gc:order-tracking",
+	"order-tracking",
+	"gc:extmsg-binding",
+	"gc:extmsg-delivery",
+	"gc:extmsg-group",
+	"gc:extmsg-group-participant",
+	"gc:extmsg-participant",
+	"gc:extmsg-membership",
+	"gc:extmsg-transcript",
+	"gc:extmsg-transcript-state",
+}
+
+// ReadyExcludedLabels returns the ready-exclusion label set, in declaration
+// order. The copy is deliberate: the returned slice reaches callers that build
+// command lines from it, and a caller who sorted or truncated the package's
+// own slice would silently narrow Ready() for every store in the process.
+func ReadyExcludedLabels() []string {
+	out := make([]string, len(readyExcludeLabels))
+	copy(out, readyExcludeLabels)
+	return out
+}
+
+// ReadyExcludedTypes returns the ready-exclusion bead types, sorted. Sorted
+// rather than in map order because a caller renders it into a command line
+// and an unsorted iteration makes that argv differ run to run.
+func ReadyExcludedTypes() []string {
+	out := make([]string, 0, len(readyExcludeTypes))
+	for t := range readyExcludeTypes {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // HasReadyExcludedLabel reports whether a bead carries a label that marks it
-// as infrastructure bookkeeping (session continuity, order tracking,
-// external-messaging fabric rows) rather than actionable Ready work. Distinct from IsReadyExcludedType: a bead may be
-// label-excluded regardless of its type. Callers that have already constrained
-// the bead's type (e.g. iterating known-convoy beads) use this to test only
-// the label dimension.
+// as infrastructure bookkeeping rather than actionable Ready work. Distinct
+// from IsReadyExcludedType: a bead may be label-excluded regardless of its
+// type. Callers that have already constrained the bead's type (e.g. iterating
+// known-convoy beads) use this to test only the label dimension.
 func HasReadyExcludedLabel(b Bead) bool {
 	for _, label := range b.Labels {
-		switch label {
-		case "gc:session", "gc:order-tracking", "order-tracking":
-			return true
-		// The external-messaging fabric's locator labels, one per family.
-		// Every row internal/extmsg writes is type "task" with no assignee
-		// and no description, so nothing about its shape tells it apart from
-		// work nobody has picked up: a Slack adapter created and deleted
-		// inside eight seconds on 2026-09-08 left a binding, a membership and
-		// a transcript-state row that the city's unclaimable-work check then
-		// counted as three claimable beads reaching no pool door (ci-fdr7cf).
-		//
-		// Enumerated rather than tested with strings.HasPrefix on
-		// "gc:extmsg-", which is what a reader would reach for and is a
-		// second copy of a set internal/extmsg owns -- beads must stay a leaf
-		// (extmsg imports it), so importing the constants is not available.
-		// TestEveryExtmsgLocatorLabelIsReadyExcluded in that package holds the
-		// copy in step by scanning extmsg's own source, and reddens on a new
-		// family the moment its literal is written.
-		case "gc:extmsg-binding",
-			"gc:extmsg-delivery",
-			"gc:extmsg-group",
-			"gc:extmsg-group-participant",
-			"gc:extmsg-participant",
-			"gc:extmsg-membership",
-			"gc:extmsg-transcript",
-			"gc:extmsg-transcript-state":
-			return true
+		for _, excluded := range readyExcludeLabels {
+			if label == excluded {
+				return true
+			}
 		}
 	}
 	return false

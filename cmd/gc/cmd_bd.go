@@ -96,7 +96,18 @@ on the session from that agent's own config -- decides the store, ahead of cwd.
 An agent whose work_dir is a worktree of another rig therefore reads and writes
 the same store instead of reading its own and writing the worktree's.
 
-All arguments after "gc bd" are forwarded to bd unchanged, except the
+All arguments after "gc bd" are forwarded to bd unchanged, except as follows.
+
+"ready" is forwarded with gc's own ready-exclusion sets appended as
+--exclude-label and --exclude-type, so the CLI view matches the Ready() every
+gc store computes. Without them bd counts infrastructure bookkeeping --
+session beads, order-tracking rows, external-messaging fabric rows -- as
+claimable work, and bd's default row cap is then spent on it, dropping real
+ready beads off the bottom at exit 0. Your own --exclude-label and
+--exclude-type still apply; they compose. For the unfiltered view, invoke bd
+directly.
+
+Excepted next is the
 "heartbeat <issue-id>" subcommand (alias "hb"), which performs two writes so
 a long-running worker keeps both halves of its claim alive — bd's own
 "heartbeat" to push the claim lease forward, then
@@ -117,6 +128,7 @@ auto-export behavior, invoke bd directly.`,
   gc bd show my-project-abc          # auto-detects rig from bead prefix
   gc bd list --rig my-project -s open
   gc bd --city /path/to/city list    # pins the city (HQ) store, no rig auto-detect
+  gc bd ready                        # ready work, gc's exclusions applied
   gc bd heartbeat my-project-abc     # refresh the claim lease + stamp gc.last_heartbeat_at
   gc bd release-if-current my-project-abc worker-1`,
 		DisableFlagParsing: true,
@@ -575,7 +587,17 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 		return 1
 	}
 
-	cmd := exec.Command(bdPath, bdArgs...)
+	// The ready view is the one place gc does not forward the argv verbatim:
+	// bd knows nothing about gc's ready-exclusion set and caps at 100 rows,
+	// so on a store holding infrastructure bookkeeping the cap is spent on it
+	// and real work falls off the bottom at exit 0 (ci-6wwggu). The
+	// exclusions go into bd's own query rather than into a gc-side filter --
+	// see cmd/gc/bd_ready_exclusion.go for why that is not the ci-ctkz shape.
+	// Applied here, after every guard above, so each still reads the argv the
+	// caller actually typed.
+	execArgs := augmentBdReadyArgs(bdArgs)
+
+	cmd := exec.Command(bdPath, execArgs...)
 	cmd.Dir = target.ScopeRoot
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = stdout
@@ -604,7 +626,7 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 			traceExit = -1
 		}
 	}
-	beads.TraceBDCall("go:gc-bd-passthrough", target.ScopeRoot, bdArgs, traceStart, traceExit, runErr)
+	beads.TraceBDCall("go:gc-bd-passthrough", target.ScopeRoot, execArgs, traceStart, traceExit, runErr)
 
 	if runErr != nil {
 		if traceExit > 0 {

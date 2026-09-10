@@ -277,7 +277,18 @@ on the session from that agent's own config -- decides the store, ahead of cwd.
 An agent whose work_dir is a worktree of another rig therefore reads and writes
 the same store instead of reading its own and writing the worktree's.
 
-All arguments after "gc bd" are forwarded to bd unchanged, except the
+All arguments after "gc bd" are forwarded to bd unchanged, except as follows.
+
+"ready" is forwarded with gc's own ready-exclusion sets appended as
+--exclude-label and --exclude-type, so the CLI view matches the Ready() every
+gc store computes. Without them bd counts infrastructure bookkeeping --
+session beads, order-tracking rows, external-messaging fabric rows -- as
+claimable work, and bd's default row cap is then spent on it, dropping real
+ready beads off the bottom at exit 0. Your own --exclude-label and
+--exclude-type still apply; they compose. For the unfiltered view, invoke bd
+directly.
+
+Excepted next is the
 "heartbeat &lt;issue-id&gt;" subcommand (alias "hb"), which performs two writes so
 a long-running worker keeps both halves of its claim alive — bd's own
 "heartbeat" to push the claim lease forward, then
@@ -306,6 +317,7 @@ gc bd --rig my-project create "New task"
 gc bd show my-project-abc          # auto-detects rig from bead prefix
 gc bd list --rig my-project -s open
 gc bd --city /path/to/city list    # pins the city (HQ) store, no rig auto-detect
+gc bd ready                        # ready work, gc's exclusions applied
 gc bd heartbeat my-project-abc     # refresh the claim lease + stamp gc.last_heartbeat_at
 gc bd release-if-current my-project-abc worker-1
 ```
