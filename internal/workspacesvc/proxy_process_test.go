@@ -419,13 +419,18 @@ func TestProxyProcessPublishesServiceEnv(t *testing.T) {
 	// has no name to send: the supervised Slack bridge read GC_CITY, sent the
 	// path, and 404ed once a second for two hours straight (ci-azvlhn).
 	//
-	// The fixture's cityName and cityPath differ, which is what stops this
-	// assertion passing on a launcher that exports the path under either name.
+	// The fixture's distinctness is what gives the assertion below its teeth:
+	// equal values would let a launcher exporting the PATH under this key pass.
+	// Checked rather than assumed, because it is a property of the fixture and
+	// nothing else in this test would notice it changing. An earlier draft
+	// instead asserted GC_CITY_NAME != cityPath, which a mutation sweep showed
+	// to be unreachable -- the value check below fires first on every wrong
+	// value, the path included.
+	if rt.cityName == rt.cityPath {
+		t.Fatal("fixture cityName equals cityPath; GC_CITY_NAME cannot then distinguish a name export from a path export")
+	}
 	if env["GC_CITY_NAME"] != rt.cityName {
 		t.Fatalf("GC_CITY_NAME = %q, want %q", env["GC_CITY_NAME"], rt.cityName)
-	}
-	if env["GC_CITY_NAME"] == rt.cityPath {
-		t.Fatalf("GC_CITY_NAME = %q, which is the city PATH; the API resolves names only", env["GC_CITY_NAME"])
 	}
 }
 
