@@ -127,6 +127,17 @@ chain pm-log #73 already placed outside the roadmap, not a fresh descent
 question. The class growing to six is itself further evidence for settling
 the standing question below.
 
+Update 2026-09-10 (pm-log #131): gs-hzrg (machine supervisor never
+installed as a service; GC_SUPERVISOR_ENV opt-ins baked at install time,
+unrecorded) joins the class, seventh after gs-z39, gs-c6f, gs-eep, gs-olu,
+gs-dzj, and gs-a6j. Summons gs-n6ja ruled it standalone: a machine-state
+record proposing no gascity code change, assignee human -- the gs-eep
+operational-record shape -- with its bridge-relevant half already carried
+in-epic by gs-msc2. Per the mayor's mail of the same hour
+(ci-wisp-2jg4mwz), `gc supervisor install` has now run for the first time
+on this machine, remedying finding 1 while the standing question below
+stays open.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?

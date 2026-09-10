@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-xcs9 2026-09-08T23:36:36Z
+last_seen: gs-n6ja 2026-09-10T11:56:17Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4320,3 +4320,54 @@ through assets/scripts/ask-pm.py to hit the identical cut, corroborating
 #129's flag rather than a one-off.
 
 Source: pm-log #58
+
+## 131. Placement summons gs-n6ja: gs-hzrg ruled standalone; parked for supervisor restart (2026-09-10)
+
+gs-hzrg (the machine supervisor was never installed as a service, and
+GC_SUPERVISOR_ENV opt-ins are baked at install time with nothing recording
+them -- P2, assignee human, filed by the mayor 2026-09-10) carries no epic
+label and sweep summons gs-n6ja summoned this PM to place it. Ruling:
+`standalone`, seventh member of the pm-open #3 class, applied this turn
+with `bd update gs-hzrg --add-label standalone`.
+
+Grounds, under the established membership test (acceptance-criteria
+coverage decides, not descent -- pm-log #60, #73, #129):
+epic:mayor-slack-bridge's supervision criterion is scoped to the adapter
+and mirror surviving controller restart and mayor respawn, not to the
+machine supervisor's own installation as a service, and the
+bridge-relevant half of gs-hzrg's evidence (BRIDGE_SLACK tokens present in
+secrets.env, absent from the live supervisor) is already carried in-epic
+by gs-msc2 -- open, epic:mayor-slack-bridge, hold:external, stamped by the
+mayor 2026-09-10T11:54Z with the same measurements gs-hzrg records.
+Labeling gs-hzrg into the epic would double-carry that condition and
+re-arm the epic-close sweep against a bead no criterion needs
+(orphan-scope standard, pm-log #4/#15). epic:governor's criteria (check-in
+cadence, assessment, judged rebuild/restart) do not close over supervisor
+installation either. The rest of the bead is machine-state record --
+~/.gc/ opt-in state outside both repos, explicitly proposing no gascity
+code change, assignee human -- the gs-eep operational-record shape (pm-log
+#38). No new epic opened: whether substrate/ops maintenance gets a roadmap
+home is pm-open #3's standing question, Willie's call. pm-open #3 amended;
+no re-ping (pm-log #16 precedent).
+
+PARKED ON MAYOR'S ORDER in the same turn: mid-turn mail ci-wisp-2jg4mwz
+(2026-09-10T11:58:56Z) -- the operator is rebuilding gc and restarting the
+supervisor; commit, record position, drain, claim nothing new. Facts from
+that mail worth keeping past the restart: `gc supervisor install` has now
+run for the FIRST TIME on this machine (unit
+~/.local/share/systemd/user/gascity-supervisor.service, carrying both
+BRIDGE_SLACK tokens -- gs-hzrg finding 1 and gs-msc2's missing-token
+condition are being remedied as of that mail, though gs-msc2's own
+verification steps remain open); and the running supervisor is
+/home/willie/go/bin/gc built 2026-09-08 20:00 while the new unit's
+ExecStart names /home/willie/.local/bin/gc -- if those differ, the city
+comes back on a gc 16 commits newer, including claim_lease_renewal.go, so
+expect lease behavior to change. The remedy arriving does not change the
+placement: the label is the durable record that no epic's acceptance was
+ever meant to close over this bead (pm-log #15 standard), and the
+already-lapsed-premise shape is gs-8zd/gs-22c precedent exactly. This unit
+was completed before draining -- the label and the summons close are two
+idempotent writes, while an open summons held by a dead session is the
+stranded state the mail warns against.
+
+Source: pm-log #129
