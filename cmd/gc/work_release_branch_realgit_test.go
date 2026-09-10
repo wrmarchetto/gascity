@@ -4,14 +4,17 @@ package main
 // git worktree for the retirement path and with literal branch values for the
 // release facade.
 //
-// Why this suite exists: gc.work_branch is resolved ONCE, at claim time
-// (hookClaimIdentityPatch, cmd/gc/cmd_hook_claim.go), and an agent runs
-// `gc hook --claim` exactly once per session, BEFORE it cuts its feature
-// branch. The stamp therefore said "main" while the work sat on
-// feat/<bead>-<slug>. When the session died, the bead was released carrying
-// that stale handle, so the next claimant had no way to find ~40 minutes of
-// uncommitted work and redid it, and the salvage had to be done by hand
-// (ci-q3qbo9; measured on gs-eh2 and as-2mhs, 2026-09-07).
+// Why this suite exists: the claim-time stamp resolved the bead store's
+// shared checkout rather than the agent's worktree, so it said "main" while
+// the work sat on feat/<bead>-<slug>. When the session died, the bead was
+// released carrying that stale handle, the next claimant had no way to find
+// ~40 minutes of uncommitted work and redid it, and the salvage had to be
+// done by hand (ci-q3qbo9; measured on gs-eh2 and as-2mhs, 2026-09-07).
+//
+// ci-hdnj73 corrected the claim-time resolution, so the release is no longer
+// the only writer that names the right tree -- see
+// cmd_hook_claim_workerdir_realgit_test.go. It is still the LAST writer, and
+// the one that fires when no further tick will.
 //
 // The real-git half is not ceremony. hookResolveWorkBranch shells out to
 // `git rev-parse --abbrev-ref HEAD`, so a fake returning a canned string

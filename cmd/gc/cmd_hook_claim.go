@@ -15,6 +15,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
+	"github.com/gastownhall/gascity/internal/beads/contract"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/executionevent"
 )
@@ -59,20 +60,30 @@ type hookClaimOps struct {
 	// EmitClaimRejected publishes a bead.claim_rejected event when a claim is
 	// lost to a different live claimant (ADR-0009). Best-effort.
 	EmitClaimRejected hookEmitClaimRejectedFunc
-	// ResolveSiblingBranches returns the unlanded local branches of the
-	// worker's worktree (dir) that already name the claimed bead or a bead
-	// sharing one of its labels. Reported to the claimant as a signal only:
+	// ResolveSiblingBranches returns the unlanded local branches of the BEAD
+	// STORE's repository (dir) that already name the claimed bead or a bead
+	// sharing one of its labels. Deliberately not the worker's own worktree:
+	// the scan is over the repository the store lives in, so a gascity
+	// worktree's branches are invisible to it and the claimant is told so. Reported to the claimant as a signal only:
 	// hook_claim_sibling_branches.go records why a refusal was rejected.
 	ResolveSiblingBranches hookResolveSiblingBranchesFunc
-	// ResolveWorkBranch returns the git branch of the worker's worktree (dir),
-	// stamped onto the bead as gc.work_branch at claim time. Empty result (no
-	// repo / detached HEAD) omits the branch key — the session back-reference is
-	// still stamped.
+	// ResolveWorkBranch returns the git branch of the directory it is given,
+	// stamped onto the bead as gc.work_branch at claim time. It is called with
+	// the worktree hookClaimWorkerDir resolved, NEVER with the claim's own dir.
+	// Empty result (no repo / detached HEAD) omits the branch key — the session
+	// back-reference is still stamped.
 	ResolveWorkBranch hookResolveWorkBranchFunc
 	// StampWorkMeta writes the claim-time execution-identity metadata patch
 	// (gc.work_branch and/or the durable session back-reference gc.session_id /
 	// gc.session_name) onto the claimed bead in ONE update. Best-effort.
 	StampWorkMeta hookStampWorkMetaFunc
+	// ReadSessionBead returns the session bead named by GC_SESSION_ID, from
+	// the same store the claim reads. It exists so the claim can resolve the
+	// CLAIMING AGENT's worktree (contract.WorkerDirFromMetadata) rather than
+	// the dir threaded down from agentCommandDir, which is the bead store's
+	// SHARED checkout by explicit design (cmd/gc/cmd_start.go). Best-effort:
+	// a read error resolves no worktree and stamps no branch.
+	ReadSessionBead hookReadSessionBeadFunc
 	// ReadWorkMeta is the post-stamp authoritative readback used only to
 	// establish the durable lifecycle-start emission point.
 	ReadWorkMeta             func(context.Context, string, []string, string, string) (beads.Bead, error)
@@ -90,6 +101,7 @@ type (
 	hookAssignContinuationFunc func(context.Context, string, []string, string, string) error
 	hookEmitClaimRejectedFunc  func(beadID, existingClaimant, attemptedClaimant string)
 	hookResolveWorkBranchFunc  func(dir string) string
+	hookReadSessionBeadFunc    func(ctx context.Context, dir string, env []string, sessionID, actor string) (beads.Bead, error)
 	hookStampWorkMetaFunc      func(ctx context.Context, dir string, env []string, beadID, assignee string, patch map[string]string) error
 	hookPublishRunMapFunc      func(runID, beadID string, sessionKeys ...string) error
 )
@@ -240,6 +252,9 @@ func (ops *hookClaimOps) applyDefaults() {
 	}
 	if ops.PublishRunMap == nil {
 		ops.PublishRunMap = writeRunMap
+	}
+	if ops.ReadSessionBead == nil {
+		ops.ReadSessionBead = hookReadSessionBeadWithBdStore
 	}
 	if ops.ReadWorkMeta == nil {
 		ops.ReadWorkMeta = hookReadClaimedBeadWithBdStore
@@ -827,8 +842,9 @@ func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, bea
 }
 
 // stampHookClaimIdentity records the claiming worker's execution identity on the
-// claimed bead in ONE metadata write: gc.work_branch (the durable handle from the
-// bead to its work that the close gate later reads, ADR-0009) plus the durable
+// claimed bead in ONE metadata write: the location pair gc.work_dir +
+// gc.work_branch, naming the agent's own worktree and the branch it is on
+// (ADR-0009, resolved by hookClaimWorkerDir -- NOT from dir), plus the durable
 // session back-reference gc.session_id / gc.session_name (#2843) so the dashboard
 // run-detail can resolve which session executed a pool step after the transient
 // Assignee is cleared on close. graphroute leaves pool steps unbound at route time,
@@ -841,7 +857,7 @@ func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, bea
 // (the cache-reconcile flood class). Best-effort: a missing repo, detached HEAD,
 // absent session, or write error never blocks the claim.
 func stampHookClaimIdentity(bead beads.Bead, opts hookClaimOptions, ops hookClaimOps, dir string, stderr io.Writer) (beads.Bead, bool) {
-	patch := hookClaimIdentityPatch(bead, opts, ops, dir)
+	patch := hookClaimIdentityPatch(bead, opts, ops, hookClaimWorkerDir(opts, ops, dir, stderr))
 	sessionID := hookClaimSessionID(opts.Env)
 	needsLifecycleIdentity := sessionID != "" && !beadmeta.IsControlKind(strings.TrimSpace(bead.Metadata[beadmeta.KindMetadataKey]))
 	if len(patch) == 0 {
@@ -890,9 +906,68 @@ func hookClaimLifecycleCandidate(bead beads.Bead, opts hookClaimOptions) bool {
 	return true
 }
 
+// hookClaimWorkerDir returns the worktree the CLAIMING AGENT is actually
+// working in, read from its own session bead's worker_dir. Empty means the
+// worktree is unknown.
+//
+// dir is NOT that worktree and never was. It is threaded down from
+// agentCommandDir (cmd/gc/cmd_start.go), whose docstring states the intent:
+// "the canonical rig repository, not an individual agent's isolated
+// work_dir". For a city-scoped agent it is the shared checkout the operator
+// works in, so resolving a branch there records the operator's working state,
+// re-sampled at every hook tick, on beads held by other agents in other
+// worktrees. Measured at 29 of 127 decidable non-`main` stamps, one cluster
+// carrying `feat/console-service` across four different assignees
+// (docs/work-branch-semantics.md in the city repo).
+//
+// This is the same resolution the retirement path already makes
+// (unclaimWorkAssignedToRetiredSessionBead, cmd/gc/session_beads.go), and
+// contract.WorkerDirFromMetadata carries the canonical-then-legacy precedence
+// -- spelling the `work_dir` fallback here instead is how the two paths drift.
+//
+// The rejected alternative is stamping AFTER the agent cuts its feature
+// branch. Ordering is not the defect and fixing it changes nothing: dir is
+// the shared root whenever the stamp runs.
+//
+// Documented absence: there is NO fallback to dir when the session bead names
+// no worktree. Falling back would reinstate the defect for exactly the
+// sessions this cannot resolve, and a branch name that points at someone
+// else's work is worse than none -- the release path reads the field as a
+// handle to the predecessor's uncommitted work (withReleasedWorkBranch).
+//
+// Cost: one extra store read per claim tick, on top of the work query's own.
+// It is skipped entirely when no session is claiming.
+func hookClaimWorkerDir(opts hookClaimOptions, ops hookClaimOps, dir string, stderr io.Writer) string {
+	sessionID := hookClaimSessionID(opts.Env)
+	if sessionID == "" || ops.ReadSessionBead == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hookClaimMutationTimeout)
+	defer cancel()
+	sessionBead, err := ops.ReadSessionBead(ctx, dir, opts.Env, sessionID, opts.Assignee)
+	if err != nil {
+		if stderr != nil {
+			fmt.Fprintf(stderr, "gc hook --claim: reading session bead %s to resolve the worker worktree: %v\n", sessionID, err) //nolint:errcheck
+		}
+		return ""
+	}
+	// bd resolves an id by prefix, so a `bd show` for a session that vanished
+	// concurrently can answer with a prefix-colliding one. The write path
+	// refuses to touch the session bead at all for that reason
+	// (publishHookClaimRunMap); a read cannot corrupt anything, but an
+	// unchecked one would stamp ANOTHER agent's worktree onto this bead --
+	// exactly the cross-worktree confusion this whole change removes.
+	if strings.TrimSpace(sessionBead.ID) != sessionID {
+		return ""
+	}
+	return contract.WorkerDirFromMetadata(sessionBead.Metadata)
+}
+
 // hookClaimIdentityPatch builds the compare-and-skipped claim-time metadata patch.
-// It carries gc.work_branch when the worktree resolves a branch that differs from
-// the bead's, the session back-reference gc.session_id / gc.session_name when
+// It carries the location pair gc.work_dir + gc.work_branch, taken from workerDir
+// -- the claiming agent's own worktree, resolved by hookClaimWorkerDir -- and
+// each written only when it differs from the bead's, the
+// session back-reference gc.session_id / gc.session_name when
 // this is a session-run claim (GC_SESSION_ID present) of a non-control bead and the
 // values differ, and gc.brief_digest -- the one key here that is write-once rather
 // than compare-and-skipped, for the reason stated at its assignment. Session identity is stamped even when the branch is empty — a
@@ -901,11 +976,26 @@ func hookClaimLifecycleCandidate(bead beads.Bead, opts hookClaimOptions) bool {
 // (ApplyGraphControlRouteBinding), even when a control-dispatcher session claims one
 // through this same hook path. An empty result means every key is already current,
 // so the caller issues no write.
-func hookClaimIdentityPatch(bead beads.Bead, opts hookClaimOptions, ops hookClaimOps, dir string) map[string]string {
+//
+// An unknown workerDir stamps NEITHER location key and clears neither, which is
+// also what an unresolvable branch does. A pruned worktree, a detached HEAD or a
+// non-repo path all resolve empty, and erasing the handle there would destroy the
+// only record of where a predecessor was working -- the same reasoning
+// withReleasedWorkBranch records for the release path.
+func hookClaimIdentityPatch(bead beads.Bead, opts hookClaimOptions, ops hookClaimOps, workerDir string) map[string]string {
 	patch := map[string]string{}
-	if branch := strings.TrimSpace(ops.ResolveWorkBranch(dir)); branch != "" &&
-		strings.TrimSpace(bead.Metadata[beadmeta.WorkBranchMetadataKey]) != branch {
-		patch[beadmeta.WorkBranchMetadataKey] = branch
+	if workerDir != "" {
+		if branch := strings.TrimSpace(ops.ResolveWorkBranch(workerDir)); branch != "" &&
+			strings.TrimSpace(bead.Metadata[beadmeta.WorkBranchMetadataKey]) != branch {
+			patch[beadmeta.WorkBranchMetadataKey] = branch
+		}
+		// Stamped alongside the branch because ADR-0009 says so and because the
+		// close gate needs it: without gc.work_dir, work_record_gate.go resolves
+		// the commit in the scope root, which is the wrong repository for every
+		// agent working a rig from a worktree.
+		if strings.TrimSpace(bead.Metadata[beadmeta.WorkDirMetadataKey]) != workerDir {
+			patch[beadmeta.WorkDirMetadataKey] = workerDir
+		}
 	}
 	if sessionID := hookClaimSessionID(opts.Env); sessionID != "" &&
 		!beadmeta.IsControlKind(strings.TrimSpace(bead.Metadata[beadmeta.KindMetadataKey])) {
@@ -938,6 +1028,14 @@ func hookStampWorkMetaWithBdStore(_ context.Context, dir string, env []string, b
 
 func hookReadClaimedBeadWithBdStore(_ context.Context, dir string, env []string, beadID, assignee string) (beads.Bead, error) {
 	return hookClaimBdStore(dir, env, assignee).Get(beadID)
+}
+
+// hookReadSessionBeadWithBdStore reads the claiming session's own bead. It is a
+// separate seam from ReadWorkMeta despite the identical body: that one is the
+// post-stamp readback of the WORK bead and tests fake it with the work bead's
+// metadata, so sharing it would answer this lookup with the wrong bead.
+func hookReadSessionBeadWithBdStore(_ context.Context, dir string, env []string, sessionID, actor string) (beads.Bead, error) {
+	return hookClaimBdStore(dir, env, actor).Get(sessionID)
 }
 
 func hookEmitExecutionStepStarted(step beads.Bead, dir string, env []string, assignee string) {

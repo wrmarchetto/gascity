@@ -116,12 +116,13 @@ func TestHookClaimBriefDigestCostsExactlyOneExtraWritePerBead(t *testing.T) {
 	// never again.
 	digest := beadBriefDigest("", "")
 	base := map[string]string{
-		"gc.routed_to":    "worker",
-		"gc.work_branch":  "bd-hw-once",
-		"gc.session_id":   "mc-sess1",
-		"gc.session_name": "gc__role-mc-sess1",
+		"gc.routed_to":              "worker",
+		"gc.work_branch":            "bd-hw-once",
+		beadmeta.WorkDirMetadataKey: poolClaimWorkerDir,
+		"gc.session_id":             "mc-sess1",
+		"gc.session_name":           "gc__role-mc-sess1",
 	}
-	const readyNoDigest = `[{"id":"hw-once","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-once","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1"}}]`
+	readyNoDigest := fmt.Sprintf(`[{"id":"hw-once","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-once","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1"}}]`, poolClaimWorkerDir)
 
 	first := &stampMetaSpy{}
 	var stdout, stderr bytes.Buffer
@@ -141,7 +142,7 @@ func TestHookClaimBriefDigestCostsExactlyOneExtraWritePerBead(t *testing.T) {
 	second := &stampMetaSpy{}
 	stdout.Reset()
 	stderr.Reset()
-	readyStamped := fmt.Sprintf(`[{"id":"hw-once","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-once","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest)
+	readyStamped := fmt.Sprintf(`[{"id":"hw-once","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-once","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, poolClaimWorkerDir, digest)
 	if code := doHookClaim("bd ready --json", "/tmp/work", poolClaimOpts(),
 		poolClaimOps(readyStamped, stamped, "bd-hw-once", second), &stdout, &stderr); code != 0 {
 		t.Fatalf("second claim = %d; stderr=%s", code, stderr.String())

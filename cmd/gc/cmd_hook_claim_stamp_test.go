@@ -47,14 +47,29 @@ func noopStampWorkMeta(context.Context, string, []string, string, string, map[st
 	return nil
 }
 
+// poolClaimWorkerDir is the worktree the session bead in poolClaimOps names.
+// The location keys are only stamped when a worker dir resolves, so every
+// fixture here must carry one -- which is the point: the claim now records
+// where the AGENT is, and a suite that could omit the agent's tree entirely
+// and still see a branch was the hole ci-hdnj73 closed. Which directory the
+// branch is actually resolved FROM is pinned over real git in
+// cmd_hook_claim_workerdir_realgit_test.go; the resolver here is a constant.
+const poolClaimWorkerDir = "/tmp/worktrees/pool-1"
+
 // poolClaimOps builds the seam for a pool slot claiming an unassigned,
 // route-matched candidate: the runner yields it, Claim returns it owned by us,
-// the branch resolver returns branch, and StampWorkMeta is captured by spy.
+// the session bead names poolClaimWorkerDir, the branch resolver returns
+// branch, and StampWorkMeta is captured by spy.
 func poolClaimOps(runner string, claimedMeta map[string]string, branch string, spy *stampMetaSpy) hookClaimOps {
 	return hookClaimOps{
 		Runner: func(string, string) (string, error) { return runner, nil },
 		Claim: func(_ context.Context, _ string, _ []string, id, assignee string) (beads.Bead, bool, error) {
 			return beads.Bead{ID: id, Status: "in_progress", Assignee: assignee, Metadata: claimedMeta}, true, nil
+		},
+		ReadSessionBead: func(_ context.Context, _ string, _ []string, id, _ string) (beads.Bead, error) {
+			return beads.Bead{ID: id, Type: "session", Metadata: map[string]string{
+				beadmeta.WorkerDirMetadataKey: poolClaimWorkerDir,
+			}}, nil
 		},
 		ResolveWorkBranch: func(string) string { return branch },
 		StampWorkMeta:     spy.fn,
@@ -109,6 +124,7 @@ func TestDoHookClaimStampsSessionIdentity(t *testing.T) {
 	// a literal, so a change to the digest's framing moves both sides.
 	want := map[string]string{
 		beadmeta.WorkBranchMetadataKey:  "bd-hw-pool",
+		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
 		beadmeta.SessionIDMetadataKey:   "mc-sess1",
 		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
 		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
@@ -157,7 +173,10 @@ func TestDoHookClaimStampsSessionIdentityOnAdoption(t *testing.T) {
 // TestDoHookClaimStampsSessionIdentityWithoutWorktree pins sessionVerify #1: when
 // the worktree resolves no branch (no repo / detached HEAD), the session
 // back-reference is STILL stamped — it must not be buried behind the branch
-// early-return.
+// early-return. gc.work_dir is stamped here too: the session named its tree,
+// and only the BRANCH is unresolvable. The case where the tree itself is
+// unknown belongs to cmd_hook_claim_workerdir_realgit_test.go, and stamps
+// neither location key.
 func TestDoHookClaimStampsSessionIdentityWithoutWorktree(t *testing.T) {
 	spy := &stampMetaSpy{}
 	ops := poolClaimOps(
@@ -172,12 +191,13 @@ func TestDoHookClaimStampsSessionIdentityWithoutWorktree(t *testing.T) {
 		t.Fatalf("doHookClaim = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	want := map[string]string{
+		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
 		beadmeta.SessionIDMetadataKey:   "mc-sess1",
 		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
 		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
 	}
 	if spy.calls != 1 || !reflect.DeepEqual(spy.patch, want) {
-		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v} (session id/name even with no worktree)", spy.calls, spy.patch, want)
+		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v} (session id/name even with no branch)", spy.calls, spy.patch, want)
 	}
 }
 
@@ -194,12 +214,13 @@ func TestDoHookClaimSkipsStampWhenIdentityUnchanged(t *testing.T) {
 	current := map[string]string{
 		"gc.routed_to":                  "worker",
 		"gc.work_branch":                "bd-hw-idem",
+		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
 		"gc.session_id":                 "mc-sess1",
 		"gc.session_name":               "gc__role-mc-sess1",
 		beadmeta.BriefDigestMetadataKey: digest,
 	}
 	ops := poolClaimOps(
-		fmt.Sprintf(`[{"id":"hw-idem","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-idem","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest),
+		fmt.Sprintf(`[{"id":"hw-idem","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-idem","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, poolClaimWorkerDir, digest),
 		current,
 		"bd-hw-idem",
 		spy,
@@ -223,12 +244,13 @@ func TestDoHookClaimStampsOnlyChangedIdentityKeys(t *testing.T) {
 	current := map[string]string{
 		"gc.routed_to":                  "worker",
 		"gc.work_branch":                "bd-old",
+		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
 		"gc.session_id":                 "mc-sess1",
 		"gc.session_name":               "gc__role-mc-sess1",
 		beadmeta.BriefDigestMetadataKey: digest,
 	}
 	ops := poolClaimOps(
-		fmt.Sprintf(`[{"id":"hw-partial","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-old","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest),
+		fmt.Sprintf(`[{"id":"hw-partial","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-old","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, poolClaimWorkerDir, digest),
 		current,
 		"bd-new",
 		spy,
@@ -264,15 +286,23 @@ func TestDoHookClaimSkipsSessionIdentityForControlBead(t *testing.T) {
 	if code := doHookClaim("bd ready --json", "/tmp/work", poolClaimOpts(), ops, &stdout, &stderr); code != 0 {
 		t.Fatalf("doHookClaim = %d, want 0; stderr=%s", code, stderr.String())
 	}
-	want := map[string]string{beadmeta.WorkBranchMetadataKey: "bd-hc-check"}
+	want := map[string]string{
+		beadmeta.WorkBranchMetadataKey: "bd-hc-check",
+		beadmeta.WorkDirMetadataKey:    poolClaimWorkerDir,
+	}
 	if spy.calls != 1 || !reflect.DeepEqual(spy.patch, want) {
 		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v} (no session keys on a control bead)", spy.calls, spy.patch, want)
 	}
 }
 
 // TestDoHookClaimSkipsSessionIdentityWhenNoSessionID: a non-session run (no
-// GC_SESSION_ID) has no session bead to reference, so neither session key is
-// stamped even when GC_SESSION_NAME happens to be set.
+// GC_SESSION_ID) has no session bead to reference, so NOTHING is stamped --
+// not the session keys, and not the location keys either.
+//
+// The location half is the part worth stating: gc.work_branch used to be
+// stamped here from the bead store's shared checkout, which is precisely the
+// operator's own tree. With no session there is no agent whose worktree could
+// be resolved, so the truthful record is silence (ci-hdnj73).
 func TestDoHookClaimSkipsSessionIdentityWhenNoSessionID(t *testing.T) {
 	spy := &stampMetaSpy{}
 	ops := poolClaimOps(
@@ -288,9 +318,8 @@ func TestDoHookClaimSkipsSessionIdentityWhenNoSessionID(t *testing.T) {
 	if code := doHookClaim("bd ready --json", "/tmp/work", opts, ops, &stdout, &stderr); code != 0 {
 		t.Fatalf("doHookClaim = %d, want 0; stderr=%s", code, stderr.String())
 	}
-	want := map[string]string{beadmeta.WorkBranchMetadataKey: "bd-hw-nosess"}
-	if spy.calls != 1 || !reflect.DeepEqual(spy.patch, want) {
-		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v} (no session id ⇒ no session keys)", spy.calls, spy.patch, want)
+	if spy.calls != 0 {
+		t.Fatalf("stamp = {calls:%d patch:%v}, want no write at all (no session id ⇒ no identity and no worktree)", spy.calls, spy.patch)
 	}
 }
 
