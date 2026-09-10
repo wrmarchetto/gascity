@@ -102,7 +102,7 @@ to empty output from valid conditional logic, or on suspended states
 			if doPrimeWithHookFormatOpts(args, &buf, stderr, hookMode, hookFormat, strictMode, false) != 0 {
 				return errExit
 			}
-			agentName, _ := primeInvocationAgentName(args)
+			agentName := primeInvocationAgentName(args)
 			return writeCLIJSONLineOrErr(stdout, stderr, "gc prime", primeJSONResult{
 				SchemaVersion: "1",
 				Agent:         agentName,
@@ -157,25 +157,33 @@ func doPrimeWithMode(args []string, stdout, stderr io.Writer, hookMode, strictMo
 	return doPrimeWithHookFormat(args, stdout, stderr, hookMode, "", strictMode)
 }
 
-func primeInvocationAgentName(args []string) (string, bool) {
+// primeInvocationAgentName resolves the agent an invocation is about, from an
+// explicit argument, then GC_ALIAS/GC_AGENT, then GC_TEMPLATE when the process
+// is standing in a session.
+//
+// It used to also report whether the name came from that GC_TEMPLATE
+// session-context branch, which gated whether a PromptContext was built.
+// That gate is gone -- the context is now built for every agent, including
+// the builtin-worker-prompt branch that renders one -- so the second result
+// had no reader left and was removed rather than kept as a value nothing
+// consults.
+func primeInvocationAgentName(args []string) string {
 	agentName := os.Getenv("GC_ALIAS")
 	if agentName == "" {
 		agentName = os.Getenv("GC_AGENT")
 	}
-	sessionTemplateContext := false
 	if len(args) == 0 {
 		template := strings.TrimSpace(os.Getenv("GC_TEMPLATE"))
 		hasSessionContext := strings.TrimSpace(os.Getenv("GC_SESSION_NAME")) != "" ||
 			strings.TrimSpace(os.Getenv("GC_SESSION_ID")) != ""
 		if template != "" && hasSessionContext {
 			agentName = template
-			sessionTemplateContext = true
 		}
 	}
 	if len(args) > 0 {
 		agentName = args[0]
 	}
-	return strings.TrimSpace(agentName), sessionTemplateContext
+	return strings.TrimSpace(agentName)
 }
 
 func doPrimeWithHookFormat(args []string, stdout, stderr io.Writer, hookMode bool, hookFormat string, strictMode bool) int {
@@ -188,7 +196,7 @@ func doPrimeWithHookFormat(args []string, stdout, stderr io.Writer, hookMode boo
 // that a diagnostic run cannot eat the continuation the real SessionStart hook
 // is supposed to deliver.
 func doPrimeWithHookFormatOpts(args []string, stdout, stderr io.Writer, hookMode bool, hookFormat string, strictMode, consumeHandoff bool) int {
-	agentName, sessionTemplateContext := primeInvocationAgentName(args)
+	agentName := primeInvocationAgentName(args)
 	var hookContext primeHookContext
 	suppressHookPrompt := false
 	if hookMode {
@@ -326,21 +334,24 @@ func doPrimeWithHookFormatOpts(args []string, stdout, stderr io.Writer, hookMode
 				sessionName:       sessionName,
 			}))
 		}
-		var ctx PromptContext
-		if a.PromptTemplate != "" || hookMode || sessionTemplateContext {
-			ctx = buildPrimeContextForBeads(cityPath, cityName, &a, cfg.Rigs, cfg.Beads, stderr)
-			ctx.ProviderKey, ctx.ProviderDisplayName = providerInfoForAgent(&a, &cfg.Workspace, cfg.Providers)
-			ctx.InstructionsFile = instructionsFileForAgent(&a, &cfg.Workspace, cfg.Providers)
-		}
+		// Built unconditionally. It used to be gated on
+		// `a.PromptTemplate != "" || hookMode || sessionTemplateContext`,
+		// which was correct only while the builtin-prompt branch below was a
+		// raw os.ReadFile needing no context. That branch renders now, so the
+		// gate would hand it a zero-valued ctx -- an empty RigName selecting
+		// the wrong pack dirs, and an empty AgentName in the output.
+		ctx := buildPrimeContextForBeads(cityPath, cityName, &a, cfg.Rigs, cfg.Beads, stderr)
+		ctx.ProviderKey, ctx.ProviderDisplayName = providerInfoForAgent(&a, &cfg.Workspace, cfg.Providers)
+		ctx.InstructionsFile = instructionsFileForAgent(&a, &cfg.Workspace, cfg.Providers)
+		fragments := effectivePromptFragments(
+			cfg.Workspace.GlobalFragments,
+			a.InjectFragments,
+			a.AppendFragments,
+			a.InheritedAppendFragments,
+			cfg.AgentDefaults.AppendFragments,
+		)
+		packDirs := cfg.PackDirsForRig(ctx.RigName)
 		if a.PromptTemplate != "" {
-			fragments := effectivePromptFragments(
-				cfg.Workspace.GlobalFragments,
-				a.InjectFragments,
-				a.AppendFragments,
-				a.InheritedAppendFragments,
-				cfg.AgentDefaults.AppendFragments,
-			)
-			packDirs := cfg.PackDirsForRig(ctx.RigName)
 			prompt := renderPrompt(fsys.OSFS{}, cityPath, cityName, a.PromptTemplate, ctx, cfg.Workspace.SessionTemplate, stderr,
 				packDirs, fragments, nil)
 			if prompt != "" {
@@ -351,25 +362,36 @@ func doPrimeWithHookFormatOpts(args []string, stdout, stderr io.Writer, hookMode
 			// File is present but rendered empty. Treat as a legitimate
 			// (if unusual) minimal config — emit the default fallback.
 		}
-		// Agents without a prompt_template: read a builtin prompt shipped by
-		// the core bootstrap pack, resolved from the composed pack dirs.
-		// When formula_v2 is enabled, all agents use graph-worker.md.
-		// Otherwise pool agents use pool-worker.md.
+		// Agents without a prompt_template: render a builtin prompt shipped
+		// by the core bootstrap pack, resolved from the composed pack dirs.
+		// When formula_v2 is enabled, all agents use graph-worker.template.md.
+		// Otherwise pool agents use pool-worker.template.md.
 		// Pool instances have Pool=nil after resolution, so also check the
 		// template agent via findAgentByName.
+		//
+		// Rendered through renderPrompt rather than read with os.ReadFile:
+		// a raw read cannot append the city's [agent_defaults]
+		// append_fragments, and the agents that reach this branch are exactly
+		// the ones with no prompt of their own to carry that text. Measured
+		// 2026-09-10 before this changed: 21 active agents in the operator's
+		// city received none of the four declared city fragments, silently,
+		// because the append loop never ran. Both builtins are absolute paths
+		// under the resolved core pack dir, which renderPrompt passes through
+		// unchanged (promptTemplateSourcePath).
 		if a.PromptTemplate == "" {
 			promptFile := ""
 			if coreDir := cfg.PackDirByName("core"); coreDir != "" {
 				if cfg.Daemon.FormulaV2Enabled() {
-					promptFile = filepath.Join(coreDir, "assets", "prompts", "graph-worker.md")
+					promptFile = filepath.Join(coreDir, "assets", "prompts", "graph-worker.template.md")
 				} else if a.SupportsInstanceExpansion() || isPoolInstance(cfg, a) {
-					promptFile = filepath.Join(coreDir, "assets", "prompts", "pool-worker.md")
+					promptFile = filepath.Join(coreDir, "assets", "prompts", "pool-worker.template.md")
 				}
 			}
 			if promptFile != "" {
-				if content, fErr := os.ReadFile(promptFile); fErr == nil {
+				if prompt := renderPrompt(fsys.OSFS{}, cityPath, cityName, promptFile, ctx, cfg.Workspace.SessionTemplate, stderr,
+					packDirs, fragments, nil); prompt != "" {
 					injection := primeHookContextSuffix(cityPath, hookMode, hookContext, stderr, consumeHandoff)
-					writePrimePromptWithFormat(stdout, cityName, ctx.AgentName, string(content), hookMode, hookFormat, suppressHookPrompt, injection.text, injection.afterDelivery)
+					writePrimePromptWithFormat(stdout, cityName, ctx.AgentName, prompt, hookMode, hookFormat, suppressHookPrompt, injection.text, injection.afterDelivery)
 					return 0
 				}
 			}

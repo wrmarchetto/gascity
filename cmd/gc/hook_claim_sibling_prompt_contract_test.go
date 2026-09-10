@@ -56,8 +56,8 @@ func TestHookClaimSiblingPromptContractNamesTheEmittedField(t *testing.T) {
 	}
 	wire := siblingBranchesWireName(t)
 	for _, rel := range []string{
-		"internal/bootstrap/packs/core/assets/prompts/pool-worker.md",
-		"internal/bootstrap/packs/core/assets/prompts/graph-worker.md",
+		"internal/bootstrap/packs/core/assets/prompts/pool-worker.template.md",
+		"internal/bootstrap/packs/core/assets/prompts/graph-worker.template.md",
 	} {
 		t.Run(rel, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join(repoRoot, rel))
