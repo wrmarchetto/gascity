@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/dispatch"
@@ -805,6 +806,10 @@ func TestDoHookClaimEmitsRejectedOnLostClaim(t *testing.T) {
 
 // TestDoHookClaimStampsWorkBranch covers ADR-0009 acceptance (d): the worker's
 // branch is stamped onto the bead as gc.work_branch at claim time.
+//
+// The session bead is not scenery. The branch is resolved from the worktree
+// the CLAIMING SESSION names, so a claim carrying no session resolves no tree
+// and stamps nothing (ci-hdnj73); this test would pass vacuously without one.
 func TestDoHookClaimStampsWorkBranch(t *testing.T) {
 	var stampedBead, stampedBranch, stampedAssignee string
 	runner := func(string, string) (string, error) {
@@ -815,16 +820,26 @@ func TestDoHookClaimStampsWorkBranch(t *testing.T) {
 		Claim: func(_ context.Context, _ string, _ []string, beadID, assignee string) (beads.Bead, bool, error) {
 			return beads.Bead{ID: beadID, Status: "in_progress", Assignee: assignee, Metadata: map[string]string{"gc.routed_to": "worker"}}, true, nil
 		},
+		ReadSessionBead: func(_ context.Context, _ string, _ []string, id, _ string) (beads.Bead, error) {
+			return beads.Bead{ID: id, Type: "session", Metadata: map[string]string{
+				beadmeta.WorkerDirMetadataKey: "/tmp/worktrees/worker-1",
+			}}, nil
+		},
 		ResolveWorkBranch: func(string) string { return "bd-hw-stamp" },
 		StampWorkMeta: func(_ context.Context, _ string, _ []string, beadID, assignee string, patch map[string]string) error {
 			stampedBead, stampedAssignee, stampedBranch = beadID, assignee, patch["gc.work_branch"]
 			return nil
+		},
+		PublishRunMap: func(string, string, ...string) error { return nil },
+		ReadWorkMeta: func(_ context.Context, _ string, _ []string, id, assignee string) (beads.Bead, error) {
+			return beads.Bead{ID: id, Status: "in_progress", Assignee: assignee}, nil
 		},
 	}
 	opts := hookClaimOptions{
 		Assignee:           "worker-1",
 		IdentityCandidates: []string{"worker-1"},
 		RouteTargets:       []string{"worker"},
+		Env:                []string{"GC_SESSION_ID=sess-worker-1", "GC_SESSION_NAME=worker-1"},
 		JSON:               true,
 	}
 

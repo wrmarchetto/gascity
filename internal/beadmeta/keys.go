@@ -247,9 +247,25 @@ const (
 // and its outcome so observability/eval can answer "what work was done, by
 // whom, with what artifact, to what end":
 //
-//   - WorkBranchMetadataKey ("gc.work_branch") — the git branch the claiming
-//     worker is on; the durable handle from the bead to its work. Stamped at
-//     claim time alongside WorkDirMetadataKey and read by the close gate.
+//   - WorkBranchMetadataKey ("gc.work_branch") — the git branch of the
+//     CLAIMING AGENT'S OWN WORKTREE, resolved from its session bead's
+//     worker_dir; the handle from the bead to work that has not landed yet.
+//     Stamped at claim time alongside WorkDirMetadataKey, re-stamped on every
+//     hook tick (so it follows the agent when it cuts its feature branch),
+//     and re-stamped again when a dying session releases the bead.
+//
+//     Until ci-hdnj73 both halves of that were false: the branch came from the
+//     bead store's SHARED checkout, so it recorded the operator's working
+//     state, and no gc.work_dir was written at all. Do NOT reintroduce a
+//     fallback to the store root when the worktree is unknown — stamping
+//     nothing is the truthful record, and the reasoning, the measurements and
+//     the rejected alternatives are in docs/work-branch-semantics.md in the
+//     city repository.
+//
+//     It is NOT a gate anchor. The ref is deleted when the work lands, so a
+//     branch-keyed reachability rule returns "unreachable" for successfully
+//     merged work — measured at 29 of 60 shipped closes. Anchor on
+//     WorkCommitMetadataKey instead.
 //   - WorkOutcomeMetadataKey ("gc.work_outcome") — the typed close disposition,
 //     one of "shipped" | "no-op" | "blocked" | "abandoned". Deliberately NOT
 //     OutcomeMetadataKey ("gc.outcome"): that key is the control-plane step

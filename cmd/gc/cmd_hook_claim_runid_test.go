@@ -69,11 +69,16 @@ func claimOpsForRunMap(beadID string, claimedMeta map[string]string, spy *publis
 func TestDoHookClaimPublishesRunMapWithoutSessionBeadMutation(t *testing.T) {
 	originalRunner := hookClaimCommandRunnerWithEnvContext
 	t.Cleanup(func() { hookClaimCommandRunnerWithEnvContext = originalRunner })
-	var bdCalls int
+	// Every bd verb the claim reaches for is recorded, not just the mutating
+	// one. Counting only `update` would pass over a mutation spelled with any
+	// other verb, which is the shape a future edit is most likely to add.
+	var bdVerbs []string
 	collisionMetadata := map[string]string{"sentinel": "unchanged"}
 	hookClaimCommandRunnerWithEnvContext = func(context.Context, map[string]string) beads.CommandRunner {
 		return func(_ string, _ string, args ...string) ([]byte, error) {
-			bdCalls++
+			if len(args) > 0 {
+				bdVerbs = append(bdVerbs, args[0])
+			}
 			if len(args) >= 3 && args[0] == "update" && args[2] == "session-1" {
 				collisionMetadata["gc.current_run_id"] = "root-safe"
 			}
@@ -91,8 +96,15 @@ func TestDoHookClaimPublishesRunMapWithoutSessionBeadMutation(t *testing.T) {
 	if code := doHookClaim("bd ready --json", "/tmp/work", opts, ops, &stdout, &stderr); code != 0 {
 		t.Fatalf("doHookClaim = %d, want 0; stderr=%s", code, stderr.String())
 	}
-	if bdCalls != 0 {
-		t.Fatalf("post-claim bd mutation calls = %d, want 0", bdCalls)
+	// `show` is the claim-time read of this session's own bead, which resolves
+	// the worktree the location stamp records (hookClaimWorkerDir). A read
+	// cannot corrupt a prefix-colliding session, and the resolver refuses a
+	// bead whose id is not the one asked for, so it is admitted by verb here.
+	// Anything else reaching bd on this path is the failure being pinned.
+	for _, verb := range bdVerbs {
+		if verb != "show" {
+			t.Fatalf("post-claim bd verbs = %v, want reads only -- %q mutates the store", bdVerbs, verb)
+		}
 	}
 	if !reflect.DeepEqual(collisionMetadata, map[string]string{"sentinel": "unchanged"}) {
 		t.Fatalf("prefix-colliding session metadata = %v, want sentinel only", collisionMetadata)
