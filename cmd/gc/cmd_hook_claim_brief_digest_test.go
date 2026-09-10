@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
@@ -100,5 +103,50 @@ func TestHookClaimBriefDigestSkipsASessionlessClaim(t *testing.T) {
 		hookClaimOptions{Assignee: "toolsmith-1"}, ops, "/tmp/tree")
 	if got, ok := patch[beadmeta.BriefDigestMetadataKey]; ok {
 		t.Fatalf("sessionless claim was stamped %s=%q", beadmeta.BriefDigestMetadataKey, got)
+	}
+}
+
+func TestHookClaimBriefDigestCostsExactlyOneExtraWritePerBead(t *testing.T) {
+	// The comment on stampHookClaimIdentity warns that an unconditional write
+	// here emits a bead.updated per tick per in-progress bead -- the
+	// cache-reconcile flood class. Adding a key to that patch reopens the
+	// question, so bound it: a bead already carrying current branch and
+	// session identity but no digest is written ONCE, and the tick after that
+	// writes nothing. One extra event per bead, at the moment this ships, and
+	// never again.
+	digest := beadBriefDigest("", "")
+	base := map[string]string{
+		"gc.routed_to":    "worker",
+		"gc.work_branch":  "bd-hw-once",
+		"gc.session_id":   "mc-sess1",
+		"gc.session_name": "gc__role-mc-sess1",
+	}
+	const readyNoDigest = `[{"id":"hw-once","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-once","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1"}}]`
+
+	first := &stampMetaSpy{}
+	var stdout, stderr bytes.Buffer
+	if code := doHookClaim("bd ready --json", "/tmp/work", poolClaimOpts(),
+		poolClaimOps(readyNoDigest, base, "bd-hw-once", first), &stdout, &stderr); code != 0 {
+		t.Fatalf("first claim = %d; stderr=%s", code, stderr.String())
+	}
+	want := map[string]string{beadmeta.BriefDigestMetadataKey: digest}
+	if first.calls != 1 || !reflect.DeepEqual(first.patch, want) {
+		t.Fatalf("first tick = {calls:%d patch:%v}, want {1 %v} (only the missing digest)", first.calls, first.patch, want)
+	}
+
+	stamped := map[string]string{beadmeta.BriefDigestMetadataKey: digest}
+	for k, v := range base {
+		stamped[k] = v
+	}
+	second := &stampMetaSpy{}
+	stdout.Reset()
+	stderr.Reset()
+	readyStamped := fmt.Sprintf(`[{"id":"hw-once","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-once","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest)
+	if code := doHookClaim("bd ready --json", "/tmp/work", poolClaimOpts(),
+		poolClaimOps(readyStamped, stamped, "bd-hw-once", second), &stdout, &stderr); code != 0 {
+		t.Fatalf("second claim = %d; stderr=%s", code, stderr.String())
+	}
+	if second.calls != 0 {
+		t.Fatalf("second tick wrote %d times with patch %v, want 0 -- the stamp must not re-fire per tick", second.calls, second.patch)
 	}
 }

@@ -45,9 +45,9 @@ import (
 // route through `gc bd`. `bd` is a separate binary on PATH, not a shim onto
 // this dispatch, so a bare `bd close` never reaches here -- and bare `bd close`
 // is what most of this city's agent prompts and formulas currently mandate.
-// Counted 2026-09-09 across the fleet's agent transcripts: 528 `gc bd close`
-// against 907 bare `bd close`, and for the bench-engineer in the incident
-// above, 2 against 88. The incident's own close was bare, so as the city stands
+// Counted 2026-09-09 over 2770 agent transcripts (Bash tool_use commands,
+// command-position match): 579 `gc bd close` against 1017 bare `bd close`,
+// and for the bench-engineer in the incident above, 2 against 92. The incident's own close was bare, so as the city stands
 // this gate would not have caught the case it was written for. Routing those
 // prompts and formulas at `gc bd close` is the other half and is filed
 // separately, because `gc bd`'s scope resolution has to be verified per agent
