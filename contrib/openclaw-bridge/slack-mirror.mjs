@@ -5,7 +5,7 @@
 // process supervision still stays outside this component.
 
 import { createAssistantTurnMirror, reconnectAssistantTurnStream } from './lib/assistant-turn-mirror.mjs'
-import { env, makeGcClient } from './lib/gc-client.mjs'
+import { cityName, env, makeGcClient } from './lib/gc-client.mjs'
 
 const required = (name) => {
   const value = process.env[name]
@@ -16,7 +16,15 @@ const required = (name) => {
   return value
 }
 
-const CITY = required('GC_CITY')
+// The city NAME, not the city path: see cityName in lib/gc-client.mjs for why
+// GC_CITY alone is not enough under [[service]] supervision.
+let CITY
+try {
+  CITY = cityName()
+} catch (err) {
+  console.error(`[slack-mirror] ${err.message}`)
+  process.exit(2)
+}
 const SESSION = required('GC_MIRROR_SESSION')
 const CHANNEL_ID = required('BRIDGE_SLACK_CHANNEL_ID')
 const GC_BASE = env('GC_BASE_URL', 'http://127.0.0.1:8372')

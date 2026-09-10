@@ -93,7 +93,7 @@ func requirePython3(t *testing.T) {
 // what TestProxyProcessDisablesProductMetrics asserts. It is a leak vector
 // elsewhere — an ambient value silently flips the productmetrics projection —
 // so only this intentional seeding is exempted, by name.
-const helperPassthroughForTests = "GC_CITY,GC_CITY_PATH,GC_CITY_RUNTIME_DIR,GC_CONTROL_DISPATCHER_TRACE_DEFAULT,GC_DISABLE_USAGE_METRICS"
+const helperPassthroughForTests = "GC_CITY,GC_CITY_NAME,GC_CITY_PATH,GC_CITY_RUNTIME_DIR,GC_CONTROL_DISPATCHER_TRACE_DEFAULT,GC_DISABLE_USAGE_METRICS"
 
 // setHelperPassthrough installs extraHelperEnv so proxy_process.start()
 // appends the passthrough var to the helper subprocess env. Tests run
@@ -182,25 +182,27 @@ func TestProxyProcessHelper(t *testing.T) {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
+	// Serves the WHOLE child environ rather than a hand-listed subset. The
+	// list this replaced was a second copy of the keys proxy_process exports,
+	// and it rotted the first time one was added: GC_CITY_NAME was exported,
+	// allowed through the passthrough, and still read back "" because only
+	// this map had not been updated -- a launcher bug and a missing map entry
+	// are the same symptom here, which is the one thing this helper must not
+	// confuse. Deriving from os.Environ() means a new export is assertable
+	// with no edit to the helper.
+	//
+	// The one computed key stays explicit: GC_DISABLE_USAGE_METRICS_COUNT is a
+	// DUPLICATE-key count, which a map keyed by name cannot represent.
 	mux.HandleFunc("/env", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{
-			execenv.UsageMetricsDisableEnv:        os.Getenv(execenv.UsageMetricsDisableEnv),
-			"GC_DISABLE_USAGE_METRICS_COUNT":      fmt.Sprintf("%d", countProxyProcessHelperEnvKey(execenv.UsageMetricsDisableEnv)),
-			"BD_DISABLE_METRICS":                  os.Getenv("BD_DISABLE_METRICS"),
-			"OTEL_SERVICE_NAME":                   os.Getenv("OTEL_SERVICE_NAME"),
-			"UNRELATED_SERVICE_SENTINEL":          os.Getenv("UNRELATED_SERVICE_SENTINEL"),
-			"GC_CITY":                             os.Getenv("GC_CITY"),
-			"GC_CITY_PATH":                        os.Getenv("GC_CITY_PATH"),
-			"GC_CITY_RUNTIME_DIR":                 os.Getenv("GC_CITY_RUNTIME_DIR"),
-			"GC_CONTROL_DISPATCHER_TRACE_DEFAULT": os.Getenv("GC_CONTROL_DISPATCHER_TRACE_DEFAULT"),
-			"GC_SERVICE_NAME":                     os.Getenv("GC_SERVICE_NAME"),
-			"GC_SERVICE_STATE_ROOT":               os.Getenv("GC_SERVICE_STATE_ROOT"),
-			"GC_SERVICE_SECRETS_DIR":              os.Getenv("GC_SERVICE_SECRETS_DIR"),
-			"GC_SERVICE_URL_PREFIX":               os.Getenv("GC_SERVICE_URL_PREFIX"),
-			"GC_SERVICE_PUBLIC_URL":               os.Getenv("GC_SERVICE_PUBLIC_URL"),
-			"GC_SERVICE_VISIBILITY":               os.Getenv("GC_SERVICE_VISIBILITY"),
-			"GC_PUBLISHED_SERVICES_DIR":           os.Getenv("GC_PUBLISHED_SERVICES_DIR"),
-		})
+		env := map[string]string{}
+		for _, entry := range os.Environ() {
+			key, value, ok := strings.Cut(entry, "=")
+			if ok {
+				env[key] = value
+			}
+		}
+		env["GC_DISABLE_USAGE_METRICS_COUNT"] = fmt.Sprintf("%d", countProxyProcessHelperEnvKey(execenv.UsageMetricsDisableEnv))
+		_ = json.NewEncoder(w).Encode(env)
 	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "%s %s", r.Method, r.URL.Path) //nolint:errcheck // test helper
@@ -409,6 +411,26 @@ func TestProxyProcessPublishesServiceEnv(t *testing.T) {
 	wantPrefix := citylayout.PublicServiceMountPath(rt.cityName, "bridge")
 	if env["GC_SERVICE_URL_PREFIX"] != wantPrefix {
 		t.Fatalf("GC_SERVICE_URL_PREFIX = %q, want %q", env["GC_SERVICE_URL_PREFIX"], wantPrefix)
+	}
+	// A service child that calls the city API needs the NAME, because every
+	// /v0/city/{cityName}/... route resolves through a name-keyed registry
+	// (cmd/gc/city_registry.go, snap.byName) with no path fallback. GC_CITY is
+	// the PATH and is asserted as such above, so without this variable a child
+	// has no name to send: the supervised Slack bridge read GC_CITY, sent the
+	// path, and 404ed once a second for two hours straight (ci-azvlhn).
+	//
+	// The fixture's distinctness is what gives the assertion below its teeth:
+	// equal values would let a launcher exporting the PATH under this key pass.
+	// Checked rather than assumed, because it is a property of the fixture and
+	// nothing else in this test would notice it changing. An earlier draft
+	// instead asserted GC_CITY_NAME != cityPath, which a mutation sweep showed
+	// to be unreachable -- the value check below fires first on every wrong
+	// value, the path included.
+	if rt.cityName == rt.cityPath {
+		t.Fatal("fixture cityName equals cityPath; GC_CITY_NAME cannot then distinguish a name export from a path export")
+	}
+	if env["GC_CITY_NAME"] != rt.cityName {
+		t.Fatalf("GC_CITY_NAME = %q, want %q", env["GC_CITY_NAME"], rt.cityName)
 	}
 }
 
