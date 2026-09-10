@@ -75,6 +75,13 @@ ruling on ci-waw3o7, standing paged via ci-gbhkpa. Until he rules, the
 15-minute pm-epic-close sweep is the watch -- each summons re-reads
 ci-waw3o7 and re-closes if unruled.
 
+Update 2026-09-10 (pm-log #132): RESOLVED, both halves. Willie ruled at
+2026-09-10T12:55Z: ci-waw3o7 closed "Governor has indeed made regular
+check-ins unnecessary" and gate ci-gbhkpa closed "Governor has retired the
+manual check-in". (a) is answered and epic:governor is done on the roadmap;
+(b) was settled earlier by pm-log #59 (mayor-slack-bridge). The successor
+queue-after question is pm-open #5.
+
 ## 3. Substrate maintenance beads have no epic home; gs-z39 ruled standalone (2026-09-05)
 
 gs-z39 (superseded fix/gs-hph-formula-version-check branch -- salvage or
@@ -160,3 +167,19 @@ ground, not a reversal.
 Would settle it: a future provider integration that needs to reply without adopting the
 contrib/openclaw-bridge mirror shape, or a `gc city pm plan`/`gc city pm chat` sitting
 where Willie decides the policy ahead of that need rather than at the moment it bites.
+
+## 5. Nothing queued after mayor-slack-bridge (2026-09-10)
+
+epic:governor was ruled done at pm-log #132, leaving mayor-slack-bridge as
+the roadmap's only epic not done -- in-progress since pm-log #59, still
+carrying open work (gs-msc2 hold:external; gs-77tn and gs-t0d8 in progress
+as of pm-log #129/#130). No epic has status: open, so when
+mayor-slack-bridge closes this rig has nothing to promote -- the same gap
+pm-open #2(b) recorded after governor, one epic later.
+
+Question: what does gascity build after mayor-slack-bridge?
+
+Would settle it: a `gc city pm plan gascity '<epic>'` sitting. pm-open #3's
+standing question (a maintenance epic, or a declared standalone-by-default
+policy for substrate fixes) is one candidate answer that sitting could fold
+in.

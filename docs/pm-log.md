@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-n6ja 2026-09-10T11:56:17Z
+last_seen: gs-ietr 2026-09-10T12:59:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4371,3 +4371,60 @@ idempotent writes, while an open summons held by a dead session is the
 stranded state the mail warns against.
 
 Source: pm-log #129
+
+## 132. pm-epic-close gs-ietr: governor ruled DONE -- Willie's say-so landed (2026-09-10)
+
+The first ruling of this shape whose outcome changes: every prior summons
+since pm-log #5 held governor in-progress pending Willie's ruling on
+ci-waw3o7, and the ruling has landed. Re-verified live this turn (~12:59Z),
+not recalled:
+
+- Closed set under epic:governor: gs-x0k, gs-xeh, gs-o9i, gs-nun, gs-r76 --
+  0 open, 0 in progress. Criteria 1-6 stand verified in the first four
+  beads' close reasons (pm-log #5); gs-r76 added the criterion-7 interval
+  record (pm-log #102).
+- ci-waw3o7 CLOSED 2026-09-10T12:55:18Z, close reason "Governor has indeed
+  made regular check-ins unnecessary". Gate ci-gbhkpa (await_type human, the
+  carrier built for this decision) CLOSED 22 seconds later, "Governor has
+  retired the manual check-in". One ruling recorded in two places by one
+  actor, not two corroborations.
+- Attribution, since the store keeps no closed_by: the pm-log #4 say-so
+  standard is met on converging records rather than a signature. Both
+  records' owner field is Willie's own identity (wrmarchetto@gmail.com),
+  the gate's await_type is human, the deferral (2026-09-11T05:00Z) was
+  still in force at close -- so no agent had standing to close it, and the
+  bead's own notes forbade exactly that -- and the close landed three
+  minutes before Willie himself messaged this session mid-turn to resume
+  work after his supervisor restart. The timing matches his second answer
+  ("let's see how it shakes out the next couple of days", ci-waw3o7 comment
+  2026-09-08T21:25Z) two days later.
+
+Ruling: every acceptance criterion is met. Roadmap sets epic:governor
+status: done with its Conclusion block written in the same edit. Residuals,
+so nobody resurrects pm-log #5's stale residual line: the assessment layer
+HAS now run live (40/40 interval wakes sourced, retiring that residual);
+still open are the soak instrument's retry blindness (filed ci-lbaesr,
+assignee toolsmith -- it gates trusting failed-wake in later records, not
+this epic) and the mechanically-unclosable assesses-then-reports-something-
+else hole, audited clean empirically over the 65-hour interval at gs-r76.
+
+No epic promoted and no DECOMP sent: the roadmap holds no status: open
+epic. The summons's "other open epics: mayor-slack-bridge" is the sweep's
+not-done sense -- that epic has been in-progress since pm-log #59 and
+carries open work (gs-msc2 hold:external; gs-77tn, gs-t0d8 in progress at
+pm-log #129/#130), so promoting or re-DECOMPing it would double-dispatch a
+running decomposition. The queue-after gap is recorded as pm-open #5 (what
+does gascity build after mayor-slack-bridge), courtesy ping delivered
+(exit 0); pm-open #2 updated -- both halves now settled, successor question
+is #5.
+
+Session context for the record: this session woke under the mayor's park
+order ci-wisp-2jg4mwz (supervisor restart), acked it as parked
+(ci-wisp-izg7gd4; the notify leg queued -- no live-nudge path to the
+mayor), then was countermanded mid-turn by the operator to re-run the
+startup protocol. The restart was evidently complete: the hook handed out
+gs-ietr and the city store answered every read. Catch-up since last_seen
+(gs-n6ja 2026-09-10T11:56:17Z): the rig store moved only by gs-n6ja's own
+close (logged at #131) and this summons.
+
+Source: roadmap governor

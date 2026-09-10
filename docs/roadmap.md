@@ -28,7 +28,7 @@ init sitting 2026-09-05).
 
 ## epic:governor -- Governor agent for autonomous city oversight
 
-status: in-progress
+status: done
 
 A scheduled agent, running on the Fable model, that takes over the check-in
 duty Willie currently performs by hand every couple of hours: the mayor
@@ -63,6 +63,17 @@ Acceptance:
   ritual stops being necessary.
 
 Depends on: ci-waw3o7
+
+Conclusion: Delivered as configuration only -- agent definition, 90-minute
+schedule, prompt templates; no governor-named Go. Criteria 1-6 verified in
+the close reasons of gs-x0k, gs-xeh, gs-o9i and gs-nun (pm-log #5);
+criterion 7's measure is gs-r76's 65.1-hour interval record on ci-waw3o7:
+40/40 wakes claimed, closed and paged, 14 real conditions relayed to the
+mayor with zero false relays, against the prediction that Willie's manual
+every-couple-of-hours ritual stops being necessary. Willie ruled it met
+2026-09-10T12:55Z -- ci-waw3o7 closed "Governor has indeed made regular
+check-ins unnecessary" and gate ci-gbhkpa closed "Governor has retired the
+manual check-in" (pm-log #132).
 
 ## epic:mayor-slack-bridge -- Direct Slack line to the mayor
 
