@@ -355,7 +355,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	if p.city != nil {
 		beadsCfg = p.city.Beads
 	}
-	prompt = renderPrompt(p.fs, p.cityPath, p.cityName, cfgAgent.PromptTemplate, PromptContext{
+	promptCtx := PromptContext{
 		CityRoot:                p.cityPath,
 		AgentName:               qualifiedName,
 		TemplateName:            cfgAgent.Name,
@@ -375,7 +375,23 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		ProviderDisplayName:     providerDisplayName,
 		InstructionsFile:        instructionsFileForAgent(cfgAgent, p.workspace, p.providers),
 		Env:                     cfgAgent.Env,
-	}, p.sessionTemplate, p.stderr, packDirs, fragments, p.beadStore)
+	}
+	prompt = renderPrompt(p.fs, p.cityPath, p.cityName, cfgAgent.PromptTemplate, promptCtx,
+		p.sessionTemplate, p.stderr, packDirs, fragments, p.beadStore)
+	// An agent that declares no prompt_template is spawned with the core
+	// pack's builtin worker prompt, the same one `gc prime` falls back to.
+	// Without this the beacon below became the WHOLE prompt, and the
+	// SessionStart hook could not repair it: a non-empty beacon marks the
+	// startup prompt delivered (promptDelivery), which suppresses the hook's
+	// own `gc prime` output. The agent's entire behavioral specification was
+	// then a one-line timestamp. Pinned by
+	// TestSpawnBuiltinPromptReachesAgentWithNoPromptTemplate (ci-d2d19d).
+	if prompt == "" {
+		if builtin := builtinWorkerPromptPath(p.city, cfgAgent); builtin != "" {
+			prompt = renderPrompt(p.fs, p.cityPath, p.cityName, builtin, promptCtx,
+				p.sessionTemplate, p.stderr, packDirs, fragments, p.beadStore)
+		}
+	}
 	hasHooks := config.AgentHasHooks(cfgAgent, p.workspace, resolved.Name, p.providers)
 	beacon := runtime.FormatBeaconAt(p.cityName, qualifiedName, !hasHooks, p.beaconTime)
 	suppressStartupPrompt := suppressStartupPromptForAgent(cfgAgent)
