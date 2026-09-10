@@ -862,10 +862,10 @@ func TestFormulaFilesystemSearchGuidanceCoversPromptSources(t *testing.T) {
 	paths := map[string]string{
 		"embedded gastown pack/template-fragments/following-mol.template.md": filepath.Join(
 			gastownDir, "template-fragments", "following-mol.template.md"),
-		"internal/bootstrap/packs/core/assets/prompts/pool-worker.md": filepath.Join(
-			repoRoot, "internal", "bootstrap", "packs", "core", "assets", "prompts", "pool-worker.md"),
-		"internal/bootstrap/packs/core/assets/prompts/graph-worker.md": filepath.Join(
-			repoRoot, "internal", "bootstrap", "packs", "core", "assets", "prompts", "graph-worker.md"),
+		"internal/bootstrap/packs/core/assets/prompts/pool-worker.template.md": filepath.Join(
+			repoRoot, "internal", "bootstrap", "packs", "core", "assets", "prompts", "pool-worker.template.md"),
+		"internal/bootstrap/packs/core/assets/prompts/graph-worker.template.md": filepath.Join(
+			repoRoot, "internal", "bootstrap", "packs", "core", "assets", "prompts", "graph-worker.template.md"),
 	}
 	for rel, path := range paths {
 		t.Run(rel, func(t *testing.T) {
@@ -903,8 +903,8 @@ func TestCoreWorkerPromptsUseHookClaimProtocol(t *testing.T) {
 	}
 
 	for _, rel := range []string{
-		"internal/bootstrap/packs/core/assets/prompts/pool-worker.md",
-		"internal/bootstrap/packs/core/assets/prompts/graph-worker.md",
+		"internal/bootstrap/packs/core/assets/prompts/pool-worker.template.md",
+		"internal/bootstrap/packs/core/assets/prompts/graph-worker.template.md",
 	} {
 		t.Run(rel, func(t *testing.T) {
 			data, err := os.ReadFile(filepath.Join(repoRoot, rel))
