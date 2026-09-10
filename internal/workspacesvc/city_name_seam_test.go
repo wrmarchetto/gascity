@@ -9,6 +9,11 @@
 // here. A copy of the pattern in Go would agree with itself forever while the
 // bridge drifted, which is the failure mode this file exists to remove.
 //
+// Mutation-swept 2026-09-10 at adc2437f2, 8/8 died, covering both guards here
+// plus the GC_CITY_NAME export and the bridge's three resolution branches. The
+// first run of that sweep returned 7/8 and the survivor was in the TEST, not
+// the code: an assertion in proxy_process_test.go that no mutation could reach.
+//
 // Run: go test ./internal/workspacesvc/ -run TestServiceURLPrefix
 package workspacesvc
 
