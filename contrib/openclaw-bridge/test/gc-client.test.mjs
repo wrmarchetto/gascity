@@ -396,3 +396,44 @@ test('cityName ignores an empty GC_CITY_NAME and falls through to GC_CITY', () =
   // empty value must not shadow a usable GC_CITY.
   assert.equal(cityName({ GC_CITY_NAME: '', GC_CITY: 'lab' }), 'lab')
 })
+
+// The deployment-window cases. GC_CITY_NAME is exported by a gc built after
+// the ci-azvlhn fix, but the bridge half of that fix reaches a running city on
+// a merge while the Go half needs a rebuild and an operator-only supervisor
+// restart. Between the two, a bridge that only knew GC_CITY_NAME would refuse
+// at startup -- and proxy_process's restart backoff is 1s, so refusing turns a
+// 60-attempt-per-100s loop into one spawn per second. GC_SERVICE_URL_PREFIX is
+// what closes that window: proxy_process has exported it all along, and it
+// carries the city name in the segment after /v0/city/.
+
+test('cityName derives the name from GC_SERVICE_URL_PREFIX when GC_CITY_NAME is absent', () => {
+  assert.equal(cityName({
+    GC_SERVICE_URL_PREFIX: '/v0/city/city/svc/slack-bridge',
+    GC_CITY: '/home/willie/projects/city',
+  }), 'city')
+})
+
+test('cityName prefers an explicit GC_CITY_NAME over the derived prefix', () => {
+  // The explicit variable is authoritative once the launcher sends it; the
+  // prefix derivation exists only to cover launchers that do not yet.
+  assert.equal(cityName({
+    GC_CITY_NAME: 'explicit',
+    GC_SERVICE_URL_PREFIX: '/v0/city/derived/svc/slack-bridge',
+  }), 'explicit')
+})
+
+test('cityName ignores a GC_SERVICE_URL_PREFIX that does not match the mount shape', () => {
+  // Falls through to the GC_CITY fallback rather than sending a guess: a
+  // prefix of another shape means this is not a proxy_process child.
+  assert.equal(cityName({ GC_SERVICE_URL_PREFIX: '/svc/slack-bridge', GC_CITY: 'lab' }), 'lab')
+})
+
+test('cityName refuses when the prefix does not match and GC_CITY is a path', () => {
+  assert.throws(() => cityName({
+    GC_SERVICE_URL_PREFIX: '/not/a/mount/path',
+    GC_CITY: '/home/willie/projects/city',
+  }), (err) => {
+    assert.match(err.message, /GC_CITY_NAME/)
+    return true
+  })
+})
