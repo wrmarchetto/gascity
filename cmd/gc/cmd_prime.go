@@ -379,14 +379,7 @@ func doPrimeWithHookFormatOpts(args []string, stdout, stderr io.Writer, hookMode
 		// under the resolved core pack dir, which renderPrompt passes through
 		// unchanged (promptTemplateSourcePath).
 		if a.PromptTemplate == "" {
-			promptFile := ""
-			if coreDir := cfg.PackDirByName("core"); coreDir != "" {
-				if cfg.Daemon.FormulaV2Enabled() {
-					promptFile = filepath.Join(coreDir, "assets", "prompts", "graph-worker.template.md")
-				} else if a.SupportsInstanceExpansion() || isPoolInstance(cfg, a) {
-					promptFile = filepath.Join(coreDir, "assets", "prompts", "pool-worker.template.md")
-				}
-			}
+			promptFile := builtinWorkerPromptPath(cfg, &a)
 			if promptFile != "" {
 				if prompt := renderPrompt(fsys.OSFS{}, cityPath, cityName, promptFile, ctx, cfg.Workspace.SessionTemplate, stderr,
 					packDirs, fragments, nil); prompt != "" {
