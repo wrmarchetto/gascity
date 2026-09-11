@@ -2133,6 +2133,25 @@ func (t *Tmux) paneHoldsDraft(target, message string) (bool, error) {
 // but no one has measured whether their busy state reaches
 // paneContainsBusyIndicator. Adding a family here on the strength of it being
 // a TUI gc drives is the specific mistake this comment exists to prevent.
+//
+// A HAZARD THIS LIST INHERITS RATHER THAN CREATES, measured 2026-09-11 and
+// tracked as its own bead. A re-send fires only while busy reads FALSE, so
+// the states at risk are exactly the ones with no busy indicator -- and a
+// codex OVERLAY is one. With the composer holding a single "/", codex opens
+// its command palette and paneContainsBusyIndicator reads 0; three Enters
+// then walked /model -> model picker -> reasoning picker and COMMITTED the
+// change ("Model changed to gpt-6-astra medium"). One Enter, today's
+// behavior, stops at the first picker without committing. The trigger is a
+// nudge whose text begins with "/", which is rare but not impossible.
+//
+// This is NOT a codex-specific regression: the same arm has re-sent into
+// claude panes since ga-bwm, and claude has a command palette too. What is
+// unestablished is whether claude's draft evidence happens to suppress the
+// re-send there -- draftInInputBox could read either way depending on how
+// the palette repaints the input line, and nobody has driven a claude TUI to
+// find out. Bounding it needs overlay detection spanning both families, so
+// it is deliberately not attempted here, where the fix under test is the
+// family gate.
 var submitVerifyFamilies = []string{"claude", "codex"}
 
 // providerEnvSubmitVerifyEligible reports whether a GC_PROVIDER value names a
