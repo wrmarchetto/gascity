@@ -66,8 +66,15 @@ resource = "fixed_sleep"
 # by a lifecycle signal -- there is no event to wait for, elapsed time is the
 # claim. The fourth is the poll step inside waitForScopeIdleCondition. Summed
 # with ci-87655r's delta over the 440/163 base.
-baseline_calls = 445
-baseline_files = 165
+# +1 call / 1 file (ci-mpk4g4, banked under ci-34d20v): the 20ms step inside
+# socketOf's bounded retry in internal/workspacesvc/reload_added_service_test.go.
+# It is a POLL interval and not a wait-and-hope -- the loop re-issues the /env
+# request until it answers 200 or a 5s deadline passes, and the assertion is on
+# the response, never on elapsed time. There is no lifecycle signal to wait on:
+# the manager publishes a reloaded service by starting to serve it, so its own
+# HTTP surface is the only edge that can report readiness.
+baseline_calls = 446
+baseline_files = 166
 reported_calls = 447
 reported_files = 157
 owner_bead = "ga-80po0c.2"
@@ -118,8 +125,11 @@ resource = "fixed_sleep"
 # +1 call / 1 file (ci-87655r) and +4 calls / 1 file (ci-sptsk3): the same
 # sleeps recorded on the all-source audit row above, counted again in the
 # untagged scope and summed over the 290/116 base.
-baseline_calls = 295
-baseline_files = 118
+# +1 call / 1 file (ci-mpk4g4, banked under ci-34d20v): the same poll step
+# recorded on the all-source audit row above, counted again in the untagged
+# scope.
+baseline_calls = 296
+baseline_files = 119
 reported_calls = 295
 reported_files = 114
 owner_bead = "ga-80po0c.2"
@@ -131,8 +141,14 @@ expires = "2026-10-01"
 [[debt]]
 scope = "cmd/gc+untagged"
 resource = "environment"
-baseline_calls = 128
-baseline_files = 13
+# +1 call / 1 file (ci-fn48qz, banked under ci-34d20v): the os.Unsetenv in
+# unsetFormulaRefForTest, cmd/gc/cmd_supervisor_formularef_test.go. The state
+# under test is the key being ABSENT, which t.Setenv cannot express -- it can
+# only set empty, and absent and set-empty are the two facts that case exists
+# to tell apart. The paired t.Setenv above it registers the restore, so the
+# process environment is left as found.
+baseline_calls = 129
+baseline_files = 14
 reported_calls = 3960
 reported_files = 184
 owner_bead = "ga-80po0c.2.3"
@@ -476,8 +492,10 @@ expires = "2026-10-01"
 [[small_debt]]
 scope = "untagged"
 resource = "fixed_sleep"
-baseline_calls = 294
-baseline_files = 117
+# +1 call / 1 file (ci-mpk4g4, banked under ci-34d20v): the socketOf poll step;
+# see the untagged source row above.
+baseline_calls = 295
+baseline_files = 118
 reported_calls = 287
 reported_files = 113
 owner_bead = "ga-80po0c.2.1"
@@ -489,8 +507,10 @@ expires = "2026-10-01"
 [[small_debt]]
 scope = "cmd/gc+untagged"
 resource = "environment"
-baseline_calls = 122
-baseline_files = 13
+# +1 call / 1 file (ci-fn48qz, banked under ci-34d20v): the unsetFormulaRefForTest
+# os.Unsetenv; see the cmd/gc source row above.
+baseline_calls = 123
+baseline_files = 14
 reported_calls = 4348
 reported_files = 200
 owner_bead = "ga-80po0c.2.1"

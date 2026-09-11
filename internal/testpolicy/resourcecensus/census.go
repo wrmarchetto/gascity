@@ -199,8 +199,17 @@ var bootstrapPolicy = Ledger{
 			// poll step inside the shared deadline loop
 			// waitForScopeIdleCondition. Summed with ci-87655r's delta over the
 			// 440/163 base; both sides moved files to 164 for their own file.
-			BaselineCalls:   445,
-			BaselineFiles:   165,
+			// +1 call / 1 file (ci-mpk4g4, banked under ci-34d20v): the 20ms step
+			// inside socketOf's bounded retry, in
+			// internal/workspacesvc/reload_added_service_test.go. It is a POLL
+			// interval and not a wait-and-hope: the loop re-issues the /env request
+			// until it answers 200 or a 5s deadline passes, and the assertion is on
+			// the response, never on elapsed time. No lifecycle signal is available
+			// to wait on instead -- the manager publishes a reloaded service by
+			// beginning to serve it, so its own HTTP surface is the only edge that
+			// can report readiness.
+			BaselineCalls:   446,
+			BaselineFiles:   166,
 			ReportedCalls:   447,
 			ReportedFiles:   157,
 			OwnerBead:       "ga-80po0c.2",
@@ -252,8 +261,11 @@ var bootstrapPolicy = Ledger{
 			// the same sleeps recorded on the all-source audit row above,
 			// counted again in the untagged scope and summed over the 290/116
 			// base.
-			BaselineCalls:   295,
-			BaselineFiles:   118,
+			// +1 call / 1 file (ci-mpk4g4, banked under ci-34d20v): the socketOf
+			// poll step; see the all-source fixed_sleep row for why elapsed time is
+			// not the claim there.
+			BaselineCalls:   296,
+			BaselineFiles:   119,
 			ReportedCalls:   295,
 			ReportedFiles:   114,
 			OwnerBead:       "ga-80po0c.2",
@@ -263,10 +275,16 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeCmdGCUntagged,
-			Resource:        ResourceEnvironment,
-			BaselineCalls:   128,
-			BaselineFiles:   13,
+			Scope:    ScopeCmdGCUntagged,
+			Resource: ResourceEnvironment,
+			// +1 call / 1 file (ci-fn48qz, banked under ci-34d20v): the os.Unsetenv
+			// in unsetFormulaRefForTest, cmd/gc/cmd_supervisor_formularef_test.go.
+			// The state under test is the key being ABSENT, which t.Setenv cannot
+			// express -- it can only set empty, and absent and set-empty are the
+			// two facts that case exists to tell apart. The paired t.Setenv above
+			// it registers the restore, so the environment is left as found.
+			BaselineCalls:   129,
+			BaselineFiles:   14,
 			ReportedCalls:   3960,
 			ReportedFiles:   184,
 			OwnerBead:       "ga-80po0c.2.3",
@@ -613,10 +631,13 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceFixedSleep,
-			BaselineCalls:   294,
-			BaselineFiles:   117,
+			Scope:    ScopeUntagged,
+			Resource: ResourceFixedSleep,
+			// +1 call / 1 file (ci-mpk4g4, banked under ci-34d20v): the socketOf
+			// poll step; see the all-source fixed_sleep row for why elapsed time is
+			// not the claim there.
+			BaselineCalls:   295,
+			BaselineFiles:   118,
 			ReportedCalls:   287,
 			ReportedFiles:   113,
 			OwnerBead:       "ga-80po0c.2.1",
@@ -626,10 +647,12 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-10-01",
 		},
 		{
-			Scope:           ScopeCmdGCUntagged,
-			Resource:        ResourceEnvironment,
-			BaselineCalls:   122,
-			BaselineFiles:   13,
+			Scope:    ScopeCmdGCUntagged,
+			Resource: ResourceEnvironment,
+			// +1 call / 1 file (ci-fn48qz, banked under ci-34d20v): the
+			// unsetFormulaRefForTest os.Unsetenv; see the cmd/gc source row.
+			BaselineCalls:   123,
+			BaselineFiles:   14,
 			ReportedCalls:   4348,
 			ReportedFiles:   200,
 			OwnerBead:       "ga-80po0c.2.1",
