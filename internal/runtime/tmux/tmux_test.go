@@ -2372,7 +2372,14 @@ func TestNudgeSessionSkipsEscapeForCodex(t *testing.T) {
 	defer func() { _ = tm.KillSession(sessionName) }()
 	time.Sleep(300 * time.Millisecond)
 
-	if err := tm.NudgeSession(sessionName, "hello"); err != nil {
+	// codex joined submitVerifyFamilies in ci-gqvu9q, so this pane now takes
+	// the confirm-and-resend arm. A `cat -v` pane renders no busy indicator
+	// and holds no claude-shaped input box, so neither evidence source can
+	// confirm and ErrNudgeSubmitUnconfirmed is the correct outcome -- the
+	// same shape TestNudgeSessionSkipsEscapeForClaude has carried since
+	// ra-3x46cy. What this test pins is unchanged either way: no Escape
+	// precedes codex's submit.
+	if err := tm.NudgeSession(sessionName, "hello"); err != nil && !errors.Is(err, ErrNudgeSubmitUnconfirmed) {
 		t.Fatalf("NudgeSession: %v", err)
 	}
 	time.Sleep(300 * time.Millisecond)
@@ -2433,7 +2440,11 @@ func main() {
 	defer func() { _ = tm.KillSession(sessionName) }()
 	time.Sleep(300 * time.Millisecond)
 
-	if err := tm.NudgeSession(sessionName, "hello"); err != nil {
+	// Same as the GC_PROVIDER case above, reached through the process-name
+	// sniff instead: submitVerifyEligible falls back to
+	// targetLooksLikeAnyProvider, and the fake binary is named "codex", so
+	// this pane is submit-verify-eligible too and cannot confirm.
+	if err := tm.NudgeSession(sessionName, "hello"); err != nil && !errors.Is(err, ErrNudgeSubmitUnconfirmed) {
 		t.Fatalf("NudgeSession: %v", err)
 	}
 	time.Sleep(300 * time.Millisecond)
