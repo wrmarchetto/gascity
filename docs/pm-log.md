@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-6v5n 2026-09-10T14:23:00Z
+last_seen: gs-781f 2026-09-11T03:00:08Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4574,3 +4574,64 @@ mayor-slack-bridge closes, per #134). No DECOMP sent -- the epic is open,
 not in-progress. pm-open #5 is resolved by this entry.
 
 Source: Willie, pm-chat sitting gs-6v5n
+
+## 137. DECOMP gs-781f: ACCEPT agent-efficiency, promoted early on Willie's relayed instruction (2026-09-10)
+
+Summons gs-781f (pm-decomp:agent-efficiency, mayor via pm-request.py):
+seven beads proposed for epic:agent-efficiency, filed unassigned and
+unrouted, nothing slung. Verdict: ACCEPT agent-efficiency.
+
+Coverage, each bead read in full against the epic's seven criteria:
+gs-cm0w criterion 1 (per-session token/wall-clock accounting, baseline
+with its window written down, no dollar figures). gs-ian6 criterion 2
+(prefix hygiene, where the criterion is the measured nonzero
+cache_read_input_tokens on a second same-slot same-account spawn, not
+the removal). gs-yvxt criterion 3 (explicit model+effort everywhere,
+the #136 assignments carried verbatim, unrecognized values fail config
+load loudly, the validator proven by mutation). gs-jbyc criterion 4
+(prospective canary, no replay rig per #136, per-agent revert criterion
+named in advance, threshold between regimes). gs-z2on criterion 5
+(affinity reshuffle under the #135 constraints -- even spread, no blind
+hash, preference that yields, future spawns only -- sequenced after
+prefix hygiene). gs-arar criterion 6 (harvest, empty, mechanical gate
+proven to go red on deliberate drift). gs-saj5 criterion 7 (anti-pattern
+audit by checklist content, every finding fix or keep-with-reason, stack
+token size before and after, ~/.claude/CLAUDE.md proposals-only). One
+bead per criterion, no criterion uncovered, no bead outside a criterion.
+Exactly seven beads carry the epic label, none closed, none hidden.
+
+Dependencies. The quota signal the epic said to verify at decomposition
+was recounted rather than inherited: ~/.claude-homes/quota/<N>.json
+exists for all six accounts with five_hour/seven_day used_percentage and
+resets_at plus an append-only history dir. The staleness pattern matches
+the mayor's caveat -- accounts 0 and 4 last written 2026-09-09 15:33 and
+2026-09-10 07:38, the other four minutes old at check time (22:05 local)
+-- and the stale-means-never-observed semantics ride inside gs-cm0w and
+gs-z2on where they are needed.
+
+Promotion ahead of the #134 default. The epic's stated dependency,
+mayor-slack-bridge closing, is unmet, and the mayor asked knowingly,
+quoting Willie's overnight instruction verbatim: "hopefully you can
+close out the slack bridge tonight and get the following epic started
+as well. if the bridge hits a blocker, go ahead and start the next
+epic." The blocker premise was verified from the store rather than
+taken from the summons: gs-t0d8 and gs-77tn are closed, the bridge's
+sole open bead gs-msc2 is assignee human with hold:external (operator
+supervisor-env activation), and the epic's live-round-trip criterion
+needs Willie at the keyboard, so no agent action closes the bridge
+tonight. That is the instruction's stated condition. Set
+epic:agent-efficiency in-progress in docs/roadmap.md in this same edit.
+mayor-slack-bridge stays in-progress, parked on gs-msc2. One
+decomposition is in flight (this one), so the #134 one-at-a-time
+convention holds even though its promotion trigger was superseded.
+
+The instruction exists in no record this PM can read -- not spec, log,
+or roadmap -- only in the mayor's relay, so the timing half of this
+verdict is unconfirmed. pm-open #6 names what settles it (Willie's word
+when he wakes). The coverage half is confirmed against the epic's
+criteria in the roadmap.
+
+Verdict delivered both ways: gs-781f closed "ACCEPT agent-efficiency"
+and the same verdict mailed to mayor with --notify.
+
+Source: PM inference, unconfirmed

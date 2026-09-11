@@ -194,3 +194,24 @@ that same sitting or a follow-up.
 Update 2026-09-10 (pm-log #136): RESOLVED. epic:agent-efficiency is in
 docs/roadmap.md at status: open with seven acceptance criteria, queued for
 normal promotion when mayor-slack-bridge closes.
+
+## 6. agent-efficiency promoted on an instruction known only via the mayor's relay (2026-09-10)
+
+DECOMP summons gs-781f requested decomposition of epic:agent-efficiency
+while its stated dependency (mayor-slack-bridge closing) was unmet,
+quoting Willie's overnight instruction verbatim: "hopefully you can close
+out the slack bridge tonight and get the following epic started as well.
+if the bridge hits a blocker, go ahead and start the next epic." pm-log
+#137 accepted and promoted on that instruction plus a store-verified
+blocker: gs-msc2 (human, hold:external) and the live-round-trip
+criterion both need Willie, so no agent action could close the bridge
+tonight. The instruction itself appears in no record the PM can read --
+not spec, pm-log, or roadmap -- only in the mayor's relay.
+
+Question: does Willie confirm the overnight instruction and the early
+start of agent-efficiency?
+
+Would settle it: Willie's word when he wakes -- in the mayor's channel, a
+pm-chat sitting, or a note on any agent-efficiency bead. If he did not
+give the instruction, promotion reverts to the #134 path (bridge close)
+and the slung work parks.

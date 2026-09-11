@@ -119,7 +119,7 @@ in ${GC_HOME}/secrets.env. No hardware, no upstream rig.
 
 ## epic:agent-efficiency -- Agent session efficiency: time and usage headroom
 
-status: open
+status: in-progress
 
 Make the agent fleet cheaper in the two currencies that actually bind this
 city: wall-clock time and usage-window headroom. The city runs on Claude
@@ -181,10 +181,13 @@ Acceptance:
   the instructions stack's token size recorded before and after.
 
 Depends on: mayor-slack-bridge closing (normal promotion path, pm-log
-#134). A queryable per-account 5h/7d usage-availability signal for the
-reshuffle script -- verify at decomposition. Edits to ~/.claude/CLAUDE.md
-are Willie's own (it lives outside every rig), so audit findings there are
-proposals to him, not beads.
+#134 -- superseded 2026-09-10 by Willie's overnight instruction with the
+bridge blocked on operator-only action, promoted at pm-log #137, pending
+his confirmation per pm-open #6). A queryable per-account 5h/7d
+usage-availability signal for the reshuffle script -- verified at
+decomposition (pm-log #137). Edits to ~/.claude/CLAUDE.md are Willie's
+own (it lives outside every rig), so audit findings there are proposals
+to him, not beads.
 
 ## Abandoned
 
