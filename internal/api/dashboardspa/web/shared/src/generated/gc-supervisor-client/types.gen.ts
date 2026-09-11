@@ -375,6 +375,13 @@ export type BeadGraphResponse = {
     root: Bead;
 };
 
+export type BeadLabelPolicyOutputBody = {
+    /**
+     * Labels marking a bead as infrastructure bookkeeping rather than actionable work, in declaration order. A client hides these rows by default.
+     */
+    hidden_labels: Array<string> | null;
+};
+
 export type BeadUpdateBody = {
     /**
      * Assigned agent.
@@ -10930,6 +10937,44 @@ export type GetV0CityByCityNameBeadsGraphByRootIdResponses = {
 };
 
 export type GetV0CityByCityNameBeadsGraphByRootIdResponse = GetV0CityByCityNameBeadsGraphByRootIdResponses[keyof GetV0CityByCityNameBeadsGraphByRootIdResponses];
+
+export type GetV0CityByCityNameBeadsLabelPolicyData = {
+    body?: never;
+    path: {
+        /**
+         * City name.
+         */
+        cityName: string;
+    };
+    query?: never;
+    url: '/v0/city/{cityName}/beads/label-policy';
+};
+
+export type GetV0CityByCityNameBeadsLabelPolicyErrors = {
+    /**
+     * Not Found
+     */
+    404: ErrorModel;
+    /**
+     * Unprocessable Entity
+     */
+    422: ErrorModel;
+    /**
+     * Internal Server Error
+     */
+    500: ErrorModel;
+};
+
+export type GetV0CityByCityNameBeadsLabelPolicyError = GetV0CityByCityNameBeadsLabelPolicyErrors[keyof GetV0CityByCityNameBeadsLabelPolicyErrors];
+
+export type GetV0CityByCityNameBeadsLabelPolicyResponses = {
+    /**
+     * OK
+     */
+    200: BeadLabelPolicyOutputBody;
+};
+
+export type GetV0CityByCityNameBeadsLabelPolicyResponse = GetV0CityByCityNameBeadsLabelPolicyResponses[keyof GetV0CityByCityNameBeadsLabelPolicyResponses];
 
 export type GetV0CityByCityNameBeadsReadyData = {
     body?: never;

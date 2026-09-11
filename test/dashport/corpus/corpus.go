@@ -117,6 +117,24 @@ const (
 	// in testdata/dashport/beads.json for WorkBeadID); the beads view renders it.
 	WorkBeadTitle = "Wire the seeded dashboard corpus"
 
+	// BookkeepingBeadID and BookkeepingBeadTitle are the seeded external-message
+	// transcript row: issue_type "task" and status "open", exactly like real
+	// work, carrying the label "gc:extmsg-transcript". It exists so the beads
+	// view can be shown to HIDE it by default and to bring it back through the
+	// bookkeeping control (ci-zg9lbn). Its type is deliberately not a
+	// bookkeeping type -- a row hidden by its type would prove nothing about
+	// the label rule, which is the one that rots.
+	BookkeepingBeadID    = "slack-transcript-1"
+	BookkeepingBeadTitle = "slack/default/C0C0JPH5E2Y#99"
+
+	// UnprefixedBookkeepingBeadID and its title are the second bookkeeping row,
+	// and the assertion that is not vacuous. Its label carries no "gc:" prefix,
+	// so the board's forward-looking prefix heuristic cannot be what hides it:
+	// only the served ready-exclusion set can. Without this row the e2e would
+	// stay green against a board that had stopped reading that set.
+	UnprefixedBookkeepingBeadID    = "order-track-1"
+	UnprefixedBookkeepingBeadTitle = "order sweep bookkeeping row"
+
 	// MailSubject is the seeded mail message's subject the mail view projects.
 	MailSubject = "seeded handoff"
 
@@ -408,9 +426,14 @@ func splitNonEmptyLines(raw []byte) [][]byte {
 }
 
 func truncate(b []byte) string {
-	const max = 300
-	if len(b) > max {
-		return string(b[:max]) + "..."
+	// Not named `max`: that shadows the builtin, and revive rejects it. The
+	// package only became lintable when a change to it first reached
+	// `make lint-changed` with -tags=integration set (ci-zg9lbn) -- the target
+	// cannot load a build-tagged package otherwise, so nothing here had ever
+	// been linted.
+	const maxLen = 300
+	if len(b) > maxLen {
+		return string(b[:maxLen]) + "..."
 	}
 	return string(b)
 }

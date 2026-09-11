@@ -30,6 +30,16 @@ import { listSupervisorSessions } from '../supervisor/sessionReads';
 const EMPTY_IDS: ReadonlySet<string> = new Set();
 const RIG_FILTER_ALL = '';
 const CLOSED_CHIP_ID = 'closed';
+const BOOKKEEPING_CHIP_ID = 'bookkeeping';
+const NO_CHIPS: ReadonlySet<string> = new Set();
+const BOOKKEEPING_CHIPS: ReadonlySet<string> = new Set([BOOKKEEPING_CHIP_ID]);
+// Rendered as a one-chip group of its own rather than a fifth status chip:
+// it widens the data scope across every status at once, so grouping it with
+// open/in_progress/blocked/closed would read as a fifth status the rows could
+// be in.
+const ROW_SCOPE_CHIPS: ReadonlyArray<{ id: string; label: string }> = [
+  { id: BOOKKEEPING_CHIP_ID, label: 'bookkeeping' },
+];
 // The board's refresh is a full list refetch (~1.3MB on a busy city). A busy
 // city emits bead.* events roughly every few seconds, so the default ~2.5s
 // coalesce window still drives a near-continuous full refetch — wasteful under
@@ -80,6 +90,14 @@ export function BeadsPage() {
   // four status controls reading as one group while `closed` alone widens
   // the data scope.
   const [showClosed, setShowClosed] = useState(false);
+  // The rows gc itself does not count as work -- external-message transcripts
+  // above all, which on 2026-09-10 were 101 of the city's 118 open beads
+  // (ci-zg9lbn). Hidden by default and revealed by the `bookkeeping` control,
+  // never removed: a row unreachable from the UI is a worse defect than a
+  // noisy list, and it is invisible from outside. Same shape as showClosed --
+  // it parameterizes the fetch AND rides the cache key, so flipping it forces
+  // exactly one fresh fan-out instead of re-filtering a stale payload.
+  const [showBookkeeping, setShowBookkeeping] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(selectedBeadParam);
   const [closing, setClosing] = useState<SupervisorBead | null>(null);
   const [actionInFlight, setActionInFlight] = useState<string | null>(null);
@@ -93,10 +111,11 @@ export function BeadsPage() {
   const [newAgent, setNewAgent] = useState('');
 
   const { data, loading, error, refresh } = useCachedData(
-    `beads:board:${cityCacheKey}:${rigFilter}:${showClosed ? 'all' : 'open'}`,
+    `beads:board:${cityCacheKey}:${rigFilter}:${showClosed ? 'all' : 'open'}:${showBookkeeping ? 'bk' : 'work'}`,
     () =>
       listSupervisorBeads({
         includeClosed: showClosed,
+        includeBookkeeping: showBookkeeping,
         ...(rigFilter === RIG_FILTER_ALL ? {} : { rigFilter }),
       }),
   );
@@ -175,6 +194,8 @@ export function BeadsPage() {
     },
     [toggleChip],
   );
+
+  const toggleBookkeeping = useCallback(() => setShowBookkeeping((prev) => !prev), []);
 
   useGcEventRefresh([GC_EVENT_PREFIX.bead], () => void refresh(), {
     coalesceMs: BOARD_REFRESH_COALESCE_MS,
@@ -360,6 +381,11 @@ export function BeadsPage() {
             <span className="text-label uppercase tracking-wider text-fg-faint">
               {showClosed ? 'All statuses' : 'Open work'}
             </span>
+            {showBookkeeping && (
+              <span className="text-label uppercase tracking-wider text-fg-faint">
+                Including bookkeeping
+              </span>
+            )}
             {readOnly && <ReadOnlyBadge />}
             <Button
               type="button"
@@ -425,6 +451,12 @@ export function BeadsPage() {
             activeIds={filters.activeChipIds}
             onToggle={toggleStatusChip}
             legend="Status"
+          />
+          <FilterChips
+            chips={ROW_SCOPE_CHIPS}
+            activeIds={showBookkeeping ? BOOKKEEPING_CHIPS : NO_CHIPS}
+            onToggle={toggleBookkeeping}
+            legend="Show"
           />
           {dispatchRigOptions.length > 1 && (
             <label className="flex items-baseline gap-2 text-label">

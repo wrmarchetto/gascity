@@ -18,6 +18,13 @@ export interface SupervisorBeadList extends Omit<ListBodyBead, 'items' | 'total'
 
 export interface ListSupervisorBeadsOptions {
   includeClosed?: boolean;
+  /**
+   * Reveal the rows gc itself does not count as work -- external-message
+   * transcripts, session and order bookkeeping, and the bookkeeping bead
+   * types. Off by default; the Beads board exposes it as a control so those
+   * rows stay reachable rather than being removed (ci-zg9lbn). The families
+   * are not enumerated here on purpose: the supervisor serves them.
+   */
   includeBookkeeping?: boolean;
   rigFilter?: string;
   limit?: number;
@@ -32,11 +39,17 @@ const BEADS_FETCH_LIMIT = 1000;
 const ASSIGNED_BEADS_FETCH_LIMIT = 200;
 const DETAIL_FALLBACK_FETCH_LIMIT = 1000;
 // The "real work" bead types the board fans out (one typed query each),
-// then keeps via defaultBeadFilter — the bookkeeping types
+// then keeps via isWorkBead — the bookkeeping types
 // (message/session/molecule/…) are dropped. Every entry MUST be a type the
 // live gc/bd backend accepts as a `type=` filter: a rig-scoped include-closed
 // (`all=true`) query for a type the backend rejects fails closed (HTTP 503
 // "invalid issue type") and that one rejected leg blanks the whole board.
+//
+// Kept as an allowlist rather than switched to the supervisor's ready-excluded
+// TYPE set, which is a denylist: the allowlist also drops a type gc gains
+// later and nobody has decided belongs on a work board. The LABEL dimension
+// went the other way for exactly the reason the type one did not -- families
+// are added there routinely, so that list must be read, not guessed.
 const ENGINEERING_BEAD_TYPES: ReadonlySet<string> = new Set([
   'feature',
   'bug',
@@ -59,13 +72,26 @@ export async function listSupervisorBeads(
     ...(includeClosed ? { all: true } : {}),
     ...(rigFilter.length === 0 ? {} : { rig: rigFilter }),
   };
-  const list =
+  // The hidden-label set is READ from the supervisor, never typed here: gc
+  // owns it (internal/beads.readyExcludeLabels) and adds external-message
+  // families to it over time, so a copy on this side rots silently -- the
+  // whole point of ci-zg9lbn. Issued alongside the list rather than cached,
+  // because it is a few hundred bytes next to a ~1.3MB board fetch and a
+  // cache keyed on nothing in particular is the next stale-copy bug.
+  // Skipped entirely when the caller wants everything: then there is nothing
+  // to hide and a policy outage must not blank the board.
+  const [list, policy] = await Promise.all([
     options.signal === undefined
-      ? await supervisorApi().listBeads(cityName, baseQuery)
-      : await supervisorApi().listBeads(cityName, baseQuery, options.signal);
+      ? supervisorApi().listBeads(cityName, baseQuery)
+      : supervisorApi().listBeads(cityName, baseQuery, options.signal),
+    includeBookkeeping ? Promise.resolve(undefined) : supervisorApi().beadLabelPolicy(cityName),
+  ]);
   const items = uniqueById(list.items ?? []);
   const statusFiltered = includeClosed ? items : items.filter((bead) => bead.status !== 'closed');
-  const filtered = includeBookkeeping ? statusFiltered : statusFiltered.filter(defaultBeadFilter);
+  const hiddenLabels = new Set(policy?.hidden_labels ?? []);
+  const filtered = includeBookkeeping
+    ? statusFiltered
+    : statusFiltered.filter((bead) => isWorkBead(bead, hiddenLabels));
   const upstreamTotal = countAsNumber(list.total);
   return {
     items: filtered,
@@ -128,13 +154,21 @@ export async function fetchSupervisorBead(id: string): Promise<SupervisorBead> {
   }
 }
 
-function defaultBeadFilter(bead: SupervisorBead): boolean {
+// isWorkBead: does this row belong on a board of engineering work?
+//
+// Two dimensions, and the label one is a UNION of two rules rather than one.
+// `hiddenLabels` is the supervisor's own ready-exclusion set and is the
+// authority -- the set contains a family carrying no `gc:` prefix at all, and
+// nothing but the served set catches it. The prefix test stays beside it as a
+// forward-looking catch-all for a gc-internal row whose family nobody has
+// added to that set yet; it is a heuristic, NOT a copy of the enumeration,
+// which is why it does not name a single family.
+function isWorkBead(bead: SupervisorBead, hiddenLabels: ReadonlySet<string>): boolean {
   if (!ENGINEERING_BEAD_TYPES.has(bead.issue_type)) return false;
-  if (Array.isArray(bead.labels) && bead.labels.some((label) => label.startsWith('gc:'))) {
-    return false;
-  }
-  return true;
+  if (!Array.isArray(bead.labels)) return true;
+  return !bead.labels.some((label) => hiddenLabels.has(label) || label.startsWith('gc:'));
 }
+
 function countAsNumber(value: ListBodyBead['total']): number | undefined {
   if (typeof value === 'number') return value;
   if (typeof value === 'bigint') return Number(value);

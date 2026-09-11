@@ -8,6 +8,7 @@ import {
   AGENT_SESSION_TEMPLATE,
   ANCHOR_FORMULA,
   ANCHOR_RUN_ID,
+  BOOKKEEPING_BEAD_TITLE,
   CITY_BASE,
   CITY_NAME,
   COMPLETED_FORMULA,
@@ -21,6 +22,7 @@ import {
   REVIEW_BEAD_TITLE,
   REVIEW_DEP_TARGET_ID,
   RIG_NAME,
+  UNPREFIXED_BOOKKEEPING_BEAD_TITLE,
   WORK_BEAD_ID,
   WORK_BEAD_TITLE,
 } from './fixtures/expected';
@@ -129,6 +131,37 @@ test.describe('dashboard render smoke over the seeded corpus', () => {
     await expect(page.getByText(WORK_BEAD_ID, { exact: true }).first()).toBeVisible();
     // The seeded work bead's title renders on its card — proof the row, not just
     // its id chip, projected.
+    await expect(page.getByText(WORK_BEAD_TITLE, { exact: false }).first()).toBeVisible();
+  });
+
+  // ci-zg9lbn. jsdom can prove the predicate and the refetch; it cannot prove
+  // the control is on the page, that the hidden row is absent from what a
+  // browser actually paints, or that the reveal survives a real re-render.
+  // That is this spec's job.
+  test('beads hides the seeded bookkeeping row until the show control is used', async ({
+    page,
+  }) => {
+    await gotoCityRoute(page, CITY_BASE, '/beads');
+    await expect(page.getByRole('heading', { name: 'Beads', level: 1 })).toBeVisible();
+    // Wait on a row that IS expected before asserting an absence: an assertion
+    // that the transcript row is missing passes trivially against a board that
+    // has not finished loading.
+    await expect(page.getByText(WORK_BEAD_TITLE, { exact: false }).first()).toBeVisible();
+    await expect(page.getByText(BOOKKEEPING_BEAD_TITLE, { exact: false })).toHaveCount(0);
+    // The row the prefix heuristic cannot account for: it is hidden only
+    // because the supervisor named its label.
+    await expect(page.getByText(UNPREFIXED_BOOKKEEPING_BEAD_TITLE, { exact: false })).toHaveCount(
+      0,
+    );
+
+    await page.getByRole('button', { name: 'bookkeeping' }).click();
+
+    await expect(page.getByText(BOOKKEEPING_BEAD_TITLE, { exact: false }).first()).toBeVisible();
+    await expect(
+      page.getByText(UNPREFIXED_BOOKKEEPING_BEAD_TITLE, { exact: false }).first(),
+    ).toBeVisible();
+    // The real work row stays: the control widens the scope, it does not swap
+    // the board over to a bookkeeping-only view.
     await expect(page.getByText(WORK_BEAD_TITLE, { exact: false }).first()).toBeVisible();
   });
 

@@ -147,3 +147,30 @@ type BeadDeleteInput struct {
 	CityScope
 	ID string `path:"id" doc:"Bead ID."`
 }
+
+// BeadLabelPolicyInput is the Huma input for
+// GET /v0/city/{cityName}/beads/label-policy. The policy is a property of the
+// binary, not of the city, so the input carries no filters; it is city-scoped
+// only because every dashboard read is, and a second unscoped route would
+// need its own client surface for no gain.
+type BeadLabelPolicyInput struct {
+	CityScope
+}
+
+// BeadLabelPolicyOutput answers "which bead labels does this binary not count
+// as work". It exists so the dashboard can hide bookkeeping rows without
+// typing the label literals into TypeScript, where nothing would redden when a
+// new external-messaging family is added (internal/beads.readyExcludeLabels
+// carries that comment).
+//
+// Ready() also excludes on bead TYPE, and that dimension is deliberately NOT
+// served here. The Beads board applies a narrower allowlist of its own
+// (ENGINEERING_BEAD_TYPES in supervisor/beadReads.ts) which already drops
+// every excluded type, so a hidden_types field would be written by this
+// handler and read by nobody -- invisible to a suite that tests each end
+// separately. Add it here when a consumer actually needs it.
+type BeadLabelPolicyOutput struct {
+	Body struct {
+		HiddenLabels []string `json:"hidden_labels" doc:"Labels marking a bead as infrastructure bookkeeping rather than actionable work, in declaration order. A client hides these rows by default."`
+	}
+}
