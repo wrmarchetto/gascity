@@ -22,28 +22,44 @@ import (
 
 // TestComputeFactGetCandidate is the usage-lane Get-budget gate: emitDueComputeFacts only
 // issues a per-session store Get when computeFactGetCandidate returns true, so this pins
-// the pre-Get filter that keeps a steady fleet of parked, already-accounted sessions at
-// zero Gets. A mutation that drops any filter clause (terminal-state, awake-interval
-// present, or interval-not-already-emitted) flips a case and fails.
+// the pre-Get filter that keeps a steady fleet of parked, fully-accounted sessions at
+// zero Gets. A mutation that drops any filter clause -- terminal-state, awake-interval
+// present, compute-unrecorded, or sweep-unsettled -- flips exactly one case and fails.
+//
+// The two marker clauses are a UNION, and each is pinned alone (compute-set-sweep-unset,
+// compute-unset-sweep-set) because dropping either one is silent in the other's cases:
+// without the sweep clause a terminal interval's trailing model tokens are never
+// recovered, and without the compute clause the fact is never recorded. Only the
+// both-set case may return false. The old single-clause form is what forced
+// processSessionBead to withhold the compute marker, which is the gs-18wr re-emission.
 func TestComputeFactGetCandidate(t *testing.T) {
-	info := func(state, awake, emitted string) session.Info {
+	info := func(state, awake, emitted, swept string) session.Info {
 		return sessiontest.SeedBead(t, beads.Bead{
 			ID: "gc-x", Type: session.BeadType, Status: "open", Labels: []string{session.LabelSession},
-			Metadata: map[string]string{"state": state, "awake_started_at": awake, "usage_compute_emitted_at": emitted},
+			Metadata: map[string]string{
+				"state":                    state,
+				"awake_started_at":         awake,
+				"usage_compute_emitted_at": emitted,
+				"usage_model_swept_at":     swept,
+			},
 		})
 	}
 	const t1 = "2026-01-02T00:30:00Z"
+	const stale = "2026-01-01T00:00:00Z"
 	cases := []struct {
 		name string
 		info session.Info
 		want bool
 	}{
-		{"active-not-terminal", info("active", t1, ""), false},
-		{"terminal-no-awake", info("asleep", "", ""), false},
-		{"terminal-awake-not-emitted", info("asleep", t1, ""), true},
-		{"terminal-awake-already-emitted", info("asleep", t1, t1), false},
-		{"terminal-awake-emitted-stale-interval", info("asleep", t1, "2026-01-01T00:00:00Z"), true},
-		{"drained-terminal", info("drained", t1, ""), true},
+		{"active-not-terminal", info("active", t1, "", ""), false},
+		{"terminal-no-awake", info("asleep", "", "", ""), false},
+		{"terminal-awake-neither-lane-done", info("asleep", t1, "", ""), true},
+		{"terminal-awake-both-lanes-done", info("asleep", t1, t1, t1), false},
+		{"terminal-awake-compute-done-sweep-pending", info("asleep", t1, t1, ""), true},
+		{"terminal-awake-sweep-done-compute-pending", info("asleep", t1, "", t1), true},
+		{"terminal-awake-compute-marker-stale-interval", info("asleep", t1, stale, t1), true},
+		{"terminal-awake-sweep-marker-stale-interval", info("asleep", t1, t1, stale), true},
+		{"drained-terminal", info("drained", t1, "", ""), true},
 	}
 	for _, tc := range cases {
 		if got := computeFactGetCandidate(tc.info); got != tc.want {
@@ -112,7 +128,7 @@ func TestEmitComputeFactForBead(t *testing.T) {
 	sink := &captureSink{}
 	now := slept.Add(5 * time.Second)
 
-	if !emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", now, nil, true) {
+	if !emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", now, nil) {
 		t.Fatal("expected first emit to record a fact")
 	}
 	if len(sink.facts) != 1 {
@@ -145,7 +161,7 @@ func TestEmitComputeFactForBead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if emitComputeFactForBead(context.Background(), sink, store, refreshed, "fake", "demo", now, nil, true) {
+	if emitComputeFactForBead(context.Background(), sink, store, refreshed, "fake", "demo", now, nil) {
 		t.Fatal("second emit on same interval must no-op (marker set)")
 	}
 	if len(sink.facts) != 1 {
@@ -176,7 +192,7 @@ func TestEmitComputeFactForBeadMultiInterval(t *testing.T) {
 	}
 	sink := &captureSink{}
 
-	if !emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", s1.Add(time.Second), nil, true) {
+	if !emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", s1.Add(time.Second), nil) {
 		t.Fatal("interval 1 should emit")
 	}
 
@@ -193,7 +209,7 @@ func TestEmitComputeFactForBeadMultiInterval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !emitComputeFactForBead(context.Background(), sink, store, refreshed, "fake", "demo", s2.Add(time.Second), nil, true) {
+	if !emitComputeFactForBead(context.Background(), sink, store, refreshed, "fake", "demo", s2.Add(time.Second), nil) {
 		t.Fatal("interval 2 should emit a second compute fact")
 	}
 	if len(sink.facts) != 2 {
@@ -221,7 +237,7 @@ func TestEmitComputeFactForBeadSinkErrorIsLogged(t *testing.T) {
 	logf := func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
 	sink := &erroringSink{}
 
-	if emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", start.Add(time.Minute), logf, true) {
+	if emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", start.Add(time.Minute), logf) {
 		t.Fatal("a failing sink must not report success")
 	}
 	if len(logged) == 0 {
@@ -245,12 +261,12 @@ func TestEmitComputeFactForBeadNoOps(t *testing.T) {
 
 	// No awake_started_at → nothing to bill.
 	b1, _ := store.Create(beads.Bead{Title: "s1", Metadata: map[string]string{"state": "asleep"}})
-	if emitComputeFactForBead(ctx, sink, store, b1, "fake", "demo", now, nil, true) {
+	if emitComputeFactForBead(ctx, sink, store, b1, "fake", "demo", now, nil) {
 		t.Fatal("no awake_started_at must no-op")
 	}
 	// Discard sink → no-op even with a valid interval.
 	b2, _ := store.Create(beads.Bead{Title: "s2", Metadata: map[string]string{"state": "asleep", "awake_started_at": now.Format(time.RFC3339)}})
-	if emitComputeFactForBead(ctx, usage.Discard, store, b2, "fake", "demo", now, nil, true) {
+	if emitComputeFactForBead(ctx, usage.Discard, store, b2, "fake", "demo", now, nil) {
 		t.Fatal("discard sink must no-op")
 	}
 	if len(sink.facts) != 0 {
@@ -281,7 +297,7 @@ func TestEmitComputeFactForBeadHungSinkReturnsPromptly(t *testing.T) {
 	done := make(chan bool, 1)
 	began := time.Now()
 	go func() {
-		done <- emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", start.Add(time.Minute), nil, true)
+		done <- emitComputeFactForBead(context.Background(), sink, store, b, "fake", "demo", start.Add(time.Minute), nil)
 	}()
 	select {
 	case ok := <-done:
@@ -346,11 +362,14 @@ func kindCount(facts []usage.Fact, kind usage.Kind) int {
 	return n
 }
 
-// rawSinkModelFactCount counts the model facts APPENDED to the sink file,
+// rawSinkKindCount counts the facts of one Kind APPENDED to the sink file,
 // without usage.ReadFacts's IdempotencyKey dedup. Idempotency assertions must
 // use this: ReadFacts collapses a replayed fact at read time, so it would
-// silently pass even if a tick re-recorded work the cursor should have skipped.
-func rawSinkModelFactCount(t *testing.T, path string) int {
+// silently pass even if a tick re-recorded work a cursor or marker should have
+// skipped -- which is exactly how the compute lane's unbounded re-emission
+// (gs-18wr) survived a green suite. Every raw counter goes through here so a
+// new lane cannot be given a dedup-blind assertion by accident.
+func rawSinkKindCount(t *testing.T, path string, kind usage.Kind) int {
 	t.Helper()
 	body, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -368,11 +387,18 @@ func rawSinkModelFactCount(t *testing.T, path string) int {
 		if err := json.Unmarshal([]byte(line), &f); err != nil {
 			t.Fatalf("malformed usage fact %q: %v", line, err)
 		}
-		if f.Kind == usage.KindModel {
+		if f.Kind == kind {
 			n++
 		}
 	}
 	return n
+}
+
+// rawSinkModelFactCount is the model-lane spelling of rawSinkKindCount, kept
+// because the live-sweep tests read as prose with it.
+func rawSinkModelFactCount(t *testing.T, path string) int {
+	t.Helper()
+	return rawSinkKindCount(t, path, usage.KindModel)
 }
 
 // liveSweepStart anchors a live fixture just behind the wall clock. A live
@@ -946,8 +972,8 @@ func TestEmitDueComputeFactsRetriesUnsettledModelSweep(t *testing.T) {
 	info := session.Info{ID: b.ID, MetadataState: "asleep", AwakeStartedAt: start.Format(time.RFC3339)}
 
 	// Tick 1: the rollout is not on disk yet → the sweep misses (transient). The
-	// compute fact still records, but neither the compute marker nor the sweep
-	// marker is stamped, so the interval stays open for retry.
+	// compute fact records AND closes its own lane; only the sweep marker is left
+	// unset, and that alone keeps the interval a Get candidate for the retry.
 	cr.emitDueComputeFacts(context.Background(), []session.Info{info}, false)
 	facts1, _, err := usage.ReadFacts(sinkPath)
 	if err != nil {
@@ -963,11 +989,17 @@ func TestEmitDueComputeFactsRetriesUnsettledModelSweep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if afterTick1.Metadata[usageComputeEmittedAtKey] != "" {
-		t.Fatal("tick 1 must leave usage_compute_emitted_at unset so the interval stays a candidate for the sweep retry")
+	// Pre-gs-18wr this asserted the OPPOSITE -- that the compute marker stay unset
+	// -- which is what re-recorded the fact on every later tick. The sweep clause of
+	// computeFactGetCandidate now carries the retry instead.
+	if got := afterTick1.Metadata[usageComputeEmittedAtKey]; got != start.Format(time.RFC3339) {
+		t.Fatalf("tick 1 compute marker = %q, want %q: the compute lane closes as soon as its fact is recorded, whatever the sweep did", got, start.Format(time.RFC3339))
 	}
 	if afterTick1.Metadata[usageModelSweptAtKey] != "" {
 		t.Fatal("tick 1 must leave the sweep marker unset (the sweep did not settle)")
+	}
+	if got := rawSinkKindCount(t, sinkPath, usage.KindCompute); got != 1 {
+		t.Fatalf("tick 1 compute LINES = %d, want 1", got)
 	}
 
 	// The transcript is flushed to disk between ticks.
@@ -984,7 +1016,10 @@ func TestEmitDueComputeFactsRetriesUnsettledModelSweep(t *testing.T) {
 		t.Fatalf("ReadFacts (tick 2): %v", err)
 	}
 	if got := kindCount(facts2, usage.KindCompute); got != 1 {
-		t.Fatalf("tick 2 compute facts = %d, want 1 (the re-recorded compute fact dedups by IdempotencyKey)", got)
+		t.Fatalf("tick 2 compute facts = %d, want 1", got)
+	}
+	if got := rawSinkKindCount(t, sinkPath, usage.KindCompute); got != 1 {
+		t.Fatalf("tick 2 compute LINES = %d, want 1: the retry tick must not re-append the interval's compute fact", got)
 	}
 	if got := kindCount(facts2, usage.KindModel); got != 2 {
 		t.Fatalf("tick 2 model facts = %d, want 2 (recovered on retry): %+v", got, facts2)
@@ -995,15 +1030,21 @@ func TestEmitDueComputeFactsRetriesUnsettledModelSweep(t *testing.T) {
 	}
 	awake := start.Format(time.RFC3339)
 	if afterTick2.Metadata[usageComputeEmittedAtKey] != awake {
-		t.Fatalf("tick 2 must commit the interval (usage_compute_emitted_at=%q), got %q", awake, afterTick2.Metadata[usageComputeEmittedAtKey])
+		t.Fatalf("tick 2 must leave the interval accounted (usage_compute_emitted_at=%q), got %q", awake, afterTick2.Metadata[usageComputeEmittedAtKey])
 	}
 	if afterTick2.Metadata[usageModelSweptAtKey] != awake {
 		t.Fatalf("tick 2 must stamp the sweep marker (%q), got %q", awake, afterTick2.Metadata[usageModelSweptAtKey])
 	}
 
-	// Tick 3: both markers set → no re-Get work, no new facts.
-	info.UsageComputeEmittedAt = awake // reflects the committed interval on the snapshot
-	cr.emitDueComputeFacts(context.Background(), []session.Info{info}, false)
+	// Tick 3: both markers set → no re-Get work, no new facts. The snapshot is
+	// re-projected from the store through the production codec rather than having
+	// its marker fields assigned, which is both closer to what the reconcile tick
+	// does and what keeps this package compiling when the upstream-retirement probe
+	// reverts the production half: a test that names session.Info.UsageModelSweptAt
+	// directly fails to BUILD against unpatched code, and a build failure is a red
+	// the probe cannot distinguish from "upstream still lacks the behavior"
+	// (docs/upstream-patch-retirement.md).
+	cr.emitDueComputeFacts(context.Background(), []session.Info{sessiontest.SeedBead(t, afterTick2)}, false)
 	facts3, _, err := usage.ReadFacts(sinkPath)
 	if err != nil {
 		t.Fatalf("ReadFacts (tick 3): %v", err)
@@ -1150,5 +1191,139 @@ func TestIsComputeTerminalState(t *testing.T) {
 		if isComputeTerminalState(s) {
 			t.Errorf("%q should not be terminal", s)
 		}
+	}
+}
+
+// unsettledSweepTicks is how many reconcile ticks the never-settling-sweep
+// regression drives. It must be well above 1 so a fix that merely delays the
+// re-emission by one tick still fails, and above 2 so the third-and-later ticks
+// prove the repeat is per-tick rather than a one-off replay. The production
+// figure it stands in for is 3,383 lines under one key (gs-18wr); eight is
+// enough to fail loudly and cheap enough to keep the fixture fast.
+const unsettledSweepTicks = 8
+
+// TestEmitDueComputeFactsRecordsComputeOnceWhenSweepNeverSettles pins the
+// invariant gs-18wr broke: one awake interval appends exactly ONE compute line
+// to the sink, however many ticks the model-usage sweep stays unsettled.
+//
+// The suite could not represent this defect before. Its sibling
+// TestEmitDueComputeFactsRetriesUnsettledModelSweep asserts through
+// usage.ReadFacts, which collapses the replay by IdempotencyKey at read time, so
+// it reads 1 compute fact whether the emitter appended 1 line or 3,383 -- and it
+// settles the sweep on tick 2, so it never reaches the steady state where a
+// session's transcript is permanently undiscoverable. This test asserts the RAW
+// line count and never settles the sweep.
+//
+// It is built with a KEYED codex session and an empty observe root on purpose:
+// a keyed rollout that is not on disk is classified a TRANSIENT discovery miss
+// (settled=false, internal/worker/invocation_telemetry.go), so the interval is
+// re-offered on every tick forever. A keyless session would report a definitive
+// miss and settle, which is the case that does NOT reproduce.
+//
+// The snapshot Info is re-projected from the fresh store bead on every tick via
+// session.InfoFromPersistedBead, because that is what the reconcile tick does.
+// Reusing one hand-built Info across ticks -- as the sibling test does -- hides
+// the coupling this fix turns on: once the compute marker is stamped, Get
+// candidacy has to come from the SWEEP marker, or the retry the marker split
+// exists to protect dies silently.
+//
+// Run: go test ./cmd/gc/ -run TestEmitDueComputeFactsRecordsComputeOnceWhenSweepNeverSettles
+func TestEmitDueComputeFactsRecordsComputeOnceWhenSweepNeverSettles(t *testing.T) {
+	cityPath := t.TempDir()
+	workDir := t.TempDir()
+	codexRoot := t.TempDir() // stays EMPTY: discovery misses transiently every tick
+	sinkPath := filepath.Join(cityPath, ".gc", "usage.jsonl")
+
+	store := beads.NewMemStore()
+	start := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	slept := start.Add(90 * time.Second)
+	awake := start.Format(time.RFC3339)
+	b, err := store.Create(beads.Bead{
+		Type:   session.BeadType,
+		Status: "open",
+		Title:  "codex session",
+		Labels: []string{session.LabelSession},
+		Metadata: map[string]string{
+			"state":            "asleep",
+			"session_name":     "codex-1",
+			"awake_started_at": awake,
+			"slept_at":         slept.Format(time.RFC3339),
+			"session_key":      codexSweepSessionKey,
+			"work_dir":         workDir,
+			"provider":         "codex",
+			"builtin_ancestor": "codex",
+			"molecule_id":      "run-Z",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{Daemon: config.DaemonConfig{ObservePaths: []string{codexRoot}}}
+	cs := &controllerState{cityBeadStore: store, usageSink: usage.NewLocalSink(sinkPath), cityName: "demo", cityPath: cityPath}
+	cr := &CityRuntime{cs: cs, cfg: cfg, sp: runtime.NewFake(), cityName: "demo", cityPath: cityPath, stderr: io.Discard}
+
+	// tick re-projects the snapshot row from the store through the production
+	// codec (sessiontest.SeedBead runs session.Store.Get), as the reconcile tick
+	// does, so a marker this pass writes is visible to the next pass's candidacy
+	// filter.
+	tick := func() {
+		fresh, gerr := store.Get(b.ID)
+		if gerr != nil {
+			t.Fatal(gerr)
+		}
+		cr.emitDueComputeFacts(context.Background(), []session.Info{sessiontest.SeedBead(t, fresh)}, false)
+	}
+
+	for i := 0; i < unsettledSweepTicks; i++ {
+		tick()
+		if got := rawSinkKindCount(t, sinkPath, usage.KindCompute); got != 1 {
+			t.Fatalf("after %d tick(s): %d compute LINES in the sink, want 1 -- the interval is re-recorded on every tick the sweep does not settle (gs-18wr)", i+1, got)
+		}
+	}
+
+	// The sweep marker must still be unset: the interval stays a sweep candidate,
+	// which is the capability the compute marker used to be overloaded to carry.
+	afterTicks, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := afterTicks.Metadata[usageModelSweptAtKey]; got != "" {
+		t.Fatalf("sweep marker = %q, want unset -- an unsettled sweep must stay retryable", got)
+	}
+
+	// The transcript finally lands. The sweep must still be retried -- proving the
+	// re-emission was stopped by closing the compute interval, NOT by dropping the
+	// session out of candidacy altogether.
+	writeCodexRolloutForSweep(t, codexRoot, workDir, [][3]int{
+		{150, 100, 50},
+		{450, 200, 100},
+	})
+	tick()
+
+	if got := rawSinkKindCount(t, sinkPath, usage.KindModel); got != 2 {
+		t.Fatalf("%d model LINES after the transcript landed, want 2 -- the unsettled sweep must still retry once the compute interval is closed", got)
+	}
+	if got := rawSinkKindCount(t, sinkPath, usage.KindCompute); got != 1 {
+		t.Fatalf("%d compute LINES after the recovery tick, want 1", got)
+	}
+	settled, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := settled.Metadata[usageModelSweptAtKey]; got != awake {
+		t.Fatalf("sweep marker = %q, want %q (settled on the recovery tick)", got, awake)
+	}
+	if got := settled.Metadata[usageComputeEmittedAtKey]; got != awake {
+		t.Fatalf("compute marker = %q, want %q (the interval is accounted)", got, awake)
+	}
+
+	// One more tick with both markers set changes nothing.
+	tick()
+	if got := rawSinkKindCount(t, sinkPath, usage.KindCompute); got != 1 {
+		t.Fatalf("%d compute LINES after the quiescent tick, want 1", got)
+	}
+	if got := rawSinkKindCount(t, sinkPath, usage.KindModel); got != 2 {
+		t.Fatalf("%d model LINES after the quiescent tick, want 2", got)
 	}
 }

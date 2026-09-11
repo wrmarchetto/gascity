@@ -318,6 +318,18 @@ type Info struct {
 	// terminal session whose current interval is already accounted BEFORE issuing a
 	// per-session store Get.
 	UsageComputeEmittedAt string // usage_compute_emitted_at (raw)
+	// UsageModelSweptAt is the RAW usage_model_swept_at metadata: the
+	// awake_started_at value of the interval whose end-of-interval model-usage
+	// sweep has settled. It is projected for the SAME reason as
+	// UsageComputeEmittedAt -- the compute-usage lane's pre-Get candidacy filter
+	// reads it -- and the two are read as a union: an interval is still worth a
+	// Get while EITHER marker lags AwakeStartedAt. Do not drop this field on the
+	// grounds that the compute marker already covers candidacy. That overload is
+	// exactly the defect gs-18wr fixed: the compute marker was held back to keep
+	// an unsettled sweep retryable, and a sweep that never settles then
+	// re-recorded the compute fact on every tick forever (3,383 lines under one
+	// idempotency key in the maintainer city).
+	UsageModelSweptAt string // usage_model_swept_at (raw)
 	// StateReason is the RAW state_reason metadata. The pool sweep's
 	// post-create-protection window matches state_reason == "creation_complete".
 	StateReason string // state_reason (raw)

@@ -17,6 +17,20 @@ import (
 // value) whose compute Fact has already been recorded, so a later tick does
 // not re-emit it. A new awake interval has a new awake_started_at, so emission
 // across intervals is allowed.
+//
+// It means ONLY "the compute fact for this interval is in the sink". It must
+// NOT be held back to keep some other lane's retry alive -- the reading a
+// future editor would reach for, since leaving it unset is the cheapest way to
+// re-offer a session to the next tick. That overload is the gs-18wr defect: the
+// marker was withheld while the model-usage sweep was unsettled, and a sweep
+// that never settles re-recorded the compute fact on EVERY tick for the life of
+// the bead. Measured in the maintainer city 2026-09-10: 36 intervals produced
+// 17,914 sink lines, the worst single idempotency key 3,383 of them, inflating
+// the log ~21% over the facts in it. Nothing double-counted -- usage.ReadFacts
+// collapses the key -- so the only visible symptom was line-count growth, and a
+// per-day LINE count reported a 2,633-fact compute spike whose real figure was
+// 8. Each lane gets its own marker; candidacy reads their union
+// (computeFactGetCandidate).
 const usageComputeEmittedAtKey = "usage_compute_emitted_at"
 
 // usageModelSweptAtKey marks the awake interval (by its awake_started_at value)
@@ -77,13 +91,11 @@ func isLiveModelSweepState(state string) bool {
 // when the interval was already recorded. Sink and marker write failures are
 // reported through logf (when non-nil) rather than dropped silently.
 //
-// commit governs the interval-accounting side effects, decoupled from the fact
-// write so the model-usage sweep can retry across ticks: when commit is true the
-// usage_compute_emitted_at marker is stamped (closing the interval to further
-// Gets); when false the fact is still recorded but the interval stays open, so a
-// caller that has not yet settled the model sweep leaves the session a candidate
-// for the next tick. Re-recording the fact on a later tick is collapsed by
-// ComputeIdempotencyKey at read time.
+// The marker is stamped on every successful record, unconditionally: there is no
+// caller-supplied way to record the fact and leave the interval open. A caller
+// that still needs the session re-offered next tick says so with its OWN marker
+// and reads the union in computeFactGetCandidate -- see usageComputeEmittedAtKey
+// for why the withheld-marker shape is banned rather than merely discouraged.
 //
 // SessionID is stamped from bead.ID so compute facts carry the same session
 // bead join key as model facts.
@@ -95,7 +107,7 @@ func isLiveModelSweepState(state string) bool {
 // molecule_id || gc.root_bead_id-or-self || bead id). Per-work-bead attribution
 // is deferred until a dispatch/claim writer exists, so pooled sessions roll up
 // per-session for now (see engdocs/design/usage-facts-v0.md).
-func emitComputeFactForBead(ctx context.Context, sink usage.Sink, store beads.Store, bead beads.Bead, runtimeKind, city string, now time.Time, logf func(string, ...any), commit bool) bool {
+func emitComputeFactForBead(ctx context.Context, sink usage.Sink, store beads.Store, bead beads.Bead, runtimeKind, city string, now time.Time, logf func(string, ...any)) bool {
 	if sink == nil || sink == usage.Discard || store == nil {
 		return false
 	}
@@ -155,12 +167,6 @@ func emitComputeFactForBead(ctx context.Context, sink usage.Sink, store beads.St
 		}
 		return false
 	}
-	if !commit {
-		// The fact is durably recorded, but the interval is intentionally left open
-		// (marker unset) so the model-usage sweep retries on a later tick. The
-		// re-recorded fact is collapsed by IdempotencyKey.
-		return true
-	}
 	// Single-key marker → atomic on every store impl.
 	if err := store.SetMetadata(bead.ID, usageComputeEmittedAtKey, startRaw); err != nil {
 		// The fact is durably recorded; a missed marker only risks a re-emit that
@@ -172,14 +178,33 @@ func emitComputeFactForBead(ctx context.Context, sink usage.Sink, store beads.St
 	return true
 }
 
-// computeFactGetCandidate reports whether a session is worth a per-session store Get for
-// a compute Fact, decided purely from its Info projection — BEFORE any Get. A session
-// qualifies only when it is in a compute-terminal state, has an awake interval to account
-// (awake_started_at set), and that interval is not already recorded
-// (usage_compute_emitted_at != awake_started_at). This is the same short-circuit
-// emitComputeFactForBead applies AFTER the Get, hoisted onto Info so a parked (idle/
-// asleep) session whose interval is already accounted costs zero Gets — the common steady
-// state. It is the pure, testable gate behind emitDueComputeFacts's per-session Get.
+// computeFactGetCandidate reports whether a session is worth a per-session store Get on
+// the terminal lane, decided purely from its Info projection — BEFORE any Get. A session
+// qualifies when it is in a compute-terminal state, has an awake interval to account
+// (awake_started_at set), and EITHER of the interval's two lanes is still outstanding:
+// the compute fact unrecorded (usage_compute_emitted_at != awake_started_at) or the
+// model-usage sweep unsettled (usage_model_swept_at != awake_started_at). Hoisting the
+// filter onto Info keeps a parked (idle/asleep) session whose interval is fully accounted
+// at zero Gets — the common steady state. It is the pure, testable gate behind
+// emitDueComputeFacts's per-session Get.
+//
+// The union is load-bearing, and the compute clause ALONE is the shape to reject: it was
+// what the lane read before gs-18wr, and it only kept the sweep retryable because
+// processSessionBead withheld the compute marker to fake an outstanding interval — which
+// re-recorded the compute fact every tick (see usageComputeEmittedAtKey). Dropping the
+// sweep clause instead would silence the re-emission by dropping the session out of
+// candidacy entirely, trading a visible log-growth defect for an invisible billing one:
+// a terminal interval's trailing model tokens would never be recovered and nothing on
+// the log would say so. TestEmitDueComputeFactsRecordsComputeOnceWhenSweepNeverSettles
+// pins both halves.
+//
+// Deliberately absent: any attempt cap or backoff on the sweep clause. A session whose
+// transcript is permanently undiscoverable reports a TRANSIENT miss forever
+// (internal/worker/invocation_telemetry.go), so it stays a candidate for the life of the
+// bead and costs one Get plus one bounded discovery scan per tick. That cadence is
+// unchanged from before gs-18wr — the fix removes the sink append, not the retry — and
+// capping it means deciding when to abandon an interval's model facts permanently, which
+// is a billing-completeness call for the usage owner, not a side effect of this fix.
 func computeFactGetCandidate(info session.Info) bool {
 	if !isComputeTerminalState(info.MetadataState) {
 		return false
@@ -188,7 +213,8 @@ func computeFactGetCandidate(info session.Info) bool {
 	if start == "" {
 		return false
 	}
-	return strings.TrimSpace(info.UsageComputeEmittedAt) != start
+	return strings.TrimSpace(info.UsageComputeEmittedAt) != start ||
+		strings.TrimSpace(info.UsageModelSweptAt) != start
 }
 
 // liveModelSweepCandidate reports whether an open snapshot row is worth
@@ -296,35 +322,32 @@ func (cr *CityRuntime) emitDueComputeFacts(ctx context.Context, sessions []sessi
 		// Model-usage lane FIRST, symmetric to and beside the compute fact: recover the
 		// terminal interval's trailing model-token usage that the prompt-op seam never
 		// recorded (pool-routed, hook-self-driven agents self-drive after the claim
-		// nudge). It runs before the compute commit so its settle result gates whether
-		// the interval closes this tick. Best-effort — a sweep error never
-		// fails the reconcile tick; overlap with the prompt-op seam is collapsed at read
-		// time by the shared usage.ModelIdempotencyKey.
+		// nudge). Best-effort — a sweep error never fails the reconcile tick; overlap
+		// with the prompt-op seam is collapsed at read time by the shared
+		// usage.ModelIdempotencyKey.
 		//
-		// The sweep is gated by its OWN per-interval marker (usageModelSweptAtKey),
-		// distinct from the compute marker, so a transient miss retries on a later tick
-		// instead of being lost. sweepSettled defaults true so a nil factory / no-op
-		// sink never blocks the compute commit.
-		sweepSettled := true
+		// The sweep is gated by its OWN per-interval marker (usageModelSweptAtKey), and
+		// that marker is the WHOLE retry mechanism: while it lags awakeStart the session
+		// stays a Get candidate through computeFactGetCandidate's sweep clause. The
+		// sweep's verdict reaches the compute lane through nothing at all, which is the
+		// point of gs-18wr — the two lanes are independent, so ordering here is
+		// presentational (model beside compute) rather than a dependency.
 		if factory := modelSweepFactory(); factory != nil && awakeStart != "" &&
 			strings.TrimSpace(b.Metadata[usageModelSweptAtKey]) != awakeStart {
 			_, settled, serr := factory.SweepSessionModelUsage(ctx, b.ID, b.Metadata, now)
 			if serr != nil {
 				logf("usage: model-usage sweep for session %s failed; will retry: %v", b.ID, serr)
 			}
-			sweepSettled = settled
 			if settled {
 				if merr := store.SetMetadata(b.ID, usageModelSweptAtKey, awakeStart); merr != nil {
 					logf("usage: marking model-usage swept for session %s failed; may re-sweep (deduped by idempotency key): %v", b.ID, merr)
 				}
 			}
 		}
-		// Commit the interval (stamp usage_compute_emitted_at) only once the sweep
-		// has settled — an unsettled sweep leaves the interval a
-		// candidate so both lanes retry next tick. The compute fact itself is always
-		// recorded (idempotent), so wall-time accounting is never delayed by a pending
-		// sweep.
-		emitComputeFactForBead(ctx, sink, store, b, runtimeKind, cr.cityName, now, logf, sweepSettled)
+		// Account the interval: record the fact and stamp the compute marker in the same
+		// call. Both are idempotent per interval, so a session re-offered next tick for
+		// an unsettled sweep no longer re-appends the compute line.
+		emitComputeFactForBead(ctx, sink, store, b, runtimeKind, cr.cityName, now, logf)
 	}
 	for _, info := range sessions {
 		// A canceled tick (controller shutdown, reconcile deadline) stops here

@@ -494,7 +494,18 @@ func (f *Factory) SweepSessionModelUsage(ctx context.Context, id string, meta ma
 		// only rollout, and a lone hit may have hidden a second same-cwd, in-window
 		// rollout that would make it ambiguous. Either way the result is
 		// non-definitive, so record nothing and leave the interval unsettled for a
-		// later, unclouded tick; the recently-closed sweep window bounds the retries.
+		// later, unclouded tick.
+		//
+		// Nothing bounds the number of retries. This comment used to claim "the
+		// recently-closed sweep window bounds the retries"; there is no such window
+		// and there never was -- grep finds no recently-closed gate on the terminal
+		// lane, whose only caller is the reconcile tick over every OPEN session bead
+		// (cmd/gc/city_runtime.go). An interval stays a candidate until its state
+		// leaves isComputeTerminalState or its bead closes, which for a parked
+		// session is hours. That false bound is what made an unsettled return look
+		// cheap, and it cost 17,914 sink lines before gs-18wr; the cost is now one
+		// store Get plus one bounded discovery scan per tick, because the compute
+		// fact no longer rides along with the retry.
 		slog.Debug("model-usage sweep: keyless codex workdir scan hit a transient IO fault; will retry",
 			slog.String("session_id", id))
 		return 0, false, nil
@@ -504,9 +515,13 @@ func (f *Factory) SweepSessionModelUsage(ctx context.Context, id string, meta ma
 			// Clean miss: a terminal session's rollout is written at codex start and is
 			// already on disk, so a clean zero/ambiguous match is ambiguity, an
 			// out-of-window filename timestamp, or a TZ-shifted filename — none of which
-			// a retry resolves. Settle so the whole recently-closed window is not
-			// re-swept every tick. (A keyed miss below stays transient: its keyed
-			// rollout may simply not be flushed yet.)
+			// a retry resolves. Settle so this interval is not re-swept on every tick
+			// forever -- there is no window that would stop it otherwise (see the
+			// transient-IO arm above). (A keyed miss below stays transient: its keyed
+			// rollout may simply not be flushed yet, and that reading is sometimes
+			// right -- one maintainer-city session's rollout appeared after 7.2 hours
+			// of retrying and settled legitimately, which is why a terminal miss is
+			// NOT reclassified as permanent.)
 			slog.Debug("model-usage sweep: keyless codex workdir fallback found no rollout; settling",
 				slog.String("session_id", id))
 			return 0, true, nil

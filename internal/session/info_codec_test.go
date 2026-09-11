@@ -16,6 +16,7 @@ import (
 // ~19 keys beyond the original commit: alias_reservation_refused*,
 // pool_alias_conflict*, PackWorkspace /
 // WorkDirCanonical / WorkerDir, awake_started_at, usage_compute_emitted_at,
+// usage_model_swept_at,
 // SessionCircuitState, live_hash, startup_dialog_verified, builtin_ancestor,
 // and the 7-key sleep-policy cluster). It is the INDEPENDENT oracle for the
 // table-driven codec: TestInfoCodecProjectionParity asserts the new table loop
@@ -117,6 +118,7 @@ func infoFromPersistedBeadFrozen(b beads.Bead) Info {
 		LastWokeAt:                 b.Metadata["last_woke_at"],
 		AwakeStartedAt:             b.Metadata["awake_started_at"],
 		UsageComputeEmittedAt:      b.Metadata["usage_compute_emitted_at"],
+		UsageModelSweptAt:          b.Metadata["usage_model_swept_at"],
 		StateReason:                b.Metadata["state_reason"],
 		CreationCompleteAt:         b.Metadata["creation_complete_at"],
 		ContinuationResetPending:   b.Metadata["continuation_reset_pending"],
