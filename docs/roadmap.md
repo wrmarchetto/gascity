@@ -77,7 +77,7 @@ manual check-in" (pm-log #132).
 
 ## epic:mayor-slack-bridge -- Direct Slack line to the mayor
 
-status: in-progress
+status: done
 
 A second Slack channel, separate from the alerts channel, that works like
 having the mayor's tmux window open in Slack: anything Willie posts there
@@ -116,6 +116,21 @@ Acceptance:
 Depends on: a Slack app provisioned by Willie (bot token plus app-level
 token with connections:write; the new channel created), credentials landed
 in ${GC_HOME}/secrets.env. No hardware, no upstream rig.
+
+Conclusion: Live Slack line delivered end-to-end: Willie's unplanned
+2026-09-11 14:56 CDT channel message reached the mayor and the answer
+mirrored back with no manual step, the service pair provably continuous
+across the round trip (gs-z1m9 -- start times 14:19:16/14:21:57, 35 min
+before the demo, re-read live at PM review), and the gs-t0d8 flood fix
+held at 2 messages in the opening 45 s against the 2026-09-08 incident's
+92 (ci-6lx11c). Criterion 1's cold-wake clause was WITHDRAWN by Willie's
+2026-09-11 ruling, not passed: cold wake has never been demonstrated and
+no hold-down lever exists (gs-z09), and if the mayor ever stops being an
+always-awake session the criterion returns, owned by whoever makes that
+change. Remaining evidence: gs-wnn (Socket Mode ingress), gs-a9bm/gs-msc2
+(supervised pair), gs-8ra (ZERO-roles gate, 17/17 mutants dead), gs-228
+(secrets.env seam), gs-eh2 (chunking); close report gs-90b7, pm-log
+#140-#141.
 
 ## epic:agent-efficiency -- Agent session efficiency: time and usage headroom
 

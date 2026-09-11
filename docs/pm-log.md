@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-555l 2026-09-11T19:36:00Z
+last_seen: gs-90b7 2026-09-11T19:58:53Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4793,7 +4793,11 @@ possible, and no open bead carries it. Requested from the mayor by mail
 this turn: mint ONE re-run bead under epic:mayor-slack-bridge (clean
 round trip, no manual step, plus the cold arm behind a verified
 hold-down lever), operator-attended since it needs Willie at the
-keyboard. gs-msc2's own caveat stays outside this epic: the machine
+keyboard. Sent as ci-wisp-ii2n9ok. The --notify nudge was queued, not
+live -- the mayor's provider has no live-nudge path -- so it acts at its
+next prompt, and if the mail sits unread the 15-minute sweep re-summons
+this PM anyway, since no open bead carries the epic label. gs-msc2's own
+caveat stays outside this epic: the machine
 supervisor is running, not installed (no systemd unit), carried by
 gs-hzrg, standalone per #131.
 
@@ -4812,5 +4816,53 @@ gs-saj5 (criterion 7) -- gs-u302 (instrument question, answered at
 waiver review). agent-efficiency's remaining open work is gs-jbyc
 (canary window) and gs-z2on (affinity), recounted this turn: both open,
 neither in progress.
+
+Source: roadmap mayor-slack-bridge
+
+## 141. CLOSE REPORT gs-90b7: mayor-slack-bridge done -- criterion 9 passed live, criterion 1's cold arm withdrawn by Willie (2026-09-11)
+
+Close report gs-90b7 (mayor, re-run bead gs-z1m9) settles the two arms
+pm-log #140 left open. Verdict: epic:mayor-slack-bridge set done, with
+criterion 1's cold-wake clause recorded WITHDRAWN rather than satisfied.
+
+Criterion 9 (round trip, no manual step): PASSED. Willie posted into
+slack/C0C0JPH5E2Y at 14:56 CDT unplanned, the mayor answered in-channel,
+and nothing was started, stopped or restarted by hand. The evidence is
+negative -- that nothing was touched -- so this review re-read it live
+rather than trusting the report's copy: at ~15:00 CDT all four PIDs
+(slack-mirror 2234970/2234971, slack-bridge 2254497/2254501 -- service
+plus wrapper pairs) were still running with start times 14:19:16 and
+14:21:57, 35 minutes before the demo and before the answering mayor
+session (14:27:59), and gc service list showed both ready/private. A
+second reading at a later time extends the continuity window past the
+demo; it is not the report's own ps output counted twice.
+
+Criterion 1 (cold wake): WITHDRAWN, NOT PASSED. Willie, 14:56 CDT,
+verbatim: "I don't really see the value in proving it can wake the mayor;
+the mayor is always awake during normal operation. I'd say we just close
+this." The quote is mayor-recorded (gs-z1m9 and the report are one
+source), but its premise is corroborated independently -- gc status reads
+mayor "awake (always)" -- and Willie's live presence in the channel at
+that minute is proven by the demo itself. Recorded with its expiry in the
+epic's Conclusion: cold wake has never been demonstrated, no hold-down
+lever exists (gs-z09 measured suspend failing to stick; unpin+suspend
+untested), and if the mayor ever stops being an always-awake session the
+criterion returns, owned by whoever makes that change. No follow-up bead,
+deliberately: the ruling was close, not defer.
+
+All other criteria stood met at #140 and were not re-litigated. Roadmap
+edited in one pass: status: done plus the Conclusion block. No promotion
+from this path: agent-efficiency is already in-progress and no epic is
+open, so pm-open #8 stands as the what-next record. The 15-minute sweep
+filed a fresh epic-close summons gs-3ml0 before this edit; its premise is
+now discharged, and the next session closes it citing this entry rather
+than re-verifying. This commit also carries the prior turn's staged but
+uncommitted amendment to #140 (the ci-wisp-ii2n9ok mail-send details),
+found staged at wake and folded in rather than dropped.
+
+Drift since last_seen (gs-555l 19:36:00Z): gs-z1m9 filed and closed (the
+re-run, outcome shipped), gs-90b7 filed (this report), gs-3ml0 filed
+(epic-close summons, open). agent-efficiency's open carriers gs-jbyc and
+gs-z2on are unchanged, as is gs-hzrg.
 
 Source: roadmap mayor-slack-bridge
