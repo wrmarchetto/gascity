@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-90b7 2026-09-11T19:58:53Z
+last_seen: gs-3ml0 2026-09-11T20:09:56Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4866,3 +4866,29 @@ re-run, outcome shipped), gs-90b7 filed (this report), gs-3ml0 filed
 gs-z2on are unchanged, as is gs-hzrg.
 
 Source: roadmap mayor-slack-bridge
+
+## 142. pm-epic-close gs-3ml0: stale summons -- mayor-slack-bridge was set done at #141 before this wake (2026-09-11)
+
+Summons gs-3ml0 is the fresh epic-close summons #141 predicted: the
+15-minute sweep filed it while mayor-slack-bridge was still in-progress,
+before #141's roadmap edit landed (commit f65b0a5d9). Its premise is
+discharged. Re-read this turn rather than trusted from memory: the
+roadmap carries status: done plus the Conclusion block for
+mayor-slack-bridge, written in #141's single edit from close report
+gs-90b7 (criterion 9 passed live 14:56 CDT, criterion 1's cold-wake arm
+withdrawn by Willie, expiry recorded in the Conclusion). Nothing is
+re-litigated here; the evidence base is #140-#141.
+
+No promotion: no epic has status: open. agent-efficiency is already
+in-progress (promoted at #137, pending Willie's confirmation per pm-open
+#6) with open carriers gs-jbyc (canary window) and gs-z2on (affinity),
+so the rig is not idle. The what-next gap is already recorded as pm-open
+#8 -- no new append, one record per question. Closing the summons cannot
+re-file: the sweep's condition (all epic beads closed AND epic
+in-progress) no longer holds now the epic is done.
+
+Drift since last_seen (gs-90b7 19:58:53Z): gs-90b7 closed (#141's close
+report, verdict delivered) and gs-3ml0 filed and claimed (this summons).
+No other bead moved.
+
+Source: pm-log #141
