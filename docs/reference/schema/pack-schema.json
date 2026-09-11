@@ -327,6 +327,10 @@
           ],
           "description": "WakeMode is the parsed/composed default wake mode (\"resume\" or\n\"fresh\"), but it is not yet auto-applied at runtime."
         },
+        "idle_timeout": {
+          "type": "string",
+          "description": "IdleTimeout is the default idle timeout for agents that do not set\ntheir own. Duration string (e.g. \"90m\"); empty leaves every agent as\nconfigured. Applied to agents with an empty IdleTimeout by\nApplyAgentDefaults.\n\nThis exists because a per-agent idle_timeout cannot be kept correct in\na city of any size: setting it agent-by-agent means one [[patches]]\nentry per agent, and an agent added later inherits no bound at all.\nThe timeout is the only mechanism that ends a wedged session\nunconditionally -- a drain-ack refused for assigned work leaves a live\nsession believing it retired, with no event, no nudge and nothing else\nthat transitions it out (ci-07ebae) -- so \"off unless each agent opts\nin\" is the wrong default shape for it."
+        },
         "default_sling_formula": {
           "type": "string",
           "description": "DefaultSlingFormula is the default formula used for agents that inherit\n[agent_defaults]. Explicit agents only receive this value when\nagent_defaults.default_sling_formula is set; implicit multi-session\nconfigs are seeded with \"mol-do-work\" elsewhere when no explicit default is set."
