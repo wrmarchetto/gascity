@@ -18,9 +18,11 @@ func TestCmdExtMsgBindRejectsInvalidTargetFlags(t *testing.T) {
 		wantMsg   string
 	}{
 		{name: "bind requires a target", wantMsg: "gc extmsg bind: --agent or --session is required"},
-		{name: "handoff requires a target", replace: true, wantMsg: "gc extmsg handoff: --agent or --session is required"},
+		// handoff registers --to, never --agent, so its message must not send
+		// the reader to a flag that verb does not have.
+		{name: "handoff requires a target", replace: true, wantMsg: "gc extmsg handoff: --to or --session is required"},
 		{name: "bind target mutually exclusive", agentName: "myrig/a", sessionID: "sess-1", wantMsg: "gc extmsg bind: --agent and --session are mutually exclusive"},
-		{name: "handoff target mutually exclusive", agentName: "myrig/a", sessionID: "sess-1", replace: true, wantMsg: "gc extmsg handoff: --agent and --session are mutually exclusive"},
+		{name: "handoff target mutually exclusive", agentName: "myrig/a", sessionID: "sess-1", replace: true, wantMsg: "gc extmsg handoff: --to and --session are mutually exclusive"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -120,5 +122,51 @@ func TestPrintExtMsgBindingOutputs(t *testing.T) {
 		if !strings.Contains(human, want) {
 			t.Fatalf("human output = %q, want it to contain %q", human, want)
 		}
+	}
+}
+
+// TestExtMsgHandoffAcceptsSessionTarget pins that handoff can replace a
+// binding with a SESSION, not only an agent.
+//
+// Before this, replace=true was reachable from exactly one place in the tree:
+// gc extmsg handoff --to <agent>. A conversation bound to a session that
+// needed moving had no CLI path at all, and the HTTP replace field was the
+// only way to do it. That gap is what turned an ordinary reconfigure into a
+// 409 with no documented remedy (ci-nlx1rx).
+//
+// The flag registration is asserted separately from the validation because
+// they fail differently: a flag that is declared but never read still passes
+// a validation test, and validation logic that is correct but unreachable
+// from the command line still passes a unit test on the helper.
+func TestExtMsgHandoffAcceptsSessionTarget(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	cmd := newExtMsgHandoffCmd(&stdout, &stderr)
+
+	sessionFlag := cmd.Flags().Lookup("session")
+	if sessionFlag == nil {
+		t.Fatal("gc extmsg handoff has no --session flag, so a session-bound conversation cannot be moved")
+	}
+	if cmd.Flags().Lookup("to") == nil {
+		t.Fatal("--to disappeared; handoff's agent path is the one that already had callers")
+	}
+
+	// Both targets at once must be refused, and the message must name the
+	// flags THIS verb actually has. handoff exposes --to, never --agent, so
+	// the shared bind wording would send the reader to a flag that does not
+	// exist here.
+	code := cmdExtMsgBind(extMsgConversationFlags{}, "myrig/a", "sess-1", true, false, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1 for both targets set", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "--to and --session are mutually exclusive") {
+		t.Fatalf("stderr = %q, want it to name --to (the flag handoff has)", got)
+	}
+
+	stderr.Reset()
+	if code := cmdExtMsgBind(extMsgConversationFlags{}, "", "", true, false, &stdout, &stderr); code != 1 {
+		t.Fatalf("code = %d, want 1 for no target", code)
+	}
+	if got := stderr.String(); !strings.Contains(got, "--to or --session is required") {
+		t.Fatalf("stderr = %q, want it to name --to (the flag handoff has)", got)
 	}
 }

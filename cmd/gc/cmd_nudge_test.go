@@ -1500,7 +1500,7 @@ func TestSendMailNotifyWithProviderQueuesWhenSessionSleeping(t *testing.T) {
 		sessionName: "sess-mayor",
 	}
 
-	if err := sendMailNotifyWithProvider(target, runtime.NewFake()); err != nil {
+	if _, err := sendMailNotifyWithProvider(target, runtime.NewFake()); err != nil {
 		t.Fatalf("sendMailNotifyWithProvider: %v", err)
 	}
 
@@ -1566,7 +1566,7 @@ func TestSendMailNotifyWithWorkerManagedNonRunningQueuesWakeForController(t *tes
 	}
 	beforeCalls := len(fake.Calls)
 
-	if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+	if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 		t.Fatalf("sendMailNotifyWithWorker: %v", err)
 	}
 	if pokes != 1 {
@@ -1645,7 +1645,7 @@ func TestSendMailNotifyWithWorkerManagedQueueFailureDoesNotWake(t *testing.T) {
 		agent:       config.Agent{Name: "worker", Provider: "claude"},
 	}
 
-	err = sendMailNotifyWithWorker(target, store, fake, "human")
+	_, err = sendMailNotifyWithWorker(target, store, fake, "human")
 	if err == nil {
 		t.Fatal("sendMailNotifyWithWorker: expected queue error")
 	}
@@ -1719,7 +1719,7 @@ func TestSendMailNotifyQueuesIndependentRemindersForEachMail(t *testing.T) {
 	// Two mails arrive back to back; the first reminder is still pending
 	// (unread) when the second arrives.
 	for i := 0; i < 2; i++ {
-		if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+		if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 			t.Fatalf("sendMailNotifyWithWorker(call %d): %v", i+1, err)
 		}
 	}
@@ -1778,7 +1778,7 @@ func TestSendMailNotifyWithWorkerManagedWakeFailureRollsBackQueuedNudge(t *testi
 		agent:       config.Agent{Name: "worker", Provider: "claude"},
 	}
 
-	err = sendMailNotifyWithWorker(target, store, fake, "human")
+	_, err = sendMailNotifyWithWorker(target, store, fake, "human")
 	if err == nil {
 		t.Fatal("sendMailNotifyWithWorker: expected wake conflict")
 	}
@@ -1872,7 +1872,7 @@ func TestSendMailNotifyWithWorkerManagedWaitNudgeWithdrawFailureKeepsQueuedNudge
 		agent:       config.Agent{Name: "worker", Provider: "claude"},
 	}
 
-	if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+	if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 		t.Fatalf("sendMailNotifyWithWorker: %v", err)
 	}
 	if withdraws != 1 {
@@ -1964,7 +1964,7 @@ func TestSendMailNotifyWithWorkerManagedWakePokeFailureIsNonFatal(t *testing.T) 
 	}
 	beforeCalls := len(fake.Calls)
 
-	if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+	if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 		t.Fatalf("sendMailNotifyWithWorker: %v", err)
 	}
 	if pokes != 1 {
@@ -2032,7 +2032,7 @@ func TestSendMailNotifyWithProviderStartsCodexPollerWhenQueueingRunningSession(t
 	}
 	t.Cleanup(func() { startNudgePoller = prev })
 
-	if err := sendMailNotifyWithProvider(target, fake); err != nil {
+	if _, err := sendMailNotifyWithProvider(target, fake); err != nil {
 		t.Fatalf("sendMailNotifyWithProvider: %v", err)
 	}
 	if !called {
@@ -2066,7 +2066,7 @@ func TestSendMailNotifyWithProviderStartsClaudePollerWhenQueueingRunningSession(
 	}
 	t.Cleanup(func() { startNudgePoller = prev })
 
-	if err := sendMailNotifyWithProvider(target, fake); err != nil {
+	if _, err := sendMailNotifyWithProvider(target, fake); err != nil {
 		t.Fatalf("sendMailNotifyWithProvider: %v", err)
 	}
 	if !called {
@@ -2110,7 +2110,7 @@ func TestSendMailNotifyWithWorkerStartsPollerBySessionIDForAliasedTarget(t *test
 	}
 	t.Cleanup(func() { startNudgePoller = prev })
 
-	if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+	if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 		t.Fatalf("sendMailNotifyWithWorker: %v", err)
 	}
 	if !called {
@@ -2145,7 +2145,7 @@ func TestSendMailNotifyWithProviderWaitIdleWrapsDirectDeliveryInSystemReminder(t
 		sessionName: "sess-mayor",
 	}
 
-	if err := sendMailNotifyWithProvider(target, fake); err != nil {
+	if _, err := sendMailNotifyWithProvider(target, fake); err != nil {
 		t.Fatalf("sendMailNotifyWithProvider: %v", err)
 	}
 
@@ -2209,7 +2209,7 @@ func TestSendMailNotifyWithWorkerWaitIdlePreservesMailSource(t *testing.T) {
 		sessionName: info.SessionName,
 	}
 
-	if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+	if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 		t.Fatalf("sendMailNotifyWithWorker: %v", err)
 	}
 
@@ -2255,7 +2255,7 @@ func TestSendMailNotifyWithWorkerQueuesWhenRuntimeIsGone(t *testing.T) {
 	}
 
 	startCalls := len(fake.Calls)
-	if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+	if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 		t.Fatalf("sendMailNotifyWithWorker: %v", err)
 	}
 	for _, call := range fake.Calls[startCalls:] {
@@ -2304,7 +2304,7 @@ func TestSendMailNotifyWithWorkerQueuesWhenDirectProviderMisses(t *testing.T) {
 		sessionName: info.SessionName,
 	}
 
-	if err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
+	if _, err := sendMailNotifyWithWorker(target, store, fake, "human"); err != nil {
 		t.Fatalf("sendMailNotifyWithWorker: %v", err)
 	}
 
@@ -3193,7 +3193,7 @@ func TestCmdNudgeDrainStampsLastNudgeDeliveredAt(t *testing.T) {
 			}
 
 			var stdout, stderr bytes.Buffer
-			code := cmdNudgeDrainWithFormat([]string{created.ID}, tc.inject, "", &stdout, &stderr)
+			code := cmdNudgeDrainWithFormat([]string{created.ID}, tc.inject, "", "", &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("cmdNudgeDrainWithFormat = %d, want 0; stderr=%s", code, stderr.String())
 			}

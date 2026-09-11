@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -266,5 +267,72 @@ func TestRigActionUnknown(t *testing.T) {
 	}
 	if pd.Type != "urn:gascity:error:validation-failed" {
 		t.Errorf("type = %q, want urn:gascity:error:validation-failed", pd.Type)
+	}
+}
+
+// countingListProvider records ListRunning calls, delegating everything else
+// to a real Fake so the handler under test still observes a coherent city.
+// Counting is the whole assertion here: the response is correct both before
+// and after the fix, so nothing in the payload can see the defect.
+type countingListProvider struct {
+	*runtime.Fake
+	calls int
+}
+
+func (p *countingListProvider) ListRunning(prefix string) ([]string, error) {
+	p.calls++
+	return p.Fake.ListRunning(prefix)
+}
+
+// TestRigListSessionListingIsIndependentOfAgentCount pins the SUBPROCESS
+// BUDGET of GET /v0/rigs against the tmux provider, where each ListRunning is
+// one fork+exec of `tmux list-sessions`.
+//
+// Two multipliers meet on this path. expandAgent consults the provider once
+// per unlimited-capacity agent, and buildRigResponse then calls rigSuspended,
+// which walks the SAME agent set again -- so the cost is 2N per rig per
+// request, and the dashboard polls this endpoint on a timer. /v0/agents and
+// /v0/status both sit behind a response cache; /v0/rigs and /v0/rig/{name} do
+// not, so they pay it in full every time (ci-jcbdd6).
+//
+// PARAMETERIZED OVER N AND COMPARED ACROSS N rather than pinning today's
+// number: an assertion like `calls <= 168` passes on the unfixed code, and the
+// defect is the per-agent TERM rather than its size. Requiring the counts to
+// be EQUAL is what fails on any term that scales with the agent count.
+func TestRigListSessionListingIsIndependentOfAgentCount(t *testing.T) {
+	countFor := func(t *testing.T, agents int) int {
+		t.Helper()
+		base := newFakeState(t)
+		// MaxActiveSessions left nil on purpose: that is the
+		// unlimited-capacity shape whose expansion consults the provider, and
+		// it is what every agent in the imported roles pack looks like.
+		base.cfg.Agents = nil
+		for i := 0; i < agents; i++ {
+			base.cfg.Agents = append(base.cfg.Agents, config.Agent{
+				Name: fmt.Sprintf("worker-%d", i), Dir: "myrig",
+			})
+		}
+		sp := &countingListProvider{Fake: runtime.NewFake()}
+		state := &sessionProviderOverrideState{fakeState: base, provider: sp}
+		h := newTestCityHandler(t, state)
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", cityURL(state, "/rigs"), nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+		return sp.calls
+	}
+
+	counts := map[int]int{}
+	for _, n := range []int{1, 20, 100} {
+		counts[n] = countFor(t, n)
+		t.Logf("agents=%d listRunning calls=%d", n, counts[n])
+	}
+	if counts[1] != counts[20] || counts[20] != counts[100] {
+		t.Fatalf("session listings scale with the agent count: "+
+			"1 agent -> %d calls, 20 -> %d, 100 -> %d; want a listing budget "+
+			"per request that does not depend on N",
+			counts[1], counts[20], counts[100])
 	}
 }

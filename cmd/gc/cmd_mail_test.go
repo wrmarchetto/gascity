@@ -1928,9 +1928,9 @@ func TestMailReplyNotifySuccess(t *testing.T) {
 	mp.Send("alice", "bob", "Hello", "first") //nolint:errcheck
 
 	var nudged string
-	nf := func(recipient string) error {
+	nf := func(recipient string) (mailNotifyOutcome, error) {
 		nudged = recipient
-		return nil
+		return mailNotifyOutcome{Delivered: true}, nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -1951,8 +1951,8 @@ func TestMailReplyNotifyNudgeError(t *testing.T) {
 	mp := beadmail.New(store)
 	mp.Send("alice", "bob", "Hello", "first") //nolint:errcheck
 
-	nf := func(_ string) error {
-		return fmt.Errorf("session not found")
+	nf := func(_ string) (mailNotifyOutcome, error) {
+		return mailNotifyOutcome{}, fmt.Errorf("session not found")
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -3123,6 +3123,12 @@ func TestMailNotifyHelpDocumentsManagedWake(t *testing.T) {
 			if !strings.Contains(notify.Usage, "managed wake") {
 				t.Fatalf("--notify help = %q, want managed-wake behavior", notify.Usage)
 			}
+			// The flag REQUESTS a turn and the request is not always
+			// grantable. Help that promises only the wake reads as a promise
+			// of delivery, which is what a sender acted on in ci-7b1ueb.
+			if !strings.Contains(notify.Usage, "queued") {
+				t.Fatalf("--notify help = %q, want the queued outcome named alongside the wake", notify.Usage)
+			}
 			if !strings.Contains(cmd.Long, "Unread mail alone does not request a wake") {
 				t.Fatalf("Long help = %q, want unread-mail wake boundary", cmd.Long)
 			}
@@ -3136,9 +3142,9 @@ func TestMailSendNotifySuccess(t *testing.T) {
 	recipients := map[string]bool{"human": true, "mayor": true}
 
 	var nudged string
-	nf := func(recipient string) error {
+	nf := func(recipient string) (mailNotifyOutcome, error) {
 		nudged = recipient
-		return nil
+		return mailNotifyOutcome{Delivered: true}, nil
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -3159,8 +3165,8 @@ func TestMailSendNotifyNudgeError(t *testing.T) {
 	mp := beadmail.New(store)
 	recipients := map[string]bool{"human": true, "mayor": true}
 
-	nf := func(_ string) error {
-		return fmt.Errorf("session not found")
+	nf := func(_ string) (mailNotifyOutcome, error) {
+		return mailNotifyOutcome{}, fmt.Errorf("session not found")
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -3184,9 +3190,9 @@ func TestMailSendNotifyToHuman(t *testing.T) {
 	recipients := map[string]bool{"human": true, "mayor": true}
 
 	nudgeCalled := false
-	nf := func(_ string) error {
+	nf := func(_ string) (mailNotifyOutcome, error) {
 		nudgeCalled = true
-		return nil
+		return mailNotifyOutcome{Delivered: true}, nil
 	}
 
 	var stdout bytes.Buffer

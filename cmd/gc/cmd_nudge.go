@@ -297,6 +297,7 @@ for another session after verifying their IDs with gc nudge status.`,
 func newNudgeDrainCmd(stdout, stderr io.Writer) *cobra.Command {
 	var inject bool
 	var hookFormat string
+	var hookEvent string
 	cmd := &cobra.Command{
 		Use:    "drain [session]",
 		Short:  "Deliver queued nudges for a session",
@@ -304,7 +305,7 @@ func newNudgeDrainCmd(stdout, stderr io.Writer) *cobra.Command {
 		Args:   cobra.MaximumNArgs(1),
 		Hidden: true,
 		RunE: func(_ *cobra.Command, args []string) error {
-			if cmdNudgeDrainWithFormat(args, inject, hookFormat, stdout, stderr) != 0 {
+			if cmdNudgeDrainWithFormat(args, inject, hookFormat, hookEvent, stdout, stderr) != 0 {
 				return errExit
 			}
 			return nil
@@ -312,6 +313,7 @@ func newNudgeDrainCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&inject, "inject", false, "emit <system-reminder> output for hook injection")
 	cmd.Flags().StringVar(&hookFormat, "hook-format", "", "format hook output for a provider")
+	cmd.Flags().StringVar(&hookEvent, "hook-event", "", "provider hook event this invocation runs on (default UserPromptSubmit)")
 	return cmd
 }
 
@@ -475,10 +477,21 @@ func cmdNudgeAck(ids []string, targetID string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdout, stderr io.Writer) int {
-	// On every prompt, emit context guidance, a live clock (operator-local + UTC
-	// + epoch), and the agent's active formula step (if any) as UserPromptSubmit
-	// hook context.
+func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat, hookEvent string, stdout, stderr io.Writer) int {
+	hookEvent = normalizeNudgeHookEvent(hookEvent)
+	// A mid-turn drain carries the nudge and NOTHING else. The clock line, the
+	// context-pressure guidance and the active formula step below are
+	// prompt-boundary orientation: useful once, when a turn starts, and noise
+	// on every tool call of a turn already under way. Worse than noise on this
+	// event -- Claude Code's only mid-turn injection shape is a refusal
+	// (hook_output_claude.go), so an unconditional clock line would interrupt
+	// the agent on every single tool call to tell it the time.
+	//
+	// The consequence is the invariant this event exists for: with no queued
+	// nudge, a mid-turn drain writes nothing and the tool call is untouched.
+	midTurn := isMidTurnNudgeHookEvent(hookEvent)
+	// At a prompt boundary, emit context guidance, a live clock (operator-local
+	// + UTC + epoch), and the agent's active formula step as hook context.
 	// When a nudge also fires we fold everything into that nudge's single
 	// provider-formatted payload (see the combined write below); otherwise this
 	// deferred fallback emits clock+step on their own. Either way exactly one
@@ -488,7 +501,7 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 	var wispExtra string // set after target resolution; captured by defer closure
 	emittedHookContext := false
 	var injectContext string
-	if inject {
+	if inject && !midTurn {
 		// Read the provider hook input once (UserPromptSubmit JSON on stdin,
 		// pipe-only — see readHookStdin) and build the stable portion of the
 		// shared injection. The varying clock is added only after all context
@@ -498,7 +511,7 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 			if !emittedHookContext {
 				line := injectContext + wispExtra + clockInjectLine()
 				if line != "" {
-					_ = writeProviderHookContextForEvent(stdout, hookFormat, "UserPromptSubmit", line)
+					_ = writeProviderHookContextForEvent(stdout, hookFormat, hookEvent, line)
 				}
 			}
 		}()
@@ -526,7 +539,7 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 		fmt.Fprintf(stderr, "gc nudge drain: %v\n", err) //nolint:errcheck
 		return 1
 	}
-	if inject {
+	if inject && !midTurn {
 		wispExtra = wispStepInjectionContent(target.cityPath)
 	}
 
@@ -588,19 +601,26 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat string, stdo
 	}
 
 	var out string
-	if inject {
+	switch {
+	case inject && midTurn:
+		out = formatNudgeMidTurnInjectOutput(items)
+	case inject:
 		out = formatNudgeInjectOutput(items)
-	} else {
+	default:
 		out = formatNudgeRuntimeMessage(items)
 	}
 	var writeErr error
 	if inject {
-		// Fold active formula step and clock into the nudge so a single
-		// provider-formatted payload carries all; this is the one place the
-		// combined context is written. The clock follows the payload because it
-		// varies on every invocation and must not defeat the reusable prefix.
+		// Fold active formula step and, at a prompt boundary, the clock into the
+		// nudge so a single provider-formatted payload carries all. The clock
+		// follows the payload because it varies on every invocation and must not
+		// defeat the reusable prefix.
 		emittedHookContext = true
-		writeErr = writeProviderHookContextForEvent(stdout, hookFormat, "UserPromptSubmit", injectContext+out+wispExtra+clockInjectLine())
+		line := injectContext + out + wispExtra
+		if !midTurn {
+			line += clockInjectLine()
+		}
+		writeErr = writeProviderHookContextForEvent(stdout, hookFormat, hookEvent, line)
 	} else {
 		_, writeErr = io.WriteString(stdout, out)
 	}
@@ -1180,23 +1200,74 @@ func writeQueuedSessionNudgeResult(target nudgeTarget, mode nudgeDeliveryMode, j
 	return 0
 }
 
-func sendMailNotify(target nudgeTarget, sender string) error {
+// mailNotifyOutcome reports what a --notify request achieved, as distinct from
+// whether it errored.
+//
+// Every field here was previously collapsed into "the call returned nil". A
+// message that reached a mid-turn recipient's queue and a message written into
+// its pane were the same result to the sender, and `gc mail send --notify`
+// printed nothing either way (ci-7b1ueb).
+type mailNotifyOutcome struct {
+	// Delivered is true only when the message reached the live session.
+	Delivered bool
+	// Queued is true when the message was left on the nudge queue instead.
+	Queued bool
+	// Skip names why live delivery did not happen. Empty iff Delivered.
+	Skip session.NudgeSkip
+	// WokeManaged is true when the controller was asked to wake a stopped
+	// managed session, which is neither a live delivery nor a plain queue.
+	WokeManaged bool
+}
+
+// String renders the outcome for an operator, without naming the recipient --
+// the caller knows who it addressed and says so itself.
+func (o mailNotifyOutcome) String() string {
+	switch {
+	case o.Delivered:
+		return "delivered to the live session"
+	case o.WokeManaged:
+		return "queued, and the controller was asked to wake the session"
+	case o.Skip != session.NudgeSkipNone:
+		return "queued: " + o.Skip.Explain()
+	default:
+		return "queued"
+	}
+}
+
+// reportMailNotifyOutcome tells the sender on stderr when a notify request did
+// not reach the recipient's live session.
+//
+// It prints NOTHING on a live delivery: a line on the happy path trains the
+// reader to skip it, and this line exists to be read on the one run in ten
+// where the message only reached a queue. The recipient is named because the
+// sender is often broadcasting, and what will surface the message is named
+// because "queued" alone does not tell the sender whether to wait or to try
+// another channel.
+func reportMailNotifyOutcome(stderr io.Writer, command, recipient string, outcome mailNotifyOutcome) {
+	if stderr == nil || outcome.Delivered {
+		return
+	}
+	fmt.Fprintf(stderr, "%s: %s did not take the notification live: %s. The message is stored and queued; the recipient sees it at its next prompt, and `gc mail inbox` shows it now.\n", //nolint:errcheck // best-effort stderr
+		command, recipient, outcome)
+}
+
+func sendMailNotify(target nudgeTarget, sender string) (mailNotifyOutcome, error) {
 	store := openNudgeBeadStore(target.cityPath)
 	if store.Store == nil {
-		return fmt.Errorf("opening city store for %q", target.agentKey())
+		return mailNotifyOutcome{}, fmt.Errorf("opening city store for %q", target.agentKey())
 	}
 	sp, err := newSessionProvider()
 	if err != nil {
-		return err
+		return mailNotifyOutcome{}, err
 	}
 	return sendMailNotifyWithWorker(target, store.Store, sp, sender)
 }
 
-func sendMailNotifyWithProvider(target nudgeTarget, sp runtime.Provider) error {
+func sendMailNotifyWithProvider(target nudgeTarget, sp runtime.Provider) (mailNotifyOutcome, error) {
 	return sendMailNotifyWithWorker(target, nil, sp, "human")
 }
 
-func sendMailNotifyWithWorker(target nudgeTarget, store beads.Store, sp runtime.Provider, sender string) error {
+func sendMailNotifyWithWorker(target nudgeTarget, store beads.Store, sp runtime.Provider, sender string) (mailNotifyOutcome, error) {
 	msg := fmt.Sprintf("You have mail from %s", sender)
 	now := time.Now()
 	// Session-class store for the observe/handle reads and the last-nudge stamp
@@ -1206,8 +1277,13 @@ func sendMailNotifyWithWorker(target nudgeTarget, store beads.Store, sp runtime.
 	sessStore := cliSessionStore(store, target.cfg, target.cityPath)
 	obs, err := workerObserveNudgeTarget(target, sessStore, sp)
 	if err != nil {
-		return err
+		return mailNotifyOutcome{}, err
 	}
+	// The skip survives past the live attempt so the queue paths below can
+	// report WHY they are the ones running. Losing it here is the original
+	// defect: the queue fallback is correct, and reporting nothing about it
+	// is what let a sender believe the message had landed.
+	skip := session.NudgeSkipNotRunning
 	if obs.Running {
 		handle, err := workerHandleForNudgeTarget(target, sessStore, sp)
 		if err == nil {
@@ -1217,36 +1293,43 @@ func sendMailNotifyWithWorker(target nudgeTarget, store beads.Store, sp runtime.
 				Source:   "mail",
 				Wake:     worker.NudgeWakeLiveOnly,
 			})
-			if nudgeErr == nil && result.Delivered {
+			switch {
+			case nudgeErr == nil && result.Delivered:
 				telemetry.RecordNudge(context.Background(), target.agentKey(), nil)
 				var sessFront *session.Store
 				if store != nil {
 					sessFront = sessionFrontDoor(sessStore)
 				}
 				stampLastNudgeDeliveredAt(sessFront, target.sessionID, time.Now())
-				return nil
+				return mailNotifyOutcome{Delivered: true}, nil
+			case nudgeErr == nil:
+				skip = result.Skip
+			default:
+				skip = session.NudgeSkipNudgeWriteFailed
 			}
+		} else {
+			skip = session.NudgeSkipUnclassified
 		}
 	}
 	if !obs.Running && canRequestManagedNudgeWake(target, store) {
 		item := newQueuedNudgeWithOptions(target.agentKey(), msg, "mail", now, queuedNudgeOptionsFromTarget(target))
 		if err := enqueueManagedNudgeThenWake(target, store, item); err != nil {
-			return err
+			return mailNotifyOutcome{}, err
 		}
 		if err := nudgePokeController(target.cityPath); err != nil {
 			if nudgeWarningWriter != nil {
 				fmt.Fprintf(nudgeWarningWriter, "gc mail notify: warning: poke failed after managed wake: %v\n", err) //nolint:errcheck
 			}
 		}
-		return nil
+		return mailNotifyOutcome{Queued: true, Skip: skip, WokeManaged: true}, nil
 	}
 	if err := enqueueQueuedNudge(target.cityPath, newQueuedNudgeWithOptions(target.agentKey(), msg, "mail", now, queuedNudgeOptionsFromTarget(target))); err != nil {
-		return err
+		return mailNotifyOutcome{}, err
 	}
 	if obs.Running {
 		maybeStartNudgePoller(target)
 	}
-	return nil
+	return mailNotifyOutcome{Queued: true, Skip: skip}, nil
 }
 
 func resolveNudgeTarget(identifier string, warningWriter ...io.Writer) (nudgeTarget, error) {

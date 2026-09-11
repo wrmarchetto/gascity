@@ -808,12 +808,27 @@ func doRigList(fs fsys.FS, cityPath string, jsonOutput bool, stdout, stderr io.W
 	// constructing it per rig reopened the session store and re-forked
 	// tmux probes, making --json scale O(rigs) in subprocesses (~7x
 	// slower than the text path, which skips running-status detection).
+	//
+	// Wrapped so the pass costs ONE session listing rather than one per
+	// unlimited-capacity agent. rigHasRunningAgent expands every such agent
+	// through discoverPoolInstances, which asks the provider for the whole
+	// running set each time and then filters it by prefix -- the same question,
+	// once per agent. Measured on the live city 2026-09-09: 84 identical
+	// `tmux list-sessions` forks for one `gc rig list --json`, one per
+	// rig-scoped agent declaring no max_active_sessions (ci-jcbdd6). The
+	// hoisting above fixed the O(rigs) term and left the O(agents) one.
+	//
+	// The wrapper is built HERE, at the pass, and not inside the provider: it
+	// has no invalidation, so its correctness rests on being dropped when this
+	// call returns. runtime.NewSessionListCache carries that argument and the
+	// reason ListRunning must not join the provider's own StateCache.
 	var sp runtime.Provider
 	if jsonOutput && len(cfg.Rigs) > 0 {
 		sp, err = rigListSessionProvider()
 		if err != nil {
 			return writeJSONError(stdout, stderr, "session_provider_failed", fmt.Sprintf("gc rig list: %v", err), 1)
 		}
+		sp = runtime.NewSessionListCache(sp)
 	}
 	for i := range cfg.Rigs {
 		running := false

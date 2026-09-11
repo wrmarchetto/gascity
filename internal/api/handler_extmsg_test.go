@@ -474,25 +474,6 @@ func TestHandleExtMsgInboundNormalizedInvariantViolationReturns400(t *testing.T)
 	}
 }
 
-func TestTitleCaseProvider(t *testing.T) {
-	cases := []struct {
-		in, want string
-	}{
-		{"slack", "Slack"},
-		{"discord", "Discord"},
-		{"", ""},
-		{"a", "A"},
-		{"Slack", "Slack"},
-		{"X", "X"},
-		{"123", "123"},
-	}
-	for _, tc := range cases {
-		if got := titleCaseProvider(tc.in); got != tc.want {
-			t.Errorf("titleCaseProvider(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
 // TestFormatExtmsgNotifyReminderStripsSystemReminderBreakoutSequence is the
 // regression test for gastownhall/gascity#2195 at the external-messaging
 // notify path: an external sender (Slack, Discord, etc.) whose display

@@ -54,7 +54,18 @@ func (s *Server) humaHandleRigList(ctx context.Context, input *RigListInput) (*L
 	}
 
 	cfg := s.state.Config()
-	sp := s.state.SessionProvider()
+	// One session listing per REQUEST, not one per unlimited-capacity agent
+	// per walk. buildRigResponse expands every such agent through the
+	// provider and then calls rigSuspended, which walks the same set again,
+	// so the unwrapped cost is 2N per rig -- 168 on this city, paid in full
+	// on every dashboard poll because /v0/rigs, unlike /v0/agents and
+	// /v0/status, sits behind no response cache (ci-jcbdd6).
+	//
+	// Wrapped HERE rather than around s.state.SessionProvider() itself: the
+	// cache has no invalidation, so its correctness is the request's
+	// lifetime. A wrapper on the shared provider would report a session that
+	// has since died as running, forever.
+	sp := runtime.NewSessionListCache(s.state.SessionProvider())
 	cityName := s.state.CityName()
 	store := s.state.CityBeadStore()
 	if err := cacheLiveOr503(store); err != nil {
@@ -81,7 +92,8 @@ func (s *Server) humaHandleRigList(ctx context.Context, input *RigListInput) (*L
 func (s *Server) humaHandleRigGet(_ context.Context, input *RigGetInput) (*IndexOutput[rigResponse], error) {
 	name := input.Name
 	cfg := s.state.Config()
-	sp := s.state.SessionProvider()
+	// Per-request, for the same reason as the list handler above.
+	sp := runtime.NewSessionListCache(s.state.SessionProvider())
 	wantGit := input.Git
 
 	for _, rig := range cfg.Rigs {

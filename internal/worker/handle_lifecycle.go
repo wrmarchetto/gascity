@@ -349,18 +349,18 @@ func (h *SessionHandle) Nudge(ctx context.Context, req NudgeRequest) (result Nud
 		return result, nil
 	case NudgeDeliveryWaitIdle:
 		if normalizeNudgeWakePolicy(req.Wake) == NudgeWakeLiveOnly {
-			delivered, err := h.manager.TryWaitIdleNudgeLiveOnly(ctx, id, req.Source, req.Text)
+			delivered, skip, err := h.manager.TryWaitIdleNudgeLiveOnly(ctx, id, req.Source, req.Text)
 			if err != nil {
 				return NudgeResult{}, err
 			}
-			result = NudgeResult{Delivered: delivered}
+			result = NudgeResult{Delivered: delivered, Skip: skip}
 			return result, nil
 		}
-		delivered, err := h.manager.TryWaitIdleNudge(ctx, id, req.Source, req.Text, resumeCommand, h.runtimeHints())
+		delivered, skip, err := h.manager.TryWaitIdleNudge(ctx, id, req.Source, req.Text, resumeCommand, h.runtimeHints())
 		if err != nil {
 			return NudgeResult{}, err
 		}
-		result = NudgeResult{Delivered: delivered}
+		result = NudgeResult{Delivered: delivered, Skip: skip}
 		return result, nil
 	default:
 		err = fmt.Errorf("unknown nudge delivery %q", req.Delivery)

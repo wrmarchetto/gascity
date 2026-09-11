@@ -20,6 +20,43 @@ import (
 // anything, which bounds exactly that shape: every relaunch re-runs the
 // check, so the file never exceeds the cap by more than one instance's
 // output. Vars (not consts) so tests can lower the thresholds.
+//
+// WHAT THE CAP DOES NOT BOUND, and it follows from the gate above rather
+// than being a gap in it. Rotation has exactly one call site -- the start
+// path, via acquireSupervisorLockAndRotateLog -- so a supervisor that stays
+// up never rotates, whatever its log reaches. The cap bounds the crash-loop
+// shape because a crash loop restarts; while a single instance holds the
+// lock it bounds nothing.
+//
+// That is sufficient on a long-lived host rather than merely tolerated, and
+// the figures are measured rather than projected (Gas City host, 2026-09-09,
+// ci-nncach). Its three archives are 82.4, 70.0 and 64.3 MiB uncompressed,
+// so every rotation fired at or just past the cap and the overshoot stayed
+// inside the one-instance bound promised above. The active log grew
+// 341 KB/h, which is 8.0 days from empty to 64 MiB, against an observed
+// archive cadence of 7 and 8 days: this supervisor is restarted slightly
+// more often than the cap is reached, so the file is bounded in practice at
+// 64-82 MiB. Re-measure before trusting that on a host whose supervisor
+// outlives its own fill time, which is the case this arithmetic does not
+// cover.
+//
+// A TICK-DRIVEN SIZE CHECK IS THE OBVIOUS ADDITION AND IS WRONG TWICE.
+// First, the lock requirement below is an invariant, not a preference: the
+// live supervisor is the process holding that lock, so an in-loop rotator
+// would compress and truncate the file it is itself appending to -- the
+// interleaving the lock exists to prevent, reached with one process instead
+// of two. Second, `gc supervisor logs -f` shells out to `tail -f` and not
+// `tail -F` (doSupervisorLogs, cmd_supervisor_lifecycle.go), so it follows
+// the descriptor: a rotation under an operator's follow session leaves that
+// session on the archived inode, printing nothing further and saying
+// nothing about why. A large file is visible; a dead follow is not.
+//
+// Log CONSUMERS are not the hazard, checked rather than assumed: they
+// recompute a tail per run instead of storing an offset -- the city's
+// governor-soak.py reads the last 16 MiB fresh and prints a falls-short
+// sentence when the record does not reach its window -- so rotation does
+// not corrupt a reader's position. The follow session above is the one
+// reader that a rotation silently breaks.
 var (
 	// supervisorLogMaxBytes is the size at or above which a supervisor
 	// start archives the log before appending. Non-positive disables

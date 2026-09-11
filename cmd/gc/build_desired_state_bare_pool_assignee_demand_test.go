@@ -202,3 +202,165 @@ func TestBarePoolAssigneeSurvivesTheSelfRetirementThatCreatedIt(t *testing.T) {
 		t.Errorf("desired %q sessions after self-retirement = %d, want 1; PoolDesiredCounts=%v ScaleCheckCounts=%v", pool, got, cold.PoolDesiredCounts, cold.ScaleCheckCounts)
 	}
 }
+
+// TestBarePoolAssigneeWithNoRouteWakesThatPool pins the same wake for work
+// that carries the pool's name and NO gc.routed_to at all.
+//
+// This is the addressing mode the city's own mayor prompt teaches -- assign it
+// to the pool and let the pool claim it -- and it entered none of the
+// collection passes. isOpenAssignedMoleculeWork wants Ephemeral, NoHistory or
+// gc.kind=workflow; appendOpenRoutedWorkUnique wants a non-empty
+// routedToOrLegacyWorkflowTarget; and appendBarePoolAssignees only promotes
+// assignees already present in what those two captured. So the assignee was
+// never added and no Ready(assignee=) probe ever ran for it.
+//
+// Measured (ci-efjuzz): as-9fvr sat at zero sessions for twenty minutes, its
+// Dolt assignee history reading bench-operator-codex / open 05:58:15Z through
+// 06:18:33Z, while a grep for as-9fvr over the supervisor log returned 0 hits
+// in a log carrying 23,193 other bead ids from the same window.
+//
+// It is a distinct case from the routed sibling above, not a duplicate: that
+// bead reaches appendOpenRoutedWorkUnique and this one reaches nothing, so a
+// fix aimed at the routed pass alone leaves this shape exactly as it was.
+//
+// THIS CASE PASSED BEFORE THE COLLECTION FIX AND IS NOT ITS EVIDENCE. Measured
+// while writing it: a pool on gc's DEFAULT scale check already reads demand 1
+// for this bead, because that check queries the store itself and never
+// consults the assigned-work snapshot. What goes red is the capture, pinned by
+// TestUnroutedBarePoolWorkReachesTheAssignedWorkSnapshot below. This one is
+// the regression guard on either side of it -- that the wake survives, and
+// that promoting the assignee does not double-count one bead into two slots.
+func TestBarePoolAssigneeWithNoRouteWakesThatPool(t *testing.T) {
+	const pool = "worker"
+	cityPath := t.TempDir()
+	store := beads.NewMemStore()
+
+	work, err := store.Create(beads.Bead{
+		Title:    "addressed to the pool's own name, with no route at all",
+		Type:     "task",
+		Status:   "open",
+		Assignee: pool,
+	})
+	if err != nil {
+		t.Fatalf("create work: %v", err)
+	}
+	if got := work.Metadata["gc.routed_to"]; got != "" {
+		t.Fatalf("test setup: gc.routed_to = %q, want absent -- the absence IS the case", got)
+	}
+
+	cfg := deadSlotCity(pool)
+	build := func() DesiredStateResult {
+		return buildDesiredStateWithSessionBeads(
+			"gc", cityPath, time.Now().UTC(), cfg, runtime.NewFake(),
+			store, nil, &sessionBeadSnapshot{}, nil, io.Discard,
+		)
+	}
+
+	first := build()
+
+	woke := deadSlotDesiredCount(first, pool)
+	if woke < 1 {
+		t.Fatalf("desired %q sessions = %d, want at least 1; the pool-alias claim tier would claim %s the moment a session existed, so the controller must raise the demand that starts one. PoolDesiredCounts=%v ScaleCheckCounts=%v",
+			pool, woke, work.ID, first.PoolDesiredCounts, first.ScaleCheckCounts)
+	}
+	if woke > 1 {
+		t.Fatalf("one bead wants %d %q slots; a single unit of work must not overshoot into a spawn storm", woke, pool)
+	}
+
+	// Same level on the next tick. A demand that climbs per tick over one
+	// still-open bead is a spawn storm with a slow fuse.
+	if got := deadSlotDesiredCount(build(), pool); got != woke {
+		t.Fatalf("desired %q sessions grew from %d to %d across two ticks over ONE still-open bead; PoolDesiredCounts=%v", pool, woke, got, first.PoolDesiredCounts)
+	}
+}
+
+// TestUnroutedWorkAssignedToANonPoolNameRaisesNoDemand is the negative arm, and
+// without it the fix above could be "promote every open assignee".
+//
+// An assignee that names no configured pool is a concrete handoff to some
+// identity the controller does not manage. Waking a pool for it would spend a
+// slot on work no pool can claim.
+func TestUnroutedWorkAssignedToANonPoolNameRaisesNoDemand(t *testing.T) {
+	const pool = "worker"
+	cityPath := t.TempDir()
+	store := beads.NewMemStore()
+
+	if _, err := store.Create(beads.Bead{
+		Title:    "handed to somebody who is not a pool",
+		Type:     "task",
+		Status:   "open",
+		Assignee: "a-human-being",
+	}); err != nil {
+		t.Fatalf("create work: %v", err)
+	}
+
+	cfg := deadSlotCity(pool)
+	res := buildDesiredStateWithSessionBeads(
+		"gc", cityPath, time.Now().UTC(), cfg, runtime.NewFake(),
+		store, nil, &sessionBeadSnapshot{}, nil, io.Discard,
+	)
+
+	if got := deadSlotDesiredCount(res, pool); got != 0 {
+		t.Fatalf("desired %q sessions = %d, want 0; no pool can claim work addressed to an identity the controller does not manage. PoolDesiredCounts=%v", pool, got, res.PoolDesiredCounts)
+	}
+}
+
+// TestUnroutedBarePoolWorkReachesTheAssignedWorkSnapshot is the red case for
+// the collection gap itself.
+//
+// An open, non-molecule, un-routed bead assigned to a pool's bare name entered
+// no pass: isOpenAssignedMoleculeWork wants Ephemeral, NoHistory or
+// gc.kind=workflow, appendOpenRoutedWorkUnique wants a route, and
+// appendBarePoolAssignees only promotes assignees already present in what
+// those two captured. So the assignee was never added to the Ready probe list
+// and the bead never appeared in AssignedWorkBeads at all -- measured false
+// before the fix, on both the default and the custom scale-check shapes.
+//
+// Asserted on the SNAPSHOT rather than on a session count on purpose. Demand
+// for a default-check pool comes from a store query that never reads this
+// snapshot, so a demand assertion is green either way; the snapshot is what
+// the wake tier and the demand filter actually consume, and it is where the
+// gap is observable.
+func TestUnroutedBarePoolWorkReachesTheAssignedWorkSnapshot(t *testing.T) {
+	const pool = "worker"
+	cityPath := t.TempDir()
+	store := beads.NewMemStore()
+
+	work, err := store.Create(beads.Bead{
+		Title:    "open, plain, un-routed, addressed to the pool's own name",
+		Type:     "task",
+		Status:   "open",
+		Assignee: pool,
+	})
+	if err != nil {
+		t.Fatalf("create work: %v", err)
+	}
+
+	res := buildDesiredStateWithSessionBeads(
+		"gc", cityPath, time.Now().UTC(), deadSlotCity(pool), runtime.NewFake(),
+		store, nil, &sessionBeadSnapshot{}, nil, io.Discard,
+	)
+
+	rows := 0
+	for _, b := range res.AssignedWorkBeads {
+		if b.ID == work.ID {
+			rows++
+		}
+	}
+	if rows == 0 {
+		t.Fatalf("%s is absent from AssignedWorkBeads; a pool's own name is an address the pool-alias claim tier will claim, so the snapshot the wake tier reads must carry it", work.ID)
+	}
+	if rows != 1 {
+		t.Errorf("AssignedWorkBeads carries %s %d times, want 1; a duplicated row doubles the per-tick operator log and the awake work-bead trace counts", work.ID, rows)
+	}
+}
+
+// A DOCUMENTED MUTATION SURVIVOR, left alive deliberately. Deleting the
+// assigneeNamesConfiguredPool filter in barePoolAssignedOpenWork kills no case
+// here, and a case written to kill it would be measuring nothing: with the
+// readyDemandCache in play the per-assignee reads are filterReadySnapshot over
+// ONE cached snapshot (measured -- a store wrapper counting Ready() sees two
+// unfiltered reads whether one assignee is promoted or three), so a surplus
+// assignee costs in-memory filtering and a slice entry, never a store probe.
+// The filter is a bound on what crosses the goroutine boundary, not a verdict,
+// and barePoolAssignedOpenWork says so where it is defined.

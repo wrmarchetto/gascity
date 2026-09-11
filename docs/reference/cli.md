@@ -1565,10 +1565,14 @@ gc extmsg bind [flags]
 
 ## gc extmsg handoff
 
-Rebind an external conversation to another configured agent, replacing
-the active binding. Run from inside an agent session to hand a
-conversation to the right specialist — the routing judgment lives in the
-agent's prompt, this verb is pure transport.
+Rebind an external conversation to another configured agent (--to) or
+to a concrete session (--session), replacing the active binding. Run from
+inside an agent session to hand a conversation to the right specialist —
+the routing judgment lives in the agent's prompt, this verb is pure
+transport.
+
+This is the only verb that replaces an ACTIVE binding; plain "bind"
+refuses one with a conflict.
 
 ```
 gc extmsg handoff [flags]
@@ -1583,7 +1587,8 @@ gc extmsg handoff [flags]
 | `--parent-conversation-id` | string |  | Parent conversation ID for thread conversations |
 | `--provider` | string |  | External messaging provider (required) |
 | `--scope-id` | string |  | Conversation scope (default: the city name) |
-| `--to` | string |  | Configured agent identity to hand the conversation to (required) |
+| `--session` | string |  | Session ID to hand the conversation to (mutually exclusive with --to) |
+| `--to` | string |  | Configured agent identity to hand the conversation to (mutually exclusive with --session) |
 
 ## gc extmsg unbind
 
@@ -2429,6 +2434,8 @@ Inherits the thread ID from the original message for conversation tracking.
 Use --notify to request a recipient turn after replying. In a managed city,
 it can request a wake for a non-running recipient.
 Unread mail alone does not request a wake.
+A mid-turn recipient is queued rather than interrupted; the outcome is
+printed on stderr and carried in --json.
 Use -s/--subject for the reply subject and -m/--message for the reply body.
 
 ```
@@ -2439,7 +2446,7 @@ gc mail reply <id> [-s subject] [-m body] [flags]
 |------|------|---------|-------------|
 | `--json` | bool |  | emit JSONL result |
 | `-m`, `--message` | string |  | reply body text |
-| `--notify` | bool |  | request a recipient turn (including a managed wake if not running), even with earlier unread mail |
+| `--notify` | bool |  | request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed |
 | `-s`, `--subject` | string |  | reply subject line |
 
 ## gc mail send
@@ -2450,6 +2457,12 @@ Creates a message bead addressed to the recipient. The sender defaults
 to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human". Use --notify to request
 a recipient turn after sending. In a managed city, it can request a wake for
 a non-running recipient. Unread mail alone does not request a wake.
+
+--notify REQUESTS a turn and the request is not always grantable. A recipient
+that is mid-turn cannot be written to safely, so the message is queued and
+surfaced at the recipient's next prompt instead. Which of the two happened is
+printed on stderr and carried in --json as notified / notify_queued /
+notify_skip. The message itself is stored either way.
 Use --from to override the sender identity.
 Use --to as an alternative to the positional &lt;to&gt; argument.
 Use -s/--subject for the summary line and -m/--message for the body text.
@@ -2477,7 +2490,7 @@ gc mail send --all "Status update: tests passing"
 | `--from` | string |  | sender identity (default: $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human") |
 | `--json` | bool |  | emit JSONL result |
 | `-m`, `--message` | string |  | message body text |
-| `--notify` | bool |  | request a recipient turn (including a managed wake if not running), even with earlier unread mail |
+| `--notify` | bool |  | request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed |
 | `-s`, `--subject` | string |  | message subject line |
 | `--to` | string |  | recipient address (alternative to positional argument) |
 

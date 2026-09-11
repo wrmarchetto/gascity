@@ -403,12 +403,16 @@ func (h *RuntimeHandle) nudgeWaitIdle(ctx context.Context, req NudgeRequest) (Nu
 		return NudgeResult{Delivered: true}, nil
 	}
 	if h.providerName != "claude" {
-		return NudgeResult{Delivered: false}, nil
+		return NudgeResult{Delivered: false, Skip: sessionpkg.NudgeSkipProviderUnsupported}, nil
 	}
 	waiter, ok := h.provider.(runtime.IdleWaitProvider)
 	if !ok {
-		return NudgeResult{Delivered: false}, nil
+		return NudgeResult{Delivered: false, Skip: sessionpkg.NudgeSkipNoIdleWait}, nil
 	}
+	// The skips here mirror the session-layer path so a caller reads one
+	// vocabulary whichever Handle it holds. A context cancel is the caller
+	// giving up rather than the session declining, so it stays an error and
+	// carries no skip.
 	if err := waiter.WaitForIdle(ctx, h.sessionName, runtimeHandleWaitIdleTimeout); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return NudgeResult{Delivered: false}, err
@@ -417,9 +421,9 @@ func (h *RuntimeHandle) nudgeWaitIdle(ctx context.Context, req NudgeRequest) (Nu
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return NudgeResult{Delivered: false}, ctxErr
 			}
-			return NudgeResult{Delivered: false}, nil
+			return NudgeResult{Delivered: false, Skip: sessionpkg.NudgeSkipBusy}, nil
 		}
-		return NudgeResult{Delivered: false}, nil
+		return NudgeResult{Delivered: false, Skip: sessionpkg.ClassifyIdleWaitFailure(err)}, nil
 	}
 	if err := h.nudgeNow(formatRuntimeWaitIdleReminder(req.Source, req.Text)); err != nil {
 		return NudgeResult{}, err

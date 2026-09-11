@@ -193,7 +193,10 @@ var (
 	ErrSessionExists      = errors.New("session already exists")
 	ErrSessionNotFound    = errors.New("session not found")
 	ErrInvalidSessionName = errors.New("invalid session name")
-	ErrIdleTimeout        = errors.New("agent not idle before timeout")
+	// ErrIdleTimeout is the tmux spelling of runtime.ErrIdleTimeout, aliased
+	// for the same reason as ErrNudgeSubmitUnconfirmed below: callers above
+	// the provider boundary classify a mid-turn session on it.
+	ErrIdleTimeout = runtime.ErrIdleTimeout
 	// ErrNudgeSubmitUnconfirmed is the tmux spelling of
 	// runtime.ErrNudgeSubmitUnconfirmed. It preserves source compatibility for
 	// callers that classify the provider's delivered-but-unobserved outcome.

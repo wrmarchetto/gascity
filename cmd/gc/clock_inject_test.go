@@ -118,7 +118,7 @@ func TestCmdNudgeDrainInjectClockAndNudgeSingleJSONDocument(t *testing.T) {
 			}
 
 			var stdout, stderr bytes.Buffer
-			code := cmdNudgeDrainWithFormat([]string{created.ID}, true, hookFormat, &stdout, &stderr)
+			code := cmdNudgeDrainWithFormat([]string{created.ID}, true, hookFormat, "", &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("cmdNudgeDrainWithFormat = %d, want 0; stderr=%s", code, stderr.String())
 			}
@@ -217,7 +217,7 @@ func TestCmdNudgeDrainInjectStepInSingleJSONDocument(t *testing.T) {
 			}
 
 			var stdout, stderr bytes.Buffer
-			code := cmdNudgeDrainWithFormat([]string{created.ID}, true, hookFormat, &stdout, &stderr)
+			code := cmdNudgeDrainWithFormat([]string{created.ID}, true, hookFormat, "", &stdout, &stderr)
 			if code != 0 {
 				t.Fatalf("cmdNudgeDrainWithFormat = %d, want 0; stderr=%s", code, stderr.String())
 			}

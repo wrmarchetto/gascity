@@ -892,9 +892,10 @@ func hookClaimLifecycleCandidate(bead beads.Bead, opts hookClaimOptions) bool {
 
 // hookClaimIdentityPatch builds the compare-and-skipped claim-time metadata patch.
 // It carries gc.work_branch when the worktree resolves a branch that differs from
-// the bead's, and the session back-reference gc.session_id / gc.session_name when
+// the bead's, the session back-reference gc.session_id / gc.session_name when
 // this is a session-run claim (GC_SESSION_ID present) of a non-control bead and the
-// values differ. Session identity is stamped even when the branch is empty — a
+// values differ, and gc.brief_digest -- the one key here that is write-once rather
+// than compare-and-skipped, for the reason stated at its assignment. Session identity is stamped even when the branch is empty — a
 // session with no worktree still needs its back-reference — but never on control
 // beads, which stay session-free by graphroute's design
 // (ApplyGraphControlRouteBinding), even when a control-dispatcher session claims one
@@ -914,6 +915,17 @@ func hookClaimIdentityPatch(bead beads.Bead, opts hookClaimOptions, ops hookClai
 		if sessionName := hookClaimSessionName(opts.Env); sessionName != "" &&
 			strings.TrimSpace(bead.Metadata[beadmeta.SessionNameMetadataKey]) != sessionName {
 			patch[beadmeta.SessionNameMetadataKey] = sessionName
+		}
+		// Stamped only when absent, NOT compare-and-skipped like every other
+		// key above. The difference is the whole gate: this function runs again
+		// on each hook tick through the adoption paths, so a value refreshed to
+		// match the current brief would absorb the mayor's mid-flight edit and
+		// the close gate would never see a mismatch. The other keys record
+		// where the worker IS and must track it; this one records what the
+		// worker was TOLD, and must not move until the worker acknowledges the
+		// change (cmd/gc/brief_redirect_gate.go).
+		if strings.TrimSpace(bead.Metadata[beadmeta.BriefDigestMetadataKey]) == "" {
+			patch[beadmeta.BriefDigestMetadataKey] = beadBriefDigest(bead.Title, bead.Description)
 		}
 	}
 	return patch

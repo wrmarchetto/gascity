@@ -29,7 +29,14 @@ import (
 // nudgeFunc is an optional callback for nudging an agent after sending or
 // replying to mail. When non-nil, it is called with the recipient name.
 // Errors are non-fatal.
-type nudgeFunc func(recipient string) error
+// nudgeFunc requests a recipient turn and reports what the request achieved.
+//
+// It returns the outcome as well as an error because the two answer different
+// questions: the error says the request could not be made, the outcome says
+// whether the recipient actually saw anything. Collapsing them is what let
+// `gc mail send --notify` print success for a message that only reached a
+// queue (ci-7b1ueb).
+type nudgeFunc func(recipient string) (mailNotifyOutcome, error)
 
 const (
 	mailInjectMaxMessages          = 3
@@ -76,8 +83,16 @@ type mailActionResult struct {
 	IDs           []string             `json:"ids,omitempty"`
 	Count         *int                 `json:"count,omitempty"`
 	AlreadyDone   bool                 `json:"already_done,omitempty"`
-	Notified      bool                 `json:"notified,omitempty"`
-	DryRun        bool                 `json:"dry_run,omitempty"`
+	// Notified is true only when the notify request reached the recipient's
+	// LIVE session. Before ci-7b1ueb it was true whenever the request did not
+	// error, which included every message that only reached the queue.
+	Notified bool `json:"notified,omitempty"`
+	// NotifyQueued is true when the message was left on the nudge queue for
+	// the recipient instead of being delivered live.
+	NotifyQueued bool `json:"notify_queued,omitempty"`
+	// NotifySkip names why live delivery did not happen. Empty iff Notified.
+	NotifySkip session.NudgeSkip `json:"notify_skip,omitempty"`
+	DryRun     bool              `json:"dry_run,omitempty"`
 }
 
 type mailMessageSummary struct {
@@ -114,10 +129,10 @@ func summarizeMailMessage(m mail.Message) mailMessageSummary {
 }
 
 func newMailNudgeFunc(sender string) nudgeFunc {
-	return func(recipient string) error {
+	return func(recipient string) (mailNotifyOutcome, error) {
 		target, err := resolveNudgeTarget(recipient, io.Discard)
 		if err != nil {
-			return err
+			return mailNotifyOutcome{}, err
 		}
 		return sendMailNotify(target, sender)
 	}
@@ -1461,6 +1476,12 @@ Creates a message bead addressed to the recipient. The sender defaults
 to $GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or "human". Use --notify to request
 a recipient turn after sending. In a managed city, it can request a wake for
 a non-running recipient. Unread mail alone does not request a wake.
+
+--notify REQUESTS a turn and the request is not always grantable. A recipient
+that is mid-turn cannot be written to safely, so the message is queued and
+surfaced at the recipient's next prompt instead. Which of the two happened is
+printed on stderr and carried in --json as notified / notify_queued /
+notify_skip. The message itself is stored either way.
 Use --from to override the sender identity.
 Use --to as an alternative to the positional <to> argument.
 Use -s/--subject for the summary line and -m/--message for the body text.
@@ -1486,7 +1507,7 @@ Use --all to broadcast to all live sessions (excluding sender and "human").`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn (including a managed wake if not running), even with earlier unread mail")
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed")
 	cmd.Flags().BoolVar(&notify, "nudge", false, "alias for --notify")
 	_ = cmd.Flags().MarkHidden("nudge")
 	cmd.Flags().BoolVar(&all, "all", false, "broadcast to all live sessions (excludes sender and human)")
@@ -1576,6 +1597,8 @@ Inherits the thread ID from the original message for conversation tracking.
 Use --notify to request a recipient turn after replying. In a managed city,
 it can request a wake for a non-running recipient.
 Unread mail alone does not request a wake.
+A mid-turn recipient is queued rather than interrupted; the outcome is
+printed on stderr and carried in --json.
 Use -s/--subject for the reply subject and -m/--message for the reply body.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
@@ -1593,7 +1616,7 @@ Use -s/--subject for the reply subject and -m/--message for the reply body.`,
 	}
 	cmd.Flags().StringVarP(&subject, "subject", "s", "", "reply subject line")
 	cmd.Flags().StringVarP(&message, "message", "m", "", "reply body text")
-	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn (including a managed wake if not running), even with earlier unread mail")
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed")
 	cmd.Flags().BoolVar(&notify, "nudge", false, "alias for --notify")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit JSONL result")
 	_ = cmd.Flags().MarkHidden("nudge")
@@ -1871,16 +1894,20 @@ func doMailSendJSON(mp mail.Provider, rec events.Recorder, validRecipients map[s
 
 	// Nudge recipient if requested and recipient is not human.
 	notified := false
+	var outcome mailNotifyOutcome
 	if nudgeFn != nil && to != "human" {
-		if err := nudgeFn(to); err != nil {
+		result, err := nudgeFn(to)
+		if err != nil {
 			fmt.Fprintf(stderr, "gc mail send: nudge failed: %v\n", err) //nolint:errcheck // best-effort stderr
 		} else {
-			notified = true
+			outcome = result
+			notified = result.Delivered
+			reportMailNotifyOutcome(stderr, "gc mail send", to, result)
 		}
 	}
 	if jsonOut {
 		summary := summarizeMailMessage(m)
-		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail send", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.send", Action: "send", ID: m.ID, Message: &summary, Messages: []mailMessageSummary{summary}, Count: intRef(1), Notified: notified})
+		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail send", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.send", Action: "send", ID: m.ID, Message: &summary, Messages: []mailMessageSummary{summary}, Count: intRef(1), Notified: notified, NotifyQueued: outcome.Queued, NotifySkip: outcome.Skip})
 	}
 	return 0
 }
@@ -1921,7 +1948,10 @@ func doMailSendAllJSON(mp mail.Provider, rec events.Recorder, validRecipients ma
 	}
 
 	var sent []mailMessageSummary
-	notified := false
+	// allDelivered starts true only when a notify was actually requested, and
+	// any recipient that did not take a live delivery clears it.
+	allDelivered := nudgeFn != nil
+	anyQueued := false
 	for _, to := range recipients {
 		m, err := mp.Send(sender, to, subject, body)
 		if err != nil {
@@ -1941,15 +1971,26 @@ func doMailSendAllJSON(mp mail.Provider, rec events.Recorder, validRecipients ma
 		}
 
 		if nudgeFn != nil {
-			if err := nudgeFn(to); err != nil {
+			result, err := nudgeFn(to)
+			if err != nil {
 				fmt.Fprintf(stderr, "gc mail send --all: nudge %s failed: %v\n", to, err) //nolint:errcheck // best-effort stderr
+				allDelivered = false
 			} else {
-				notified = true
+				if !result.Delivered {
+					allDelivered = false
+				}
+				if result.Queued {
+					anyQueued = true
+				}
+				reportMailNotifyOutcome(stderr, "gc mail send --all", to, result)
 			}
 		}
 	}
 	if jsonOut {
-		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail send", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.send", Action: "send", Messages: sent, Count: intRef(len(sent)), Notified: notified})
+		// notified is true only when EVERY recipient took a live delivery. A
+		// broadcast where one agent was mid-turn is not a notified broadcast,
+		// and the any-recipient reading is what made the flag unusable.
+		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail send", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.send", Action: "send", Messages: sent, Count: intRef(len(sent)), Notified: allDelivered, NotifyQueued: anyQueued})
 	}
 	return 0
 }
@@ -2275,16 +2316,20 @@ func doMailReplyJSON(mp mail.Provider, rec events.Recorder, id, sender, subject,
 	}
 
 	notified := false
+	var outcome mailNotifyOutcome
 	if nudgeFn != nil && reply.To != "human" {
-		if err := nudgeFn(reply.To); err != nil {
+		result, err := nudgeFn(reply.To)
+		if err != nil {
 			fmt.Fprintf(stderr, "gc mail reply: nudge failed: %v\n", err) //nolint:errcheck // best-effort stderr
 		} else {
-			notified = true
+			outcome = result
+			notified = result.Delivered
+			reportMailNotifyOutcome(stderr, "gc mail reply", reply.To, result)
 		}
 	}
 	if jsonOut {
 		summary := summarizeMailMessage(reply)
-		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail reply", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.reply", Action: "reply", ID: reply.ID, Message: &summary, Messages: []mailMessageSummary{summary}, Count: intRef(1), Notified: notified})
+		return writeCLIJSONLineOrExit(stdout, stderr, "gc mail reply", mailActionResult{SchemaVersion: "1", OK: true, Command: "mail.reply", Action: "reply", ID: reply.ID, Message: &summary, Messages: []mailMessageSummary{summary}, Count: intRef(1), Notified: notified, NotifyQueued: outcome.Queued, NotifySkip: outcome.Skip})
 	}
 	return 0
 }

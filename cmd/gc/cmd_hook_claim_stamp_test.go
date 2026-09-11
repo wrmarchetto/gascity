@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -103,10 +104,14 @@ func TestDoHookClaimStampsSessionIdentity(t *testing.T) {
 	if spy.calls != 1 {
 		t.Fatalf("StampWorkMeta calls = %d, want 1", spy.calls)
 	}
+	// The fixture bead carries no title or description, so the brief digest
+	// is the digest of the empty brief -- derived here rather than written as
+	// a literal, so a change to the digest's framing moves both sides.
 	want := map[string]string{
 		beadmeta.WorkBranchMetadataKey:  "bd-hw-pool",
 		beadmeta.SessionIDMetadataKey:   "mc-sess1",
 		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
 	}
 	if !reflect.DeepEqual(spy.patch, want) {
 		t.Fatalf("patch = %v, want %v", spy.patch, want)
@@ -142,6 +147,7 @@ func TestDoHookClaimStampsSessionIdentityOnAdoption(t *testing.T) {
 	want := map[string]string{
 		beadmeta.SessionIDMetadataKey:   "mc-sess1",
 		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
 	}
 	if spy.calls != 1 || !reflect.DeepEqual(spy.patch, want) {
 		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v}", spy.calls, spy.patch, want)
@@ -168,6 +174,7 @@ func TestDoHookClaimStampsSessionIdentityWithoutWorktree(t *testing.T) {
 	want := map[string]string{
 		beadmeta.SessionIDMetadataKey:   "mc-sess1",
 		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
 	}
 	if spy.calls != 1 || !reflect.DeepEqual(spy.patch, want) {
 		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v} (session id/name even with no worktree)", spy.calls, spy.patch, want)
@@ -180,14 +187,19 @@ func TestDoHookClaimStampsSessionIdentityWithoutWorktree(t *testing.T) {
 // flood bead.updated events.
 func TestDoHookClaimSkipsStampWhenIdentityUnchanged(t *testing.T) {
 	spy := &stampMetaSpy{}
+	// gc.brief_digest is part of "already current": it is stamped once on the
+	// first tick that sees the bead without one, and the no-write invariant
+	// this test pins applies from the tick after that.
+	digest := beadBriefDigest("", "")
 	current := map[string]string{
-		"gc.routed_to":    "worker",
-		"gc.work_branch":  "bd-hw-idem",
-		"gc.session_id":   "mc-sess1",
-		"gc.session_name": "gc__role-mc-sess1",
+		"gc.routed_to":                  "worker",
+		"gc.work_branch":                "bd-hw-idem",
+		"gc.session_id":                 "mc-sess1",
+		"gc.session_name":               "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey: digest,
 	}
 	ops := poolClaimOps(
-		`[{"id":"hw-idem","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-idem","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1"}}]`,
+		fmt.Sprintf(`[{"id":"hw-idem","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-idem","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest),
 		current,
 		"bd-hw-idem",
 		spy,
@@ -207,14 +219,16 @@ func TestDoHookClaimSkipsStampWhenIdentityUnchanged(t *testing.T) {
 // the branch, leaving the unchanged session keys out of the patch.
 func TestDoHookClaimStampsOnlyChangedIdentityKeys(t *testing.T) {
 	spy := &stampMetaSpy{}
+	digest := beadBriefDigest("", "")
 	current := map[string]string{
-		"gc.routed_to":    "worker",
-		"gc.work_branch":  "bd-old",
-		"gc.session_id":   "mc-sess1",
-		"gc.session_name": "gc__role-mc-sess1",
+		"gc.routed_to":                  "worker",
+		"gc.work_branch":                "bd-old",
+		"gc.session_id":                 "mc-sess1",
+		"gc.session_name":               "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey: digest,
 	}
 	ops := poolClaimOps(
-		`[{"id":"hw-partial","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-old","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1"}}]`,
+		fmt.Sprintf(`[{"id":"hw-partial","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-old","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest),
 		current,
 		"bd-new",
 		spy,
@@ -339,14 +353,16 @@ func TestDoHookClaimEmitsStartedOnlyAfterDurableSessionReadback(t *testing.T) {
 // lifecycle gap.
 func TestDoHookClaimAdoptionReconcilesDurableStartedFact(t *testing.T) {
 	spy := &stampMetaSpy{}
+	digest := beadBriefDigest("", "")
 	meta := map[string]string{
 		"gc.routed_to": "worker", beadmeta.RootBeadIDMetadataKey: "gcg-run",
 		beadmeta.StepIDMetadataKey: "build", beadmeta.SessionIDMetadataKey: "mc-sess1",
 		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey: digest,
 	}
 	ops := hookClaimOps{
 		Runner: func(string, string) (string, error) {
-			return `[{"id":"gcg-attempt","status":"in_progress","assignee":"gc__role-mc-sess1","metadata":{"gc.routed_to":"worker","gc.root_bead_id":"gcg-run","gc.step_id":"build","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1"}}]`, nil
+			return fmt.Sprintf(`[{"id":"gcg-attempt","status":"in_progress","assignee":"gc__role-mc-sess1","metadata":{"gc.routed_to":"worker","gc.root_bead_id":"gcg-run","gc.step_id":"build","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest), nil
 		},
 		ResolveWorkBranch: func(string) string { return "" },
 		StampWorkMeta:     spy.fn,

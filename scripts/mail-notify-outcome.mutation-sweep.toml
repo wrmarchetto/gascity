@@ -1,0 +1,158 @@
+# Proves the ci-7b1ueb reporting guards are enforced, layer by layer.
+#
+# The defect was a chain of three collapses, each of which independently hides
+# the other two: the session layer returned one unnamed decline, the notify
+# path threw the decline away, and the CLI set "notified" from the call not
+# erroring. A guard at any one layer looks green while the other two stand, so
+# every layer gets its own row.
+#
+# NOT SWEPT here, deliberately: whether a queued nudge is ever CONSUMED. That
+# is the poller's contract, not this reporting path's, and no assertion in the
+# suite claims it -- see the note in cmd/gc/mail_notify_outcome_test.go.
+
+[sweep]
+name = "gc mail send --notify reports what it actually achieved"
+repo = "/home/willie/projects/city/.gc/worktrees/gascity/toolsmith-3"
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/", "./internal/session/", "-count=1",
+  "-run", "MailNotify|NotifyOutcome|BusySession|MailSend|MailReply|WaitIdleNudge|NudgeSkip",
+]
+timeout_s = 900
+
+# Layer 1: the session layer forgets which decline happened. This is the
+# original (false, nil).
+[[mutation]]
+id = "session-layer-drops-the-busy-reason"
+path = "internal/session/chat.go"
+find = '''	if err := waiter.WaitForIdle(ctx, sessName, waitIdleNudgeTimeout); err != nil {
+		return false, ClassifyIdleWaitFailure(err), nil
+	}
+	if err := m.nudgeSession(ctx, sessName, formatWaitIdleReminder(normalizeWaitIdleNudgeSource(source), message), true); err != nil {
+		return false, NudgeSkipNudgeWriteFailed, nil
+	}
+	return true, NudgeSkipNone, nil
+}
+
+func (m *Manager) tryWaitIdleNudgeLiveOnlyLocked'''
+replace = '''	if err := waiter.WaitForIdle(ctx, sessName, waitIdleNudgeTimeout); err != nil {
+		return false, NudgeSkipNone, nil
+	}
+	if err := m.nudgeSession(ctx, sessName, formatWaitIdleReminder(normalizeWaitIdleNudgeSource(source), message), true); err != nil {
+		return false, NudgeSkipNudgeWriteFailed, nil
+	}
+	return true, NudgeSkipNone, nil
+}
+
+func (m *Manager) tryWaitIdleNudgeLiveOnlyLocked'''
+expect_output = ["TestEveryUndeliveredWaitIdleNudgeNamesASkipReason"]
+
+# Layer 1, the live-only twin. The two bodies are near-identical and a fix
+# applied to one is easy to miss on the other, which is why both are swept.
+[[mutation]]
+id = "session-layer-live-only-drops-the-busy-reason"
+path = "internal/session/chat.go"
+find = '''		return false, ClassifyIdleWaitFailure(err), nil
+	}
+	if err := m.nudgeSession(ctx, sessName, formatWaitIdleReminder(normalizeWaitIdleNudgeSource(source), message), true); err != nil {
+		return false, NudgeSkipNudgeWriteFailed, nil
+	}
+	return true, NudgeSkipNone, nil
+}
+
+func (m *Manager) pendingInteractionLocked'''
+replace = '''		return false, NudgeSkipNone, nil
+	}
+	if err := m.nudgeSession(ctx, sessName, formatWaitIdleReminder(normalizeWaitIdleNudgeSource(source), message), true); err != nil {
+		return false, NudgeSkipNudgeWriteFailed, nil
+	}
+	return true, NudgeSkipNone, nil
+}
+
+func (m *Manager) pendingInteractionLocked'''
+expect_output = ["TestWaitIdleNudgeLiveOnlyReportsBusyWhenSessionIsMidTurn"]
+
+# Layer 1: every wait failure collapses back to one bucket. Catches a fix that
+# names a reason but names the same one for everything.
+[[mutation]]
+id = "every-wait-failure-reads-as-busy"
+path = "internal/session/nudge_skip.go"
+find = '''	case errors.Is(err, runtime.ErrInteractionUnsupported):
+		return NudgeSkipNoIdleWait
+	default:
+		return NudgeSkipIdleWaitFailed'''
+replace = '''	case errors.Is(err, runtime.ErrInteractionUnsupported):
+		return NudgeSkipBusy
+	default:
+		return NudgeSkipBusy'''
+expect_output = ["TestWaitIdleNudgeLiveOnlyDistinguishesAnUnsupportedRuntimeFromABusySession"]
+
+# Layer 2: the notify path throws the reason away on its way to the queue.
+[[mutation]]
+id = "notify-path-discards-the-skip"
+path = "cmd/gc/cmd_nudge.go"
+find = '''			case nudgeErr == nil:
+				skip = result.Skip'''
+replace = '''			case nudgeErr == nil:
+				skip = session.NudgeSkipNone'''
+expect_output = ["TestSendMailNotifyToBusySessionQueuesAndReportsMidTurn"]
+
+# Layer 3: the original CLI reading -- notified means "the call did not
+# error", which every queued outcome also satisfies.
+[[mutation]]
+id = "notified-means-the-call-did-not-error"
+path = "cmd/gc/cmd_mail.go"
+find = '''			outcome = result
+			notified = result.Delivered
+			reportMailNotifyOutcome(stderr, "gc mail send", to, result)'''
+replace = '''			outcome = result
+			notified = true
+			reportMailNotifyOutcome(stderr, "gc mail send", to, result)'''
+expect_output = ["TestMailSendReportsAQueuedRecipientInsteadOfClaimingNotified"]
+
+# Layer 3: a broadcast counts as notified when ANY recipient took it live.
+[[mutation]]
+id = "broadcast-notified-on-any-recipient"
+path = "cmd/gc/cmd_mail.go"
+find = '''				if !result.Delivered {
+					allDelivered = false
+				}'''
+replace = '''				if result.Delivered {
+					allDelivered = true
+				}'''
+expect_output = ["TestMailSendAllReportsNotifiedOnlyWhenEveryRecipientTookItLive"]
+
+# Layer 3: the report fires on every send, including deliveries. A line the
+# reader learns to skip is not a report.
+[[mutation]]
+id = "report-prints-on-a-live-delivery-too"
+path = "cmd/gc/cmd_nudge.go"
+find = '''	if stderr == nil || outcome.Delivered {
+		return
+	}'''
+replace = '''	if stderr == nil {
+		return
+	}'''
+expect_output = ["TestMailSendPrintsNothingExtraOnALiveDelivery"]
+
+# The help text goes back to promising only the wake. The string is identical
+# on send and on reply, so each row carries the preceding line as its anchor --
+# without one the driver cannot attribute a red gate to either site.
+[[mutation]]
+id = "send-help-text-promises-only-the-wake"
+path = "cmd/gc/cmd_mail.go"
+find = '''	}
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed")'''
+replace = '''	}
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn (including a managed wake if not running), even with earlier unread mail")'''
+expect_output = ["TestMailNotifyHelpDocumentsManagedWake/send"]
+
+[[mutation]]
+id = "reply-help-text-promises-only-the-wake"
+path = "cmd/gc/cmd_mail.go"
+find = '''	cmd.Flags().StringVarP(&message, "message", "m", "", "reply body text")
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn -- a managed wake if it is stopped, a queued nudge if it is mid-turn; the outcome is printed")'''
+replace = '''	cmd.Flags().StringVarP(&message, "message", "m", "", "reply body text")
+	cmd.Flags().BoolVar(&notify, "notify", false, "request a recipient turn (including a managed wake if not running), even with earlier unread mail")'''
+expect_output = ["TestMailNotifyHelpDocumentsManagedWake/reply"]
