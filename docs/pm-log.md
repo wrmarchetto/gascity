@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-u302 2026-09-11T05:14:23Z
+last_seen: gs-555l 2026-09-11T19:36:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4751,3 +4751,66 @@ Drift since last_seen (gs-ian6 05:08:32Z): one bead -- gs-u302, this
 question itself.
 
 Source: roadmap agent-efficiency
+
+## 140. pm-epic-close gs-555l: mayor-slack-bridge stays in-progress -- the acceptance demo has no passing run (2026-09-11)
+
+Summons gs-555l: all 12 epic:mayor-slack-bridge beads are closed while the
+epic is still in-progress. No close-report entry for this epic is in the
+log, so the beads' close reasons are the whole evidence base. Verdict: NOT
+done. Two acceptance arms have no passing evidence, both recorded by
+gs-z09, the demo bead, which closed FAIL on exactly them so its partial
+would not be read as the epic's acceptance:
+
+- Criterion 1's cold arm ("cold-waking the mayor when no session is
+  live") was never run. gc session suspend did not hold the mayor down --
+  it was back in about two minutes, mechanism unestablished -- so the
+  demo ran against an awake mayor. gs-z09's re-run notes require a lever
+  that sticks, verified before Willie is asked to post.
+- Criterion 9's "no manual step" was broken by the runner, not the
+  system: the mirror was hand-stopped at 22:33Z to halt the flood later
+  filed as gs-t0d8, and hand-restarted at 22:41Z, so the return path
+  needed a human mid-demo.
+
+Everything else is met on the close reasons. Inbound full text verified
+byte-identical at both ends, gc transcript against Slack's own history
+(gs-z09, adapter gs-wnn). Assistant-turns-only mirror with narration
+retained per ruling #130, and the transcript-replay flood fixed by
+gs-t0d8 -- 2 messages in the opening 45s at activation against the 92
+that caused the 2026-09-08 incident (measured at gs-msc2). Socket Mode
+with no public TLS (gs-wnn). Supervised out-of-process pair surviving
+controller restart and mayor respawn (gs-a9bm, city commit ccf1895, and
+gs-2hl's regression tests, then live: gs-msc2 shows slack-bridge and
+slack-mirror both ready after Willie's 14:19 CDT rebuild-and-restart).
+ZERO-roles and alerts-seam isolation as a mutation-proven gate (gs-8ra,
+carried to main by gs-lq9 and gs-fn6, 17/17 mutants dead on the port).
+BRIDGE_SLACK_* credentials in secrets.env with the alerts-seam namespace
+collision refused (gs-228, gs-lq9). Lossless [part i/n] chunking
+(gs-eh2).
+
+Both blockers gs-z09's close named for a re-run have since landed --
+gs-t0d8 and supervision (gs-a9bm, gs-msc2) -- so a clean re-run is now
+possible, and no open bead carries it. Requested from the mayor by mail
+this turn: mint ONE re-run bead under epic:mayor-slack-bridge (clean
+round trip, no manual step, plus the cold arm behind a verified
+hold-down lever), operator-attended since it needs Willie at the
+keyboard. gs-msc2's own caveat stays outside this epic: the machine
+supervisor is running, not installed (no systemd unit), carried by
+gs-hzrg, standalone per #131.
+
+No promotion: no epic has status: open. agent-efficiency is already
+in-progress (promoted at #137), so promoting from here would
+double-promote. Per the summons's none-left-open instruction the
+what-next gap is recorded as pm-open #8 -- nothing queued after
+agent-efficiency, the #2(b)/#5 gap one epic later.
+
+Drift since last_seen (gs-u302 05:14:23Z): eight beads closed, one filed
+(this summons), plus two gs-ian6 hold-clear event children. Closed:
+gs-msc2 (bridge activation, above), four agent-efficiency carriers --
+gs-ian6 (criterion 2), gs-yvxt (criterion 3), gs-arar (criterion 6),
+gs-saj5 (criterion 7) -- gs-u302 (instrument question, answered at
+#139), gs-18wr (usage-fact re-emission bug), and gs-xujz (test-policy
+waiver review). agent-efficiency's remaining open work is gs-jbyc
+(canary window) and gs-z2on (affinity), recounted this turn: both open,
+neither in progress.
+
+Source: roadmap mayor-slack-bridge

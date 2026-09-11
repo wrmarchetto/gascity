@@ -234,3 +234,20 @@ met once the gate runs live?
 Would settle it: Willie's word in any sitting or a note on gs-arar or
 gs-ntgf; or the branch landing on city main by whatever path that repo
 uses, which confirms the disposition by exercise.
+
+## 8. Nothing queued after agent-efficiency (2026-09-11)
+
+epic:mayor-slack-bridge is parked on its acceptance demo (pm-log #140:
+criterion 1's cold-wake arm and criterion 9's clean no-manual-step round
+trip, re-run bead requested from the mayor) and epic:agent-efficiency is
+in-progress with five of its seven criterion carriers already closed, only
+gs-jbyc (canary window) and gs-z2on (affinity) open. No epic has status:
+open, so when agent-efficiency closes this rig has nothing to promote --
+the same gap pm-open #2(b) and #5 recorded, one epic later.
+
+Question: what does gascity build after agent-efficiency?
+
+Would settle it: a `gc city pm plan gascity '<epic>'` sitting. pm-open #3's
+standing question (a maintenance epic, or a declared standalone-by-default
+policy for substrate fixes) is one candidate answer that sitting could fold
+in, as #5 noted before it.
