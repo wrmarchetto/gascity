@@ -3073,6 +3073,20 @@ type AgentDefaults struct {
 	// WakeMode is the parsed/composed default wake mode ("resume" or
 	// "fresh"), but it is not yet auto-applied at runtime.
 	WakeMode string `toml:"wake_mode,omitempty" jsonschema:"enum=resume,enum=fresh"`
+	// IdleTimeout is the default idle timeout for agents that do not set
+	// their own. Duration string (e.g. "90m"); empty leaves every agent as
+	// configured. Applied to agents with an empty IdleTimeout by
+	// ApplyAgentDefaults.
+	//
+	// This exists because a per-agent idle_timeout cannot be kept correct in
+	// a city of any size: setting it agent-by-agent means one [[patches]]
+	// entry per agent, and an agent added later inherits no bound at all.
+	// The timeout is the only mechanism that ends a wedged session
+	// unconditionally -- a drain-ack refused for assigned work leaves a live
+	// session believing it retired, with no event, no nudge and nothing else
+	// that transitions it out (ci-07ebae) -- so "off unless each agent opts
+	// in" is the wrong default shape for it.
+	IdleTimeout string `toml:"idle_timeout,omitempty"`
 	// DefaultSlingFormula is the default formula used for agents that inherit
 	// [agent_defaults]. Explicit agents only receive this value when
 	// agent_defaults.default_sling_formula is set; implicit multi-session
@@ -3115,6 +3129,9 @@ func mergeAgentDefaultsAliasPreferCanonical(dst *AgentDefaults, src AgentDefault
 	}
 	if !meta.IsDefined("agent_defaults", "wake_mode") {
 		dst.WakeMode = src.WakeMode
+	}
+	if !meta.IsDefined("agent_defaults", "idle_timeout") {
+		dst.IdleTimeout = src.IdleTimeout
 	}
 	if !meta.IsDefined("agent_defaults", "default_sling_formula") {
 		dst.DefaultSlingFormula = src.DefaultSlingFormula
@@ -3879,6 +3896,27 @@ func ApplyAgentDefaults(cfg *City) {
 			}
 		}
 	}
+
+	// Idle timeout: agents with no explicit idle_timeout inherit the
+	// city-wide default, which is what arms buildIdleTracker for them at all
+	// -- an agent whose resolved IdleTimeoutDuration is 0 is skipped there,
+	// and a city where EVERY agent resolves to 0 gets a nil tracker and no
+	// idle reaper of any kind (cmd/gc/cmd_start.go buildIdleTracker).
+	//
+	// The control dispatcher is excluded for a reason the other defaults do
+	// not share: it is a long-lived serve loop that is SUPPOSED to sit quiet
+	// between control beads, so reaping it on inactivity would kill the
+	// component that drives every formula.
+	if idleTimeout := cfg.AgentDefaults.IdleTimeout; idleTimeout != "" {
+		for i := range cfg.Agents {
+			if cfg.Agents[i].Name == ControlDispatcherAgentName {
+				continue
+			}
+			if cfg.Agents[i].IdleTimeout == "" {
+				cfg.Agents[i].IdleTimeout = idleTimeout
+			}
+		}
+	}
 }
 
 // DefaultOrderTrackingDeleteAfterClose is the canonical default closed-bead
@@ -4004,6 +4042,12 @@ func mergeAgentDefaults(dst *AgentDefaults, src AgentDefaults, label string, pro
 			prov.Warnings = append(prov.Warnings, fmt.Sprintf("agent_defaults.wake_mode redefined by %q", label))
 		}
 		dst.WakeMode = src.WakeMode
+	}
+	if src.IdleTimeout != "" {
+		if prov != nil && dst.IdleTimeout != "" && dst.IdleTimeout != src.IdleTimeout {
+			prov.Warnings = append(prov.Warnings, fmt.Sprintf("agent_defaults.idle_timeout redefined by %q", label))
+		}
+		dst.IdleTimeout = src.IdleTimeout
 	}
 	if src.DefaultSlingFormula != "" {
 		if prov != nil && dst.DefaultSlingFormula != "" && dst.DefaultSlingFormula != src.DefaultSlingFormula {
