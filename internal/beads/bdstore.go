@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
+	"github.com/gastownhall/gascity/internal/gchome"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
 
@@ -572,8 +573,45 @@ const bdAutoBackupOptOutEnvKey = "BD_BACKUP_ENABLED"
 func execEnvFor(name string, baseEnv []string, overrides map[string]string) []string {
 	if name == "bd" {
 		baseEnv = append(envWithout(baseEnv, bdAutoBackupOptOutEnvKey), bdAutoBackupOptOutEnvKey+"=false")
+		baseEnv = withFallbackHome(baseEnv)
 	}
 	return mergeEnv(baseEnv, overrides)
+}
+
+// withFallbackHome guarantees the bd child env names a HOME.
+//
+// With HOME absent bd does not fail; it resolves its config directory to the
+// literal string "~" and writes ./~/.config/bd/config.yaml relative to its
+// cwd. Every bd exec here sets cmd.Dir to the bead store root, which is a git
+// checkout, so a caller that assembled a HOME-less environment deposits an
+// untracked directory named "~" in the operator's repository -- and, because
+// bd writes that config only when it is missing, does so silently ever after.
+// One did, in the city root on 2026-09-11 (bead ci-3we3lc).
+//
+// The rejected alternative is to let the caller's environment stand and fix
+// callers: there is no choke point for them. The HOME-less env in that
+// incident was built by hand, outside this repository, and the same shape is
+// available to any script, hook or cron that allowlists variables. This is
+// the one place every runner-spawned bd passes through.
+//
+// gc's own resolved home rather than os.TempDir(), so a HOME-less bd and a
+// HOME-less gc tell one story about where their state went -- that path is
+// already the one gc names in its diagnostics. ResolveReadOnly and NOT
+// ResolveDefault: assembling an env slice must not create a directory as a
+// side effect, and ResolveDefault's MkdirTemp branch would leave one per
+// exec.
+//
+// Scoped to bd for the same reason the backup opt-out above is: dolt has no
+// relative-"~" behavior to defend against, and inventing a HOME for an
+// unrelated program changes what it reads for no reason. An inherited HOME is
+// never replaced -- only absence is filled.
+func withFallbackHome(baseEnv []string) []string {
+	for _, entry := range baseEnv {
+		if strings.HasPrefix(entry, "HOME=") {
+			return baseEnv
+		}
+	}
+	return append(baseEnv, "HOME="+gchome.ResolveReadOnly().Path())
 }
 
 // envWithout returns a copy of environ with all entries for the given key removed.
