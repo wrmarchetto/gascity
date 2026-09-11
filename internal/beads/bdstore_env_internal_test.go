@@ -113,3 +113,47 @@ func TestExecCommandRunnerWithEnv_RelativeBDBinUsesAmbientBd(t *testing.T) {
 		t.Fatalf("ambient bd output = %q, want %q", got, want)
 	}
 }
+
+func TestExecEnvForBd_SuppliesHomeWhenTheParentHasNone(t *testing.T) {
+	// bd resolves its config directory from HOME, and with HOME ABSENT it
+	// does not fail -- it writes ./~/.config/bd/config.yaml, relative to
+	// cwd, into a directory literally named `~`. Every bd exec here sets
+	// cmd.Dir to the bead store root, which is a git checkout, so a
+	// HOME-less caller silently deposits an untracked directory in the
+	// operator's repository. One did: /home/willie/projects/city/~ on
+	// 2026-09-11, from a command that built its child env with `env -i` and
+	// a five-variable allowlist (bead ci-3we3lc).
+	//
+	// The value is gc's own resolved home rather than os.TempDir() so a
+	// HOME-less bd and a HOME-less gc tell one story about where their
+	// state went -- that path is already what gc names in its diagnostics.
+	// ResolveReadOnly, not ResolveDefault: assembling an env slice must not
+	// create a directory as a side effect.
+	//
+	// THE ASSERTION IS `exactly one, non-empty, absolute`, not a literal.
+	// A literal would have to restate the resolver's branch table, and a
+	// test that recomputes its expectation from the same source as the
+	// implementation cannot see that source being dropped. What must hold
+	// is that bd can never take its relative-`~` branch.
+	base := []string{"PATH=/usr/bin"}
+	got := execEnvFor("bd", base, nil)
+	vals := envValues(got, "HOME")
+	if len(vals) != 1 {
+		t.Fatalf("HOME values = %v, want exactly one entry so bd cannot resolve `~` relative to cwd", vals)
+	}
+	if vals[0] == "" || !filepath.IsAbs(vals[0]) {
+		t.Errorf("HOME = %q, want a non-empty absolute path", vals[0])
+	}
+}
+
+func TestExecEnvForNonBd_GetsNoFabricatedHome(t *testing.T) {
+	// The runner also execs dolt directly, and dolt has no relative-`~`
+	// behavior to defend against. Inventing a HOME for it would change what
+	// an unrelated program reads for no reason, so the injection is scoped
+	// to bd the way the backup opt-out above already is.
+	base := []string{"PATH=/usr/bin"}
+	got := execEnvFor("dolt", base, nil)
+	if vals := envValues(got, "HOME"); len(vals) != 0 {
+		t.Errorf("HOME values = %v, want none for non-bd commands", vals)
+	}
+}
