@@ -335,6 +335,27 @@ func provedRuntimeScoped(constructor SymbolRef, file, test, scope string, allowe
 // full-contract suite at all. A shorter renewal was rejected: the gaps are
 // structural, so a 30-day window buys the same answer a month sooner at the
 // cost of another gate outage.
+//
+// Re-reviewed 2026-09-11 (bead gs-xujz) WITHOUT moving the date: all nine
+// still retained, and not one gets an extra day out of that review. The
+// per-entry basis and what would close each gap are recorded in
+// engdocs/contributors/test-policy-waiver-review.md, which
+// TestEveryWaiverHasARecordedDecision holds equal to this set -- including the
+// expiry each decision was taken against, so moving this literal without
+// re-recording the decisions fails the gate instead of extending nine waivers
+// quietly. Two findings from that pass are worth knowing before planning any
+// of the work: k8s.NewSeamBacked and cmd/gc.newHybridProvider return
+// (Provider, error), which the proof-factory shape rejects outright, so a test
+// cluster alone would not retire the k8s waiver; and t3bridge.NewProvider
+// os.RemoveAll's $HOME/.t3/gc-bridge at construction, so an untagged proof of
+// it would delete the operator's live T3 state on every run.
+//
+// The resourcecensus catalog was aligned onto this same date by that review,
+// so one sitting now covers both. Its rows close the gate one day later than
+// these waivers do -- census.go compares expiry.Before(day(now)) while this
+// compares !Expires.After(now) -- which is why
+// doctor/test-policy-expiry-horizon reports two closure dates from one expiry
+// date.
 func waivedRuntime(constructor SymbolRef, reason string) ContractClaim {
 	return ContractClaim{
 		Constructor: constructor,
