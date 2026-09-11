@@ -174,6 +174,12 @@ function stubFetch() {
       const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
       fetchCalls.push({ method, path: url.pathname, query: url.searchParams });
 
+      // The board reads the bookkeeping-label set from the supervisor rather
+      // than carrying a copy (ci-zg9lbn), so the stub has to answer it; the
+      // `gc:session` noise bead below is hidden on this basis.
+      if (url.pathname === '/v0/city/test-city/beads/label-policy') {
+        return jsonResponse({ hidden_labels: ['gc:session'] });
+      }
       if (url.pathname === '/v0/city/test-city/beads') {
         return jsonResponse(beadListForQuery(url.searchParams.get('type')));
       }

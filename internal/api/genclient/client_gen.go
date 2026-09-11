@@ -1222,6 +1222,12 @@ type BeadGraphResponse struct {
 	Root  Bead                   `json:"root"`
 }
 
+// BeadLabelPolicyOutputBody defines model for BeadLabelPolicyOutputBody.
+type BeadLabelPolicyOutputBody struct {
+	// HiddenLabels Labels marking a bead as infrastructure bookkeeping rather than actionable work, in declaration order. A client hides these rows by default.
+	HiddenLabels *[]string `json:"hidden_labels"`
+}
+
 // BeadUpdateBody defines model for BeadUpdateBody.
 type BeadUpdateBody struct {
 	// Assignee Assigned agent.
@@ -18031,6 +18037,9 @@ type ClientInterface interface {
 	// GetV0CityByCityNameBeadsGraphByRootId request
 	GetV0CityByCityNameBeadsGraphByRootId(ctx context.Context, cityName string, rootID string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetV0CityByCityNameBeadsLabelPolicy request
+	GetV0CityByCityNameBeadsLabelPolicy(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetV0CityByCityNameBeadsReady request
 	GetV0CityByCityNameBeadsReady(ctx context.Context, cityName string, params *GetV0CityByCityNameBeadsReadyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -18960,6 +18969,18 @@ func (c *Client) CreateBead(ctx context.Context, cityName string, params *Create
 
 func (c *Client) GetV0CityByCityNameBeadsGraphByRootId(ctx context.Context, cityName string, rootID string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetV0CityByCityNameBeadsGraphByRootIdRequest(c.Server, cityName, rootID)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetV0CityByCityNameBeadsLabelPolicy(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV0CityByCityNameBeadsLabelPolicyRequest(c.Server, cityName)
 	if err != nil {
 		return nil, err
 	}
@@ -22873,6 +22894,40 @@ func NewGetV0CityByCityNameBeadsGraphByRootIdRequest(server string, cityName str
 	}
 
 	operationPath := fmt.Sprintf("/v0/city/%s/beads/graph/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetV0CityByCityNameBeadsLabelPolicyRequest generates requests for GetV0CityByCityNameBeadsLabelPolicy
+func NewGetV0CityByCityNameBeadsLabelPolicyRequest(server string, cityName string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "cityName", cityName, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v0/city/%s/beads/label-policy", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -31565,6 +31620,9 @@ type ClientWithResponsesInterface interface {
 	// GetV0CityByCityNameBeadsGraphByRootIdWithResponse request
 	GetV0CityByCityNameBeadsGraphByRootIdWithResponse(ctx context.Context, cityName string, rootID string, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameBeadsGraphByRootIdResponse, error)
 
+	// GetV0CityByCityNameBeadsLabelPolicyWithResponse request
+	GetV0CityByCityNameBeadsLabelPolicyWithResponse(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameBeadsLabelPolicyResponse, error)
+
 	// GetV0CityByCityNameBeadsReadyWithResponse request
 	GetV0CityByCityNameBeadsReadyWithResponse(ctx context.Context, cityName string, params *GetV0CityByCityNameBeadsReadyParams, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameBeadsReadyResponse, error)
 
@@ -32840,6 +32898,31 @@ func (r GetV0CityByCityNameBeadsGraphByRootIdResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetV0CityByCityNameBeadsGraphByRootIdResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetV0CityByCityNameBeadsLabelPolicyResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *BeadLabelPolicyOutputBody
+	ApplicationproblemJSON404 *ErrorModel
+	ApplicationproblemJSON422 *ErrorModel
+	ApplicationproblemJSON500 *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetV0CityByCityNameBeadsLabelPolicyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetV0CityByCityNameBeadsLabelPolicyResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -36814,6 +36897,15 @@ func (c *ClientWithResponses) GetV0CityByCityNameBeadsGraphByRootIdWithResponse(
 	return ParseGetV0CityByCityNameBeadsGraphByRootIdResponse(rsp)
 }
 
+// GetV0CityByCityNameBeadsLabelPolicyWithResponse request returning *GetV0CityByCityNameBeadsLabelPolicyResponse
+func (c *ClientWithResponses) GetV0CityByCityNameBeadsLabelPolicyWithResponse(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameBeadsLabelPolicyResponse, error) {
+	rsp, err := c.GetV0CityByCityNameBeadsLabelPolicy(ctx, cityName, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetV0CityByCityNameBeadsLabelPolicyResponse(rsp)
+}
+
 // GetV0CityByCityNameBeadsReadyWithResponse request returning *GetV0CityByCityNameBeadsReadyResponse
 func (c *ClientWithResponses) GetV0CityByCityNameBeadsReadyWithResponse(ctx context.Context, cityName string, params *GetV0CityByCityNameBeadsReadyParams, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameBeadsReadyResponse, error) {
 	rsp, err := c.GetV0CityByCityNameBeadsReady(ctx, cityName, params, reqEditors...)
@@ -40091,6 +40183,53 @@ func ParseGetV0CityByCityNameBeadsGraphByRootIdResponse(rsp *http.Response) (*Ge
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest BeadGraphResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetV0CityByCityNameBeadsLabelPolicyResponse parses an HTTP response from a GetV0CityByCityNameBeadsLabelPolicyWithResponse call
+func ParseGetV0CityByCityNameBeadsLabelPolicyResponse(rsp *http.Response) (*GetV0CityByCityNameBeadsLabelPolicyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetV0CityByCityNameBeadsLabelPolicyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest BeadLabelPolicyOutputBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

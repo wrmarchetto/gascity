@@ -829,3 +829,24 @@ func (s *Server) humaHandleBeadDelete(_ context.Context, input *BeadDeleteInput)
 	}
 	return nil, apierr.BeadNotFound.Msg("bead " + id + " not found")
 }
+
+// humaHandleBeadLabelPolicy is the Huma-typed handler for
+// GET /v0/beads/label-policy.
+//
+// It reads nothing and touches no store: the answer is this binary's compiled
+// Ready() exclusion set. That is deliberate -- the set has to be served by the
+// same build that serves the SPA, so the two can never disagree at runtime the
+// way a generated TypeScript copy could after a partial rebuild.
+//
+// The rejected alternative is filtering these rows out of GET /beads itself,
+// which would also shrink the payload. It is not done because that handler
+// sources Total from each store's hydration-free Count, and beads.ListQuery
+// has no label-exclusion term: the rows would vanish from Items while still
+// counting toward Total and toward the keyset page bound, so the board's
+// "showing N of M" and its next_cursor walk would both be wrong in a way no
+// client could detect.
+func (s *Server) humaHandleBeadLabelPolicy(_ context.Context, _ *BeadLabelPolicyInput) (*BeadLabelPolicyOutput, error) {
+	out := &BeadLabelPolicyOutput{}
+	out.Body.HiddenLabels = beads.ReadyExcludedLabels()
+	return out, nil
+}

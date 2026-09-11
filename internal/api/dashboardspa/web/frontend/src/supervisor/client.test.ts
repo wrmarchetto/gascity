@@ -1334,6 +1334,7 @@ describe('supervisor client wrapper', () => {
       mailThread: vi.fn(),
       sendMail: vi.fn(),
       createBead: vi.fn(),
+      beadLabelPolicy: vi.fn(),
       updateBead: vi.fn(),
       closeBead: vi.fn(),
       sling: vi.fn(),

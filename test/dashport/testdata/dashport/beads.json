@@ -65,6 +65,26 @@
       "updated_at": "2026-06-01T09:00:00Z"
     },
     {
+      "id": "order-track-1",
+      "title": "order sweep bookkeeping row",
+      "status": "open",
+      "issue_type": "task",
+      "description": "order tracking bookkeeping, not work",
+      "labels": ["order-tracking"],
+      "created_at": "2026-06-01T10:03:00Z",
+      "updated_at": "2026-06-01T10:03:00Z"
+    },
+    {
+      "id": "slack-transcript-1",
+      "title": "slack/default/C0C0JPH5E2Y#99",
+      "status": "open",
+      "issue_type": "task",
+      "description": "hi from slack",
+      "labels": ["gc:extmsg-transcript"],
+      "created_at": "2026-06-01T10:02:00Z",
+      "updated_at": "2026-06-01T10:02:00Z"
+    },
+    {
       "id": "src-review-1",
       "title": "Review PR #42 for the seeded corpus",
       "status": "closed",

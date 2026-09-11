@@ -6,6 +6,7 @@ import {
   getV0CityByCityNameAgents,
   getV0CityByCityNameBeadById,
   getV0CityByCityNameBeads,
+  getV0CityByCityNameBeadsLabelPolicy,
   getV0CityByCityNameEvents,
   getV0CityByCityNameFormulasByName,
   getV0CityByCityNameFormulasFeed,
@@ -33,6 +34,7 @@ import {
 import type {
   Bead,
   BeadCreateInputBody,
+  BeadLabelPolicyOutputBody,
   BeadUpdateBody,
   FormulaFeedBody,
   GetV0CityByCityNameBeadsData,
@@ -111,6 +113,12 @@ export interface SupervisorApi {
     cityName: string,
     query?: NonNullable<GetV0CityByCityNameEventsData['query']>,
   ): Promise<ListBodyWireEvent>;
+  /**
+   * The set of bead labels and types this supervisor build does not count as
+   * work. Read rather than hardcoded so the board never carries a second copy
+   * of gc's ready-exclusion literals (ci-zg9lbn).
+   */
+  beadLabelPolicy(cityName: string): Promise<BeadLabelPolicyOutputBody>;
   getBead(cityName: string, id: string): Promise<Bead>;
   createBead(cityName: string, body: BeadCreateInputBody): Promise<Bead>;
   updateBead(cityName: string, id: string, body: BeadUpdateBody): Promise<OkResponseBody>;
@@ -297,6 +305,15 @@ export function createSupervisorApi(options: CreateSupervisorApiOptions = {}): S
           ...(query === undefined ? {} : { query }),
         }) as Promise<SupervisorResult<ListBodyWireEvent>>,
         'gc supervisor events response was empty',
+      );
+    },
+    beadLabelPolicy(cityName) {
+      return unwrapSupervisorResult<BeadLabelPolicyOutputBody>(
+        getV0CityByCityNameBeadsLabelPolicy({
+          client,
+          path: { cityName },
+        }) as Promise<SupervisorResult<BeadLabelPolicyOutputBody>>,
+        'gc supervisor bead label policy response was empty',
       );
     },
     getBead(cityName, id) {

@@ -25,6 +25,12 @@ const baseApi: SupervisorApi = {
   listAgents: vi.fn(),
   listRigs: vi.fn(),
   listBeads: vi.fn(),
+  // Present so the mock satisfies SupervisorApi; refuses rather than answering,
+  // because nothing in this file should be reading the bookkeeping-label
+  // policy and a silent empty answer would hide it if something started to.
+  beadLabelPolicy: vi.fn(async () => {
+    throw new Error('beadLabelPolicy is not part of this suite');
+  }),
   listEvents: vi.fn(),
   getBead: vi.fn(),
   createBead: vi.fn(),

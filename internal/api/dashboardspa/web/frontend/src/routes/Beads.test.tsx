@@ -9,6 +9,10 @@ import { OperatorConfigProvider } from '../contexts/OperatorConfigContext';
 import type { SupervisorBead } from '../supervisor/beadReads';
 
 const PROJECT = 'gascity';
+// The label the served policy marks as bookkeeping. Invented, not one of gc's
+// real families: a fixture naming a real one would still pass if the board had
+// gone back to a hardcoded list, which is the regression ci-zg9lbn guards.
+const SERVED_HIDDEN_LABEL = 'fixture:not-work';
 const beadQueries: URLSearchParams[] = [];
 const supervisorWrites: Array<{
   method: string;
@@ -29,9 +33,14 @@ beforeEach(() => {
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = parsedUrl(input);
       const method = requestMethod(input, init);
+      if (url.pathname === '/v0/city/test-city/beads/label-policy' && method === 'GET') {
+        return jsonResponse({ hidden_labels: [SERVED_HIDDEN_LABEL] });
+      }
       if (url.pathname === '/v0/city/test-city/beads' && method === 'GET') {
         beadQueries.push(url.searchParams);
-        return jsonResponse(beadListPayload(url.searchParams.has('type') ? [] : [sampleBead()]));
+        return jsonResponse(
+          beadListPayload(url.searchParams.has('type') ? [] : [sampleBead(), bookkeepingBead()]),
+        );
       }
       if (url.pathname === '/v0/city/test-city/beads' && method === 'POST') {
         supervisorWrites.push({
@@ -126,6 +135,33 @@ afterEach(() => {
 });
 
 describe('BeadsPage', () => {
+  // ci-zg9lbn. The board must not show the rows gc itself does not count as
+  // work, and must still be able to reach them. Both halves are asserted here:
+  // a jsdom suite can prove the predicate and the refetch, but NOT that the
+  // control is visible or reachable on a rendered page -- the Playwright spec
+  // in e2e/render-smoke.spec.ts covers that.
+  it('hides a bookkeeping-labelled row from the default board', async () => {
+    renderPage();
+
+    await screen.findByText('Sample bead');
+
+    expect(screen.queryByText('slack/default/C0C0JPH5E2Y#99')).toBeNull();
+  });
+
+  it('reveals bookkeeping rows through the show control, refetching rather than re-filtering', async () => {
+    renderPage();
+
+    await screen.findByText('Sample bead');
+    expect(beadQueries.length).toBe(1);
+
+    fireEvent.click(screen.getByRole('button', { name: /^bookkeeping$/i }));
+
+    await screen.findByText('slack/default/C0C0JPH5E2Y#99');
+    // A second fetch, not a re-filter of the first payload: the control rides
+    // the cache key, so the board cannot serve a stale scope.
+    expect(beadQueries.length).toBe(2);
+  });
+
   it('renders the kanban board by default with no board/list compatibility switch', async () => {
     renderPage();
 
@@ -339,6 +375,22 @@ function sampleBead(): SupervisorBead {
     issue_type: 'task',
     assignee: 'mayor',
     labels: [],
+    created_at: '2026-01-01T00:00:00Z',
+  };
+}
+
+// A row shaped like the external-message transcripts that filled the board:
+// issue_type `task`, the same type real work carries, so only its label can be
+// what hides it (ci-zg9lbn).
+function bookkeepingBead(): SupervisorBead {
+  return {
+    id: `${PROJECT}-0099`,
+    title: 'slack/default/C0C0JPH5E2Y#99',
+    description: 'hi from slack',
+    status: 'open',
+    priority: 0,
+    issue_type: 'task',
+    labels: [SERVED_HIDDEN_LABEL],
     created_at: '2026-01-01T00:00:00Z',
   };
 }

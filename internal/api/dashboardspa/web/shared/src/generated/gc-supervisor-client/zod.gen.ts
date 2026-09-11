@@ -116,6 +116,10 @@ export const zBeadDeadAssigneeReopenedPayload = z.object({
     routed_to: z.string().optional()
 });
 
+export const zBeadLabelPolicyOutputBody = z.object({
+    hidden_labels: z.array(z.string()).nullable()
+});
+
 export const zBeadUpdateBody = z.object({
     assignee: z.string().optional(),
     description: z.string().optional(),
@@ -7248,6 +7252,15 @@ export const zGetV0CityByCityNameBeadsGraphByRootIdPath = z.object({
  * OK
  */
 export const zGetV0CityByCityNameBeadsGraphByRootIdResponse = zBeadGraphResponse;
+
+export const zGetV0CityByCityNameBeadsLabelPolicyPath = z.object({
+    cityName: z.string().min(1).regex(/\S/)
+});
+
+/**
+ * OK
+ */
+export const zGetV0CityByCityNameBeadsLabelPolicyResponse = zBeadLabelPolicyOutputBody;
 
 export const zGetV0CityByCityNameBeadsReadyPath = z.object({
     cityName: z.string().min(1).regex(/\S/)

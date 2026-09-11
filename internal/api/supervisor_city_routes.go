@@ -198,6 +198,10 @@ func (sm *SupervisorMux) registerCityRoutes() {
 	// invalid-cursor problem response, never a silent page-1 restart.
 	cityGet(sm, "/beads", (*Server).humaHandleBeadList, errorStatuses(http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable), listOrder("(created_at DESC, id DESC) — newest beads first"))
 	cityGet(sm, "/beads/graph/{rootID}", (*Server).humaHandleBeadGraph, errorStatuses(http.StatusNotFound))
+	// The board asks for the bookkeeping-label set rather than carrying its
+	// own copy of those literals (ci-zg9lbn). No 503: the answer is compiled in,
+	// so it is served even while every bead store is unreachable.
+	cityGet(sm, "/beads/label-policy", (*Server).humaHandleBeadLabelPolicy, errorStatuses(http.StatusNotFound))
 	cityGet(sm, "/beads/ready", (*Server).humaHandleBeadReady, errorStatuses(http.StatusNotFound, http.StatusServiceUnavailable))
 	cityRegister(sm, huma.Operation{
 		OperationID:   "create-bead",

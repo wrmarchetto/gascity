@@ -19,6 +19,8 @@
 //   COMPLETED_STEP_APPROVE <-> corpus.CompletedStepApproveID
 //   WORK_BEAD_ID          <-> corpus.WorkBeadID
 //   WORK_BEAD_TITLE       <-> corpus.WorkBeadTitle
+//   BOOKKEEPING_BEAD_TITLE <-> corpus.BookkeepingBeadTitle
+//   UNPREFIXED_BOOKKEEPING_BEAD_TITLE <-> corpus.UnprefixedBookkeepingBeadTitle
 //   MAIL_SUBJECT          <-> corpus.MailSubject
 //   AGENT_NAME            <-> corpus.AgentName
 
@@ -66,6 +68,22 @@ export const COMPLETED_PHASE_LABEL = 'complete';
 /** The seeded standalone work bead the beads view lists. */
 export const WORK_BEAD_ID = 'work-1';
 export const WORK_BEAD_TITLE = 'Wire the seeded dashboard corpus';
+
+/**
+ * The seeded external-message transcript row. Open, issue_type `task` -- the
+ * same shape as real work -- and labelled `gc:extmsg-transcript`, so only the
+ * bookkeeping-label rule can be what keeps it off the default board
+ * (ci-zg9lbn).
+ */
+export const BOOKKEEPING_BEAD_TITLE = 'slack/default/C0C0JPH5E2Y#99';
+
+/**
+ * The second seeded bookkeeping row, and the one that makes the assertion
+ * mean something. Its label carries no `gc:` prefix, so the board's prefix
+ * heuristic cannot hide it -- only the ready-exclusion set the supervisor
+ * serves can.
+ */
+export const UNPREFIXED_BOOKKEEPING_BEAD_TITLE = 'order sweep bookkeeping row';
 
 /** The seeded mail message the mail view lists. */
 export const MAIL_SUBJECT = 'seeded handoff';

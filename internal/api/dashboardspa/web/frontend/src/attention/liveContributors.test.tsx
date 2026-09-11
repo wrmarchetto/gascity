@@ -61,6 +61,12 @@ const mockSupervisorApi = vi.hoisted(() => ({
   formulaFeed: vi.fn(),
   listAgents: vi.fn(),
   listBeads: vi.fn(),
+  // The default bead read filters bookkeeping rows on the supervisor's own
+  // label set (ci-zg9lbn), so this mock has to answer it. Scripted per-run in
+  // beforeEach with an empty set: the attention queues here assert on which
+  // rows reach them, and a fixture that hid one would make those assertions
+  // about this stub instead of about the code.
+  beadLabelPolicy: vi.fn(),
   listEvents: vi.fn(),
   listMail: vi.fn(),
   listSessions: vi.fn(),
@@ -101,6 +107,7 @@ describe('useLiveAttentionContributors', () => {
       mockSupervisorApi.formulaFeed,
       mockSupervisorApi.listAgents,
       mockSupervisorApi.listBeads,
+      mockSupervisorApi.beadLabelPolicy,
       mockSupervisorApi.listEvents,
       mockSupervisorApi.listMail,
       mockSupervisorApi.listSessions,
@@ -108,6 +115,8 @@ describe('useLiveAttentionContributors', () => {
     ]) {
       fn.mockReset();
     }
+
+    mockSupervisorApi.beadLabelPolicy.mockResolvedValue({ hidden_labels: [] });
 
     mockSupervisorApi.formulaFeed.mockResolvedValue({
       partial: false,
