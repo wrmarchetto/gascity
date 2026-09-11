@@ -410,3 +410,60 @@ func TestClaudePermissionModeMapsToAcceptedCLIValues(t *testing.T) {
 		t.Errorf("full-auto FlagArgs = %v, want [--permission-mode dontAsk]", fullAuto.FlagArgs)
 	}
 }
+
+// TestCodexSchemaDeclaresCityPinnedModels pins the model ids the operator's
+// city pins on codex agents, and it doubles as this patch's retirement probe
+// (bead gs-yvxt, gc.upstream_probe).
+//
+// The retirement mechanism is: revert the fork's production change, keep its
+// tests, run this. Red means the fork still has to carry the entry; green
+// means upstream declares the id itself and the patch is dead weight. That is
+// the only way an entry like this ever leaves the fork, since nothing here is
+// proposed upstream.
+//
+// It is a list rather than a single id because the next pinned model arrives
+// the same way this one did -- through a launch that silently dropped
+// --model. Add the id here at the same time as the choice.
+func TestCodexSchemaDeclaresCityPinnedModels(t *testing.T) {
+	pinned := []string{
+		// Pinned by four city agents since 0629341 and absent from the enum
+		// until gs-yvxt; the launch path emitted no --model and they all ran
+		// the provider default.
+		"gpt-6-astra",
+		// The rig engineer pool's pin, which was already declared. Listed so
+		// a schema rewrite that drops it is caught by the same test.
+		"gpt-5.6-terra",
+	}
+	spec, ok := BuiltinProviders()["codex"]
+	if !ok {
+		t.Fatal("codex provider missing from the builtin catalog")
+	}
+	var modelOpt BuiltinProviderOption
+	for _, opt := range spec.OptionsSchema {
+		if opt.Key == "model" {
+			modelOpt = opt
+			break
+		}
+	}
+	if modelOpt.Key == "" {
+		t.Fatal("codex provider missing model option")
+	}
+	byValue := make(map[string]BuiltinOptionChoice, len(modelOpt.Choices))
+	for _, choice := range modelOpt.Choices {
+		byValue[choice.Value] = choice
+	}
+	for _, id := range pinned {
+		choice, found := byValue[id]
+		if !found {
+			t.Errorf("codex model choices missing %q, which a city agent pins: "+
+				"the launch path emits no --model for an undeclared value", id)
+			continue
+		}
+		// The flag has to carry the id verbatim. A choice whose FlagArgs
+		// normalize to some other id would satisfy a presence check while
+		// launching a different model than the config names.
+		if len(choice.FlagArgs) != 2 || choice.FlagArgs[0] != "--model" || choice.FlagArgs[1] != id {
+			t.Errorf("codex model %q FlagArgs = %v, want [--model %s]", id, choice.FlagArgs, id)
+		}
+	}
+}
