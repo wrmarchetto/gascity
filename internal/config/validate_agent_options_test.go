@@ -292,3 +292,45 @@ func TestResolveDefaultArgsDropsUnrecognizedValueSilently(t *testing.T) {
 			resolved.EffectiveDefaults["effort"])
 	}
 }
+
+// TestProviderOptionDefaultsMergePerKeyOverBuiltin pins the merge the city's
+// fleet-wide effort floor depends on. The city declares
+// [providers.claude] option_defaults = { effort = "high" } over
+// base = "builtin:claude"; if that map REPLACED the builtin's rather than
+// merging per key, every claude agent would silently lose
+// permission_mode = "unrestricted" -- which is not a degraded launch but a
+// session sitting at a permission prompt forever, with no error anywhere.
+//
+// The assertion is on the builtin key the city does NOT restate, because that
+// is the one a replacing merge would drop. Asserting only the key the city
+// does declare passes under either semantics.
+func TestProviderOptionDefaultsMergePerKeyOverBuiltin(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Name: "test", Provider: "claude"},
+		Providers: map[string]ProviderSpec{
+			"claude": {
+				Base:           strPtr("builtin:claude"),
+				OptionDefaults: map[string]string{"effort": "high"},
+			},
+			// Inherits through provider:claude the way claude-analyst and
+			// claude-mayor do, so the floor has to survive a second hop.
+			"claude-analyst": {Base: strPtr("provider:claude")},
+		},
+	}
+	if err := BuildResolvedProviderCache(cfg); err != nil {
+		t.Fatalf("BuildResolvedProviderCache: %v", err)
+	}
+	for _, name := range []string{"claude", "claude-analyst"} {
+		resolved, ok := ResolvedProviderCached(cfg, name)
+		if !ok {
+			t.Fatalf("provider %q missing from the cache", name)
+		}
+		if got := resolved.EffectiveDefaults["permission_mode"]; got != "unrestricted" {
+			t.Errorf("provider %q permission_mode = %q, want the builtin's "+
+				"unrestricted to survive the city's effort-only override", name, got)
+		}
+		if got := resolved.EffectiveDefaults["effort"]; got != "high" {
+			t.Errorf("provider %q effort = %q, want high", name, got)
+		}
+	}
+}
