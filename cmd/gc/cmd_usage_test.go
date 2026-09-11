@@ -60,6 +60,42 @@ func TestUsageTextRendersAbsenceAsADashNotZero(t *testing.T) {
 	}
 }
 
+// TestUsageTextRendersAbsentCountsAsADashToo covers the INTEGER columns, which
+// the float test above cannot reach: a session with compute facts and no model
+// facts has no invocation or token reading at all. core.control-dispatcher is
+// exactly that shape in this city (3 sessions, wall-clock only), and printing 0
+// invocations for it would say the agent ran and did nothing.
+//
+// Added after a mutation sweep: flipping usageInt's absent branch to "0" left
+// the whole suite green, because every row in the other tests still carried a
+// dash from the wall-clock column.
+func TestUsageTextRendersAbsentCountsAsADashToo(t *testing.T) {
+	rep := usageTestReport(t, []usage.Fact{{
+		RunID: "ci-a", SessionID: "ci-a", Worker: "core__control-dispatcher-ci-a",
+		Kind: usage.KindCompute, WallSeconds: 12.5,
+		At: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC).UnixMilli(),
+	}}, usageattr.Options{By: usageattr.BySession})
+
+	var buf bytes.Buffer
+	renderUsageText(&buf, rep, usageSource{})
+	line := usageLineContaining(t, buf.String(), "ci-a")
+
+	fields := strings.Fields(line)
+	// GROUP SESSIONS INVOCATIONS IN OUT CACHE_R CACHE_C WALL_S SPAN_S
+	if len(fields) < 9 {
+		t.Fatalf("row has %d fields, want at least 9:\n%s", len(fields), line)
+	}
+	for i, name := range []string{"INVOCATIONS", "IN", "OUT", "CACHE_R", "CACHE_C"} {
+		if got := fields[2+i]; got != usageAbsent {
+			t.Fatalf("%s = %q, want %q: no model fact was recorded for this session",
+				name, got, usageAbsent)
+		}
+	}
+	if fields[7] != "12.5" {
+		t.Fatalf("WALL_S = %q, want 12.5", fields[7])
+	}
+}
+
 // TestUsageTextStatesBothWindowPairs: a requested window wider than the log is
 // only partly covered. The header has to carry the request AND the coverage, or
 // a baseline recorded from this output cannot be compared to anything later --
@@ -236,11 +272,24 @@ func TestUsageReadsThePlantedLogEndToEnd(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	salt := time.Now().UnixMilli()
-	line := `{"run_id":"ci-salt","session_id":"ci-salt","worker":"lab__engineer-ci-salt",` +
-		`"kind":"model","input_tokens":` + strconv.Itoa(int(salt%9000)+1000) +
-		`,"at":` + strconv.FormatInt(salt, 10) + `}` + "\n"
+	// Two facts in one session and a third in another, so the read exercises
+	// per-session accumulation rather than a single pass-through. A sweep found
+	// the one-fact version green against an aggregation that never reused an
+	// account at all.
+	first := int(salt%9000) + 1000
+	second := int(salt%700) + 300
+	other := int(salt%400) + 100
+	lines := `{"run_id":"ci-salt","session_id":"ci-salt","worker":"lab__engineer-ci-salt",` +
+		`"kind":"model","input_tokens":` + strconv.Itoa(first) +
+		`,"at":` + strconv.FormatInt(salt, 10) + `,"idempotency_key":"k1"}` + "\n" +
+		`{"run_id":"ci-salt","session_id":"ci-salt","worker":"lab__engineer-ci-salt",` +
+		`"kind":"model","input_tokens":` + strconv.Itoa(second) +
+		`,"at":` + strconv.FormatInt(salt+5000, 10) + `,"idempotency_key":"k2"}` + "\n" +
+		`{"run_id":"ci-other","session_id":"ci-other","worker":"lab__pm-ci-other",` +
+		`"kind":"model","input_tokens":` + strconv.Itoa(other) +
+		`,"at":` + strconv.FormatInt(salt, 10) + `,"idempotency_key":"k3"}` + "\n"
 	path := filepath.Join(gcDir, "usage.jsonl")
-	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -252,12 +301,33 @@ func TestUsageReadsThePlantedLogEndToEnd(t *testing.T) {
 		t.Fatalf("warnings = %v, want none", warnings)
 	}
 	rep := usageattr.Aggregate(facts, usageattr.Options{By: usageattr.ByType})
-	if len(rep.Groups) != 1 || rep.Groups[0].Key != "lab.engineer" {
-		t.Fatalf("groups = %+v, want one lab.engineer row", rep.Groups)
+	byKey := map[string]usageattr.Group{}
+	for _, g := range rep.Groups {
+		byKey[g.Key] = g
 	}
-	want := int(salt%9000) + 1000
-	if rep.Groups[0].Tokens.InputTokens != want {
-		t.Fatalf("InputTokens = %d, want the salted %d", rep.Groups[0].Tokens.InputTokens, want)
+	eng, ok := byKey["lab.engineer"]
+	if !ok {
+		t.Fatalf("groups = %+v, want a lab.engineer row", rep.Groups)
+	}
+	if eng.Tokens.InputTokens != first+second {
+		t.Fatalf("lab.engineer InputTokens = %d, want the salted %d (both facts of one session)",
+			eng.Tokens.InputTokens, first+second)
+	}
+	if len(eng.Sessions) != 1 {
+		t.Fatalf("lab.engineer Sessions = %v, want the two facts folded into one session", eng.Sessions)
+	}
+	if !eng.Span.Observed || eng.Span.Seconds != 5 {
+		t.Fatalf("lab.engineer Span = %+v, want an observed 5s span between the two facts", eng.Span)
+	}
+	pm, ok := byKey["lab.pm"]
+	if !ok {
+		t.Fatalf("groups = %+v, want a lab.pm row", rep.Groups)
+	}
+	if pm.Tokens.InputTokens != other {
+		t.Fatalf("lab.pm InputTokens = %d, want the salted %d", pm.Tokens.InputTokens, other)
+	}
+	if rep.Sessions != 2 {
+		t.Fatalf("Sessions = %d, want 2", rep.Sessions)
 	}
 }
 
