@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/session"
-	"github.com/gastownhall/gascity/internal/sessionlog"
+	"github.com/gastownhall/gascity/internal/worker"
 )
 
-func usagePairTestSession(id, slot, account string, usage sessionlog.TailUsage) usagePairSession {
+func usagePairTestSession(id, slot, account string, usage worker.FirstInvocationUsage) usagePairSession {
 	return usagePairSession{
 		ID:              id,
 		Slot:            slot,
@@ -47,8 +47,8 @@ func TestUsagePairStableSlotNormalizesAdHocTemplateInstances(t *testing.T) {
 
 func TestBuildUsagePairReportRefusesMismatchedSlot(t *testing.T) {
 	_, err := buildUsagePairReport(
-		usagePairTestSession("ci-first", "gascity/lab.engineer-1", "/accounts/0", sessionlog.TailUsage{}),
-		usagePairTestSession("ci-second", "gascity/lab.engineer-2", "/accounts/0", sessionlog.TailUsage{}),
+		usagePairTestSession("ci-first", "gascity/lab.engineer-1", "/accounts/0", worker.FirstInvocationUsage{}),
+		usagePairTestSession("ci-second", "gascity/lab.engineer-2", "/accounts/0", worker.FirstInvocationUsage{}),
 	)
 	if err == nil || !strings.Contains(err.Error(), "stable slot") {
 		t.Fatalf("mismatched slots error = %v, want loud stable-slot refusal", err)
@@ -57,8 +57,8 @@ func TestBuildUsagePairReportRefusesMismatchedSlot(t *testing.T) {
 
 func TestBuildUsagePairReportRefusesMismatchedTranscriptRoot(t *testing.T) {
 	_, err := buildUsagePairReport(
-		usagePairTestSession("ci-first", "gascity/lab.engineer-1", "/accounts/0", sessionlog.TailUsage{}),
-		usagePairTestSession("ci-second", "gascity/lab.engineer-1", "/accounts/1", sessionlog.TailUsage{}),
+		usagePairTestSession("ci-first", "gascity/lab.engineer-1", "/accounts/0", worker.FirstInvocationUsage{}),
+		usagePairTestSession("ci-second", "gascity/lab.engineer-1", "/accounts/1", worker.FirstInvocationUsage{}),
 	)
 	if err == nil || !strings.Contains(err.Error(), "transcript-root account") {
 		t.Fatalf("mismatched accounts error = %v, want loud transcript-root-account refusal", err)
@@ -67,8 +67,8 @@ func TestBuildUsagePairReportRefusesMismatchedTranscriptRoot(t *testing.T) {
 
 func TestBuildUsagePairReportRefusesTheSameSessionTwice(t *testing.T) {
 	_, err := buildUsagePairReport(
-		usagePairTestSession("ci-one", "gascity/lab.engineer-1", "/accounts/0", sessionlog.TailUsage{}),
-		usagePairTestSession("ci-one", "gascity/lab.engineer-1", "/accounts/0", sessionlog.TailUsage{}),
+		usagePairTestSession("ci-one", "gascity/lab.engineer-1", "/accounts/0", worker.FirstInvocationUsage{}),
+		usagePairTestSession("ci-one", "gascity/lab.engineer-1", "/accounts/0", worker.FirstInvocationUsage{}),
 	)
 	if err == nil || !strings.Contains(err.Error(), "one session twice") {
 		t.Fatalf("duplicate-session error = %v, want loud refusal", err)
@@ -87,8 +87,8 @@ func TestUsagePairTranscriptRootUsesMostSpecificConfiguredRoot(t *testing.T) {
 
 func TestBuildUsagePairReportPreservesAllFirstInvocationInputSides(t *testing.T) {
 	report, err := buildUsagePairReport(
-		usagePairTestSession("ci-first", "gascity/lab.engineer-1", "/accounts/0", sessionlog.TailUsage{InputTokens: 3, CacheReadTokens: 100, CacheCreationTokens: 200}),
-		usagePairTestSession("ci-second", "gascity/lab.engineer-1", "/accounts/0", sessionlog.TailUsage{InputTokens: 4, CacheReadTokens: 300, CacheCreationTokens: 500}),
+		usagePairTestSession("ci-first", "gascity/lab.engineer-1", "/accounts/0", worker.FirstInvocationUsage{InputTokens: 3, CacheReadTokens: 100, CacheCreationTokens: 200}),
+		usagePairTestSession("ci-second", "gascity/lab.engineer-1", "/accounts/0", worker.FirstInvocationUsage{InputTokens: 4, CacheReadTokens: 300, CacheCreationTokens: 500}),
 	)
 	if err != nil {
 		t.Fatalf("buildUsagePairReport: %v", err)

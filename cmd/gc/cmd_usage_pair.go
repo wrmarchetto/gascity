@@ -9,7 +9,6 @@ import (
 
 	"github.com/gastownhall/gascity/internal/config"
 	sessionpkg "github.com/gastownhall/gascity/internal/session"
-	"github.com/gastownhall/gascity/internal/sessionlog"
 	"github.com/gastownhall/gascity/internal/worker"
 	"github.com/spf13/cobra"
 )
@@ -23,7 +22,7 @@ type usagePairSession struct {
 	Slot            string
 	TranscriptRoot  string
 	TranscriptPath  string
-	FirstInvocation sessionlog.TailUsage
+	FirstInvocation worker.FirstInvocationUsage
 }
 
 // usagePairReport contains the pairing predicate and the observed first-turn
@@ -153,7 +152,7 @@ func resolveUsagePairSession(cityPath string, cfg *config.City, front *sessionpk
 	if root == "" {
 		return usagePairSession{}, fmt.Errorf("session %q transcript is outside every configured transcript-root account", identifier)
 	}
-	usage, found, err := sessionlog.ExtractFirstUsageFromSearchPaths(searchPaths, path)
+	usage, found, err := worker.FirstInvocationUsageFromSearchPaths(searchPaths, path)
 	if err != nil {
 		return usagePairSession{}, fmt.Errorf("reading first invocation for session %q: %w", identifier, err)
 	}
