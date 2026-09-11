@@ -84,6 +84,7 @@ gc [flags]
 | [gc suspend](#gc-suspend) | Suspend the city (all agents effectively suspended) |
 | [gc trace](#gc-trace) | Inspect and control session reconciler tracing |
 | [gc unregister](#gc-unregister) | Remove a city from the machine-wide supervisor |
+| [gc usage](#gc-usage) | Per-session token and wall-clock accounting over a stated window |
 | [gc version](#gc-version) | Print gc version |
 | [gc wait](#gc-wait) | Inspect and manage durable session waits |
 | [gc whoami](#gc-whoami) | Show the authenticated hosted Gas City account |
@@ -4844,6 +4845,49 @@ gc unregister [path|name] [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--json` | bool |  | emit JSONL summary |
+
+## gc usage
+
+Account the recorded usage facts per session, per agent type, or per work bead.
+
+Reads .gc/usage.jsonl (the local usage sink) and groups it on the actor axis,
+which gc costs does not: gc costs rolls facts up by run id, the execution
+rather than the agent that ran it. The bead column is joined through each work
+bead's own gc.session_id in the bead store this command's scope resolves to --
+the same scope gc bd would use -- so in a multi-rig city most sessions show as
+"(no bead recorded)" because their bead lives in another
+rig's store.
+
+EVERY READING SAYS WHETHER IT WAS OBSERVED. A dash is "not recorded", a zero is
+a recorded zero, and they are different findings. This matters most for
+wall-clock: compute facts are sparse, so most sessions have no wall-clock
+reading at all, and the SPAN column -- the interval between a session's first
+and last invocation -- is offered as an explicit LOWER BOUND on how long the
+session was alive, never as its duration.
+
+No cost or currency column exists. This city runs on Claude Code subscription
+usage rather than metered API tokens, so a dollar figure would be fabricated;
+the currencies here are tokens and wall-clock.
+
+```
+gc usage [flags]
+```
+
+**Example:**
+
+```
+gc usage
+gc usage --by type --since 2026-09-03
+gc usage --by bead --since 168h --json
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--by` | string | `session` | group by: session, type, or bead |
+| `--json` | bool |  | emit JSON instead of a table |
+| `--since` | string |  | window start: RFC3339, YYYY-MM-DD, or a Go duration meaning that long ago |
+| `--top` | int | `25` | show only the N largest groups (0 shows all); totals always cover every group |
+| `--until` | string |  | window end, exclusive: RFC3339, YYYY-MM-DD, or a Go duration meaning that long ago |
 
 ## gc version
 

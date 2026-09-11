@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ian6 2026-09-11T05:08:32Z
+last_seen: gs-u302 2026-09-11T05:14:23Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4697,3 +4697,57 @@ progress) is new work outside the epic; gs-u302 is a SECOND pm-question
 assigned to this PM -- the next session's unit, per one-unit-per-session.
 
 Source: PM inference, unconfirmed
+
+## 139. gs-u302: criterion 2's cache instrument is a supported paired-session gc report, not a documented jq procedure (2026-09-11)
+
+Question from gs-u302 (asked by gs-ian6, epic:agent-efficiency criterion 2,
+engineer-codex-2): the raw Claude transcript exposes first-invocation
+input_tokens, cache_read_input_tokens, and cache_creation_input_tokens
+(live sample: 2 uncached / 26,750 read / 32,326 created), so cache creation
+distinguishes partial reuse from a full hit. The bead requires an
+instrument but does not choose its surface: a durable gc command that
+resolves two session records, verifies one stable slot plus one
+transcript-root account, and reports their first-invocation totals -- or a
+documented jq procedure over gc session logs.
+
+Ruling: the supported gc report, the asker's own recommendation. Grounds:
+
+1. The pairing predicate IS the measurement. Criterion 2's read is defined
+   over a second consecutive spawn of the SAME slot on the SAME account,
+   and gs-ian6's brief records why: six-account rotation fragments the
+   cache, so a pair spanning accounts reads as failure when it is only a
+   different cache. A jq procedure leaves that predicate to operator
+   interpretation on every run; the command verifies it mechanically and
+   refuses a mismatched pair. The documented procedure is intent; the
+   gate is the guarantee.
+2. The read recurs; it is not a one-shot acceptance ritual. Criterion 5
+   (account affinity) is sequenced after prefix hygiene exactly so there
+   is a cache to come back to -- verifying affinity re-runs this same
+   paired read -- and criterion 4's canary window re-reads the same
+   figures against the baseline. Three consumers, one instrument, under
+   this repo's test gates rather than prose re-interpreted per run.
+3. The epic already chose this surface shape. Criterion 1 made these
+   exact counts standing observability and gs-cm0w delivered it as a
+   supported command (gc usage) with tests and a mutation sweep, not as
+   a documented procedure. gs-ian6's instrument joins that surface.
+4. The gs-cm0w finding raised the bar the instrument must clear: 916/917
+   baseline sessions already showed nonzero first-invocation
+   cache_read_tokens, so the criterion as literally written was
+   satisfiable before any change, the load-bearing figure is the
+   creation/read split, and the mayor's note on gs-ian6 already made the
+   instrument the first deliverable. An instrument that exists to defeat
+   an already-green-as-written criterion cannot afford hand-checked
+   preconditions.
+
+Scope bounds carried in the close: report all three first-invocation
+figures (uncached / cache-read / cache-creation); refuse a pair failing
+the slot/account/first-invocation predicate loudly, criterion 3's
+fail-loud pattern, not a warning; stay a reporter -- no pass/fail verdict
+in Go, the acceptance ruling lives in the record that cites the run (keep
+judgment out of Go). Whether the report shares extraction code with
+gs-cm0w's usageattr is the engineer's call: HOW, not WHAT.
+
+Drift since last_seen (gs-ian6 05:08:32Z): one bead -- gs-u302, this
+question itself.
+
+Source: roadmap agent-efficiency
