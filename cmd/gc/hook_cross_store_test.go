@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -433,5 +434,61 @@ func TestClaimStoreWithFallbackUsesSelectedStoreWhenStillReady(t *testing.T) {
 	}
 	if len(calls) != 1 || calls[0] != "city" {
 		t.Fatalf("calls = %v, want a single [city] re-validation", calls)
+	}
+}
+
+// Every federated store leg must carry the AGENT's actor identity, never the
+// caller's ambient $BEADS_ACTOR.
+//
+// The leg envs are built by mergeRuntimeEnv(os.Environ(), ...), so any
+// identity variable absent from hookIdentityEnvKeys is inherited from the
+// invoking shell rather than overridden. That is not a cosmetic difference:
+// the CITY leg is exactly where it bit. A rig-scoped pool federates a city
+// store read (appendCityHookStore), and an operator work_query probing
+// $BEADS_ACTOR as "who am I" then matched the CALLER's own in-progress city
+// bead -- so `gc hook <rig>/<pool>` listed a bead that pool could never claim.
+//
+// The ambient value is set here rather than assumed absent. clearGCEnv does
+// not clear BEADS_ACTOR (it is not a GC_ key), so a developer or CI runner
+// with one exported would otherwise decide this test's outcome.
+func TestBeadsActorIsConstantAcrossFederatedHookStores(t *testing.T) {
+	t.Setenv("BEADS_ACTOR", "stranger-1")
+
+	cityPath := t.TempDir()
+	rigPath := filepath.Join(cityPath, "rigs", "dart")
+	if err := os.MkdirAll(rigPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Rigs:      []config.Rig{{Name: "dart", Path: rigPath}},
+		Agents:    []config.Agent{{Name: "toolsmith"}},
+	}
+	a := &cfg.Agents[0]
+
+	overrides, err := hookQueryEnv(cityPath, cfg, a)
+	if err != nil {
+		t.Fatalf("hookQueryEnv() error = %v, want nil", err)
+	}
+	// Mirrors what cmdHook writes on the explicit-target path.
+	want := a.QualifiedName()
+	overrides["BEADS_ACTOR"] = want
+
+	stores := appendRigHookStores(nil, cityPath, cfg, a, overrides)
+	stores = appendCityHookStore(stores, cityPath, cfg, a, overrides)
+	if len(stores) != 2 {
+		t.Fatalf("federated stores = %d, want 2 (one rig leg + the city leg)", len(stores))
+	}
+	for _, store := range stores {
+		got, ok := lookupEnvValue(store.env, "BEADS_ACTOR")
+		if !ok {
+			t.Fatalf("BEADS_ACTOR absent from federated store %q", store.dir)
+		}
+		if got == "stranger-1" {
+			t.Fatalf("federated store %q inherited the caller's BEADS_ACTOR; want %q", store.dir, want)
+		}
+		if got != want {
+			t.Fatalf("federated store %q exports BEADS_ACTOR = %q, want %q", store.dir, got, want)
+		}
 	}
 }

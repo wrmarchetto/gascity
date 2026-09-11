@@ -389,16 +389,33 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 	}
 	overrides["GC_AGENT"] = agentForQuery
 	overrides["GC_SESSION_NAME"] = sessionForQuery
+	// BEADS_ACTOR moves with GC_ALIAS, and leaving it out was a leak rather
+	// than an omission. A managed session sets the two to the same value
+	// (internal/session/lifecycle.go), so an operator work_query is entitled
+	// to probe either as "who am I" -- assets/scripts/lab-engineer-queue.sh
+	// in the Gas City workspace probes all five identities. Overwriting four
+	// and inheriting the fifth let `gc hook <other-agent>` answer with the
+	// CALLER's own in-progress work: measured across four rigs' codex pools
+	// on 2026-09-11, every one of them returning the caller's city bead
+	// (ci-aklxty). Pinned by
+	// TestHookExplicitTargetDoesNotInheritCallerBeadsActor.
 	if sessionTemplateContext {
 		overrides["GC_ALIAS"] = os.Getenv("GC_ALIAS")
 		overrides["GC_SESSION_ID"] = os.Getenv("GC_SESSION_ID")
 		overrides["GC_SESSION_ORIGIN"] = os.Getenv("GC_SESSION_ORIGIN")
 		overrides["GC_TEMPLATE"] = os.Getenv("GC_TEMPLATE")
+		overrides["BEADS_ACTOR"] = os.Getenv("BEADS_ACTOR")
 	} else {
 		overrides["GC_ALIAS"] = resolvedAgentName
 		overrides["GC_SESSION_ID"] = ""
 		overrides["GC_SESSION_ORIGIN"] = ""
 		overrides["GC_TEMPLATE"] = ""
+		// NOT "" like the session-only keys above. This path is an explicit
+		// `gc hook <agent>` probe, so the actor IS the resolved agent, and an
+		// empty value would silently re-open the leak from the other side --
+		// a query's own-assigned arm would skip its $BEADS_ACTOR probe and
+		// fall through to whatever identity it checks next.
+		overrides["BEADS_ACTOR"] = resolvedAgentName
 	}
 	queryEnv := mergeRuntimeEnv(os.Environ(), overrides)
 	failureTemplate, emitFailureEvent := hookWorkQueryFailureTemplate(len(args) > 0, sessionTemplateContext, a.QualifiedName())

@@ -3246,3 +3246,63 @@ func TestFilterUnreadyHookCandidatesExcludesClosedBeadsFromReworkDrift(t *testin
 		t.Fatalf("filterUnreadyHookCandidates returned %d items for closed bead, want 0; got %q", len(items), got)
 	}
 }
+
+// An explicit `gc hook <agent>` target must hand the work query the RESOLVED
+// agent's actor identity, never the caller's $BEADS_ACTOR.
+//
+// The work query is asserted through an env echo rather than through a bead
+// fixture on purpose. The defect is that one identity variable of five
+// survives into the child environment, so a test that only checked the
+// query's RESULT would pass against any query whose own-assigned arm this
+// city happens not to exercise -- and the arm that reads $BEADS_ACTOR is
+// supplied by the operator, not by gc. Reading the child's environment
+// directly is the only form that pins the variable itself.
+//
+// Measured on the live city 2026-09-11 before this test existed: from a
+// session holding BEADS_ACTOR=toolsmith-1, `gc hook <rig>/lab.engineer-codex`
+// returned that session's own in-progress city bead for all four rigs'
+// codex pools, and `env -u BEADS_ACTOR` on the same command returned []
+// (ci-aklxty). Stripping the other four identity variables and leaving this
+// one changed nothing, which is what isolates it to BEADS_ACTOR alone.
+func TestHookExplicitTargetDoesNotInheritCallerBeadsActor(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+	cityDir := t.TempDir()
+	actorPath := filepath.Join(t.TempDir(), "actor")
+	if err := os.MkdirAll(filepath.Join(cityDir, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A TOML literal string: the query embeds both shell quotes and a path,
+	// and a basic string would need them escaped twice over.
+	cityToml := fmt.Sprintf(`[workspace]
+name = "test-city"
+
+[[agent]]
+name = "worker"
+work_query = 'printf %%s "${BEADS_ACTOR:-}" > %s; printf "[]"'
+`, actorPath)
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(cityToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GC_CITY", cityDir)
+	// A stranger's identity, not this agent's: the leak is only visible when
+	// the caller is somebody else, which is every guardrail and operator
+	// invocation of `gc hook <pool>`.
+	t.Setenv("BEADS_ACTOR", "stranger-1")
+
+	var stdout, stderr bytes.Buffer
+	cmd := newHookCmd(&stdout, &stderr)
+	cmd.SetArgs([]string{"worker"})
+	_ = cmd.Execute() //nolint:errcheck // an empty offer exits nonzero; the env is what is under test
+
+	got, err := os.ReadFile(actorPath)
+	if err != nil {
+		t.Fatalf("work query did not record BEADS_ACTOR: %v; stderr=%s", err, stderr.String())
+	}
+	if string(got) == "stranger-1" {
+		t.Fatalf("work query inherited caller BEADS_ACTOR=%q; want the resolved agent identity", got)
+	}
+	if string(got) != "worker" {
+		t.Fatalf("BEADS_ACTOR = %q, want %q (must match GC_AGENT/GC_ALIAS on this path)", got, "worker")
+	}
+}
