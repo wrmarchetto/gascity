@@ -85,6 +85,7 @@ the currencies here are tokens and wall-clock.`,
 	cmd.Flags().StringVar(&opts.until, "until", "", "window end, exclusive: RFC3339, YYYY-MM-DD, or a Go duration meaning that long ago")
 	cmd.Flags().IntVar(&opts.top, "top", opts.top, "show only the N largest groups (0 shows all); totals always cover every group")
 	cmd.Flags().BoolVar(&opts.jsonOut, "json", false, "emit JSON instead of a table")
+	cmd.AddCommand(newUsagePairCmd(stdout, stderr))
 	return cmd
 }
 

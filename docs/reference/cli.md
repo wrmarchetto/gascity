@@ -4864,6 +4864,26 @@ gc usage --by bead --since 168h --json
 | `--top` | int | `25` | show only the N largest groups (0 shows all); totals always cover every group |
 | `--until` | string |  | window end, exclusive: RFC3339, YYYY-MM-DD, or a Go duration meaning that long ago |
 
+| Subcommand | Description |
+|------------|-------------|
+| [gc usage pair](#gc-usage-pair) | Report first-invocation cache inputs for a verified session pair |
+
+## gc usage pair
+
+Report uncached, cache-read, and cache-creation input tokens from the first invocation of two sessions.
+
+The command refuses a pair unless the two records resolve to the same stable
+agent slot and the same configured transcript-root account. It reports those
+observations without declaring whether the pair passed a cache experiment.
+
+```
+gc usage pair <first-session> <second-session> [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | emit JSON instead of a table |
+
 ## gc version
 
 Print the gc version string.
