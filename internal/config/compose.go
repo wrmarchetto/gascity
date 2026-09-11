@@ -741,6 +741,15 @@ func LoadWithIncludesOptions(fs fsys.FS, path string, opts LoadOptions, extraInc
 		return nil, nil, fmt.Errorf("%s: provider cache build failed: %w", path, err)
 	}
 
+	// Refuse an agent option default the provider schema does not declare.
+	// This runs after the cache build because it reads the same resolved
+	// schema, and it is an error rather than a warning because the value it
+	// guards is silently dropped downstream: a misspelled effort or model
+	// emits no launch flag and puts the agent back on the provider default.
+	if err := ValidateAgentOptionDefaults(root); err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+
 	populateAgentLocalAssetDirs(fs, root, cityRoot)
 
 	// Load namepool files for pool agents.
