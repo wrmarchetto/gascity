@@ -17,6 +17,15 @@
 // gc cannot require a value it also supplies a default for.
 //
 // Run: go test ./internal/config/ -run 'AgentOptionDefaults|ResolveDefaultArgs'
+//
+// Swept, gs-yvxt 2026-09-11, 9 of 9 mutations died against
+// `go test ./internal/config/`: each of the three refusal reasons flipped to
+// its accepting counterpart, the compose.go call removed, the workspace
+// fallback dropped, the start_command exemption dropped, the unknown-provider
+// skip turned into a default-schema fallback, the multi-offender report
+// truncated to one, and permission_mode removed from the builtin claude
+// profile -- that last one to show the per-key merge assertion reads the
+// builtin rather than a value something else always sets.
 package config
 
 import (
