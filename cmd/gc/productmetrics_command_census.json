@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "next_id": 202,
+  "next_id": 203,
   "permanent_ids": [
     {
       "name": "help",
@@ -4289,13 +4289,28 @@
       "hidden": false,
       "effective_hidden": false,
       "disable_flag_parsing": false,
-      "shape": "runnable",
+      "shape": "runnable-group",
       "recording_policy": "recordable",
       "mode": "standard",
       "notice_policy": "eligible",
       "classification": "usage",
       "owner": "immediate",
       "id": 201
+    },
+    {
+      "path": "gc usage pair",
+      "aliases": [],
+      "conditional_modes": [],
+      "hidden": false,
+      "effective_hidden": false,
+      "disable_flag_parsing": false,
+      "shape": "runnable",
+      "recording_policy": "recordable",
+      "mode": "standard",
+      "notice_policy": "eligible",
+      "classification": "usage-pair",
+      "owner": "immediate",
+      "id": 202
     },
     {
       "path": "gc version",

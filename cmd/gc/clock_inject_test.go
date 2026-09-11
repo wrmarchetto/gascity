@@ -147,6 +147,9 @@ func TestCmdNudgeDrainInjectClockAndNudgeSingleJSONDocument(t *testing.T) {
 			if !strings.Contains(ctx, "check hook output") {
 				t.Errorf("additionalContext missing nudge content, got %q", ctx)
 			}
+			if strings.Index(ctx, "check hook output") > strings.Index(ctx, "Current time:") {
+				t.Errorf("additionalContext = %q, want nudge context before clock", ctx)
+			}
 		})
 	}
 }

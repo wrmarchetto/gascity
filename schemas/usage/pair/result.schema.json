@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gc usage pair result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "ok", "stable_slot", "transcript_root", "sessions"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1"},
+    "ok": {"type": "boolean", "const": true},
+    "stable_slot": {"type": "string", "minLength": 1},
+    "transcript_root": {"type": "string", "minLength": 1},
+    "sessions": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["session_id", "transcript_path", "uncached_tokens", "cache_read_tokens", "cache_creation_tokens"],
+        "properties": {
+          "session_id": {"type": "string", "minLength": 1},
+          "transcript_path": {"type": "string", "minLength": 1},
+          "uncached_tokens": {"type": "integer", "minimum": 0},
+          "cache_read_tokens": {"type": "integer", "minimum": 0},
+          "cache_creation_tokens": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

@@ -19,6 +19,17 @@ import (
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
 )
 
+func TestPrependHookBeaconFollowsStablePrompt(t *testing.T) {
+	const prompt = "stable startup payload"
+	got := prependHookBeacon("gastown", "worker", prompt)
+	if !strings.HasPrefix(got, prompt) {
+		t.Fatalf("hook prompt = %q, want stable payload first", got)
+	}
+	if !strings.Contains(got, "[gastown] worker") {
+		t.Fatalf("hook prompt = %q, want beacon retained after payload", got)
+	}
+}
+
 type primeHookFailWriter struct {
 	err error
 }
