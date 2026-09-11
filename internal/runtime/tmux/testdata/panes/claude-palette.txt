@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.268
+▝▜██████▀  Opus 5 (1M context) · Claude Team
+  ▝▝ ▝▝    <probe-dir>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  /bench-run                    Compose a hardware round trip and log the result against its predictions when the observation comes back. Use before any bench interaction -- asking the user to
+                                probe, flash, power cycle, or read an instrument, or running a self-service test yourself against already-connected hardware -- and again when the result arrives. De…
+  /writing-skills               Author or restructure a skill in this setup. Use when creating a new skill, editing an existing one, or deciding whether new guidance belongs in a skill at all.
+                                Covers where a rule lives, how to scope the description that triggers invocation, when to split logic out into testable scripts, and how to verify the skill actually…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  ⏵⏵ bypass permissions on (shift+tab to cycle)
