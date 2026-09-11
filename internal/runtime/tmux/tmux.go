@@ -2101,15 +2101,99 @@ func (t *Tmux) paneHoldsDraft(target, message string) (bool, error) {
 	return draftInInputBox(lines, message), nil
 }
 
+// submitVerifyFamilies lists the provider families whose panes get the
+// confirm-and-resend submit loop. A family earns a place here by having a
+// busy indicator paneContainsBusyIndicator can actually read; every other
+// family keeps best-effort single delivery, because confirming against an
+// indicator that never renders would burn the full budget and re-send Enter
+// three times on every nudge.
+//
+// claude: the confirmed ga-bwm lost-Enter failure.
+//
+// codex: added for ci-gqvu9q. Its absence is what let the CODEX pool wedge
+// while the claude pool on the same queue did not -- a codex nudge took the
+// fallback arm, sent one unverified Enter, and reported success, so a codex
+// session that never received the keystroke could not be re-engaged by the
+// idle-claim backstop, a mayor nudge, or graph-v2 continuation delivery.
+// Measured against codex-cli 0.153.4 on 2026-09-11, on a detached pane, with
+// the same binary the city's codex panes run:
+//
+//   - "Working (0s - esc to interrupt)" renders 60ms after the submit Enter.
+//     That is the property that makes codex eligible, and it is two orders of
+//     magnitude faster than claude's measured ~3.3s (ci-ddapcs), so the
+//     short-turn indistinguishability behind ci-mdfcgs cannot arise here: the
+//     indicator is up before the first 150ms poll.
+//   - No stale indicator survives anywhere in the pane. Codex does not use
+//     the alternate screen (#{alternate_on} is 0), so capture-pane -S -120
+//     reads real scrollback, but codex repaints its status line in place and
+//     it never enters history -- grep over the FULL scrollback after a turn
+//     that scrolled 300 lines of output found zero matches. A false "busy"
+//     reading, which would confirm a submit that never happened, therefore
+//     has no source.
+//   - A redundant Enter into an empty codex composer is inert: three bare
+//     Enters on an idle pane submitted nothing and left no transcript entry.
+//     So the re-send arm cannot manufacture an empty turn.
+//
+// The second evidence source, draftInInputBox, ABSTAINS for codex: it keys on
+// claude's input prompt (U+276F followed by NBSP) and codex's composer prefix
+// is U+203A followed by an ordinary space. That is the documented safe
+// direction -- the busy indicator decides alone, exactly as it did for every
+// provider before the draft source existed -- and the 60ms latency above is
+// why it costs codex nothing. Teaching draftInInputBox codex's prefix would
+// be the improvement; it is deliberately NOT done here, because the draft
+// source can only turn unconfirmed into confirmed and codex does not need
+// that direction.
+//
+// NOT ADDED, and why: grok, kimi, opencode, pi, antigravity and copilot all
+// sit in providersSkippingEscapeBeforeEnter, so gc clearly drives their TUIs,
+// but no one has measured whether their busy state reaches
+// paneContainsBusyIndicator. Adding a family here on the strength of it being
+// a TUI gc drives is the specific mistake this comment exists to prevent.
+//
+// A HAZARD THIS LIST INHERITS RATHER THAN CREATES, measured 2026-09-11 and
+// tracked as its own bead. A re-send fires only while busy reads FALSE, so
+// the states at risk are exactly the ones with no busy indicator -- and a
+// codex OVERLAY is one. With the composer holding a single "/", codex opens
+// its command palette and paneContainsBusyIndicator reads 0; three Enters
+// then walked /model -> model picker -> reasoning picker and COMMITTED the
+// change ("Model changed to gpt-6-astra medium"). One Enter, today's
+// behavior, stops at the first picker without committing. The trigger is a
+// nudge whose text begins with "/", which is rare but not impossible.
+//
+// This is NOT a codex-specific regression: the same arm has re-sent into
+// claude panes since ga-bwm, and claude has a command palette too. What is
+// unestablished is whether claude's draft evidence happens to suppress the
+// re-send there -- draftInInputBox could read either way depending on how
+// the palette repaints the input line, and nobody has driven a claude TUI to
+// find out. Bounding it needs overlay detection spanning both families, so
+// it is deliberately not attempted here, where the fix under test is the
+// family gate.
+var submitVerifyFamilies = []string{"claude", "codex"}
+
+// providerEnvSubmitVerifyEligible reports whether a GC_PROVIDER value names a
+// family on the confirm-and-resend loop. Split out of submitVerifyEligible so
+// the family decision is testable without a live tmux server, mirroring
+// providerEnvSkipsEscape.
+func providerEnvSubmitVerifyEligible(provider string) bool {
+	family := sessionlog.ProviderFamily(provider)
+	for _, verified := range submitVerifyFamilies {
+		if family == verified {
+			return true
+		}
+	}
+	return false
+}
+
 // submitVerifyEligible reports whether the target runs a provider whose busy
-// indicator is reliable enough to confirm a submit. Scoped to the Claude family
-// (the confirmed ga-bwm failure); other providers keep best-effort single
-// delivery so this change cannot regress them.
+// indicator is reliable enough to confirm a submit. Identifies the family the
+// same way shouldSendEscapeBeforeEnter and nudgeSubmitKeySequence do: prefer
+// the GC_PROVIDER pane variable, falling back to a process-name sniff for
+// panes without it.
 func (t *Tmux) submitVerifyEligible(target string) bool {
 	if provider := t.providerEnv(target); provider != "" {
-		return sessionlog.ProviderFamily(provider) == "claude"
+		return providerEnvSubmitVerifyEligible(provider)
 	}
-	return t.targetLooksLikeProvider(target, "claude")
+	return t.targetLooksLikeAnyProvider(target, submitVerifyFamilies...)
 }
 
 // nudgeSubmitKeySequence resolves target's declared submit key sequence (see
@@ -2198,6 +2282,13 @@ func (t *Tmux) NudgeSession(session, message string) error {
 			commitPoke()
 		}
 	}()
+
+	// A message beginning with a composer sigil would RUN rather than arrive:
+	// measured on Claude Code 2.1.268, "/..." runs the slash command and
+	// discards the rest, and "!..." executes the remainder as a shell command.
+	// Neutralized here, before the paste and before the draft evidence reads
+	// it, so both see the same bytes. See nudge_sigil.go.
+	message = neutralizeComposerSigil(message)
 
 	// Wake a detached pane BEFORE the first send. A fully-detached pool TUI
 	// (e.g. grok, never observed by a client) may not be servicing its event
@@ -2319,6 +2410,11 @@ func (t *Tmux) NudgePane(pane, message string) error {
 			commitPoke()
 		}
 	}()
+
+	// Same neutralization NudgeSession applies, and for the same measurement:
+	// a leading "/" or "!" makes the submit run something instead of
+	// delivering. See nudge_sigil.go.
+	message = neutralizeComposerSigil(message)
 
 	// 1. Send text in literal mode with retry on transient errors
 	if err := t.sendKeysLiteralWithRetry(pane, message, t.cfg.NudgeReadyTimeout); err != nil {

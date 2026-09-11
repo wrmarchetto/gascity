@@ -499,7 +499,10 @@ func prependHookBeacon(cityName, agentName, prompt string) string {
 	if prompt == "" {
 		return beacon
 	}
-	return beacon + "\n\n" + prompt
+	// Keep the rendered behavioral prompt byte-stable from its first token so
+	// provider prompt caches can reuse it across sessions. The varying beacon
+	// remains useful session context, but belongs after that stable payload.
+	return prompt + "\n\n" + beacon
 }
 
 func managedSessionHookPromptAlreadyDelivered(ctx primeHookContext) bool {

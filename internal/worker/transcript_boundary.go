@@ -7,6 +7,13 @@ import (
 )
 
 type (
+	// FirstInvocationUsage is the startup-turn cache accounting exposed through
+	// the worker transcript boundary.
+	FirstInvocationUsage struct {
+		InputTokens         int
+		CacheReadTokens     int
+		CacheCreationTokens int
+	}
 	// TranscriptSession aliases the sessionlog transcript session payload.
 	TranscriptSession = sessionlog.Session
 	// TranscriptEntry aliases a single transcript entry.
@@ -71,4 +78,18 @@ func ValidateAgentID(agentID string) error {
 // InferTranscriptActivity summarizes transcript activity from the supplied entries.
 func InferTranscriptActivity(entries []*TranscriptEntry) string {
 	return sessionlog.InferActivityFromEntries(entries)
+}
+
+// FirstInvocationUsageFromSearchPaths reads startup-turn cache accounting from
+// a transcript after confirming the file is under a configured search root.
+func FirstInvocationUsageFromSearchPaths(searchPaths []string, path string) (FirstInvocationUsage, bool, error) {
+	usage, found, err := sessionlog.ExtractFirstUsageFromSearchPaths(searchPaths, path)
+	if err != nil || !found {
+		return FirstInvocationUsage{}, found, err
+	}
+	return FirstInvocationUsage{
+		InputTokens:         usage.InputTokens,
+		CacheReadTokens:     usage.CacheReadTokens,
+		CacheCreationTokens: usage.CacheCreationTokens,
+	}, true, nil
 }
