@@ -2267,6 +2267,13 @@ func (t *Tmux) NudgeSession(session, message string) error {
 		}
 	}()
 
+	// A message beginning with a composer sigil would RUN rather than arrive:
+	// measured on Claude Code 2.1.268, "/..." runs the slash command and
+	// discards the rest, and "!..." executes the remainder as a shell command.
+	// Neutralized here, before the paste and before the draft evidence reads
+	// it, so both see the same bytes. See nudge_sigil.go.
+	message = neutralizeComposerSigil(message)
+
 	// Wake a detached pane BEFORE the first send. A fully-detached pool TUI
 	// (e.g. grok, never observed by a client) may not be servicing its event
 	// loop, so the initial paste is silently dropped at the application layer
@@ -2376,6 +2383,11 @@ func (t *Tmux) NudgePane(pane, message string) error {
 			commitPoke()
 		}
 	}()
+
+	// Same neutralization NudgeSession applies, and for the same measurement:
+	// a leading "/" or "!" makes the submit run something instead of
+	// delivering. See nudge_sigil.go.
+	message = neutralizeComposerSigil(message)
 
 	// 1. Send text in literal mode with retry on transient errors
 	if err := t.sendKeysLiteralWithRetry(pane, message, t.cfg.NudgeReadyTimeout); err != nil {
