@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-781f 2026-09-11T03:00:08Z
+last_seen: gs-ian6 2026-09-11T05:08:32Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4633,5 +4633,67 @@ criteria in the roadmap.
 
 Verdict delivered both ways: gs-781f closed "ACCEPT agent-efficiency"
 and the same verdict mailed to mayor with --notify.
+
+Source: PM inference, unconfirmed
+
+## 138. gs-ntgf: the accounts-identical gate lands in the city repo, beside the tooling it polices (2026-09-11)
+
+Question from gs-arar (epic:agent-efficiency criterion 6, engineer-codex-1):
+the invariant gate's subject is the live ~/.claude-homes, whose tooling
+(claude-pool.py, account-cap-sweep.py) is owned by
+/home/willie/projects/city under assets/scripts, while the asking session
+and its feature branch live in this rig. Choose the landing scope: a
+city-repo feature worktree/branch, or a Gas City integration point that
+invokes a city-owned gate.
+
+Ruling: the city repo, on a feature worktree/branch of that repo -- never
+by editing its shared checkout, whose dirtiness the asker itself flagged;
+this rig's own shared-root incident (docs/pm-shared-checkout.md) is the
+same lesson -- with the gate landing in assets/scripts beside the account
+tooling it polices. No Gas City code:
+
+1. The gate's subject is live machine state. Criterion 6 requires a check
+   that keeps drift from silently re-accumulating in the LIVE homes, and
+   gs-arar's brief makes the deliverable "a check that exits nonzero". A
+   gate in the gascity tree runs where gascity's tests run and never sees
+   those homes -- the asker's own observation, and it is correct.
+2. The city repo already owns every account-home tool and the order/sweep
+   shape that runs such scripts unattended (roadmap-trace-sweep.py runs as
+   an order). The gate joins its siblings: same repo, same directory,
+   wired to run mechanically the same way.
+3. A Gas City integration point is ruled out on this rig's own settled
+   boundaries: gascity is the deployment-agnostic substrate every rig runs
+   on (roadmap charter), and burying one machine's six-account-home policy
+   in SDK paths is the shape AGENTS.md forbids for T3/DoltLite assumptions.
+   No new integration point is needed anyway -- an order running a script
+   IS the SDK's invocation mechanism, and it is configuration, not Go.
+
+Bead disposition: gs-arar stays in this rig's store under its
+epic:agent-efficiency label -- no reassignment. The epic-close sweep
+enumerates epic-labeled beads in THIS store, so moving the criterion-6
+carrier out would leave the epic's audit reading a bead set that no longer
+carries the criterion. Its close cites the city-repo branch and head
+commit as evidence (a tree-derived figure travels with its commit or not
+at all).
+
+Bar for the eventual close, so the citation is not mistaken for the
+deliverable: a script on an unmerged, unwired branch is not yet a gate.
+Criterion 6 is met when the gate runs against the live homes mechanically
+and has been proven red on deliberate drift (the acceptance bar recorded
+at pm-log #137). If landing it on the city repo's mainline takes the
+operator, that residual is recorded on gs-arar rather than silently
+dropped.
+
+No record names the landing repo -- the components are recorded (criterion
+6's live-gate requirement, the SDK-purity boundary, city-repo ownership of
+the account tooling) but their assembly into a placement is new ground, so
+this is logged unconfirmed and pm-open #7 names what settles it.
+
+Drift since last_seen (gs-781f 03:00Z): seven beads. Five are the epic's
+own decomposition moving (gs-saj5 open; gs-yvxt, gs-arar, gs-ian6 in
+progress; gs-ntgf is this question); gs-18wr (usage-fact re-emission, in
+progress) is new work outside the epic; gs-u302 is a SECOND pm-question
+(prompt-cache instrument surface, from engineer-codex-2), open and
+assigned to this PM -- the next session's unit, per one-unit-per-session.
 
 Source: PM inference, unconfirmed

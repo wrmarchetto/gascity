@@ -215,3 +215,22 @@ Would settle it: Willie's word when he wakes -- in the mayor's channel, a
 pm-chat sitting, or a note on any agent-efficiency bead. If he did not
 give the instruction, promotion reverts to the #134 path (bridge close)
 and the slung work parks.
+
+## 7. Accounts-identical gate placed in the city repo on PM inference (2026-09-11)
+
+gs-ntgf (asked by gs-arar, epic:agent-efficiency criterion 6) was answered
+at pm-log #138: the invariant gate lands in /home/willie/projects/city
+assets/scripts beside claude-pool.py and account-cap-sweep.py, built on a
+city-repo feature worktree/branch; gs-arar stays in this rig and its close
+cites that branch; no Gas City integration point. The components of the
+ruling are recorded but no record names the landing repo, so the placement
+is unconfirmed.
+
+Question: does Willie confirm the city repo as the gate's home and the
+close-cites-branch disposition -- and what merge path lands a city-repo
+feature branch on that repo's mainline, since gs-arar's criterion is only
+met once the gate runs live?
+
+Would settle it: Willie's word in any sitting or a note on gs-arar or
+gs-ntgf; or the branch landing on city main by whatever path that repo
+uses, which confirms the disposition by exercise.
