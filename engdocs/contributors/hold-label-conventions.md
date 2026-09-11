@@ -64,6 +64,44 @@ new one, and files an audit event bead. It does **not** touch `status`,
 `owner`, or `metadata` — update those separately (or add a dependency edge)
 if they also need to change.
 
+## Clearing a hold, and why an absent label is not a lost one
+
+A hold is cleared by removing the label:
+
+```bash
+bd label remove <id> hold:mayor
+```
+
+There is no cleared *value*. `hold` is the only state dimension in this system
+whose off state is the **absence** of a label rather than a value — compare
+`patrol:active|muted`, `mode:normal|degraded`, `health:healthy|failing`, which
+all carry a label on both sides. That asymmetry has a consequence worth stating
+before someone rediscovers it as a bug:
+
+**`bd set-state` files an audit event bead when a hold is SET. Removing the
+label files none.** So a bead that was correctly cleared and a bead that
+somehow lost its label leave identical trails — a child bead still reading
+`State change: hold -> mayor`, and no `hold:` label present. `set-state --help`
+calls that child bead the "source of truth" and the label a "fast lookup
+cache", which describes the set and inverts for the clear: the artifact a
+reader is pointed at is the one that cannot distinguish the two cases.
+
+The clear *is* recorded, in the bead's `events` rows as `label_removed` with
+the acting identity and a timestamp. Nothing surfaces it: `bd history` prints
+version snapshots authored by `beads` rather than the actor, and no `bd`
+subcommand prints label events. Reading the event rows directly is currently
+the only way to answer "who cleared this, and when".
+
+Measured 2026-09-11: a PM read a `hold -> mayor` child bead with no label
+present and filed a P1 reporting the park mechanism as broken, four minutes
+after the mayor cleared the hold it had been asked to clear. The commit graph
+shows the release that was blamed changed zero label rows.
+
+Do **not** clear a hold by re-running `set-state` with a different value. It
+writes a third `hold:` label rather than removing one, and any value outside
+`beadmeta.DispatchHoldLabels` is excluded by no dispatch query — so the bead
+becomes claimable while still reading as parked.
+
 ## What a hold label does to dispatch
 
 Reach for this section when the need is "record who should eventually own this
