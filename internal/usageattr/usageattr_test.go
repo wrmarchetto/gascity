@@ -242,7 +242,9 @@ func TestAgentTypeStripsTheSessionSuffixItActuallyCarries(t *testing.T) {
 // rejected: it merges a session into an agent on the strength of a name, and the
 // same shape is how a role that never existed acquires traffic. The row is kept
 // verbatim and flagged instead, which is what makes the residue countable.
-// Measured 2026-09-10: 6,378 of 83,304 rows are in this state.
+// Measured 2026-09-10: 6,117 of 65,831 facts are in this state, counted after
+// the idempotency-key de-duplication usage.ReadFacts does -- the raw line count
+// is ~21% higher and skewed entirely toward compute.
 func TestUnmatchedSessionSuffixIsFlaggedNotRepaired(t *testing.T) {
 	rep := Aggregate([]usage.Fact{
 		modelFact("ci-wisp-rkib0rl", "toolsmith-codex-adhoc-e1546d8930", 1_000, 1, 0, 0, 0),

@@ -102,11 +102,19 @@ type Wall struct {
 //
 // It is a LOWER BOUND on how long the session was alive, never its duration:
 // everything before the first invocation and after the last one falls outside
-// it. It exists because compute facts have all but stopped in this city -- 2,633
-// on 2026-09-03 against single digits most days after -- leaving the invocation
-// timestamps as the only latency signal the log still carries. Observed is false
-// for a single fact, which bounds no interval; reporting 0 there would be
-// indistinguishable from a session that finished inside one millisecond.
+// it. It exists because compute facts are scarce -- 115 of them against 62,926
+// model facts over 2026-09-03..09-10, covering 103 of 1,346 sessions -- leaving
+// the invocation timestamps as the only latency signal most sessions carry.
+//
+// Those counts are AFTER the idempotency-key de-duplication usage.ReadFacts
+// does, and the raw line count says something different: 36 compute keys account
+// for 17,914 lines of the log, one of them repeated 3,383 times. A per-day count
+// taken with wc or grep therefore shows a compute spike on 2026-09-03 that the
+// accounting never sees. Count facts, not lines.
+//
+// Observed is false for a single fact, which bounds no interval; reporting 0
+// there would be indistinguishable from a session that finished inside one
+// millisecond.
 type Span struct {
 	Observed bool
 	Facts    int
