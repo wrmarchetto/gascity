@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok",
+    "grouping",
+    "window",
+    "sessions",
+    "groups",
+    "groups_omitted",
+    "totals",
+    "residue"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "ok": {
+      "const": true
+    },
+    "grouping": {
+      "type": "string",
+      "enum": ["session", "type", "bead"]
+    },
+    "usage_path": {
+      "type": "string"
+    },
+    "bead_scope": {
+      "type": "string"
+    },
+    "bead_join_key": {
+      "type": "string"
+    },
+    "window": {
+      "type": "object",
+      "required": ["observed", "facts_in_window", "facts_outside_window", "facts_undated"],
+      "properties": {
+        "requested_since": { "type": "string" },
+        "requested_until": { "type": "string" },
+        "observed": { "type": "boolean" },
+        "observed_from": { "type": "string" },
+        "observed_to": { "type": "string" },
+        "facts_in_window": { "type": "integer" },
+        "facts_outside_window": { "type": "integer" },
+        "facts_undated": { "type": "integer" }
+      },
+      "additionalProperties": true
+    },
+    "sessions": { "type": "integer" },
+    "groups": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/group" }
+    },
+    "groups_omitted": { "type": "integer" },
+    "totals": { "$ref": "#/$defs/group" },
+    "residue": {
+      "type": "object",
+      "required": [
+        "suffix_unmatched_sessions",
+        "sessions_with_no_bead",
+        "sessions_naming_several_beads"
+      ],
+      "properties": {
+        "suffix_unmatched_sessions": { "type": "integer" },
+        "sessions_with_no_bead": { "type": "integer" },
+        "sessions_naming_several_beads": { "type": "integer" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "group": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "key": { "type": "string" },
+        "sessions": { "type": ["array", "null"], "items": { "type": "string" } },
+        "agent_types": { "type": ["array", "null"], "items": { "type": "string" } },
+        "suffix_unmatched": { "type": "boolean" },
+        "shares_sessions": { "type": "boolean" },
+        "invocations": { "type": ["integer", "null"] },
+        "input_tokens": { "type": ["integer", "null"] },
+        "output_tokens": { "type": ["integer", "null"] },
+        "cache_read_tokens": { "type": ["integer", "null"] },
+        "cache_creation_tokens": { "type": ["integer", "null"] },
+        "wall_seconds": { "type": ["number", "null"] },
+        "compute_facts": { "type": ["integer", "null"] },
+        "span_seconds_lower_bound": { "type": ["number", "null"] },
+        "first_at": { "type": "string" },
+        "last_at": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

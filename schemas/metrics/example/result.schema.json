@@ -210,7 +210,8 @@
               "events-reemit-execution",
               "storage-migrate",
               "storage-status",
-              "nudge-ack"
+              "nudge-ack",
+              "usage"
             ]
           },
           "event_id": {
