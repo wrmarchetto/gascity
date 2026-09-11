@@ -638,7 +638,10 @@ const authoredAgentTOML = `# WARNING: this header is the only record of why the 
 
 # Its own template rather than the shared one, and the copy is a KNOWN COST.
 prompt_template = "/abs/path/prompt.template.md"
-provider = "codex"
+# Must stay in the same namespace as the model named below: config load
+# refuses an option default the provider does not declare, and "opus-5" is a
+# choice of the claude schema alone.
+provider = "claude"
 
 # --- scope and placement ---
 
