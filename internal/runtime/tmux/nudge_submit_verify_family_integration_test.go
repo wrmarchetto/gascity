@@ -3,6 +3,7 @@
 package tmux
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -65,7 +66,14 @@ func TestCodexPaneTakesTheSubmitVerifyArm(t *testing.T) {
 				t.Fatalf("NewSessionWithCommandAndEnv: %v", err)
 			}
 			defer func() { _ = tm.KillSession(sessionName) }()
-			time.Sleep(300 * time.Millisecond)
+			// Wait on the pane's own lifecycle signal rather than elapsed
+			// wall time: the resource ledger's fixed_sleep row forbids the
+			// sleep, and a sleep would be the wrong instrument anyway -- it
+			// asserts a duration where the precondition is "the pane is
+			// running something other than the launching shell".
+			if err := tm.WaitForCommand(context.Background(), sessionName, []string{"sh", "bash", "zsh"}, 10*time.Second); err != nil {
+				t.Fatalf("WaitForCommand: %v", err)
+			}
 
 			if got := tm.submitVerifyEligible(sessionName); got != tc.wantUnconfirmed {
 				t.Errorf("submitVerifyEligible(GC_PROVIDER=%q) = %v, want %v", tc.provider, got, tc.wantUnconfirmed)
