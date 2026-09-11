@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/usage"
 	"github.com/gastownhall/gascity/internal/usageattr"
@@ -20,7 +21,11 @@ import (
 // are attributed at run level and Fact.StepID is never filled, because per-step
 // attribution was retired with the gc.active_work_bead session pointer
 // (internal/worker/invocation_telemetry.go).
-const beadSessionMetadataKey = "gc.session_id"
+//
+// Aliased from beadmeta rather than spelled out: a raw "gc.*" literal in
+// non-test Go is refused by TestNoUndeclaredMetadataKeys, which is what keeps
+// the key's readers and its writer from drifting apart.
+const beadSessionMetadataKey = beadmeta.SessionIDMetadataKey
 
 // usageSource records where one report's two inputs came from, so the reader can
 // tell an unattributed row from an absent store.
