@@ -211,6 +211,53 @@ yet settled.
   state (asleep/drained/archived/suspended/quarantined) is a known under-count.
   The single-key marker sidesteps open question 3 (`beads.Tx` validation across
   store impls).
+- **A line in `usage.jsonl` is not a fact, and counting lines is always wrong.**
+  At-least-once emission means the log can carry the same `idempotency_key` more
+  than once by design; `usage.ReadFacts` collapses them, so every consumer
+  (`gc costs`, `gc usage`, the API surface) sees one fact per key. A reader that
+  counts lines instead -- `wc -l`, a `grep -c`, a naive tail -- overcounts, and
+  overcounts unevenly across kinds, so the error does not wash out in a ratio.
+  Use `gc usage`, or de-duplicate on `idempotency_key` before counting anything.
+- **Each accounting lane owns exactly one marker, and a marker is never withheld
+  to keep another lane's retry alive** (gs-18wr, fixed 2026-09-11). The compute
+  lane stamps `usage_compute_emitted_at` the moment its fact is recorded; the
+  end-of-interval model sweep stamps `usage_model_swept_at` when it settles; and
+  `computeFactGetCandidate` re-offers a terminal interval while EITHER marker
+  lags `awake_started_at`. The tempting shortcut is to leave the compute marker
+  unset as the cheap way to get the session re-visited next tick -- which is
+  what the code did until gs-18wr. A model sweep whose transcript is
+  permanently undiscoverable reports a *transient* miss forever, so that
+  interval re-appended its compute fact on every reconcile tick for the life of
+  the bead: measured in the maintainer city on 2026-09-10, 36 intervals
+  produced 17,914 of the log's 83,624 lines, one key alone 3,383 of them. No
+  consumer double-counted, and that is exactly why it ran for weeks unnoticed --
+  the only symptom was a log growing ~21% faster than the facts in it, and a
+  per-day LINE count reporting a 2,633-fact compute spike whose real figure was
+  8. Residual, deliberately not capped: those intervals stay Get candidates and
+  cost one store Get plus one bounded discovery scan per tick forever. Capping
+  it means deciding when to abandon an interval's model facts permanently, which
+  is a billing-completeness decision, not a side effect of stopping the
+  re-emission.
+- **The re-emission was one window away from being a consumer bug, which is why
+  it was worth fixing rather than documenting.** Both readers keep the FIRST
+  occurrence of a key (`local_sink.go` `ReadFacts`, `recent_reader.go`
+  `ReadRecentFacts`), and a repeat does not re-measure a fact whose
+  `slept_at` pinned its interval end. But for an interval that never recorded a
+  usable `slept_at` the end falls back to `now`, so every repeat re-measures
+  `wall_seconds` upward: measured over the maintainer city's log on 2026-09-11,
+  10 of the 36 repeated keys have a MOVING wall (the worst 47 s → 86,937 s,
+  1835x; another 11 s → 90,226 s), and those 10 are the same parked-for-hours
+  intervals that hold 87% of the wasted lines. `ReadRecentFacts` sees only a
+  bounded tail (16 MiB via `usageReadMaxBytes`), and first-*in-window* wins --
+  so a window cutting mid-burst would have surfaced an inflated `wall_seconds`
+  under a later `At`, landing a run's compute cost in the wrong day.
+  Measured: 0 of the 36 keys have their first occurrence inside the live window,
+  so this never fired. **The bound on that negative is one-directional and was
+  never reassuring:** the window tracks the END of the file, so a burst that has
+  scrolled out can never re-enter, and the whole exposure was the NEXT burst
+  landing inside the window -- which is what stopping the re-emission removes.
+  Do not re-derive comfort from the historical figure; it says nothing about a
+  future burst.
 - **The awake epoch is `awake_started_at` at nanosecond precision**, stamped
   fresh on every confirmed start/wake — both create-time `ConfirmStartedPatch`
   and the controller's `CommitStartedPatch` wake path — rather than a separate
