@@ -239,6 +239,19 @@ var builtinProviderSpecs = map[string]BuiltinProviderSpec{
 				Type:  "select",
 				Choices: []BuiltinOptionChoice{
 					{Value: "", Label: "Default"},
+					// Pinned by four agents in the operator's city since
+					// 0629341 and absent from this enum until now, so the
+					// launch path emitted no --model at all and those agents
+					// silently ran the provider default (gpt-5.5). The pin
+					// was confirmed intentional 2026-09-05 while whether gc
+					// ACCEPTED the string stayed unverified; adding the entry
+					// is what resolves that, because the value now reaches
+					// codex, where a bad id fails the launch instead of
+					// disappearing. Same shape as the claude canonical-id
+					// entries below (ra-jbbv0). Evidence the CLI takes it:
+					// four codex exec arms on codex-cli 0.153.4 ran under it
+					// (city docs/bench-procedure-contract.md, ci-srx2m4).
+					{Value: "gpt-6-astra", Label: "GPT-6 Astra", FlagArgs: []string{"--model", "gpt-6-astra"}, FlagAliases: [][]string{{"-m", "gpt-6-astra"}}},
 					{Value: "gpt-5.6-sol", Label: "GPT-5.6 Sol", FlagArgs: []string{"--model", "gpt-5.6-sol"}, FlagAliases: [][]string{{"-m", "gpt-5.6-sol"}}},
 					{Value: "gpt-5.6-terra", Label: "GPT-5.6 Terra", FlagArgs: []string{"--model", "gpt-5.6-terra"}, FlagAliases: [][]string{{"-m", "gpt-5.6-terra"}}},
 					{Value: "gpt-5.6-luna", Label: "GPT-5.6 Luna", FlagArgs: []string{"--model", "gpt-5.6-luna"}, FlagAliases: [][]string{{"-m", "gpt-5.6-luna"}}},
