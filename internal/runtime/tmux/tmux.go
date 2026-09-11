@@ -1979,7 +1979,7 @@ const (
 //
 // All side effects are injected so the decision logic is unit-testable without
 // a live tmux server.
-func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bool, error), drafted func() (bool, error), sleep func(time.Duration)) (bool, error) {
+func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bool, error), drafted func() (bool, error), overlay func() (bool, error), sleep func(time.Duration)) (bool, error) {
 	// Was the draft observed sitting in the input box before the first Enter?
 	// Its later ABSENCE only means "submitted" if it was there to begin with.
 	// A paste that never landed leaves an empty box too, and reading that as a
@@ -2038,6 +2038,22 @@ func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bo
 			// already submitted must never receive a second Enter.
 			if submitted() {
 				return true, nil
+			}
+			// A re-send fires only while busy reads false, so the states it
+			// re-sends into are exactly the ones with no busy indicator -- and
+			// a provider overlay is one. There Enter means "accept the
+			// highlighted entry", so re-sending operates the TUI instead of
+			// delivering anything: measured on codex-cli 0.153.4, three Enters
+			// into the command palette walked /model to a COMMITTED model
+			// change. Stop instead, and report the nudge unconfirmed.
+			//
+			// An unreadable pane ABSTAINS rather than blocking, matching every
+			// other observation in this function: "could not look" has never
+			// stopped a re-send here, and making it do so would disable the
+			// loop for the ga-bwm lost-Enter case it exists to fix whenever
+			// capture-pane is flaky.
+			if isOverlay, err := overlay(); err == nil && isOverlay {
+				return false, errSubmitOverlayPresent
 			}
 			sleep(submitReEnterBackoff)
 		}
@@ -2227,8 +2243,19 @@ func (t *Tmux) NudgeSession(session, message string) error {
 	wake := func() { t.WakePaneIfDetached(session) }
 	if t.submitVerifyEligible(target) {
 		drafted := func() (bool, error) { return t.paneHoldsDraft(target, message) }
-		confirmed, err := submitEnterAndConfirm(sendSubmit, wake, func() (bool, error) { return t.paneBusy(target) }, drafted, time.Sleep)
+		overlay := func() (bool, error) { return t.paneShowsOverlay(target) }
+		confirmed, err := submitEnterAndConfirm(sendSubmit, wake, func() (bool, error) { return t.paneBusy(target) }, drafted, overlay, time.Sleep)
 		if err != nil {
+			// An overlay is not a delivery failure: the keys reached tmux and
+			// the draft is sitting in a composer the TUI has covered. It joins
+			// the unconfirmed path below rather than the hard-error path, so
+			// the callers keep the ack/retry split ci-uihrrv corrected, and it
+			// NAMES itself -- "unconfirmed" alone sends a reader hunting a
+			// wedged agent when the pane is merely showing a menu.
+			if errors.Is(err, errSubmitOverlayPresent) {
+				delivered = true
+				return fmt.Errorf("%w: session %q: an overlay is consuming Enter, so the submit was not re-sent", ErrNudgeSubmitUnconfirmed, session)
+			}
 			return fmt.Errorf("failed to send submit sequence: %w", err)
 		}
 		delivered = true

@@ -24,12 +24,12 @@ func TestRuntimeTmuxManifestMatchesCanonicalLinuxIntegrationInventory(t *testing
 	if drift := runtimeTmuxManifestDrift(manifest, declared); len(drift) != 0 {
 		t.Fatalf("runtime-tmux manifest drift:\n%s\nupdate %s", strings.Join(drift, "\n"), runtimeTmuxManifestRelativePath)
 	}
-	if got, want := len(manifest), 372; got != want {
+	if got, want := len(manifest), 379; got != want {
 		t.Fatalf("runtime-tmux manifest contains %d tests, want %d", got, want)
 	}
 
 	untagged := discoverRuntimeTmuxTests(t, dir, "linux", false)
-	if got, want := len(untagged), 254; got != want {
+	if got, want := len(untagged), 261; got != want {
 		t.Fatalf("runtime-tmux untagged inventory contains %d tests, want %d", got, want)
 	}
 	if got, want := len(declared)-len(untagged), 118; got != want {
@@ -39,7 +39,11 @@ func TestRuntimeTmuxManifestMatchesCanonicalLinuxIntegrationInventory(t *testing
 
 func TestRuntimeTmuxManifestSixShardsPartitionInventoryExactlyOnce(t *testing.T) {
 	manifest := parseRuntimeTmuxManifest(t, filepath.Join(repoRoot(t), runtimeTmuxManifestRelativePath))
-	wantShardCounts := []int{62, 62, 62, 62, 62, 62}
+	// 379 does not divide by six, so the index%6 partition gives the first
+	// shard the remainder. Spelled out rather than computed: a derived
+	// expectation would agree with any inventory size, which is the one thing
+	// this assertion exists to notice.
+	wantShardCounts := []int{64, 63, 63, 63, 63, 63}
 	seen := make(map[string]int, len(manifest))
 
 	for shardIndex := 0; shardIndex < len(wantShardCounts); shardIndex++ {

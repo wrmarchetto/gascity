@@ -26,7 +26,7 @@ func TestSubmitEnterAndConfirmReEntersWhileIdle(t *testing.T) {
 	busy := func() (bool, error) { return enters >= 2, nil }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noOverlay, noSleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -45,7 +45,7 @@ func TestSubmitEnterAndConfirmStopsWhenBusy(t *testing.T) {
 	busy := func() (bool, error) { return enters >= 1, nil }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noOverlay, noSleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -71,7 +71,7 @@ func TestSubmitConfirmBudgetExceedsProviderTurnStartLatency(t *testing.T) {
 	sleep := func(delay time.Duration) { elapsed += delay }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, sleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noOverlay, sleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -96,7 +96,7 @@ func TestSubmitEnterAndConfirmNoDoubleSubmitOnFastTurn(t *testing.T) {
 	}
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noOverlay, noSleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -116,7 +116,7 @@ func TestSubmitEnterAndConfirmBestEffortWhenNeverBusy(t *testing.T) {
 	busy := func() (bool, error) { return false, nil }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noOverlay, noSleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -143,7 +143,7 @@ func TestSubmitEnterAndConfirmClearsStaleSendError(t *testing.T) {
 	}
 	busy := func() (bool, error) { return false, nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noOverlay, noSleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil (later send succeeded)", err)
 	}
@@ -163,7 +163,7 @@ func TestSubmitEnterAndConfirmReturnsSendError(t *testing.T) {
 	sendEnter := func() error { enters++; return sendErr }
 	busy := func() (bool, error) { return false, nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, neverDrafted, noOverlay, noSleep)
 	if confirmed {
 		t.Fatal("confirmed = true, want false")
 	}
@@ -207,7 +207,7 @@ func TestSubmitEnterAndConfirmConfirmsATurnShorterThanTheIndicator(t *testing.T)
 	sleep := func(delay time.Duration) { elapsed += delay }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, drafted, sleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, drafted, noOverlay, sleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -243,7 +243,7 @@ func TestSubmitEnterAndConfirmStillReSendsWhenTheDraftStaysPut(t *testing.T) {
 	drafted := func() (bool, error) { return true, nil }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, drafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, drafted, noOverlay, noSleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -272,7 +272,7 @@ func TestSubmitEnterAndConfirmIgnoresAnEmptyBoxItNeverSawFilled(t *testing.T) {
 	drafted := func() (bool, error) { return false, nil }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, drafted, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, busy, drafted, noOverlay, noSleep)
 	if err != nil {
 		t.Fatalf("err = %v, want nil", err)
 	}
@@ -302,7 +302,7 @@ func TestSubmitEnterAndConfirmSaysSoWhenThePaneCouldNeverBeObserved(t *testing.T
 	blind := func() (bool, error) { return false, captureErr }
 	sendEnter := func() error { enters++; return nil }
 
-	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, blind, blind, noSleep)
+	confirmed, err := submitEnterAndConfirm(sendEnter, func() {}, blind, blind, noOverlay, noSleep)
 	if confirmed {
 		t.Fatal("confirmed = true from a pane that was never read")
 	}
@@ -323,7 +323,7 @@ func TestSubmitEnterAndConfirmPrefersATmuxSendErrorOverAnObservationError(t *tes
 	captureErr := errors.New("capture-pane: no such pane")
 	blind := func() (bool, error) { return false, captureErr }
 
-	_, err := submitEnterAndConfirm(func() error { return sendErr }, func() {}, blind, blind, noSleep)
+	_, err := submitEnterAndConfirm(func() error { return sendErr }, func() {}, blind, blind, noOverlay, noSleep)
 	if !errors.Is(err, sendErr) {
 		t.Fatalf("err = %v, want the send error to win", err)
 	}
@@ -336,7 +336,7 @@ func TestSubmitEnterAndConfirmPrefersATmuxSendErrorOverAnObservationError(t *tes
 // failure that did not happen.
 func TestSubmitEnterAndConfirmKeepsTheOldWordingWhenThePaneWasReadable(t *testing.T) {
 	idle := func() (bool, error) { return false, nil }
-	confirmed, err := submitEnterAndConfirm(func() error { return nil }, func() {}, idle, idle, noSleep)
+	confirmed, err := submitEnterAndConfirm(func() error { return nil }, func() {}, idle, idle, noOverlay, noSleep)
 	if confirmed {
 		t.Fatal("confirmed = true from an idle pane")
 	}
@@ -344,3 +344,9 @@ func TestSubmitEnterAndConfirmKeepsTheOldWordingWhenThePaneWasReadable(t *testin
 		t.Fatalf("err = %v, want nil -- the pane WAS observed, it was just idle", err)
 	}
 }
+
+// noOverlay is the abstaining overlay source. Every test above predates the
+// overlay guard and exercises the loop's other decisions, so each says
+// explicitly that no overlay is showing rather than passing a nil the
+// production path could also pass by accident.
+func noOverlay() (bool, error) { return false, nil }
