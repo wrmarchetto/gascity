@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gastownhall/gascity/internal/citylayout"
+	"github.com/gastownhall/gascity/internal/execenv"
 	"github.com/gastownhall/gascity/internal/gchome"
 	"github.com/gastownhall/gascity/internal/pathutil"
 )
@@ -155,7 +156,11 @@ func (ce ConditionEnv) Environ() []string {
 		}
 	}
 
-	return env
+	// The HOME above is a substitute, so bd cannot read the operator's
+	// `bd metrics off` out of it. Gate scripts run bd -- conditionPATH puts it
+	// there on purpose -- so without this a gate run is telemetry the operator
+	// declined.
+	return execenv.WithBDMetricsDefaultedOff(env)
 }
 
 // containedIn reports whether absPath is the same as or nested under root.

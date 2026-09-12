@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/gastownhall/gascity/internal/execenv"
 )
 
 // Output caps and concurrency, mirroring the BFF's exec-core.ts contract.
@@ -168,14 +170,19 @@ func cleanEnv() []string {
 	if path == "" {
 		path = home + "/.local/bin:/usr/local/bin:/usr/bin:/bin"
 	}
-	return []string{
+	// The "/tmp" fallback above is a home the operator does not own, and the
+	// probes this env serves include `bd doctor`, so bd would read its consent
+	// out of /tmp/.config and find none. Applied on both branches rather than
+	// only the fallback: an inherited HOME here is gc's own process HOME, so
+	// the entry is a no-op whenever the parent already stated a preference.
+	return execenv.WithBDMetricsDefaultedOff([]string{
 		"PATH=" + path,
 		"HOME=" + home,
 		"LANG=C.UTF-8",
 		"NO_COLOR=1",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_ALLOW_PROTOCOL=none",
-	}
+	})
 }
 
 // Terminal-output sanitizer, ported from exec.ts. Strips OSC sequences, CSI

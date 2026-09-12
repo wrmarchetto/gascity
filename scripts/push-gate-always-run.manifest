@@ -58,6 +58,7 @@
 ./internal/docgen
 ./internal/doctor
 ./internal/doltorphan
+./internal/execenv
 ./internal/formula
 ./internal/fsys
 ./internal/importsvc

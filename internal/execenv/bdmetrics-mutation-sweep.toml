@@ -1,0 +1,104 @@
+# Mutation sweep for the bd-telemetry-under-a-substituted-HOME guards
+# (bead ci-lf9auf). Every row flips one refusal to its accepting counterpart
+# and requires the named test to go red.
+#
+# Each flip keeps the file COMPILING -- dropping a call outright would leave
+# the execenv import unused, and a build error is red for the wrong reason,
+# which the driver reports as UNATTRIBUTABLE rather than as a kill. So the
+# neutralizing rows keep a reference to the package alive and discard the
+# result, which is exactly the shape a careless edit would leave behind.
+#
+# Run: /home/willie/projects/city/assets/scripts/mutation-sweep.py \
+#        internal/execenv/bdmetrics-mutation-sweep.toml
+
+[sweep]
+name = "bd telemetry stays off under every HOME gc substitutes"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test",
+  "./internal/execenv/", "./internal/convergence/", "./internal/beads/",
+  "-run", "TestBDMetrics|TestEveryHomeRewrite|TestConditionEnv|TestExecEnvForBd",
+]
+timeout_s = 600
+
+[[mutation]]
+id = "helper-appends-nothing"
+path = "internal/execenv/bdmetrics.go"
+find = '''	return append(environ[:len(environ):len(environ)], BDMetricsDisabledEntry)'''
+replace = '''	return environ'''
+expect_output = ["TestBDMetricsDefaultedOffAppendsWhenTheParentIsSilent"]
+
+[[mutation]]
+id = "helper-forces-off-over-an-explicit-opt-in"
+path = "internal/execenv/bdmetrics.go"
+find = '''		if key, _, ok := strings.Cut(entry, "="); ok && key == BDMetricsDisableEnv {'''
+replace = '''		if key, _, ok := strings.Cut(entry, "="); ok && key == "BD_NEVER_SET" {'''
+expect_output = ["TestBDMetricsDefaultedOffKeepsAnExplicitOptIn"]
+
+[[mutation]]
+id = "helper-aliases-the-callers-backing-array"
+path = "internal/execenv/bdmetrics.go"
+find = '''	return append(environ[:len(environ):len(environ)], BDMetricsDisabledEntry)'''
+replace = '''	return append(environ, BDMetricsDisabledEntry)'''
+expect_output = ["TestBDMetricsDefaultedOffLeavesTheCallersSliceAlone"]
+
+[[mutation]]
+id = "gate-condition-env-drops-the-optout"
+path = "internal/convergence/condition.go"
+find = '''	return execenv.WithBDMetricsDefaultedOff(env)'''
+replace = '''	_ = execenv.BDMetricsDisabledEntry
+	return env'''
+expect_output = ["TestConditionEnvDefaultsBDMetricsOff"]
+
+[[mutation]]
+id = "fabricated-home-drops-the-optout"
+path = "internal/beads/bdstore.go"
+find = '''	return execenv.WithBDMetricsDefaultedOff(append(baseEnv, "HOME="+gchome.ResolveReadOnly().Path()))'''
+replace = '''	_ = execenv.BDMetricsDisabledEntry
+	return append(baseEnv, "HOME="+gchome.ResolveReadOnly().Path())'''
+expect_output = ["TestExecEnvForBd_FabricatedHomeDefaultsMetricsOff"]
+
+# The scoping row. Without it the fabricated-home row above passes just as
+# well against an unconditional injection, which would silently cancel an
+# operator's `bd metrics on` for every runner-spawned bd in the city.
+[[mutation]]
+id = "inherited-home-gets-the-optout-forced-onto-it"
+path = "internal/beads/bdstore.go"
+find = '''		if strings.HasPrefix(entry, "HOME=") {
+			return baseEnv
+		}'''
+replace = '''		if strings.HasPrefix(entry, "HOME=") {
+			return execenv.WithBDMetricsDefaultedOff(baseEnv)
+		}'''
+expect_output = ["TestExecEnvForBd_InheritedHomeKeepsTheOperatorsMetricsChoice"]
+
+# The structural guard's own row: a HOME-rewriting site that stops carrying
+# the opt-out must be caught by the repo scan, not only by a site test. The
+# dashboard BFF is the right subject because it has no site test of its own,
+# so the scan is the ONLY thing that can catch it.
+[[mutation]]
+id = "a-home-rewriting-site-stops-carrying-the-optout"
+path = "internal/api/dashboardbff/exec.go"
+find = '''	return execenv.WithBDMetricsDefaultedOff([]string{
+		"PATH=" + path,
+		"HOME=" + home,
+		"LANG=C.UTF-8",
+		"NO_COLOR=1",
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ALLOW_PROTOCOL=none",
+	})'''
+replace = '''	_ = execenv.BDMetricsDisabledEntry
+	return []string{
+		"PATH=" + path,
+		"HOME=" + home,
+		"LANG=C.UTF-8",
+		"NO_COLOR=1",
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_ALLOW_PROTOCOL=none",
+	}'''
+expect_output = [
+  "TestEveryHomeRewriteDefaultsBDMetricsOff",
+  "internal/api/dashboardbff/exec.go",
+]

@@ -978,3 +978,30 @@ func TestRunConditionEnvVarsAvailable(t *testing.T) {
 		t.Errorf("expected resolved PATH in output, got: %s", result.Stdout)
 	}
 }
+
+func TestConditionEnvDefaultsBDMetricsOff(t *testing.T) {
+	// THE LIVE DEFECT THIS PINS, not a hypothetical. Environ substitutes HOME
+	// with the city path to keep a gate script away from the controller's .ssh
+	// and .gnupg, and conditionPATH puts bd on the gate's PATH on purpose. bd
+	// resolves the operator's `bd metrics off` from $HOME, so under the
+	// substitute it found none, fell back to its shipped default of ENABLED,
+	// and wrote that default to <city>/.config/bd/config.yaml -- observed in
+	// the running city dated 2026-08-07, alongside a queued, unsent
+	// cli_command event from 2026-09-12, while the operator's own
+	// metrics.disabled: true had stood since 2026-08-06 (bead ci-lf9auf).
+	//
+	// The one-entry assertion, not merely "present": a second, contradicting
+	// assignment would leave this one in place and still flip what bd
+	// resolves, because the last assignment in the slice wins.
+	env := ConditionEnv{BeadID: "bead-1", CityPath: "/home/test/city"}
+
+	var values []string
+	for _, entry := range env.Environ() {
+		if key, value, ok := strings.Cut(entry, "="); ok && key == "BD_DISABLE_METRICS" {
+			values = append(values, value)
+		}
+	}
+	if len(values) != 1 || values[0] != "1" {
+		t.Errorf("BD_DISABLE_METRICS values = %v, want exactly [1]; a gate script under a substituted HOME must not emit telemetry the operator declined", values)
+	}
+}
