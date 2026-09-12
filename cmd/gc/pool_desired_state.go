@@ -268,6 +268,26 @@ func computePoolDesiredStates(
 				// canonical template.
 				continue
 			}
+			// An assignee that survives pool-route normalization unchanged is
+			// the POOL DOOR, and no claim query offers a held bead at that
+			// door -- the generated pool-alias predicate excludes the labels
+			// (excludeHoldLabelsShellArgs, internal/config/workquery.go). This
+			// tier writes a desired session directly, past both demand
+			// counters, so without the gate it is the one path that spawns for
+			// work nothing may claim: the session boots, gets no_work, and
+			// drains. Measured live 2026-09-12 (ci-q24fm8) on ci-fhp0sl and
+			// ci-7le3t1, both held.
+			//
+			// The RAW assignee, and normalizing it first is the mistake: a
+			// dead slot's name ("toolsmith-1") normalizes to this template,
+			// and crash recovery for it is hold-transparent BY DESIGN
+			// (ga-5736js, engdocs/contributors/hold-label-conventions.md). Not
+			// conditioned on status either, matching poolAliasDemandEligible:
+			// hookCandidatePoolAlias serves the pool door at status open
+			// ALONE, so no other status is claimable there by any session.
+			if agentutil.NormalizePoolRouteTarget(cfg, assignee) == assignee && hasDispatchHoldLabel(wb.Labels) {
+				continue
+			}
 			// The raw assignee, not assigneeOwner: the point of the key is to
 			// tell one dead slot from another, and they normalize to the same
 			// owner by construction.

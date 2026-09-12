@@ -136,7 +136,16 @@ fails there rather than in production:
   (`excludeHoldLabelsShellArgs` / `excludeHoldLabelsJQClause`,
   `internal/config/workquery.go`). Both halves are required: the reconciler
   counts in Go for a default probe and shells out for a custom `scale_check`,
-  and dispatch.md invariant 11 forbids the two disagreeing.
+  and dispatch.md invariant 11 forbids the two disagreeing. A **third**
+  enforcement point is required and is easy to miss, because it is not a demand
+  reader at all: the wake-known-identity tier in `cmd/gc/pool_desired_state.go`
+  writes a desired session directly, bypassing both counters. It refuses a held
+  bead whose raw assignee is the pool door, and only that shape -- a slot
+  identity stays hold-transparent per the limit below. Pinned by
+  `cmd/gc/build_desired_state_pool_route_hold_test.go`; the shape it covers is a
+  bead carrying a bare pool assignee AND a `gc.routed_to` naming that same pool,
+  which the demand reader declines as a concrete handoff and which therefore
+  reaches no counter to be excluded from.
 - An ordinary addressed bead still sizes its pool. Nothing about the hold path
   narrows what an unlabelled assignee means.
 
