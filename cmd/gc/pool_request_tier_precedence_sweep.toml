@@ -17,6 +17,15 @@
 # repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
 # means the checkout the spec was read out of -- never the worktree that
 # authored it. See the mutation-sweep skill.
+#
+# Measured at 040e2e094: 7/7 died. The first run at 4c9137b88 was 6/7, and the
+# survivor is the row worth keeping the whole spec for:
+# size-new-demand-without-reserving-for-resumes passed with the reservation
+# flipped off, because the two regimes produce IDENTICAL output -- the sizing
+# pass builds a new request and the comparator then sheds it on tier
+# precedence. The test named the reservation and was pinning the comparator
+# twice. It now asserts recordNewDemandCapTrace, which is the only place the
+# regimes differ. A read of the suite predicted no survivors.
 
 [sweep]
 name = "pool request tier precedence outranks urgency"
