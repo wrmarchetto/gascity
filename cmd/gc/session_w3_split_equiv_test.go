@@ -76,7 +76,7 @@ func oracleSessionBeadShapes() []beads.Bead {
 }
 
 // assignedWorkGolden is the captured golden for TestSessionBeadHasAssignedWorkInfo.
-var assignedWorkGolden = map[string]bool{"ga-bare": false, "ga-named": true, "ga-named-fallback": true, "ga-noname": false, "ga-pool": true}
+var assignedWorkGolden = map[string]bool{"ga-bare": false, "ga-named": true, "ga-named-fallback": true, "ga-noname": false, "ga-pool": true, "ga-pool-alias": true, "ga-pool-prior-alias": true}
 
 // coreConfigHashGolden is the captured golden for TestSessionCoreConfigForHashInfoGolden.
 var coreConfigHashGolden = map[string]string{"empty/ga-bare": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-effort-override": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-named": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-named-fallback": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-noname": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "empty/ga-pool": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker-cmd/ga-bare": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-effort-override": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-named": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-named-fallback": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-noname": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-cmd/ga-pool": "v6:fc83c0f3d669dfb8c48ddad730f0d62fef9c9a4d9094db93be8c0bef11c3ba4b", "worker-declared-env/ga-bare": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-effort-override": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-named": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-named-fallback": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-noname": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-declared-env/ga-pool": "v6:1eb297d3d0c6d368c802db2ebafe30e475b4ba9c542deeffca86d83aaae7e902", "worker-provider/ga-bare": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-effort-override": "v6:f4922fa899cca0571515e4568d09101f08aa5ae3b737a050ded89bb0b56ca11f", "worker-provider/ga-named": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-named-fallback": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-noname": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker-provider/ga-pool": "v6:ac80250a8849174aa18812eeb671ac92720a4b981015873d9405d3e348f72da1", "worker/ga-bare": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-effort-override": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-named": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-named-fallback": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-noname": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34", "worker/ga-pool": "v6:26a75e3704c256abbb0719e6274cd69ab5953792c0d08d1ecf4eda085849bc34"}
@@ -165,9 +165,37 @@ func TestSessionBeadHasAssignedWorkInfo(t *testing.T) {
 		{ID: "wb-closed", Status: "closed", Assignee: "ga-pool"},
 		{ID: "wb-blank", Status: "open", Assignee: ""},
 		{ID: "wb-unmatched", Status: "in_progress", Assignee: "nobody"},
+		// The production pool shape, absent from this golden until ci-me7as9
+		// and the reason it passed over the defect: a slot's work is assigned
+		// under its ALIAS, which is what session.AssigneeIdentifier picks
+		// first and what `gc hook --claim` stamps. ga-pool carries no alias at
+		// all and ga-named matched through configured_named_identity, so no
+		// entry here moved when the alias was missing from the predicate.
+		{ID: "wb-alias", Status: "in_progress", Assignee: "worker-2"},
+		{ID: "wb-prior-alias", Status: "in_progress", Assignee: "worker-9"},
 	}
+	// Appended locally rather than added to oracleSessionBeadShapes: that
+	// corpus feeds two other goldens, and a shape added there would rewrite
+	// coreConfigHashGolden for a question about assignee matching.
+	shapes := append(oracleSessionBeadShapes(),
+		beads.Bead{
+			ID: "ga-pool-alias", Type: session.BeadType, Status: "open", Labels: []string{session.LabelSession},
+			Metadata: map[string]string{
+				"template": "worker", "session_name": "worker-ga-pool-alias",
+				"pool_managed": "true", "pool_slot": "2", "alias": "worker-2",
+			},
+		},
+		beads.Bead{
+			ID: "ga-pool-prior-alias", Type: session.BeadType, Status: "open", Labels: []string{session.LabelSession},
+			Metadata: map[string]string{
+				"template": "worker", "session_name": "worker-ga-pool-prior",
+				"pool_managed": "true", "pool_slot": "9", "alias": "worker-renamed",
+				"alias_history": "worker-9",
+			},
+		},
+	)
 	got := map[string]bool{}
-	for _, sb := range oracleSessionBeadShapes() {
+	for _, sb := range shapes {
 		info := sessiontest.SeedBead(t, sb)
 		got[sb.ID] = sessionBeadHasAssignedWorkInfo(work, info)
 		// The empty work set is false for every shape (guards the has-work path is

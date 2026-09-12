@@ -3981,7 +3981,27 @@ func selectOrPlanPoolSessionBead(
 			return info, slot, nil, err
 		}
 	}
-	slot := claimDesiredPoolSlotInfo(bp.city, cfgAgent, session.Info{}, usedSlots)
+	// A wake-known-identity request is re-homed onto the slot whose session
+	// died, because the replacement's own name is what every claim tier joins
+	// on: the work query asks `bd list --status in_progress --assignee=<own
+	// identity>`, and hookClaimExistingAssignment then requires the bead's
+	// assignee to be one of this session's identities. A session spawned at
+	// the lowest free slot for a bead stamped with a sibling slot's name is
+	// offered nothing, gets no_work and drains -- 51 such spawns measured on
+	// the live city over 2026-09-07..09-12 (ci-me7as9).
+	//
+	// KNOWN ABSENCE, recorded where a reader looks for it: the reuse paths
+	// above are not re-homed. A wake that finds an idle reusable session at
+	// another slot preserves that session and recovers nothing, which is the
+	// same defect without a spawn. It is left alone because the measured
+	// population is spawns, and skipping reuse for a wake would stop
+	// preserving an idle session the reconciler would then stop. Establishing
+	// it needs the reuse case separated in the event log first.
+	workingSlots := poolSlotsHeldByWorkingSessionsInfo(bp, cfgAgent)
+	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots, workingSlots)
+	if slot == 0 {
+		slot = claimFreshCreatePoolSlotInfo(bp, cfgAgent, usedSlots)
+	}
 	_, qualifiedInstance, poolSlot := poolDesiredRequestIdentity(cfgAgent, slot)
 	metadata := poolTriggerMetadata(bp, cfgAgent, qualifiedInstance, request)
 
@@ -4201,23 +4221,34 @@ func isFailedCreateSessionInfo(i session.Info) bool {
 }
 
 // sessionBeadHasAssignedWorkInfo reports whether any open/in-progress work bead is
-// assigned to the session: the SESSION side reads typed Info fields (ID,
-// SessionNameMetadata, ConfiguredNamedIdentity) while the WORK bead slice stays raw
+// assigned to the session: the SESSION side reads typed Info fields through
+// sessionBeadAssigneeIdentitiesInfo while the WORK bead slice stays raw
 // (ClassWork — Bead is the domain object). It is the production reuse predicate the
 // pool selection path calls; its behavior is pinned by TestSessionBeadHasAssignedWorkInfo
 // (WI-7 W-delete retired the raw sessionBeadHasAssignedWork equivalence reference along
 // with the rest of the raw pool cluster and re-pointed the pin to a golden).
+//
+// The identity set comes from session.AssigneeIdentities and must not be
+// re-listed here. Three fields were spelled out inline until ci-me7as9 --
+// ID, SessionNameMetadata, ConfiguredNamedIdentity -- and the ALIAS was not
+// among them, which is the form session.AssigneeIdentifier picks FIRST and
+// therefore the form `gc hook --claim` stamps on a pool slot's work. A live,
+// awake slot holding its own in-progress bead read as free for reuse. Its
+// sibling poolRequestResumesAssignedWorkInfo already read the full set, so the
+// same bead simultaneously proved the session must be preserved and that it
+// was free to hand away. AssigneeIdentities' own docstring records the
+// identical hazard from the orphan-reaper side.
 func sessionBeadHasAssignedWorkInfo(workBeads []beads.Bead, info session.Info) bool {
+	identities := sessionBeadAssigneeIdentitiesInfo(info)
 	for _, wb := range workBeads {
 		assignee := strings.TrimSpace(wb.Assignee)
 		if assignee == "" || (wb.Status != "open" && wb.Status != "in_progress") {
 			continue
 		}
-		if assignee == info.ID || assignee == strings.TrimSpace(info.SessionNameMetadata) {
-			return true
-		}
-		if namedIdentity := strings.TrimSpace(info.ConfiguredNamedIdentity); namedIdentity != "" && assignee == namedIdentity {
-			return true
+		for _, identity := range identities {
+			if assignee == identity {
+				return true
+			}
 		}
 	}
 	return false

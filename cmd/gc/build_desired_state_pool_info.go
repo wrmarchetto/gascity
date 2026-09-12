@@ -91,6 +91,104 @@ func claimPoolSlotWithConfigInfo(cfg *config.City, cfgAgent *config.Agent, info 
 	}
 }
 
+// poolSlotsHeldByWorkingSessionsInfo returns the slot numbers currently worn by
+// open sessions of this template that hold assigned work.
+//
+// A fresh create must not be given one of these numbers. The slot allocator
+// reserves against usedSlots, which records only what THIS tick's earlier
+// requests already claimed -- a live session that has not been planned yet has
+// reserved nothing, so a create planned ahead of it takes its number. The
+// damage is not the duplicate name: EnsureAliasAvailableSuperseding refuses the
+// alias and the new session is created without one. The damage is to the live
+// session, whose own resume request then fails
+// claimPreferredPoolSlotWithConfigInfo, returns "concrete slot already
+// claimed", and is DROPPED -- a session doing work disappears from the desired
+// state to make room for one that will find none.
+//
+// MEASURED at the 04:47:49 tick reproduced in
+// TestFreshCreateDoesNotTakeAWorkingSlotsNumber: a fresh create took slot 1
+// from a live session and that session's resume errored out of the tick.
+//
+// Scoped to sessions holding WORK rather than to every open session, and the
+// wider set is the rejected alternative: a drained or failed-create session is
+// exactly what a fresh create is meant to replace, and blocking its number in a
+// pool already at max_active_sessions sends the unbounded `for slot := 1; ;
+// slot++` loop past the configured cap. Only a session with work has a request
+// coming that needs its number kept.
+func poolSlotsHeldByWorkingSessionsInfo(bp *agentBuildParams, cfgAgent *config.Agent) map[int]bool {
+	held := map[int]bool{}
+	if bp == nil || bp.sessionBeads == nil || cfgAgent == nil || cfgAgent.UsesCanonicalSingletonPoolIdentity() {
+		return held
+	}
+	for _, info := range bp.sessionBeads.OpenInfos() {
+		if isDrainedSessionInfo(info) || isFailedCreateSessionInfo(info) {
+			continue
+		}
+		if !sessionBeadHasAssignedWorkInfo(bp.assignedWorkBeads, info) {
+			continue
+		}
+		if slot := existingPoolSlotWithConfigInfo(bp.city, cfgAgent, info); slot > 0 {
+			held[slot] = true
+		}
+	}
+	return held
+}
+
+// claimFreshCreatePoolSlotInfo reserves the lowest slot that neither an earlier
+// request this tick nor a live working session already holds.
+func claimFreshCreatePoolSlotInfo(bp *agentBuildParams, cfgAgent *config.Agent, used map[int]bool) int {
+	if cfgAgent == nil || cfgAgent.UsesCanonicalSingletonPoolIdentity() {
+		return 0
+	}
+	held := poolSlotsHeldByWorkingSessionsInfo(bp, cfgAgent)
+	for slot := 1; ; slot++ {
+		if used[slot] || held[slot] {
+			continue
+		}
+		used[slot] = true
+		return slot
+	}
+}
+
+// claimWakeRehomePoolSlot claims the concrete slot a wake-known-identity
+// request names, or 0 when that slot cannot be served and the caller must fall
+// back to the lowest free one.
+//
+// This is the only allocator entry that reads an identity off a WORK bead
+// rather than off a session bead, and it has to be: a wake has no session bead
+// to point at -- that is what makes it a wake -- so the dead slot's name
+// survives nowhere else. Deliberately not folded into
+// claimPoolSlotWithConfigInfo, whose session.Info argument would have to be
+// forged from a string to carry this.
+//
+// Three refusals, and each one is load-bearing rather than defensive:
+//   - used[slot] or held[slot]: the slot belongs to a session that is running
+//     now -- reserved by an earlier request this tick, or worn by a live
+//     session holding work whose own request has not been planned yet. Taking
+//     it would strand work that IS being done to recover work that is not.
+//   - !usablePoolIdentitySlot: a slot number outside the agent's configured
+//     bound, which is what a bead stamped before max_active_sessions was
+//     lowered looks like. Honoring it would put a session outside the pool's
+//     own cap.
+//   - slot == 0: the assignee carries no slot number at all -- the bare pool
+//     door. That work is addressed to the pool, so any slot serves it.
+//
+// An alias collision with an unrelated live session is NOT refused here; that
+// is createPoolSessionBeadWithGuardedAlias's job, and for this caller its
+// handover predicate is exactly right -- the slot is reclaiming the alias from
+// its own outgoing incarnation.
+func claimWakeRehomePoolSlot(cfgAgent *config.Agent, wakeInstance string, used, held map[int]bool) int {
+	if cfgAgent == nil || cfgAgent.UsesCanonicalSingletonPoolIdentity() {
+		return 0
+	}
+	slot := resolvePersistedPoolIdentitySlot(cfgAgent, true, strings.TrimSpace(wakeInstance))
+	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] || held[slot] {
+		return 0
+	}
+	used[slot] = true
+	return slot
+}
+
 // preferredPoolSlotAboveCapacityInfo recovers a preferred session's concrete
 // identity when the only configured bound it exceeds is max_active_sessions.
 //

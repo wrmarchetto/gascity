@@ -1,0 +1,80 @@
+# Proves TestWakeForDeadSlotPlansThatSlotNotTheLowestFree and
+# TestWakeRequestCarriesTheDeadSlotIdentity actually pin the wake re-home,
+# rather than passing over any of the four designs they are meant to tell
+# apart: no identity carried at all, the OWNER identity carried instead of the
+# slot's, a slot taken this tick stolen anyway, and a slot outside the pool's
+# configured bound honored anyway.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of -- never the worktree that
+# authored it. See the mutation-sweep skill.
+
+[sweep]
+name = "wake-known-identity slot re-home"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestWakeForDeadSlotPlansThatSlotNotTheLowestFree|TestWakeRequestCarriesTheDeadSlotIdentity",
+]
+timeout_s = 900
+
+# The pre-fix tier: a wake request that names its template and its work bead
+# and nothing about the slot whose session died. Only the tier-level test can
+# see this, which is why that test is asserted separately from the allocator.
+[[mutation]]
+id = "drop-the-identity-the-wake-fired-for"
+path = "cmd/gc/pool_desired_state.go"
+find = '''				WakeInstance:   assignee,
+'''
+replace = ''
+expect_output = ["WakeInstance = \"\", want \"rig/claude-3\""]
+
+# The near-miss design, and the one a reading of the tier invites: assigneeOwner
+# is already in scope two lines up. It has collapsed every dead slot onto the
+# template name, so it resolves to no slot and the allocator silently falls back
+# to the lowest free one -- the defect restored while the request looks populated.
+[[mutation]]
+id = "carry-the-owner-instead-of-the-slot"
+path = "cmd/gc/pool_desired_state.go"
+find = '''				WakeInstance:   assignee,'''
+replace = '''				WakeInstance:   assigneeOwner,'''
+expect_output = ["WakeInstance = \"rig/claude\", want \"rig/claude-3\""]
+
+# Stops respecting slots another request reserved this tick. The re-home then
+# renames a running session's identity out from under its own claimed work,
+# which is strictly worse than the phantom it replaces.
+[[mutation]]
+id = "steal-a-slot-taken-this-tick"
+path = "cmd/gc/build_desired_state_pool_info.go"
+find = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] || held[slot] {'''
+replace = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || held[slot] {'''
+expect_output = ["a_slot_taken_this_tick_is_never_stolen", "planned instance = \"worker-3\", want \"worker-1\""]
+
+# Stops bounding the slot by the agent's own configuration. A bead stamped
+# before max_active_sessions was lowered then puts a session outside the cap.
+# The bare pool door survives this one on its own -- it resolves to slot 0,
+# which `slot > 0` inside usablePoolIdentitySlot is not the only thing
+# rejecting -- so the out-of-bound case is the row that dies.
+[[mutation]]
+id = "honor-a-slot-outside-the-configured-bound"
+path = "cmd/gc/build_desired_state_pool_info.go"
+find = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] || held[slot] {'''
+replace = '''	if slot <= 0 || used[slot] || held[slot] {'''
+expect_output = ["a_slot_outside_the_configured_bound_falls_back", "planned instance = \"worker-9\", want \"worker-1\""]
+
+# Removes the fallback entirely, so a request the re-home refuses gets slot 0 --
+# an identity the pool path never means for a multi-slot agent. Pins that the
+# re-home NARROWS nothing: every case it declines still reaches the ordinary
+# allocator.
+[[mutation]]
+id = "drop-the-lowest-free-slot-fallback"
+path = "cmd/gc/build_desired_state.go"
+find = '''	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots, workingSlots)
+	if slot == 0 {
+		slot = claimFreshCreatePoolSlotInfo(bp, cfgAgent, usedSlots)
+	}'''
+replace = '''	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots, workingSlots)'''
+expect_output = ["want \"worker-1\""]
