@@ -20,6 +20,13 @@ type SessionRequest struct {
 	// template is configured, or "new" for ready unassigned work.
 	Tier          string
 	SessionBeadID string // concrete session to preserve for resume or in-flight new demand
+	// WakeInstance is the concrete pool-slot identity a wake-known-identity
+	// request recovers -- the RAW assignee stamped on the work bead by the
+	// slot whose session died. Empty on every other tier. The allocator
+	// re-homes the replacement onto that slot so it comes up wearing the name
+	// the bead is addressed to; nothing else in the request can carry that,
+	// because a wake has no session bead to point at.
+	WakeInstance  string
 	WorkBeadID    string // the work bead driving this request
 	WorkBeadTitle string // title of the work bead driving this request, when known
 	WorkPack      string // pack route key from the work bead, when known
@@ -297,9 +304,17 @@ func computePoolDesiredStates(
 			}
 			wakeRequestedOwners[wakeKey] = struct{}{}
 			resumeRequests = append(resumeRequests, SessionRequest{
-				Template:       template,
-				BeadPriority:   beadPriority(wb),
-				Tier:           "wake-known-identity",
+				Template:     template,
+				BeadPriority: beadPriority(wb),
+				Tier:         "wake-known-identity",
+				// The RAW assignee again, for the same reason wakeKey uses it:
+				// assigneeOwner has already collapsed every dead slot onto one
+				// template name, and the slot number is the whole point. The
+				// allocator re-homes the replacement onto this slot so it comes
+				// up wearing the name the bead is addressed to -- without it the
+				// lowest free slot is planned instead, and no claim tier offers
+				// a session a bead stamped with a sibling slot's name.
+				WakeInstance:   assignee,
 				WorkBeadID:     wb.ID,
 				WorkBeadTitle:  strings.TrimSpace(wb.Title),
 				WorkPack:       strings.TrimSpace(wb.Metadata[beadmeta.PackMetadataKey]),
