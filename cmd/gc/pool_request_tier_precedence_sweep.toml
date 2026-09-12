@@ -1,0 +1,147 @@
+# Proves the pool cap's tier-precedence guard is enforced: a resume-like
+# session request must keep the slot when max_active_sessions binds, however
+# urgent the "new" request competing with it (ci-qbhi4g).
+#
+# This seam is worth sweeping rather than reading because the rule held for the
+# wrong reason for its whole life. The comparator sorted rank first and compared
+# tier only as a tie-break; resume-like tiers won anyway, purely because no
+# producer sets a "new" request's BeadPriorityRank and the zero value sorts
+# below every declared priority. A read of either the comparator or the suite
+# said "resume wins" in both regimes. Only flipping the guard separates them.
+#
+# Each signature names the test that dies rather than an assertion string, for
+# the reason the sibling sweep gives: several rows kill more than one test, and
+# naming the FAIL line attributes the red without predicting which assertion
+# fires first.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of -- never the worktree that
+# authored it. See the mutation-sweep skill.
+#
+# Measured at 040e2e094: 7/7 died. The first run at 4c9137b88 was 6/7, and the
+# survivor is the row worth keeping the whole spec for:
+# size-new-demand-without-reserving-for-resumes passed with the reservation
+# flipped off, because the two regimes produce IDENTICAL output -- the sizing
+# pass builds a new request and the comparator then sheds it on tier
+# precedence. The test named the reservation and was pinning the comparator
+# twice. It now asserts recordNewDemandCapTrace, which is the only place the
+# regimes differ. A read of the suite predicted no survivors.
+
+[sweep]
+name = "pool request tier precedence outranks urgency"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestApplyNestedCaps_ResumeOutranksMoreUrgentNew|TestApplyNestedCaps_WakeKnownIdentityOutranksMoreUrgentNew|TestAcceptedNestedCapUsageTierPrecedenceMatchesApplyNestedCaps|TestComputePoolDesiredStates_ResumeReservesCapBeforeNewDemand|TestPoolCapAdmitsP0OverP4|TestAcceptedNestedCapUsageRanksLikeApplyNestedCaps|TestComputePoolDesiredStates_ResumeBeatsNew",
+]
+timeout_s = 900
+
+# The defect this fix exists to prevent, written out exactly as it stood before
+# ci-qbhi4g: rank first, tier only as a tie-break. Against a "new" request whose
+# rank is populated -- the follow-on change ci-qbhi4g was filed to make -- this
+# sheds the resume.
+[[mutation]]
+id = "rank-outranks-tier"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	aResume, bResume := isResumeLikeTier(a.Tier), isResumeLikeTier(b.Tier)
+	if aResume != bResume {
+		return aResume
+	}
+	if a.BeadPriorityRank != b.BeadPriorityRank {
+		return a.BeadPriorityRank > b.BeadPriorityRank
+	}
+	return false'''
+replace = '''	if a.BeadPriorityRank != b.BeadPriorityRank {
+		return a.BeadPriorityRank > b.BeadPriorityRank
+	}
+	if a.Tier != b.Tier {
+		return isResumeLikeTier(a.Tier) && !isResumeLikeTier(b.Tier)
+	}
+	return false'''
+expect_output = [
+  "--- FAIL: TestApplyNestedCaps_ResumeOutranksMoreUrgentNew",
+  "--- FAIL: TestApplyNestedCaps_WakeKnownIdentityOutranksMoreUrgentNew",
+]
+
+# The tier comparison present but inert: both tiers fall through to rank, and
+# equal ranks fall through to slice order. Distinct from the row above because
+# it leaves no ordering rule for tier at all rather than demoting it.
+[[mutation]]
+id = "tier-compare-does-nothing"
+path = "cmd/gc/pool_desired_state.go"
+find = '''		return aResume'''
+replace = '''		return false'''
+expect_output = [
+  "--- FAIL: TestApplyNestedCaps_ResumeOutranksMoreUrgentNew",
+  "--- FAIL: TestApplyNestedCaps_WakeKnownIdentityOutranksMoreUrgentNew",
+]
+
+# Precedence pointing the other way: new work sheds resumes. The direction a
+# reader who thought "start the most urgent thing" would write.
+[[mutation]]
+id = "tier-precedence-inverted"
+path = "cmd/gc/pool_desired_state.go"
+find = '''		return aResume'''
+replace = '''		return bResume'''
+expect_output = [
+  "--- FAIL: TestApplyNestedCaps_ResumeOutranksMoreUrgentNew",
+  "--- FAIL: TestApplyNestedCaps_WakeKnownIdentityOutranksMoreUrgentNew",
+]
+
+# Tier precedence kept, urgency ordering dropped. Guards the half of the
+# comparator the fix did NOT change: making tier dominant must not cost the
+# rank ordering ci-7vyl6k installed, which orders resume against resume.
+[[mutation]]
+id = "drop-rank-ordering-within-a-tier"
+path = "cmd/gc/pool_desired_state.go"
+find = '''		return a.BeadPriorityRank > b.BeadPriorityRank'''
+replace = '''		return false'''
+expect_output = ["--- FAIL: TestPoolCapAdmitsP0OverP4"]
+
+# The two admission paths diverging, one site at a time. applyNestedCaps
+# re-applies from zero the caps acceptedNestedCapUsage pre-spent, so a
+# comparator that differs between them admits a request the sizing pass never
+# reserved room for. These two rows are the reason the comparator was extracted
+# rather than edited twice; each proves its own call site is actually reached.
+[[mutation]]
+id = "apply-nested-caps-stops-using-the-shared-comparator"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	sort.SliceStable(requests, func(i, j int) bool {
+		return poolRequestLess(requests[i], requests[j])
+	})'''
+replace = '''	sort.SliceStable(requests, func(i, j int) bool {
+		if requests[i].BeadPriorityRank != requests[j].BeadPriorityRank {
+			return requests[i].BeadPriorityRank > requests[j].BeadPriorityRank
+		}
+		return false
+	})'''
+expect_output = ["--- FAIL: TestApplyNestedCaps_ResumeOutranksMoreUrgentNew"]
+
+[[mutation]]
+id = "accepted-cap-usage-stops-using-the-shared-comparator"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	sort.SliceStable(sorted, func(i, j int) bool {
+		return poolRequestLess(sorted[i], sorted[j])
+	})'''
+replace = '''	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].BeadPriorityRank != sorted[j].BeadPriorityRank {
+			return sorted[i].BeadPriorityRank > sorted[j].BeadPriorityRank
+		}
+		return false
+	})'''
+expect_output = ["--- FAIL: TestAcceptedNestedCapUsageTierPrecedenceMatchesApplyNestedCaps"]
+
+# The structural half of the rule, which is what actually fires in production:
+# computePoolDesiredStates sizes new demand against the headroom the accepted
+# resumes leave, so with the cap already spent no new request is built at all
+# and the comparator never sees the contention. Seeding the usage empty removes
+# that reservation.
+[[mutation]]
+id = "size-new-demand-without-reserving-for-resumes"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	usage := acceptedNestedCapUsage(limits, resumeRequests)'''
+replace = '''	usage := newNestedCapUsage()'''
+expect_output = ["--- FAIL: TestComputePoolDesiredStates_ResumeReservesCapBeforeNewDemand"]

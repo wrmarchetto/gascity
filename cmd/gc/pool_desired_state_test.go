@@ -192,8 +192,12 @@ func TestComputePoolDesiredStates_ResumeBeatsNew(t *testing.T) {
 	}
 	// 1 assigned (resume) + 2 new demand. scale_check reports only the new
 	// demand, and the max cap admits one of those two new requests.
+	// P4 is the LEAST urgent declared priority (the literal was 5, outside
+	// the validated 0-4 range). Using it makes the claim stronger: even the
+	// least urgent resume outranks a new request, which carries no driving
+	// bead and therefore no priority at all.
 	work := []beads.Bead{
-		workBead("w1", "rig/claude", "sess-1", "in_progress", 5),
+		workBead("w1", "rig/claude", "sess-1", "in_progress", 4),
 	}
 	sessions := []beads.Bead{sessionBead("sess-1", "open")}
 	scaleCheck := map[string]int{"rig/claude": 2}
@@ -766,15 +770,27 @@ func TestComputePoolDesiredStates_DedupsResumeForSameSession(t *testing.T) {
 	}
 }
 
+// TestComputePoolDesiredStates_ResumePriorityOrder pins that a binding cap
+// sheds the LEAST urgent resume request.
+//
+// Re-derived for ci-7vyl6k. It previously used priorities 1, 10 and 5 and
+// asserted 10 and 5 were kept, which is only correct if a larger number is
+// more urgent -- it is not, and the assertion agreed with the inverted sort it
+// was meant to pin. The priorities below are the declared unit (0-4, P0 most
+// urgent) and the assertions name the work beads rather than any rank integer,
+// so they stay readable in the declared unit and cannot be satisfied by a
+// re-encoding of the rank.
 func TestComputePoolDesiredStates_ResumePriorityOrder(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{poolAgent("claude", "", intPtr(2), 0)},
 	}
-	// 3 assigned beads with different priorities, max=2. Highest priority wins.
+	// 3 assigned beads spanning the declared range, max=2. The two most
+	// urgent are kept. P2 is listed first so slice order cannot supply the
+	// answer.
 	work := []beads.Bead{
-		workBead("w-low", "claude", "s1", "in_progress", 1),
-		workBead("w-high", "claude", "s2", "in_progress", 10),
-		workBead("w-mid", "claude", "s3", "in_progress", 5),
+		workBead("w-p2", "claude", "s1", "in_progress", 2),
+		workBead("w-p0", "claude", "s2", "in_progress", 0),
+		workBead("w-p1", "claude", "s3", "in_progress", 1),
 	}
 	sessions := []beads.Bead{
 		sessionBead("s1", "open"),
@@ -785,14 +801,13 @@ func TestComputePoolDesiredStates_ResumePriorityOrder(t *testing.T) {
 	result := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads(sessions), nil)
 
 	if len(result) != 1 || len(result[0].Requests) != 2 {
-		t.Fatalf("expected 2 requests, got %d", len(result[0].Requests))
+		t.Fatalf("expected 2 requests, got %#v", result)
 	}
-	// Highest priority resume requests should be accepted.
-	if result[0].Requests[0].BeadPriority != 10 {
-		t.Errorf("first priority = %d, want 10", result[0].Requests[0].BeadPriority)
+	if got := result[0].Requests[0].WorkBeadID; got != "w-p0" {
+		t.Errorf("first admitted = %q, want w-p0", got)
 	}
-	if result[0].Requests[1].BeadPriority != 5 {
-		t.Errorf("second priority = %d, want 5", result[0].Requests[1].BeadPriority)
+	if got := result[0].Requests[1].WorkBeadID; got != "w-p1" {
+		t.Errorf("second admitted = %q, want w-p1 -- the cap must shed P2, not P0", got)
 	}
 }
 
@@ -1556,7 +1571,7 @@ func TestApplyNestedCaps_DedupsConcreteSessionRequestsAcrossTiers(t *testing.T) 
 		Agents: []config.Agent{poolAgent("claude", "", intPtr(10), 0)},
 	}
 	requests := []SessionRequest{
-		{Template: "claude", Tier: "resume", SessionBeadID: "sess-1", BeadPriority: 10},
+		{Template: "claude", Tier: "resume", SessionBeadID: "sess-1", BeadPriorityRank: 4},
 		{Template: "claude", Tier: "new", SessionBeadID: "sess-1"},
 		{Template: "claude", Tier: "new", SessionBeadID: "sess-2"},
 	}
