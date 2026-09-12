@@ -4220,23 +4220,34 @@ func isFailedCreateSessionInfo(i session.Info) bool {
 }
 
 // sessionBeadHasAssignedWorkInfo reports whether any open/in-progress work bead is
-// assigned to the session: the SESSION side reads typed Info fields (ID,
-// SessionNameMetadata, ConfiguredNamedIdentity) while the WORK bead slice stays raw
+// assigned to the session: the SESSION side reads typed Info fields through
+// sessionBeadAssigneeIdentitiesInfo while the WORK bead slice stays raw
 // (ClassWork — Bead is the domain object). It is the production reuse predicate the
 // pool selection path calls; its behavior is pinned by TestSessionBeadHasAssignedWorkInfo
 // (WI-7 W-delete retired the raw sessionBeadHasAssignedWork equivalence reference along
 // with the rest of the raw pool cluster and re-pointed the pin to a golden).
+//
+// The identity set comes from session.AssigneeIdentities and must not be
+// re-listed here. Three fields were spelled out inline until ci-me7as9 --
+// ID, SessionNameMetadata, ConfiguredNamedIdentity -- and the ALIAS was not
+// among them, which is the form session.AssigneeIdentifier picks FIRST and
+// therefore the form `gc hook --claim` stamps on a pool slot's work. A live,
+// awake slot holding its own in-progress bead read as free for reuse. Its
+// sibling poolRequestResumesAssignedWorkInfo already read the full set, so the
+// same bead simultaneously proved the session must be preserved and that it
+// was free to hand away. AssigneeIdentities' own docstring records the
+// identical hazard from the orphan-reaper side.
 func sessionBeadHasAssignedWorkInfo(workBeads []beads.Bead, info session.Info) bool {
+	identities := sessionBeadAssigneeIdentitiesInfo(info)
 	for _, wb := range workBeads {
 		assignee := strings.TrimSpace(wb.Assignee)
 		if assignee == "" || (wb.Status != "open" && wb.Status != "in_progress") {
 			continue
 		}
-		if assignee == info.ID || assignee == strings.TrimSpace(info.SessionNameMetadata) {
-			return true
-		}
-		if namedIdentity := strings.TrimSpace(info.ConfiguredNamedIdentity); namedIdentity != "" && assignee == namedIdentity {
-			return true
+		for _, identity := range identities {
+			if assignee == identity {
+				return true
+			}
 		}
 	}
 	return false

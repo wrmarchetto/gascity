@@ -1,0 +1,87 @@
+# Proves the ownership suite actually pins that a live pool slot holding its
+# own bead is not reusable, rather than passing over the shape the defect took.
+# The last two rows are aimed at the CHARACTERIZATION golden rather than at the
+# code: that golden was green with the defect present and had to be shown to
+# move before its new entries could be trusted.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of -- never the worktree that
+# authored it. See the mutation-sweep skill.
+
+[sweep]
+name = "pool session work ownership"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestOwnershipPredicateCoversEveryAssigneeIdentity|TestOwnershipPredicatesAgreeOnTheSameBead|TestLiveSlotHoldingItsOwnBeadIsNotReusable|TestSessionBeadHasAssignedWorkInfo",
+]
+timeout_s = 900
+
+# The defect exactly as it stood: three identity fields spelled out inline,
+# with the alias -- the form AssigneeIdentifier picks first -- not among them.
+[[mutation]]
+id = "restore-the-hand-listed-identity-fields"
+path = "cmd/gc/build_desired_state.go"
+find = '''		for _, identity := range identities {
+			if assignee == identity {
+				return true
+			}
+		}'''
+replace = '''		if assignee == info.ID || assignee == strings.TrimSpace(info.SessionNameMetadata) {
+			return true
+		}
+		if namedIdentity := strings.TrimSpace(info.ConfiguredNamedIdentity); namedIdentity != "" && assignee == namedIdentity {
+			return true
+		}'''
+expect_output = ["TestOwnershipPredicateCoversEveryAssigneeIdentity", "TestLiveSlotHoldingItsOwnBeadIsNotReusable"]
+
+# Narrows the identity set to the CURRENT alias only, dropping alias_history.
+# A slot acquires a prior alias by being renamed, which no other case in the
+# suite produces, so this is the row that shows the derived-from-the-source
+# loop is doing work a three-field list would not.
+[[mutation]]
+id = "forget-a-renamed-slots-prior-alias"
+path = "internal/session/assignee_identities.go"
+find = '''	for _, prior := range i.AliasHistory {
+		if prior = strings.TrimSpace(prior); prior != "" {
+			identities = append(identities, prior)
+		}
+	}'''
+replace = ''
+expect_output = ["ga-pool-prior-alias"]
+
+# Drops the reuse guard entirely. The unit predicate stays correct and only the
+# seam test dies, which is what makes that test worth its place: a fix proved
+# at the predicate alone would survive this.
+[[mutation]]
+id = "stop-consulting-ownership-at-the-reuse-gate"
+path = "cmd/gc/build_desired_state_pool_info.go"
+find = '''	if sessionBeadHasAssignedWorkInfo(bp.assignedWorkBeads, info) {
+		return false
+	}'''
+replace = ''
+expect_output = ["a live slot holding its own in-progress bead read as reusable"]
+
+# The golden's own new fixture, aimed at the golden rather than at the code:
+# without the alias key the entry reads the pre-ci-me7as9 answer and the row
+# goes back to proving nothing. If this SURVIVES, the fixture is decorative.
+[[mutation]]
+id = "unalias-the-goldens-pool-fixture"
+path = "cmd/gc/session_w3_split_equiv_test.go"
+find = '''				"pool_managed": "true", "pool_slot": "2", "alias": "worker-2",'''
+replace = '''				"pool_managed": "true", "pool_slot": "2",'''
+expect_output = ["assigned-work characterization drift"]
+
+# Same test for the prior-alias fixture. Its alias_history is the only
+# alias_history in the golden corpus that is not also a configured named
+# identity, so nothing else covers that key.
+[[mutation]]
+id = "drop-the-goldens-prior-alias-history"
+path = "cmd/gc/session_w3_split_equiv_test.go"
+find = '''				"pool_managed": "true", "pool_slot": "9", "alias": "worker-renamed",
+				"alias_history": "worker-9",'''
+replace = '''				"pool_managed": "true", "pool_slot": "9", "alias": "worker-renamed",'''
+expect_output = ["assigned-work characterization drift"]
