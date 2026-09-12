@@ -39,9 +39,17 @@ type hookStoreRunner func(command, dir string, env []string) (string, error)
 // claim/drain/respawn -- the inverse of the narrowing failure the variable
 // exists to close, and it bounces the pool the same way.
 // TestRouteTargetsEnvIsConstantAcrossFederatedHookStores pins it.
+// BEADS_ACTOR is in this list for the identity reason, not the
+// GC_ROUTE_TARGETS one: a managed session sets it alongside GC_ALIAS, so an
+// operator work_query may legitimately probe it as "who am I". Omitted, each
+// leg inherited the CALLER's value through mergeRuntimeEnv(os.Environ(), ...)
+// -- and the city leg is where that bit, letting a rig-scoped pool's hook
+// list the caller's own city bead (ci-aklxty, four rigs, 2026-09-11).
+// TestBeadsActorIsConstantAcrossFederatedHookStores pins it.
 var hookIdentityEnvKeys = []string{
 	"GC_AGENT", "GC_SESSION_NAME", "GC_ALIAS",
 	"GC_SESSION_ID", "GC_SESSION_ORIGIN", "GC_TEMPLATE",
+	"BEADS_ACTOR",
 	routeTargetsEnvKey,
 }
 
