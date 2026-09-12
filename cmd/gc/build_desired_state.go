@@ -3997,9 +3997,10 @@ func selectOrPlanPoolSessionBead(
 	// population is spawns, and skipping reuse for a wake would stop
 	// preserving an idle session the reconciler would then stop. Establishing
 	// it needs the reuse case separated in the event log first.
-	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots)
+	workingSlots := poolSlotsHeldByWorkingSessionsInfo(bp, cfgAgent)
+	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots, workingSlots)
 	if slot == 0 {
-		slot = claimDesiredPoolSlotInfo(bp.city, cfgAgent, session.Info{}, usedSlots)
+		slot = claimFreshCreatePoolSlotInfo(bp, cfgAgent, usedSlots)
 	}
 	_, qualifiedInstance, poolSlot := poolDesiredRequestIdentity(cfgAgent, slot)
 	metadata := poolTriggerMetadata(bp, cfgAgent, qualifiedInstance, request)

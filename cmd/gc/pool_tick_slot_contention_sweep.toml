@@ -1,0 +1,76 @@
+# Proves the slot-contention suite pins the reservation a fresh create owes a
+# live working session, and that the reservation's own scope (working sessions,
+# not every open one) is enforced rather than merely commented.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of -- never the worktree that
+# authored it. See the mutation-sweep skill.
+
+[sweep]
+name = "pool tick slot contention"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestFreshCreatePlannedFirstLeavesWorkingSlotsAlone|TestFreshCreateStillTakesADrainedSlotsNumber|TestWakeDoesNotRehomeOntoALiveWorkingSlot",
+]
+timeout_s = 900
+
+# The state after the ownership fix and before the reservation: the create takes
+# the lowest slot no EARLIER REQUEST claimed, which is slot 1, and the live
+# session wearing slot 1 loses its own resume to "concrete slot already
+# claimed".
+[[mutation]]
+id = "let-a-fresh-create-take-a-working-slots-number"
+path = "cmd/gc/build_desired_state_pool_info.go"
+find = '''		if used[slot] || held[slot] {'''
+replace = '''		if used[slot] {'''
+expect_output = ["concrete slot already claimed"]
+
+# Restores the call the reservation replaced. Same consequence by a different
+# route, and worth its own row because the two live in different files: a revert
+# of the helper and a revert of the call site are separate regressions.
+[[mutation]]
+id = "route-fresh-creates-back-through-the-plain-allocator"
+path = "cmd/gc/build_desired_state.go"
+find = '''		slot = claimFreshCreatePoolSlotInfo(bp, cfgAgent, usedSlots)'''
+replace = '''		slot = claimDesiredPoolSlotInfo(bp.city, cfgAgent, session.Info{}, usedSlots)'''
+expect_output = ["concrete slot already claimed"]
+
+# Widens the reservation to every open session holding work, drained ones
+# included. A drained session is what a fresh create replaces, so its number
+# must stay available; with the pool full, reserving it sends the allocator's
+# unbounded slot loop past max_active_sessions.
+[[mutation]]
+id = "reserve-a-drained-sessions-slot-too"
+path = "cmd/gc/build_desired_state_pool_info.go"
+find = '''		if isDrainedSessionInfo(info) || isFailedCreateSessionInfo(info) {
+			continue
+		}'''
+replace = ''
+expect_output = ["a drained session reserved its slot"]
+
+# Drops the ownership condition, reserving the slot of every live session
+# whether it holds work or not. The drained case dies on the same assertion for
+# the opposite reason, which is what makes the pair of rows worth having: one
+# shows the scope is not too narrow, the other that it is not too wide.
+[[mutation]]
+id = "reserve-every-live-slot-not-only-working-ones"
+path = "cmd/gc/build_desired_state_pool_info.go"
+find = '''		if !sessionBeadHasAssignedWorkInfo(bp.assignedWorkBeads, info) {
+			continue
+		}'''
+replace = ''
+expect_output = ["a drained session reserved its slot"]
+
+# The wake re-home's own live-slot refusal, which the contention fixture does
+# not reach: after the ownership fix a live slot's bead becomes a resume, so
+# only a direct wake request can exercise it.
+[[mutation]]
+id = "let-a-wake-rehome-onto-a-live-working-slot"
+path = "cmd/gc/build_desired_state_pool_info.go"
+find = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] || held[slot] {'''
+replace = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] {'''
+expect_output = ["the wake re-homed onto a slot a live working session is wearing"]

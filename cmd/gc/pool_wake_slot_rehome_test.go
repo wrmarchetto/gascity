@@ -6,6 +6,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
+	sessionpkg "github.com/gastownhall/gascity/internal/session"
 )
 
 // Scope: the identity a wake-known-identity request recovers, from the tier
@@ -162,5 +163,52 @@ func TestWakeForDeadSlotPlansThatSlotNotTheLowestFree(t *testing.T) {
 				t.Fatalf("planned instance = %q, want %q -- the replacement session's identity is what every claim tier joins on", plan.qualifiedInstance, tt.wantInstance)
 			}
 		})
+	}
+}
+
+// TestWakeDoesNotRehomeOntoALiveWorkingSlot pins the second half of the
+// re-home's refusal: a slot is unavailable because a live session is WEARING
+// it, not only because an earlier request this tick reserved it.
+//
+// Separate from the table above because it needs a session snapshot, and the
+// table's whole point is that it has none -- every case there is decided by the
+// request and the config alone. The two refusals are also reachable
+// independently: usedSlots is populated by this tick's ordering, the live set
+// by the store, and a tick can present either without the other.
+//
+// The wake names slot 3 and the fixture puts a live, working session on slot 3.
+// After the ownership fix such a bead resolves to its live session and becomes
+// a resume rather than a wake, so this is defense in depth -- but it is the
+// cheap half of a pair whose expensive half already cost a live session its
+// request once.
+func TestWakeDoesNotRehomeOntoALiveWorkingSlot(t *testing.T) {
+	base := time.Date(2026, 9, 11, 4, 44, 0, 0, time.UTC)
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents:    []config.Agent{poolAgent("worker", "rig", intPtr(3), 0)},
+	}
+	live := contentionSession(t, "ci-live3", "rig/worker-3", "3", base)
+	work := []beads.Bead{contentionWork("wb-live", "rig/worker-3", "in_progress", -1)}
+
+	bp := wakeRehomeBuildParams(t, cfg)
+	bp.sessionBeads = newSessionBeadSnapshotFromInfos([]sessionpkg.Info{live})
+	bp.assignedWorkBeads = work
+
+	request := SessionRequest{
+		Template:     "rig/worker",
+		Tier:         "wake-known-identity",
+		WorkBeadID:   "wb-other",
+		WakeInstance: "rig/worker-3",
+	}
+	_, _, plan, err := selectOrPlanPoolSessionBead(
+		bp, &cfg.Agents[0], "rig/worker", nil, request, map[string]bool{}, map[int]bool{})
+	if err != nil {
+		t.Fatalf("selectOrPlanPoolSessionBead err = %v, want a create plan", err)
+	}
+	if plan == nil {
+		t.Fatal("no create plan for a wake request")
+	}
+	if plan.qualifiedInstance == "rig/worker-3" {
+		t.Fatal("the wake re-homed onto a slot a live working session is wearing; that session's own resume then loses its slot and is dropped from the tick")
 	}
 }
