@@ -2,12 +2,14 @@ package main
 
 import (
 	"os"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
+	sessionpkg "github.com/gastownhall/gascity/internal/session"
 )
 
 // Scope: the in-process controller demand reader's pool-alias tier -- work
@@ -302,6 +304,103 @@ func TestPoolAliasDemandCountsAssignedAndRoutedPoolWork(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPoolAliasDemandFillsTheFreeSlotBesideABusyOne is ci-82ff9c's fixture, and
+// it is an ENDORSEMENT of the current behavior rather than a tripwire: the
+// reported shape does not reproduce, and this suite is where the next reader
+// will come looking for that answer.
+//
+// What was reported: twice on 2026-09-11 a bead ready and assigned to a pool
+// template name sat unserved while one of that pool's two slots ran other work
+// (ci-bz0qw0 beside ci-34lq36 on astoria-zephyr/lab.engineer). The standing
+// hypothesis was that controllerDemandPoolAliasTarget's own-route zero starved
+// the pool. Demand IS zero for this bead -- TestPoolAliasDemandStillIgnores-
+// AssignedRoutedWork pins that as #2527 policy -- and it does NOT starve the
+// pool: the wake-known-identity tier in pool_desired_state.go emits the request
+// instead, and the free slot fills. Measured here.
+//
+// TWO TRAPS MADE THE FIRST READING SAY OTHERWISE, and both are the reason this
+// test is built the way it is rather than from the one-liner beside it:
+//
+//   - beads.MemStore.Create OVERWRITES Status with "open" (memstore.go). A busy
+//     slot seeded as a single Create with Status "in_progress" is therefore not
+//     busy at all, the resume tier never fires, and the pool reads as holding
+//     one idle session. The status must be set by a second Update, as below.
+//   - the live session must exist as a session BEAD in the same store, not only
+//     as a session.Info in the snapshot, and its SessionNameMetadata must be
+//     set -- session.AssigneeIdentities reads the raw metadata mirror, so an
+//     Info carrying only SessionName answers to no assignee at all.
+//
+// A fixture missing either one reports one desired session and looks exactly
+// like the defect. Neither is visible from the assertion.
+func TestPoolAliasDemandFillsTheFreeSlotBesideABusyOne(t *testing.T) {
+	store := beads.NewMemStore()
+
+	held, err := store.Create(beads.Bead{Title: "slot 1's own work", Type: "task", Assignee: "toolsmith-1"})
+	if err != nil {
+		t.Fatalf("Create held work: %v", err)
+	}
+	inProgress := "in_progress"
+	if err := store.Update(held.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+		t.Fatalf("Update held work to in_progress: %v", err)
+	}
+	if _, err := store.Create(beads.Bead{
+		Title: "queued on the pool door", Type: "task", Assignee: "toolsmith",
+		Metadata: map[string]string{beadmeta.RoutedToMetadataKey: "toolsmith"},
+	}); err != nil {
+		t.Fatalf("Create queued work: %v", err)
+	}
+
+	sessionBead, err := store.Create(beads.Bead{
+		Title: "toolsmith-1", Type: sessionBeadType, Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"template": "toolsmith", "agent_name": "toolsmith-1", "alias": "toolsmith-1",
+			"pool_slot": "1", "session_name": "toolsmith-1", "pool_managed": "true",
+			"state": "active",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create session bead: %v", err)
+	}
+
+	result := buildDesiredStateWithSessionBeads(
+		"test-city", t.TempDir(), time.Now(), poolAliasDemandCity(), &localMockProvider{},
+		store, nil, newSessionBeadSnapshotFromInfos([]sessionpkg.Info{{
+			ID: sessionBead.ID, Template: "toolsmith", Alias: "toolsmith-1",
+			AgentName: "toolsmith-1", SessionNameMetadata: "toolsmith-1",
+			PoolManaged: true, PoolSlot: "1", State: sessionpkg.StateActive,
+			Provider: "mock", Command: "true",
+			CreatedAt: time.Now(), LastActive: time.Now(),
+		}}), nil, os.Stderr,
+	)
+
+	// Demand stays 0 by #2527; the assertion is deliberately on the realized
+	// sessions, because demand is not what the reported symptom was about.
+	if got := result.ScaleCheckCounts["toolsmith"]; got != 0 {
+		t.Errorf("demand = %d, want 0 — the own-route zero is #2527 policy, not the defect", got)
+	}
+	if len(result.State) != 2 {
+		t.Fatalf("desired sessions = %d, want 2 — the free slot must fill beside the busy one", len(result.State))
+	}
+	// Naming both keys rather than counting: a run that dropped the live session
+	// and started two fresh ones also counts 2, and would be a worse outcome
+	// than the one this test was written to rule out.
+	if _, ok := result.State["toolsmith-1"]; !ok {
+		t.Errorf("desired sessions %v do not preserve the busy slot toolsmith-1", sortedStateKeys(result.State))
+	}
+}
+
+// sortedStateKeys renders a desired-state map for a failure message. Sorted so
+// a diff between two failing runs is about the contents rather than Go's map
+// iteration order.
+func sortedStateKeys(state map[string]TemplateParams) []string {
+	keys := make([]string, 0, len(state))
+	for k := range state {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // TestPoolAliasDemandSkipsNamedSessionIdentity guards the mechanism this tier is
