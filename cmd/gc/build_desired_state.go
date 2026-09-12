@@ -67,8 +67,14 @@ type DesiredStateResult struct {
 	// PoolPartialRetentionTemplates preserves existing pool capacity and may also
 	// contain retention-only failures where another store proved positive demand.
 	// NamedScaleCheckPartialTemplates only protects configured named sessions.
-	ScaleCheckPartialTemplates      map[string]bool
-	PoolScaleCheckPartialTemplates  map[string]bool
+	ScaleCheckPartialTemplates     map[string]bool
+	PoolScaleCheckPartialTemplates map[string]bool
+	// DeferredWakeIdentities holds the pool-slot identities whose accepted
+	// wake-known-identity create was deferred during this build. The orphan
+	// sweep must not read their absence from the open-session snapshot as
+	// proof the slot is gone -- see releaseOrphanedPoolAssignments. Empty on
+	// every tick that persisted every create it planned.
+	DeferredWakeIdentities          map[string]bool
 	PoolPartialRetentionTemplates   map[string]bool
 	NamedScaleCheckPartialTemplates map[string]bool
 	PoolDesiredCounts               map[string]int // runtime-owned demand snapshot; reused on stable patrol ticks when still fresh
@@ -221,6 +227,21 @@ func (bp *agentBuildParams) tryClaimPoolSessionCreate(template string) bool {
 		return true
 	}
 	return bp.poolSessionCreateBudget.TryClaim(template)
+}
+
+// recordDeferredWakeIdentity notes that a wake-known-identity create was
+// planned for this slot and then not persisted. Requests carrying no
+// WakeInstance are ignored: a "new" tier create that is deferred names no
+// existing assignment, so protecting one would only blind the sweep.
+func (bp *agentBuildParams) recordDeferredWakeIdentity(request SessionRequest) {
+	identity := strings.TrimSpace(request.WakeInstance)
+	if bp == nil || identity == "" {
+		return
+	}
+	if bp.deferredWakeIdentities == nil {
+		bp.deferredWakeIdentities = make(map[string]bool)
+	}
+	bp.deferredWakeIdentities[identity] = true
 }
 
 func (bp *agentBuildParams) releasePoolSessionCreate() {
@@ -1036,6 +1057,7 @@ func buildDesiredStateWithSessionBeads(
 		BaseState:                          baseDesired,
 		ScaleCheckCounts:                   scaleCheckCounts,
 		ScaleCheckPartialTemplates:         scaleCheckPartialTemplates,
+		DeferredWakeIdentities:             bp.deferredWakeIdentities,
 		PoolScaleCheckPartialTemplates:     poolScaleCheckPartialTemplates,
 		PoolPartialRetentionTemplates:      poolPartialRetentionTemplates,
 		NamedScaleCheckPartialTemplates:    namedScaleCheckPartialTemplates,
@@ -3005,6 +3027,13 @@ func realizePoolDesiredSessions(
 				default:
 					fmt.Fprintf(stderr, "buildDesiredState: pool %q request: %v (skipping)\n", qualifiedName, err) //nolint:errcheck
 				}
+				// Recorded here rather than per-error-class on purpose: this is
+				// the ONE point every deferred create passes through, so a
+				// cause added later is covered without being enumerated. All
+				// four existing causes were driven and all four lost the
+				// assignment before this line existed
+				// (pool_deferred_create_assignment_test.go).
+				bp.recordDeferredWakeIdentity(request)
 				item.skip = true
 				return item
 			}
