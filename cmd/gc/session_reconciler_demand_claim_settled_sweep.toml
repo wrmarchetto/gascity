@@ -1,0 +1,78 @@
+# Proves the demand/claim settled gate is enforced rather than decorative.
+# Each mutation flips one guard in poolTriggerBeadClaimedBySession -- or the
+# conjunction that calls it -- to its accepting counterpart, and names the
+# assertion that must go red.
+#
+# UNSWEPT, deliberately: the `source == nil` guard. Its accepting counterpart
+# is a nil-store dereference, not a wrong verdict, so a flip crashes the gate
+# instead of attributing a red to it.
+#
+# Run: assets/scripts/mutation-sweep.py cmd/gc/session_reconciler_demand_claim_settled_sweep.toml
+
+[sweep]
+name = "session.demand_claim_mismatch fires only on an actual disagreement"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/", "-count=1",
+  "-run", "DemandClaimSettled|DemandTriggeredNoWorkDrain|CountOnlyDemandNoWorkDrain",
+]
+timeout_s = 900
+
+# The gate itself: without the conjunction every settled session is reported
+# as a phantom again, which is the 255-row defect this work closes.
+[[mutation]]
+id = "drop-the-settled-conjunction"
+path = "cmd/gc/session_reconciler.go"
+find = '''isDemandClaimNoWorkDrain(info, drainOrigin, drainReason) &&
+			!poolTriggerBeadClaimedBySession(store, rigStores, info)'''
+replace = '''isDemandClaimNoWorkDrain(info, drainOrigin, drainReason)'''
+expect_output = ["recorded a demand/claim mismatch for a session that claimed the bead the demand named"]
+
+# A count-only pool names no bead. Treating "no trigger" as "claimed it"
+# silences that whole population, including its empty-trigger brake.
+[[mutation]]
+id = "empty-trigger-counts-as-claimed"
+path = "cmd/gc/session_reconciler.go"
+find = '''	if triggerID == "" {
+		// A count-only scale_check names no bead, so there is nothing to have
+		// claimed and nothing to suppress -- that population keeps its own
+		// empty-trigger brake (ci-d5l4y2).
+		return false
+	}'''
+replace = '''	if triggerID == "" {
+		return true
+	}'''
+# The count-only test asserts the BACKOFF before it asserts the event, so the
+# red it prints is the retry-class line, not the event line. Named as the gate
+# actually prints it: the first sweep read UNATTRIBUTABLE against the event
+# string alone.
+expect_output = [
+  "TestCountOnlyDemandNoWorkDrainBacksOffAndEmitsMismatch",
+  "retry class = \"\", want \"claim_no_work\"",
+]
+
+# An unreadable trigger must fail OPEN. Flipping it to fail closed hides every
+# phantom whose bead lives in a store this process did not open.
+[[mutation]]
+id = "unreadable-trigger-fails-closed"
+path = "cmd/gc/session_reconciler.go"
+find = '''	trigger, err := source.Get(triggerID)
+	if err != nil {
+		return false
+	}'''
+replace = '''	trigger, err := source.Get(triggerID)
+	if err != nil {
+		return true
+	}'''
+expect_output = ["suppressed the mismatch for a trigger bead that could not be read"]
+
+# The suppression must key on THIS session, not on the bead having been taken
+# by anyone: the lost-race phantom is a bead a stranger claimed.
+[[mutation]]
+id = "any-claimant-counts-as-this-session"
+path = "cmd/gc/session_reconciler.go"
+find = '''	return strings.TrimSpace(trigger.Metadata[beadmeta.SessionIDMetadataKey]) == strings.TrimSpace(info.ID)'''
+replace = '''	return strings.TrimSpace(trigger.Metadata[beadmeta.SessionIDMetadataKey]) != ""'''
+expect_output = ["suppressed the mismatch for a trigger bead another session claimed"]
