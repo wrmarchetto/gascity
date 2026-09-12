@@ -157,3 +157,45 @@ func TestExecEnvForNonBd_GetsNoFabricatedHome(t *testing.T) {
 		t.Errorf("HOME values = %v, want none for non-bd commands", vals)
 	}
 }
+
+func TestExecEnvForBd_FabricatedHomeDefaultsMetricsOff(t *testing.T) {
+	// bd reads the operator's `bd metrics off` out of $HOME. The fabricated
+	// home above is gc's own state directory, which holds no bd config, so
+	// without this bd finds no opt-out, falls back to its shipped default of
+	// ENABLED, and writes that default into the fabricated home so every
+	// later run under it agrees. Measured against bd
+	// 1.1.1-0.20260805093327 on 2026-09-12: a `bd version` under a
+	// substituted HOME queues a cli_command event and the detached
+	// send-metrics child POSTs it (bead ci-lf9auf).
+	//
+	// The check is on BD_DISABLE_METRICS and not on the absence of a config
+	// file because the env override is what bd consults FIRST, before any
+	// file, and is therefore the only carrier immune to the HOME rewrite
+	// that caused the problem.
+	base := []string{"PATH=/usr/bin"}
+	got := execEnvFor("bd", base, nil)
+
+	vals := envValues(got, "BD_DISABLE_METRICS")
+	if len(vals) != 1 || vals[0] != "1" {
+		t.Errorf("BD_DISABLE_METRICS values = %v, want exactly [1] so bd cannot read consent out of a home gc invented", vals)
+	}
+}
+
+func TestExecEnvForBd_InheritedHomeKeepsTheOperatorsMetricsChoice(t *testing.T) {
+	// The counterpart, and the reason the opt-out is scoped to the
+	// fabricated branch rather than applied to every bd exec. An inherited
+	// HOME is the operator's own and already carries whatever he decided,
+	// so pinning the opt-out here too would cancel a deliberate
+	// `bd metrics on` for every runner-spawned bd in the city -- a silent
+	// policy override wearing a bug fix's clothes.
+	//
+	// Without this case the fabricated-home test above passes just as well
+	// against an unconditional injection, which is exactly the wrong
+	// implementation.
+	base := []string{"PATH=/usr/bin", "HOME=/home/operator"}
+	got := execEnvFor("bd", base, nil)
+
+	if vals := envValues(got, "BD_DISABLE_METRICS"); len(vals) != 0 {
+		t.Errorf("BD_DISABLE_METRICS values = %v, want none when the parent supplied its own HOME", vals)
+	}
+}

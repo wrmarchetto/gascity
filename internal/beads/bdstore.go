@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
+	"github.com/gastownhall/gascity/internal/execenv"
 	"github.com/gastownhall/gascity/internal/gchome"
 	"github.com/gastownhall/gascity/internal/telemetry"
 )
@@ -605,13 +606,21 @@ func execEnvFor(name string, baseEnv []string, overrides map[string]string) []st
 // relative-"~" behavior to defend against, and inventing a HOME for an
 // unrelated program changes what it reads for no reason. An inherited HOME is
 // never replaced -- only absence is filled.
+//
+// The fabricated home also defaults bd's telemetry off, and ONLY the fabricated
+// one does. bd reads the operator's `bd metrics off` out of $HOME, so a home gc
+// invented holds no opt-out and bd falls back to its shipped default of enabled
+// (execenv.WithBDMetricsDefaultedOff). An inherited HOME is the operator's own,
+// already carries whatever he decided, and must not be second-guessed here:
+// pinning the opt-out on that branch too would cancel a deliberate
+// `bd metrics on` for every runner-spawned bd in the city.
 func withFallbackHome(baseEnv []string) []string {
 	for _, entry := range baseEnv {
 		if strings.HasPrefix(entry, "HOME=") {
 			return baseEnv
 		}
 	}
-	return append(baseEnv, "HOME="+gchome.ResolveReadOnly().Path())
+	return execenv.WithBDMetricsDefaultedOff(append(baseEnv, "HOME="+gchome.ResolveReadOnly().Path()))
 }
 
 // envWithout returns a copy of environ with all entries for the given key removed.

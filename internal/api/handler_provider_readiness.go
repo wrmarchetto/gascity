@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/execenv"
 	"github.com/gastownhall/gascity/internal/searchpath"
 	"gopkg.in/yaml.v3"
 )
@@ -682,7 +683,11 @@ func probeCommandEnv(homeDir string) []string {
 	} else {
 		env = append(env, "XDG_STATE_HOME="+filepath.Join(homeDir, ".local", "state"))
 	}
-	return env
+	// homeDir is a per-account home, not the operator's, so bd's opt-out is
+	// unreadable from it. No probe runs bd today -- this is the standing
+	// obligation on any environment gc gives its own HOME, so the day a probe
+	// does, it is already safe.
+	return execenv.WithBDMetricsDefaultedOff(env)
 }
 
 func claudeProbeCommandEnv() []string {
