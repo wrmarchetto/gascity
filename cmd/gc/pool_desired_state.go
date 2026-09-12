@@ -641,19 +641,72 @@ func poolSessionConsumesNewDemandInfo(info sessionpkg.Info) bool {
 	return state == "creating" || state == string(sessionpkg.StateStartPending)
 }
 
+// poolRequestLess orders session requests for cap admission: the request that
+// sorts first keeps the slot when a max_active_sessions cap binds. Both
+// admission paths sort through this one function so they cannot disagree about
+// precedence -- acceptedNestedCapUsage pre-spends the caps that applyNestedCaps
+// then re-applies from zero, and a divergence between them would admit a
+// request the sizing pass had not reserved room for.
+//
+// TIER OUTRANKS URGENCY. A resume-like request beats a "new" one whatever the
+// two driving beads' priorities are; rank orders only within a tier.
+//
+// What decides that is the cost of a REJECTION, not which work matters more,
+// and the three tiers are not symmetric (measured 2026-09-12, ci-qbhi4g):
+//
+//   - a rejected "new" request costs one patrol tick. The bead stays open and
+//     unassigned and scale_check recounts it.
+//   - a rejected "resume" costs nothing. The open-session-bead pass re-adds the
+//     live session to the desired set anyway, so the cap merely overshoots.
+//   - a rejected "wake-known-identity" for a SLOT-named assignee is
+//     destructive. releaseOrphanedPoolAssignments runs later in the same
+//     beadReconcileTick, finds no session bead bearing that slot, and clears
+//     the assignee, reverting in_progress to open. The bead itself survives and
+//     re-enters routed demand, but gc.session_affinity and
+//     gc.continuation_group go with the assignee, and the replacement spawns at
+//     the lowest free slot -- a DIFFERENT work_dir, because work_dir templates
+//     expand {{.AgentBase}}, which carries the slot. Whatever the dead slot
+//     left uncommitted in its own checkout is stranded there.
+//
+// So admitting more urgent new work ahead of a wake does not reorder two jobs.
+// It strands one.
+//
+// NOT claimed: that accepting a wake is what saves it. What saves it is a
+// session bead PERSISTED this tick, and an accepted wake whose create is
+// deferred -- create budget exhausted (daemon.max_wakes_per_tick, default 5,
+// fair-shared across templates), provider red, or failed-create backoff -- is
+// released exactly as a rejected one is. Measured, and tracked separately: this
+// comparator bounds one way in, not the loss.
+//
+// Rejected: sorting rank first with tier as a tie-break, which is what this
+// replaced. It read as equivalent only because no producer sets a "new"
+// request's rank -- the field is the Go zero value that beadPriorityRank
+// reserves for "no driving bead", below every declared priority -- so resumes
+// won by rank and the tier comparison never fired. Populating that field, the
+// obvious follow-on change and the one ci-qbhi4g was filed to make, would have
+// inverted the precedence with nothing going red.
+//
+// Absent deliberately: any threshold letting a sufficiently urgent new request
+// through. It would strand exactly the beads most expensive to strand. Ready
+// work's urgency is already acted on where it costs nothing --
+// computePoolDesiredStates sizes new demand against the headroom resumes leave
+// (capNewDemandCount), and within a tier this function still ranks by urgency.
+func poolRequestLess(a, b SessionRequest) bool {
+	aResume, bResume := isResumeLikeTier(a.Tier), isResumeLikeTier(b.Tier)
+	if aResume != bResume {
+		return aResume
+	}
+	if a.BeadPriorityRank != b.BeadPriorityRank {
+		return a.BeadPriorityRank > b.BeadPriorityRank
+	}
+	return false
+}
+
 // applyNestedCaps enforces workspace, rig, and agent max_active_sessions caps.
 // Accepts requests in priority order, rejecting any that would exceed a cap.
 func applyNestedCaps(cfg *config.City, requests []SessionRequest, aliasHeldTemplates map[string]struct{}, trace *sessionReconcilerTraceCycle) []PoolDesiredState {
-	// Most urgent rank first, resume tier first within equal rank.
 	sort.SliceStable(requests, func(i, j int) bool {
-		if requests[i].BeadPriorityRank != requests[j].BeadPriorityRank {
-			return requests[i].BeadPriorityRank > requests[j].BeadPriorityRank
-		}
-		// Resume-like tiers before new tier at same priority.
-		if requests[i].Tier != requests[j].Tier {
-			return isResumeLikeTier(requests[i].Tier) && !isResumeLikeTier(requests[j].Tier)
-		}
-		return false
+		return poolRequestLess(requests[i], requests[j])
 	})
 
 	limits := newNestedCapLimits(cfg)
@@ -789,13 +842,7 @@ func acceptedNestedCapUsage(limits nestedCapLimits, requests []SessionRequest) n
 	usage := newNestedCapUsage()
 	sorted := append([]SessionRequest(nil), requests...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].BeadPriorityRank != sorted[j].BeadPriorityRank {
-			return sorted[i].BeadPriorityRank > sorted[j].BeadPriorityRank
-		}
-		if sorted[i].Tier != sorted[j].Tier {
-			return isResumeLikeTier(sorted[i].Tier) && !isResumeLikeTier(sorted[j].Tier)
-		}
-		return false
+		return poolRequestLess(sorted[i], sorted[j])
 	})
 	for _, req := range sorted {
 		if usage.canAccept(req, limits) {

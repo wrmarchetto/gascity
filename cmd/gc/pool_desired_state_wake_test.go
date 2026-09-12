@@ -146,25 +146,31 @@ func TestComputePoolDesiredStates_LiveSessionContinuesAsResumeTier(t *testing.T)
 	}
 }
 
-// TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew verifies that when a cap
-// admits only one request and both a wake-known-identity request and a new
-// request rank equally, wake-known-identity is accepted. The sort comparator in
-// applyNestedCaps must treat "wake-known-identity" as a resume-like tier that
-// ranks ahead of "new" at equal urgency.
+// TestApplyNestedCaps_WakeKnownIdentityOutranksMoreUrgentNew verifies that
+// when a cap admits only one request, a wake-known-identity request keeps the
+// slot even though the competing new request is MORE urgent.
 //
-// The rank literal below is 3, the rank of a P2 -- the middle of the declared
-// 0-4 priority range. What the test pins is the TIE-BREAK, so the only thing
-// that matters is that the two requests carry the SAME rank; the literal was 5
-// before ci-7vyl6k, which was not a valid bead priority at all.
-func TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew(t *testing.T) {
+// This test used to give both requests the SAME rank and pin only the
+// tie-break. That state no producer generates: since ci-7vyl6k a nil priority
+// ranks as P2 and every resume-like rank is 1-5, while a new request's rank is
+// the 0 reserved for "no driving bead", so resume-vs-new never ties. Re-derived
+// for ci-qbhi4g to assert the rule that actually has to hold -- tier outranks
+// urgency -- which is the one a later edit populating the new tier's rank would
+// otherwise break silently.
+//
+// Wake-known-identity is the tier where shedding is destructive rather than
+// merely slow: for a slot-named assignee, releaseOrphanedPoolAssignments clears
+// the assignee and reverts in_progress to open later in the SAME tick, because
+// no re-homed session bead exists to make ownership.ownsWork true.
+func TestApplyNestedCaps_WakeKnownIdentityOutranksMoreUrgentNew(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{poolAgent("claude", "", intPtr(1), 0)},
 	}
-	// New request is listed first so current sort preserves it ahead of
-	// wake-known-identity. After the fix, wake-known-identity wins.
+	// The new request is listed first AND carries the most urgent rank, so
+	// both slice order and urgency point the wrong way.
 	requests := []SessionRequest{
-		{Template: "claude", Tier: "new", BeadPriorityRank: 3},
-		{Template: "claude", Tier: "wake-known-identity", SessionBeadID: "sess-closed", BeadPriorityRank: 3},
+		{Template: "claude", Tier: "new", BeadPriorityRank: rankP0},
+		{Template: "claude", Tier: "wake-known-identity", SessionBeadID: "sess-closed", BeadPriorityRank: rankP4},
 	}
 
 	result := applyNestedCaps(cfg, requests, nil, nil)
@@ -176,6 +182,6 @@ func TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew(t *testing.T) {
 		t.Fatalf("accepted = %d, want 1 (cap=1)", len(result[0].Requests))
 	}
 	if result[0].Requests[0].Tier != "wake-known-identity" {
-		t.Errorf("accepted tier = %q, want wake-known-identity — must rank before new at same priority", result[0].Requests[0].Tier)
+		t.Errorf("accepted tier = %q, want wake-known-identity -- must outrank new work however urgent", result[0].Requests[0].Tier)
 	}
 }
