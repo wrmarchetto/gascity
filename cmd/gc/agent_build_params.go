@@ -68,6 +68,21 @@ type agentBuildParams struct {
 	// evaluatePendingPoolsMap runs; newAgentBuildParams does not set it.
 	poolScaleCheckPartialTemplates map[string]bool
 
+	// deferredWakeIdentities collects the pool-slot identities whose
+	// wake-known-identity create was PLANNED this build and then not
+	// persisted -- budget exhausted, provider red, scale_check partial, or a
+	// failed-create backoff. The orphan sweep reads it as "a session bearing
+	// this name was going to exist and does not yet", which is the one thing
+	// the open-session snapshot cannot tell it. Keyed by the RAW assignee the
+	// request carries, because that is the string the sweep compares; a
+	// normalized owner would collapse every dead slot of a pool onto one name
+	// and protect siblings whose creates were never planned.
+	//
+	// Written only from Phase A of realizePoolDesiredSessions, which is
+	// serial by construction, so this map needs no lock. Phase B is the
+	// parallel one and never touches it.
+	deferredWakeIdentities map[string]bool
+
 	// providerHealthSnapshot is the per-build provider-health registry view.
 	// Loaded once at the start of buildDesiredState via loadProviderHealthSnapshot,
 	// which always returns a non-nil snapshot. When the registry file is absent,

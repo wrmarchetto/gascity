@@ -2326,6 +2326,7 @@ func releaseProbeAssignments(store *conditionalReleaseProbeStore, work beads.Bea
 		[]beads.Store{store},
 		nil,
 		nil,
+		nil, // no deferred wake identities: this tick planned no create
 	)
 }
 
@@ -2526,7 +2527,7 @@ func releaseOrphanedPoolAssignmentsFromBeads(
 	for _, b := range openSessionBeads {
 		infos = append(infos, seedSessionInfo(b))
 	}
-	return releaseOrphanedPoolAssignments(store, cfg, cityPath, infos, assignedWorkBeads, assignedWorkStores, assignedWorkStoreRefs, rigStores)
+	return releaseOrphanedPoolAssignments(store, cfg, cityPath, infos, assignedWorkBeads, assignedWorkStores, assignedWorkStoreRefs, rigStores, nil)
 }
 
 // gcSweepSessionBeadsFromBeads projects raw session beads to session.Info and
@@ -2629,6 +2630,7 @@ func TestReleaseOrphanedPoolAssignments_SkipsLiveModernPoolSessionWhenLiveListMi
 		[]beads.Store{store},
 		nil,
 		nil,
+		nil, // no deferred wake identities: this tick planned no create
 	)
 	if len(released) != 0 {
 		t.Fatalf("released = %v, want none — the owning pool session is live", released)

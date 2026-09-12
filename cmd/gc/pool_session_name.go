@@ -108,7 +108,7 @@ func releaseOrphanedPoolAssignmentsWhenSnapshotsComplete(
 	if result.snapshotQueryPartial() {
 		return nil
 	}
-	return releaseOrphanedPoolAssignments(store, cfg, cityPath, openSessionInfos, result.AssignedWorkBeads, result.AssignedWorkStores, result.AssignedWorkStoreRefs, rigStores)
+	return releaseOrphanedPoolAssignments(store, cfg, cityPath, openSessionInfos, result.AssignedWorkBeads, result.AssignedWorkStores, result.AssignedWorkStoreRefs, rigStores, result.DeferredWakeIdentities)
 }
 
 // releaseOrphanedPoolAssignments reopens active pool-routed work whose
@@ -124,6 +124,7 @@ func releaseOrphanedPoolAssignments(
 	assignedWorkStores []beads.Store,
 	assignedWorkStoreRefs []string,
 	rigStores map[string]beads.Store,
+	deferredWakeIdentities map[string]bool,
 ) []releasedPoolAssignment {
 	if store == nil || cfg == nil || len(assignedWorkBeads) == 0 {
 		return nil
@@ -180,6 +181,24 @@ func releaseOrphanedPoolAssignments(
 			// discarding the operator's recorded addressee as a cost worth
 			// avoiding.
 			if assigneeNamesConfiguredPool(cfg, assignee) {
+				continue
+			}
+			// A replacement session for this slot was PLANNED on this very
+			// tick and then not persisted -- the create budget ran out, the
+			// provider was red, the demand read came back partial, or a
+			// failed-create backoff was still active. The slot is therefore
+			// absent from the snapshot for a reason that says nothing about
+			// whether it is coming back, and reaping it produces exactly the
+			// outcome a cap REJECTION would, on a path whose own log line
+			// says the wake was scheduled.
+			//
+			// Scoped to one tick by construction: DeferredWakeIdentities is
+			// rebuilt by each build, so a slot stays protected only while the
+			// pool keeps asking for it. Work whose route or assignment stops
+			// producing a wake request is released on the next tick as before
+			// -- which is what keeps this from becoming a blanket amnesty
+			// (TestDeferredWakeGuardStillReleasesAnAddressNoWakeAsked).
+			if deferredWakeIdentities[assignee] {
 				continue
 			}
 			workStoreRef := ""
