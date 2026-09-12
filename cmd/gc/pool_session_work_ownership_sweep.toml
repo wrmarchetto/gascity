@@ -25,17 +25,35 @@ timeout_s = 900
 [[mutation]]
 id = "restore-the-hand-listed-identity-fields"
 path = "cmd/gc/build_desired_state.go"
-find = '''		for _, identity := range identities {
+#
+# The hoisted `identities` binding is part of the find half on purpose. Left
+# in place it is declared and not used, the package fails to BUILD, and the row
+# comes back UNATTRIBUTABLE -- red, but not for the reason claimed. Measured on
+# the first run of this spec.
+find = '''	identities := sessionBeadAssigneeIdentitiesInfo(info)
+	for _, wb := range workBeads {
+		assignee := strings.TrimSpace(wb.Assignee)
+		if assignee == "" || (wb.Status != "open" && wb.Status != "in_progress") {
+			continue
+		}
+		for _, identity := range identities {
 			if assignee == identity {
 				return true
 			}
-		}'''
-replace = '''		if assignee == info.ID || assignee == strings.TrimSpace(info.SessionNameMetadata) {
+		}
+	}'''
+replace = '''	for _, wb := range workBeads {
+		assignee := strings.TrimSpace(wb.Assignee)
+		if assignee == "" || (wb.Status != "open" && wb.Status != "in_progress") {
+			continue
+		}
+		if assignee == info.ID || assignee == strings.TrimSpace(info.SessionNameMetadata) {
 			return true
 		}
 		if namedIdentity := strings.TrimSpace(info.ConfiguredNamedIdentity); namedIdentity != "" && assignee == namedIdentity {
 			return true
-		}'''
+		}
+	}'''
 expect_output = ["TestOwnershipPredicateCoversEveryAssigneeIdentity", "TestLiveSlotHoldingItsOwnBeadIsNotReusable"]
 
 # Narrows the identity set to the CURRENT alias only, dropping alias_history.
