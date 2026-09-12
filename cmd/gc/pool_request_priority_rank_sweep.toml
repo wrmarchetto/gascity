@@ -10,6 +10,14 @@
 # repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
 # means the checkout the spec was read out of -- never the worktree that
 # authored it. See the mutation-sweep skill.
+#
+# Measured at 7e638f49a: 7/7 died. No survivors, which is a weaker result than
+# it looks -- every row here was written against a guard that had already been
+# watched fail by hand, so the sweep confirms the rows rather than discovering
+# anything. The row most worth keeping is
+# rank-a-nil-priority-below-every-declared-one: that reading was IMPLEMENTED and
+# green on an earlier draft of this suite, and only the P3 subtest added
+# afterwards can see it.
 
 [sweep]
 name = "pool request priority rank direction and clamps"
