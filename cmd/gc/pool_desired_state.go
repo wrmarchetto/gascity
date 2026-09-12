@@ -13,8 +13,8 @@ import (
 
 // SessionRequest represents a single session the reconciler should start.
 type SessionRequest struct {
-	Template     string // agent template qualified name (e.g., "gascity/claude")
-	BeadPriority int    // priority of the driving work bead
+	Template         string // agent template qualified name (e.g., "gascity/claude")
+	BeadPriorityRank int    // urgency rank of the driving work bead; higher is more urgent, 0 is absent (beadPriorityRank)
 	// Tier is "resume" for in-progress work with a live session,
 	// "wake-known-identity" for in-progress work whose session exited but
 	// template is configured, or "new" for ready unassigned work.
@@ -37,11 +37,80 @@ type SessionRequest struct {
 	FloorGuarantee bool
 }
 
-func beadPriority(b beads.Bead) int {
+// Bead priority numbers urgency downward -- P0 is the most urgent and the
+// declared range is 0-4 (validated in internal/formula/types.go). Requests are
+// ranked on an INVERTED scale instead, so that higher means more urgent and the
+// SessionRequest zero value means "no driving work bead".
+const (
+	beadPriorityNoBead      = 0 // SessionRequest zero value: no driving bead
+	beadPriorityMostUrgent  = 0 // P0
+	beadPriorityLeastUrgent = 4 // P4
+	// A nil Bead.Priority is the native store's encoding of P2, NOT an absent
+	// value -- see beadPriorityRank.
+	beadPriorityNilMeans = 2
+)
+
+// beadPriorityRank converts a bead's priority into the pool's request rank.
+// Higher is more urgent. It never returns beadPriorityNoBead, so that rank
+// stays unambiguously "this request has no driving bead at all".
+//
+// The inversion is the whole point. applyNestedCaps sorted the raw priority
+// DESCENDING, which admitted a P4 request under a binding cap ahead of a P0 one
+// -- a cap shed the most urgent work first (ci-7vyl6k).
+//
+// Rejected: flipping that comparator to ascending on the raw value, which is
+// the one-character fix. The "new" tier builds requests from scale-check demand
+// with no driving bead, so their rank field is the Go zero value; under an
+// ascending raw comparison that zero reads as P0 and every new request preempts
+// every resume, inverting the resume-before-new tie-break one line below the
+// comparison. Ranking keeps the zero value least urgent, which is what that
+// tie-break assumes.
+//
+// Rejected, and measured before it was rejected: ranking a nil Priority BELOW
+// every declared one, on the reading that it states no urgency. It states P2.
+// beadslib.Issue.Priority is a plain int carrying `json:"priority"` with no
+// omitempty -- upstream's own comment is "No omitempty: 0 is valid
+// (P0/critical)" -- so nativePriorityFromIssue (internal/beads/
+// native_dolt_store.go) returns nil for exactly one input, issue.Priority == 2,
+// and for no other. Ranking that last puts the entire P2 population below any
+// P3 or P4. It is not a theoretical population: at the time of the fix every
+// one of the 654 open beads in the hq store was P2, as was ci-7vyl6k itself,
+// while astoria-zephyr held an open P3 -- so the rejected reading would have
+// shed this bead's own session first.
+//
+// The sibling that answers the same question is readySortPriority
+// (internal/beads/query.go), which reads the same beads.Bead off the same
+// stores and also maps nil to 2. hookDefaultCandidatePriority
+// (cmd/gc/hook_cross_store.go) reaches the same number but is NOT precedent for
+// it: that one decodes bd's JSON, where priority is always emitted, so its
+// default is unreachable and its stated rationale is about a wire this does not
+// share.
+//
+// Absent from this function, deliberately: any "priority genuinely unset"
+// reading. Neither live backend can produce one -- NativeDoltStore collapses P2
+// to nil and BdStore carries bd's always-present value through
+// (cloneIntPtr) -- so a third case would be unreachable code pretending to a
+// distinction the stores cannot make. The cost is that the two backends
+// disagree about the SAME bead: P2 arrives as nil from one and as 2 from the
+// other. Mapping both to the same rank is what keeps the ordering
+// backend-invariant; fixing it properly means resolving the encoding at the
+// store boundary rather than guessing here, which is tracked separately.
+//
+// Out-of-range priorities clamp rather than being read literally, so a stray
+// large number cannot rank below a request with no bead and a negative one
+// cannot rank above P0.
+func beadPriorityRank(b beads.Bead) int {
+	p := beadPriorityNilMeans
 	if b.Priority != nil {
-		return *b.Priority
+		p = *b.Priority
 	}
-	return 0
+	if p < beadPriorityMostUrgent {
+		p = beadPriorityMostUrgent
+	}
+	if p > beadPriorityLeastUrgent {
+		p = beadPriorityLeastUrgent
+	}
+	return beadPriorityLeastUrgent - p + 1
 }
 
 // PoolDesiredState holds the desired state for a single agent template.
@@ -225,15 +294,15 @@ func computePoolDesiredStates(
 					continue
 				}
 				resumeRequests = append(resumeRequests, SessionRequest{
-					Template:       template,
-					BeadPriority:   beadPriority(wb),
-					Tier:           "resume",
-					SessionBeadID:  sessionBeadID,
-					WorkBeadID:     wb.ID,
-					WorkBeadTitle:  strings.TrimSpace(wb.Title),
-					WorkPack:       strings.TrimSpace(wb.Metadata[beadmeta.PackMetadataKey]),
-					WorkWorkspace:  strings.TrimSpace(wb.Metadata[beadmeta.PackWorkspaceMetadataKey]),
-					BrainParentSID: strings.TrimSpace(wb.Metadata[beadmeta.BrainParentSIDMetadataKey]),
+					Template:         template,
+					BeadPriorityRank: beadPriorityRank(wb),
+					Tier:             "resume",
+					SessionBeadID:    sessionBeadID,
+					WorkBeadID:       wb.ID,
+					WorkBeadTitle:    strings.TrimSpace(wb.Title),
+					WorkPack:         strings.TrimSpace(wb.Metadata[beadmeta.PackMetadataKey]),
+					WorkWorkspace:    strings.TrimSpace(wb.Metadata[beadmeta.PackWorkspaceMetadataKey]),
+					BrainParentSID:   strings.TrimSpace(wb.Metadata[beadmeta.BrainParentSIDMetadataKey]),
 				})
 				continue
 			}
@@ -297,14 +366,14 @@ func computePoolDesiredStates(
 			}
 			wakeRequestedOwners[wakeKey] = struct{}{}
 			resumeRequests = append(resumeRequests, SessionRequest{
-				Template:       template,
-				BeadPriority:   beadPriority(wb),
-				Tier:           "wake-known-identity",
-				WorkBeadID:     wb.ID,
-				WorkBeadTitle:  strings.TrimSpace(wb.Title),
-				WorkPack:       strings.TrimSpace(wb.Metadata[beadmeta.PackMetadataKey]),
-				WorkWorkspace:  strings.TrimSpace(wb.Metadata[beadmeta.PackWorkspaceMetadataKey]),
-				BrainParentSID: strings.TrimSpace(wb.Metadata[beadmeta.BrainParentSIDMetadataKey]),
+				Template:         template,
+				BeadPriorityRank: beadPriorityRank(wb),
+				Tier:             "wake-known-identity",
+				WorkBeadID:       wb.ID,
+				WorkBeadTitle:    strings.TrimSpace(wb.Title),
+				WorkPack:         strings.TrimSpace(wb.Metadata[beadmeta.PackMetadataKey]),
+				WorkWorkspace:    strings.TrimSpace(wb.Metadata[beadmeta.PackWorkspaceMetadataKey]),
+				BrainParentSID:   strings.TrimSpace(wb.Metadata[beadmeta.BrainParentSIDMetadataKey]),
 			})
 			if trace != nil {
 				trace.RecordDecision(TraceSitePoolWakeKnownIdentity, TraceReasonAssignedWork, TraceOutcomeScheduled, template, "", traceRecordPayload{
@@ -560,10 +629,10 @@ func poolSessionConsumesNewDemandInfo(info sessionpkg.Info) bool {
 // applyNestedCaps enforces workspace, rig, and agent max_active_sessions caps.
 // Accepts requests in priority order, rejecting any that would exceed a cap.
 func applyNestedCaps(cfg *config.City, requests []SessionRequest, aliasHeldTemplates map[string]struct{}, trace *sessionReconcilerTraceCycle) []PoolDesiredState {
-	// Sort by priority DESC, resume tier first within same priority.
+	// Most urgent rank first, resume tier first within equal rank.
 	sort.SliceStable(requests, func(i, j int) bool {
-		if requests[i].BeadPriority != requests[j].BeadPriority {
-			return requests[i].BeadPriority > requests[j].BeadPriority
+		if requests[i].BeadPriorityRank != requests[j].BeadPriorityRank {
+			return requests[i].BeadPriorityRank > requests[j].BeadPriorityRank
 		}
 		// Resume-like tiers before new tier at same priority.
 		if requests[i].Tier != requests[j].Tier {
@@ -705,8 +774,8 @@ func acceptedNestedCapUsage(limits nestedCapLimits, requests []SessionRequest) n
 	usage := newNestedCapUsage()
 	sorted := append([]SessionRequest(nil), requests...)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].BeadPriority != sorted[j].BeadPriority {
-			return sorted[i].BeadPriority > sorted[j].BeadPriority
+		if sorted[i].BeadPriorityRank != sorted[j].BeadPriorityRank {
+			return sorted[i].BeadPriorityRank > sorted[j].BeadPriorityRank
 		}
 		if sorted[i].Tier != sorted[j].Tier {
 			return isResumeLikeTier(sorted[i].Tier) && !isResumeLikeTier(sorted[j].Tier)

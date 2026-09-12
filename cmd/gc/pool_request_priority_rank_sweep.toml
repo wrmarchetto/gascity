@@ -1,0 +1,102 @@
+# Proves the pool session-request ranking guards are enforced, rather than
+# passing over any of the directions they are meant to tell apart. The seam had
+# an inverted sort that nothing caught for its whole life, so the suite pinning
+# the replacement is worth more than a read of it (ci-7vyl6k).
+#
+# Each signature names the test that dies rather than an assertion string:
+# several rows are meant to kill more than one test, and naming the FAIL line
+# attributes the red without predicting which assertion fires first.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of -- never the worktree that
+# authored it. See the mutation-sweep skill.
+
+[sweep]
+name = "pool request priority rank direction and clamps"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestPoolCap|TestBeadPriorityRank|TestAcceptedNestedCapUsageRanks|TestComputePoolDesiredStates_ResumePriorityOrder|TestComputePoolDesiredStates_ResumeBeatsNew|TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew|TestBuildDesiredState_MaxOneAgentSkipsCanonicalDuplicateWhenStaleAssignedWorkWinsCap",
+]
+timeout_s = 900
+
+# The defect as it shipped: rank the raw priority, so a larger number sorts
+# first and a cap sheds P0 before P4. The nil branch is left alone, which is
+# what makes this row distinct from the comparator rows below.
+[[mutation]]
+id = "drop-the-inversion"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	return beadPriorityLeastUrgent - p + 1'''
+replace = '''	return p'''
+expect_output = ["--- FAIL: TestPoolCapAdmitsP0OverP4", "--- FAIL: TestBeadPriorityRankIsMonotonicInUrgency"]
+
+# A nil Priority reading as P0 -- the failure the naive ascending-raw fix
+# produces, since nil would then decode as the literal 0.
+[[mutation]]
+id = "rank-a-nil-priority-as-p0"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	p := beadPriorityNilMeans'''
+replace = '''	p := beadPriorityMostUrgent'''
+expect_output = ["--- FAIL: TestBeadPriorityRankIsMonotonicInUrgency"]
+
+# The reading this fix rejected on evidence: a nil Priority ranking below every
+# declared one. Only the P3 row of TestPoolCapTreatsNilPriorityAsP2 can see it
+# -- the P1 row passes under both readings, which is why that row is not enough
+# on its own.
+[[mutation]]
+id = "rank-a-nil-priority-below-every-declared-one"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	p := beadPriorityNilMeans
+	if b.Priority != nil {
+		p = *b.Priority
+	}'''
+replace = '''	if b.Priority == nil {
+		return beadPriorityNoBead
+	}
+	p := *b.Priority'''
+expect_output = ["--- FAIL: TestPoolCapTreatsNilPriorityAsP2", "--- FAIL: TestBeadPriorityRankIsMonotonicInUrgency"]
+
+# Without the upper clamp an out-of-range priority ranks NEGATIVE, i.e. below
+# the rank reserved for a request with no bead. Nothing in the declared range
+# can reach this, which is why it needs its own row.
+[[mutation]]
+id = "stop-clamping-above-p4"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	if p > beadPriorityLeastUrgent {
+		p = beadPriorityLeastUrgent
+	}'''
+replace = ''''''
+expect_output = ["--- FAIL: TestBeadPriorityRankIsMonotonicInUrgency"]
+
+# Without the lower clamp a negative priority ranks ABOVE P0 and preempts
+# genuinely urgent work.
+[[mutation]]
+id = "stop-clamping-below-p0"
+path = "cmd/gc/pool_desired_state.go"
+find = '''	if p < beadPriorityMostUrgent {
+		p = beadPriorityMostUrgent
+	}'''
+replace = ''''''
+expect_output = ["--- FAIL: TestBeadPriorityRankIsMonotonicInUrgency"]
+
+# The accept walk's comparator, flipped to least-urgent-first.
+[[mutation]]
+id = "reverse-the-accept-walk-comparator"
+path = "cmd/gc/pool_desired_state.go"
+find = '''			return requests[i].BeadPriorityRank > requests[j].BeadPriorityRank'''
+replace = '''			return requests[i].BeadPriorityRank < requests[j].BeadPriorityRank'''
+expect_output = ["--- FAIL: TestPoolCapAdmitsP0OverP4"]
+
+# The SECOND copy of the same comparator. acceptedNestedCapUsage decides how
+# much cap headroom is already spoken for and re-sorts independently, so the
+# two disagreeing is invisible from either one's own tests -- usage reserves
+# the slot for one request while the accept walk hands it to another.
+[[mutation]]
+id = "reverse-the-usage-comparator"
+path = "cmd/gc/pool_desired_state.go"
+find = '''			return sorted[i].BeadPriorityRank > sorted[j].BeadPriorityRank'''
+replace = '''			return sorted[i].BeadPriorityRank < sorted[j].BeadPriorityRank'''
+expect_output = ["--- FAIL: TestAcceptedNestedCapUsageRanksLikeApplyNestedCaps"]

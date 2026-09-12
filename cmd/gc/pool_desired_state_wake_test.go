@@ -148,9 +148,14 @@ func TestComputePoolDesiredStates_LiveSessionContinuesAsResumeTier(t *testing.T)
 
 // TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew verifies that when a cap
 // admits only one request and both a wake-known-identity request and a new
-// request have equal priority, wake-known-identity is accepted. The sort
-// comparator in applyNestedCaps must treat "wake-known-identity" as a
-// resume-like tier that ranks ahead of "new" at the same bead priority.
+// request rank equally, wake-known-identity is accepted. The sort comparator in
+// applyNestedCaps must treat "wake-known-identity" as a resume-like tier that
+// ranks ahead of "new" at equal urgency.
+//
+// The rank literal below is 3, the rank of a P2 -- the middle of the declared
+// 0-4 priority range. What the test pins is the TIE-BREAK, so the only thing
+// that matters is that the two requests carry the SAME rank; the literal was 5
+// before ci-7vyl6k, which was not a valid bead priority at all.
 func TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{poolAgent("claude", "", intPtr(1), 0)},
@@ -158,8 +163,8 @@ func TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew(t *testing.T) {
 	// New request is listed first so current sort preserves it ahead of
 	// wake-known-identity. After the fix, wake-known-identity wins.
 	requests := []SessionRequest{
-		{Template: "claude", Tier: "new", BeadPriority: 5},
-		{Template: "claude", Tier: "wake-known-identity", SessionBeadID: "sess-closed", BeadPriority: 5},
+		{Template: "claude", Tier: "new", BeadPriorityRank: 3},
+		{Template: "claude", Tier: "wake-known-identity", SessionBeadID: "sess-closed", BeadPriorityRank: 3},
 	}
 
 	result := applyNestedCaps(cfg, requests, nil, nil)

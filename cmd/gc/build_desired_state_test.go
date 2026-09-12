@@ -3745,7 +3745,14 @@ func TestBuildDesiredState_MaxOneAgentSkipsCanonicalDuplicateWhenStaleAssignedWo
 	if err != nil {
 		t.Fatal(err)
 	}
-	stalePriority := 10
+	// The subject of this test is the canonical-duplicate skip and the alias
+	// deferral, not the ordering -- the priorities are only the lever that
+	// makes the stale slot-1 session win the single cap. Re-derived for
+	// ci-7vyl6k: the literals were 10 and 1, and 10 won only because the
+	// request sort compared raw priority DESCENDING. In the declared unit
+	// (0-4, P0 most urgent) the stale bead must be the MORE urgent of the
+	// two, so it is P0 against the canonical bead's P1.
+	stalePriority := 0
 	if _, err := store.Create(beads.Bead{
 		Title:    "stale assigned work",
 		Type:     "task",
