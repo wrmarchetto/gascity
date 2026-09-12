@@ -63,10 +63,18 @@ var ErrBDSilentFallback = errors.New("bd silent fallback to on-disk auto-import"
 // Bead is a single unit of work in Gas City. Everything is a bead: tasks,
 // mail, molecules, convoys.
 type Bead struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Status    string    `json:"status"`     // "open", "in_progress", "closed"
-	Type      string    `json:"issue_type"` // "task" default; matches bd wire format
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`     // "open", "in_progress", "closed"
+	Type   string `json:"issue_type"` // "task" default; matches bd wire format
+	// Priority is nil only when no priority was ever recorded for the bead.
+	// Neither live backend produces that: BdStore clones bd's explicit
+	// priority and NativeDoltStore reports the upstream column, which is NOT
+	// NULL DEFAULT 2. It survives for beads held only in memory or SQLite,
+	// where a caller's nil is stored as nil, and for a hand-built literal.
+	// Readers rank a nil as P2 -- readySortPriority (query.go) is the
+	// canonical mapping, and a reader picking a different fallback is
+	// wrong rather than merely unconventional.
 	Priority  *int      `json:"priority,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is zero for legacy beads; UpdatedBefore falls back to CreatedAt.

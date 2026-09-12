@@ -198,33 +198,55 @@ func TestNativeDoltStoreGetPropagatesUpstreamError(t *testing.T) {
 	}
 }
 
-func TestNativeDoltStoreConvertsDefaultPriorityAsUnset(t *testing.T) {
-	bead, err := beadFromNativeIssue(&beadslib.Issue{
-		ID:        "gc-unset-priority",
-		Title:     "unset priority",
-		Status:    beadslib.StatusOpen,
-		IssueType: beadslib.TypeTask,
-		Priority:  2,
-	})
-	if err != nil {
-		t.Fatalf("beadFromNativeIssue: %v", err)
+// TestNativeDoltStoreReportsEveryUpstreamPriorityVerbatim walks the whole P0-P4
+// range rather than sampling it, because the encoding this replaced was
+// value-dependent: it returned nil for exactly one input and a pointer for
+// every other, so a suite that happens to miss that input cannot tell a
+// verbatim decoder from a collapsing one. P2 leads the table for the same
+// reason.
+func TestNativeDoltStoreReportsEveryUpstreamPriorityVerbatim(t *testing.T) {
+	for _, priority := range []int{2, 0, 1, 3, 4} {
+		bead, err := beadFromNativeIssue(&beadslib.Issue{
+			ID:        fmt.Sprintf("gc-p%d", priority),
+			Title:     "priority carrier",
+			Status:    beadslib.StatusOpen,
+			IssueType: beadslib.TypeTask,
+			Priority:  priority,
+		})
+		if err != nil {
+			t.Fatalf("beadFromNativeIssue P%d: %v", priority, err)
+		}
+		if bead.Priority == nil {
+			t.Fatalf("Priority = nil for upstream P%d, want a pointer", priority)
+		}
+		if *bead.Priority != priority {
+			t.Fatalf("Priority = P%d, want P%d", *bead.Priority, priority)
+		}
 	}
-	if bead.Priority != nil {
-		t.Fatalf("Priority = %v, want nil for upstream default priority", *bead.Priority)
-	}
+}
 
-	bead, err = beadFromNativeIssue(&beadslib.Issue{
-		ID:        "gc-explicit-priority",
-		Title:     "explicit priority",
+// TestNativeDoltStoreDecodedPriorityDoesNotAliasUpstreamIssue pins the copy in
+// nativePriorityFromIssue. Returning &issue.Priority would satisfy every value
+// assertion above and still hand the caller a pointer into storage-owned
+// memory, so the aliasing has to be tested by mutation rather than by reading.
+func TestNativeDoltStoreDecodedPriorityDoesNotAliasUpstreamIssue(t *testing.T) {
+	issue := &beadslib.Issue{
+		ID:        "gc-alias",
+		Title:     "alias check",
 		Status:    beadslib.StatusOpen,
 		IssueType: beadslib.TypeTask,
 		Priority:  1,
-	})
-	if err != nil {
-		t.Fatalf("beadFromNativeIssue explicit: %v", err)
 	}
-	if bead.Priority == nil || *bead.Priority != 1 {
-		t.Fatalf("Priority = %v, want explicit P1", bead.Priority)
+	bead, err := beadFromNativeIssue(issue)
+	if err != nil {
+		t.Fatalf("beadFromNativeIssue: %v", err)
+	}
+	issue.Priority = 4
+	if bead.Priority == nil {
+		t.Fatalf("Priority = nil after mutating the source issue, want P1")
+	}
+	if *bead.Priority != 1 {
+		t.Fatalf("Priority = P%d after mutating the source, want P1", *bead.Priority)
 	}
 }
 

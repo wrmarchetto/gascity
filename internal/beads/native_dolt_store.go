@@ -1933,13 +1933,33 @@ func isNativeIssueMetadataParseError(err error) bool {
 	return errors.Is(err, errNativeIssueMetadataParse)
 }
 
+// nativePriorityFromIssue copies the issue's priority into a caller-owned
+// pointer. The copy exists so a Bead never aliases the upstream Issue it was
+// decoded from.
+//
+// P2 is NOT collapsed to nil here, and the collapse this replaced is the
+// obvious thing to reach for again: upstream's default priority is 2, so
+// "priority == 2 means the caller never set one" reads as a faithful
+// unset/explicit distinction. It is not one. The upstream column is
+// `priority INT NOT NULL DEFAULT 2` (beads
+// internal/storage/schema/migrations/0001_create_issues.up.sql line 10) and
+// beadslib.Issue.Priority is a plain int whose json tag carries no omitempty
+// ("No omitempty: 0 is valid (P0/critical)"), so no unset state survives to
+// this seam to be represented. Collapsing instead invented one, and BdStore --
+// which clones bd's explicit priority through verbatim -- never agreed with
+// it: the same P2 bead reached a caller as nil from here and as 2 from there,
+// so any ordering keyed on Priority depended on which constructor fired.
+// Against the live city that was the common case rather than an edge (all 657
+// open hq beads were P2 when ci-gqqsv4 was filed).
+//
+// Consequence worth knowing before reverting this: a *int priority read off a
+// bead is also what sling and molecule pass as PriorityOverride, which FORCES
+// every step of a materialized formula to that value. Reporting P2 verbatim
+// therefore overrides a step's own declared priority under a P2 root -- which
+// is what BdStore-backed cities have always done, and is the behavior this
+// aligns native with rather than a new one. The agreement is pinned by
+// internal/beads/priority_backend_agreement_test.go.
 func nativePriorityFromIssue(issue *beadslib.Issue) *int {
-	// Upstream beads stores omitted priority as P2. Gas City's Store surface
-	// represents that unset/default state as nil, matching BdStore's sparse
-	// JSON decode semantics for callers that distinguish unset from explicit.
-	if issue.Priority == 2 {
-		return nil
-	}
 	priority := issue.Priority
 	return &priority
 }
