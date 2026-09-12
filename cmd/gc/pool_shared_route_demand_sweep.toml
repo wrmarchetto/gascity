@@ -1,0 +1,87 @@
+# Mutation sweep for the shared-route new-demand budget (ci-fp7pzt).
+#
+# Each row flips one guard in cmd/gc/pool_shared_route_demand.go to its
+# accepting counterpart and requires the suite to go red naming the specific
+# test that covers it. A SURVIVED row means the budget is not actually
+# enforced where the file claims it is.
+#
+# Not swept, and deliberately: the group-of-one drop at
+# newSharedRouteDemandBudget. Removing it gives a solo template a budget equal
+# to its own count, which caps nothing -- it is an early exit, not a guard, so
+# there is no accepting counterpart to flip and no test could tell the
+# difference.
+#
+# Run: assets/scripts/mutation-sweep.py cmd/gc/pool_shared_route_demand_sweep.toml
+
+[sweep]
+name = "shared-route new-demand budget is enforced"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./cmd/gc/", "-run", "SharedRouteAnonymousDemand", "-count=1"]
+timeout_s = 600
+
+# The budget narrows nothing: every template funds its own count in full,
+# which is the pre-fix behavior exactly.
+[[mutation]]
+id = "cap-refuses-nothing"
+path = "cmd/gc/pool_shared_route_demand.go"
+find = '''	if b.remaining[group] < want {
+		want = b.remaining[group]
+	}
+	if want < 0 {
+		want = 0
+	}
+	b.remaining[group] -= want
+	return want'''
+replace = '''	_ = group
+	return want'''
+expect_output = ["--- FAIL: TestSharedRouteAnonymousDemandEarnsOneSessionPerReadyBead"]
+
+# The group budget becomes the SUM of member counts rather than the maximum.
+# Two templates each reporting the same single bead then fund two sessions --
+# the double-count restated as arithmetic.
+[[mutation]]
+id = "budget-sums-member-counts"
+path = "cmd/gc/pool_shared_route_demand.go"
+find = '''			if count := scaleCheckCounts[template]; count > largest {
+				largest = count
+			}'''
+replace = '''			largest += scaleCheckCounts[template]'''
+expect_output = ["--- FAIL: TestSharedRouteAnonymousDemandEarnsOneSessionPerReadyBead"]
+
+# In-flight creates stop being charged before the loop, so a create already in
+# flight on one member no longer reserves its unit and a sibling takes it.
+[[mutation]]
+id = "in-flight-creates-not-charged"
+path = "cmd/gc/pool_shared_route_demand.go"
+find = '''	for i := range cfg.Agents {
+		template := cfg.Agents[i].QualifiedName()
+		if _, ok := b.groupOf[template]; !ok {
+			continue
+		}
+		b.charge(template, minInt(len(inFlight[template]), scaleCheckCounts[template]))
+	}'''
+replace = '''	_ = inFlight'''
+expect_output = ["--- FAIL: TestSharedRouteAnonymousDemandIsAbsorbedByASiblingTemplatesInFlightSession"]
+
+# Route groups stop merging, so a template bridging two already-open groups
+# leaves the earlier group holding a stale budget for a route it shares.
+[[mutation]]
+id = "route-groups-do-not-merge"
+path = "cmd/gc/pool_shared_route_demand.go"
+find = '''			if existing, ok := routeGroup[route]; ok && existing != group {
+				for _, member := range members[existing] {
+					budget.groupOf[member] = group
+					members[group] = append(members[group], member)
+				}
+				for r, g := range routeGroup {
+					if g == existing {
+						routeGroup[r] = group
+					}
+				}
+				delete(members, existing)
+			}
+'''
+replace = ''''''
+expect_output = ["--- FAIL: TestSharedRouteAnonymousDemandGroupsTemplatesBridgedByAThirdTemplate"]
