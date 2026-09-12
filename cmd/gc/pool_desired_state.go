@@ -417,6 +417,12 @@ func computePoolDesiredStates(
 	// represent already-spent new demand, so they occupy the first new-demand
 	// slots explicitly before anonymous creates are materialized.
 	if len(scaleCheckCounts) > 0 {
+		// Two templates claiming the same route count the SAME beads, so their
+		// per-template counts must not be summed into per-template creates.
+		// The budget is built before the loop because it is a property of the
+		// tick, not of any one agent (ci-fp7pzt).
+		routeBudget := newSharedRouteDemandBudget(cfg, scaleCheckCounts)
+		routeBudget.chargeInFlight(cfg, scaleCheckCounts, inFlightNewRequests)
 		for i := range cfg.Agents {
 			agent := &cfg.Agents[i]
 			if agent.Suspended {
@@ -431,9 +437,12 @@ func computePoolDesiredStates(
 				continue
 			}
 			newCount := capNewDemandCount(limits, usage, agent, scaleCount)
-			recordNewDemandCapTrace(trace, template, agent, limits, usage, scaleCount, newCount)
 			inFlight := inFlightNewRequests[template]
 			inFlightCount := minInt(len(inFlight), newCount)
+			// Only the FRESH remainder is offered to the shared-route budget;
+			// the in-flight reuse above was charged before the loop.
+			newCount = inFlightCount + routeBudget.cap(template, newCount-inFlightCount)
+			recordNewDemandCapTrace(trace, template, agent, limits, usage, scaleCount, newCount)
 			if scaleCount > 0 && len(inFlight) > 0 && trace != nil {
 				trace.RecordDecision(TraceSitePoolInFlightReuse, TraceReasonInFlightReuse, TraceOutcomeAccepted, template, "", traceRecordPayload{
 					"scale_check":   scaleCount,
