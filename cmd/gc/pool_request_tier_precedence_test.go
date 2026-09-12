@@ -31,7 +31,7 @@
 // behavior. TestComputePoolDesiredStates_ResumeReservesCapBeforeNewDemand is,
 // and it pins a DIFFERENT mechanism: the demand loop, not the comparator.
 //
-//	go test ./cmd/gc/ -run 'OutranksMoreUrgentNew|TierPrecedence|ReservesCapBeforeNewDemand'
+//	go test ./cmd/gc/ -run 'OutranksMoreUrgentNew|TierPrecedence|ReservesCap'
 package main
 
 import (
@@ -108,13 +108,17 @@ func TestAcceptedNestedCapUsageTierPrecedenceMatchesApplyNestedCaps(t *testing.T
 //
 // computePoolDesiredStates seeds nestedCapUsage from the accepted resume
 // requests and then sizes new demand against the remaining headroom
-// (capNewDemandCount). With the cap already fully spent by a resume, no new
-// request is constructed at all -- so the comparator never sees the
-// contention, and no amount of urgency on the ready bead can change that.
+// (capNewDemandCount). With the cap already spent by a resume, no new request
+// is CONSTRUCTED at all -- the comparator never sees the contention.
 //
-// This is why the comparator tests above must hand-build their input, and why
-// this test cannot substitute for them: the two mechanisms express one rule
-// and either could be changed alone.
+// The assertion is on the TRACE, not on the returned requests, and that is the
+// whole point of the test. A mutation seeding the usage empty leaves the output
+// identical, because applyNestedCaps then sheds the new request it did build:
+// the comparator silently covers for the missing reservation. The sweep row
+// size-new-demand-without-reserving-for-resumes SURVIVED against an
+// output-only assertion here. recordNewDemandCapTrace is the only place the
+// two regimes differ -- it returns early when newCount is not below
+// scaleCount, so an unreserved sizing pass records nothing.
 func TestComputePoolDesiredStates_ResumeReservesCapBeforeNewDemand(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{poolAgent("claude", "rig", intPtr(1), 0)},
@@ -132,8 +136,10 @@ func TestComputePoolDesiredStates_ResumeReservesCapBeforeNewDemand(t *testing.T)
 		},
 	}
 
+	trace := newPoolDesiredStateTestTrace("rig/claude")
+
 	result := ComputePoolDesiredStatesWithDemandTraced(
-		cfg, work, sessionInfosFromBeads(sessions), map[string]int{"rig/claude": 1}, demand, nil)
+		cfg, work, sessionInfosFromBeads(sessions), map[string]int{"rig/claude": 1}, demand, trace)
 
 	if len(result) != 1 {
 		t.Fatalf("len(result) = %d, want 1", len(result))
@@ -144,5 +150,19 @@ func TestComputePoolDesiredStates_ResumeReservesCapBeforeNewDemand(t *testing.T)
 	}
 	if reqs[0].Tier != "resume" || reqs[0].WorkBeadID != "w-resume" {
 		t.Errorf("admitted %q/%q, want resume/w-resume -- the resume must hold the only slot", reqs[0].Tier, reqs[0].WorkBeadID)
+	}
+
+	// The sizing pass must have refused the ready bead outright, naming the
+	// resume that blocked it. accepted_new is the count capNewDemandCount
+	// returned; anything above 0 means a request was built and then shed by the
+	// comparator instead, which is the regime this test exists to tell apart.
+	rec := poolTraceDecision(t, trace, TraceSitePoolNewDemandCap)
+	for key, want := range map[string]int{"scale_check": 1, "accepted_new": 0, "blocked_new": 1} {
+		if got := poolTraceFieldInt(t, rec.Fields, key); got != want {
+			t.Errorf("trace %s = %d, want %d -- new demand must be sized against the resume's usage", key, got, want)
+		}
+	}
+	if got := poolTraceFieldStrings(t, rec.Fields, "blocking_work_beads"); len(got) != 1 || got[0] != "w-resume" {
+		t.Errorf("blocking_work_beads = %v, want [w-resume]", got)
 	}
 }
