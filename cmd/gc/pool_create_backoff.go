@@ -25,9 +25,24 @@ const (
 // poolCreateFailureBackoffActive reports whether a recent pool-session retry
 // failure suppresses another attempt for the exact agent and work trigger. A
 // custom scale_check only returns a count, not a work-bead ID; its no-work
-// retry ledger is therefore keyed by the empty trigger for that pool identity.
-// A closed session bead is durable across controller restarts without
-// preventing unrelated triggered work from using the pool.
+// retry ledger is therefore keyed by the EMPTY trigger. A closed session bead
+// is durable across controller restarts without preventing unrelated triggered
+// work from using the pool.
+//
+// The agent this keys on is the SLOT instance ("worker-1"), not the pool. The
+// brake nonetheless stops a cold pool's whole new tier, because the caller
+// hands its reserved slot back on refusal (delete(usedSlots, slot) in
+// selectOrPlanPoolSessionBead) and the allocator re-picks the same lowest free
+// slot, so a free slot above the braked one is never reached. That reach is an
+// emergent property of slot allocation rather than anything decided here, and
+// it is the distinction a reader of this comment will get wrong: a pool with a
+// live session on the low slot DOES still grow.
+//
+// Do not widen this to the pool template to make the comment simpler. Measured
+// 2026-09-12 over 4.4 days of supervisor log, the brake refused a create
+// against live scale_check demand 8 times, all on cold pools; keying it on the
+// template would add the warm case to that set for no measured benefit.
+// TestCountOnlyBrakeScopeIsTheLowestFreeSlotNotThePool pins all three cases.
 func poolCreateFailureBackoffActive(sessFront *sessionpkg.Store, template, agent, trigger string, now time.Time) (bool, error) {
 	if sessFront == nil || strings.TrimSpace(template) == "" || strings.TrimSpace(agent) == "" {
 		return false, nil

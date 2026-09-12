@@ -1,0 +1,64 @@
+# Proves TestCountOnlyBrakeScopeIsTheLowestFreeSlotNotThePool actually pins the
+# count-only brake's reach, rather than passing over any of the three designs
+# it is meant to tell apart.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of -- never the worktree that
+# authored it. See the mutation-sweep skill.
+
+[sweep]
+name = "count-only claim_no_work brake reach"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestCountOnlyBrakeScopeIsTheLowestFreeSlotNotThePool",
+]
+timeout_s = 900
+
+# Each signature names the assertion that ACTUALLY fires, which in two of the
+# three rows is an earlier one than a read of the test predicts -- the err
+# check precedes the plan check in both branches. Signatures written from the
+# reading rather than the run came back UNATTRIBUTABLE.
+
+# The key names the slot instance. Dropping the agent comparison makes it name
+# the pool template instead -- the design the old comment described. Only the
+# warm-pool case can see the difference.
+[[mutation]]
+id = "key-the-brake-on-the-pool-not-the-slot"
+path = "cmd/gc/pool_create_backoff.go"
+find = '''			strings.TrimSpace(row.AgentName) != agent ||
+			!isPoolCreateFailureBackoffClass(class) ||'''
+replace = '''			!isPoolCreateFailureBackoffClass(class) ||'''
+expect_output = ["warm_pool", "want a create plan"]
+
+# Restores the pre-ef3987ebc guard that made a count-only drain record and
+# match nothing at all. The cold-pool case is the only one that dies.
+[[mutation]]
+id = "stop-braking-count-only-demand"
+path = "cmd/gc/pool_create_backoff.go"
+find = '''	if sessFront == nil || strings.TrimSpace(template) == "" || strings.TrimSpace(agent) == "" {
+		return false, nil
+	}'''
+replace = '''	if sessFront == nil || strings.TrimSpace(template) == "" || strings.TrimSpace(agent) == "" || strings.TrimSpace(trigger) == "" {
+		return false, nil
+	}'''
+expect_output = ["cold_pool", "request 2 err = <nil>, want failed-create backoff"]
+
+# Retains the slot the refusal reserved instead of handing it back. The brake
+# then stops being pool-wide: the second cold-pool request reaches slot 2 and
+# plans a create. This is the mutation a single-request assertion could not
+# have caught, which is why that case issues two.
+[[mutation]]
+id = "retain-the-slot-a-braked-create-reserved"
+path = "cmd/gc/build_desired_state.go"
+find = '''	if backoffActive {
+		delete(usedSlots, slot)
+		return session.Info{}, 0, nil, errPoolSessionCreateBackoff
+	}'''
+replace = '''	if backoffActive {
+		return session.Info{}, 0, nil, errPoolSessionCreateBackoff
+	}'''
+expect_output = ["cold_pool", "request 2 err = <nil>, want failed-create backoff"]

@@ -296,3 +296,139 @@ func TestCommitStartResultRollbackPersistsPoolCreateFailureBackoff(t *testing.T)
 		t.Fatal("fresh pool create was not throttled by its closed failed-create ledger row")
 	}
 }
+
+// TestCountOnlyBrakeScopeIsTheLowestFreeSlotNotThePool pins how far a
+// count-only claim_no_work brake reaches, because nothing in the code that
+// produces that reach states it.
+//
+// A custom scale_check reports a bare count, so the create request it raises
+// carries no work bead and its retry ledger row is keyed by the empty trigger.
+// What that key names is the SLOT instance ("worker-1"), not the pool. The
+// pool-wide behavior is emergent: selectOrPlanPoolSessionBead releases the
+// slot it reserved when it refuses (`delete(usedSlots, slot)` in
+// build_desired_state.go), so the next count-only request re-picks the same
+// lowest free slot and meets the same row. A future change to slot allocation
+// would silently widen or narrow the brake, and only this test would notice.
+//
+// The cold-pool case issues TWO sequential requests against one usedSlots map
+// rather than asserting a single refusal. One request proves only that slot
+// 1 is braked; it is the second, which never reaches the unbraked slot 2,
+// that shows a cold pool's whole new tier stopped by one drain. Asserting a
+// lone refusal would pass identically if the slot were retained.
+//
+// The warm and triggered cases are what make this a measurement rather than a
+// restatement of the first. A suite holding only the cold case would pass just
+// as well if the key were the pool template -- the reading the former comment
+// on poolCreateFailureBackoffActive invited -- because the two designs differ
+// ONLY once a live session occupies the low slot.
+//
+// Absent on purpose: no case drives slot 2's own ledger row. Whether a brake
+// recorded against slot 2 blocks slot 1 is the same question with the operands
+// swapped, and the lowest-free-slot rule already answers it.
+//
+// Run: go test ./cmd/gc/ -run TestCountOnlyBrakeScopeIsTheLowestFreeSlot
+func TestCountOnlyBrakeScopeIsTheLowestFreeSlotNotThePool(t *testing.T) {
+	now := time.Date(2026, 9, 1, 1, 30, 0, 0, time.UTC)
+	store := beads.NewMemStore()
+	agent := config.Agent{Name: "worker", MaxActiveSessions: intPtr(2)}
+	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}, Agents: []config.Agent{agent}}
+
+	// The row a count-only no-work drain leaves behind: closed, ephemeral,
+	// empty trigger, recorded against slot 1's instance name.
+	if _, err := store.Create(beads.Bead{
+		Title:  "worker-1",
+		Type:   sessionBeadType,
+		Status: "closed",
+		Metadata: map[string]string{
+			"agent_name":                        "worker-1",
+			"template":                          "worker",
+			"session_origin":                    "ephemeral",
+			"gc.trigger_bead_id":                "",
+			poolCreateFailureClassMetadataKey:   poolCreateFailureClassClaimNoWork,
+			poolCreateFailureRetryAfterMetadata: now.Add(time.Minute).Format(time.RFC3339),
+		},
+	}); err != nil {
+		t.Fatalf("create count-only failure history: %v", err)
+	}
+
+	bp := &agentBuildParams{
+		city:                   cfg,
+		cityName:               cfg.EffectiveCityName(),
+		cityPath:               t.TempDir(),
+		agents:                 cfg.Agents,
+		beadStore:              store,
+		sessionBeads:           newSessionBeadSnapshotFromInfos(nil),
+		beaconTime:             now,
+		now:                    func() time.Time { return now },
+		providerHealthSnapshot: &providerHealthSnapshot{},
+	}
+
+	tests := []struct {
+		name         string
+		request      SessionRequest
+		requests     int // sequential creates sharing one usedSlots map
+		usedSlots    map[int]bool
+		wantBackoff  bool
+		wantInstance string
+	}{
+		{
+			// Cold pool, both slots free. Slot 2 carries no ledger row of its
+			// own and is still never reached, because each refusal hands slot 1
+			// back to the allocator.
+			name:        "cold pool: one slot's drain stops every count-only create",
+			request:     SessionRequest{},
+			requests:    2,
+			usedSlots:   map[int]bool{},
+			wantBackoff: true,
+		},
+		{
+			// Slot 1 held by a live session, so the allocator reserves slot 2,
+			// whose instance name misses the row. A warm pool still grows.
+			name:         "warm pool: a free slot above the braked one still fills",
+			request:      SessionRequest{},
+			requests:     1,
+			usedSlots:    map[int]bool{1: true},
+			wantInstance: "worker-2",
+		},
+		{
+			// The escape hatch: work arriving with a bead id is matched on that
+			// id, misses the empty-trigger row, and proceeds. A pool whose
+			// demand is ONLY ever count-only -- every rig lab.engineer-codex
+			// pool in this city, measured 2026-09-12 -- never takes this path,
+			// so for those pools the cold case above is the whole story.
+			name:         "concrete triggered work is not blocked by the count-only row",
+			request:      SessionRequest{WorkBeadID: "work-9"},
+			requests:     1,
+			usedSlots:    map[int]bool{},
+			wantInstance: "worker-1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var plan *poolSessionCreatePlan
+			var err error
+			for i := 0; i < tt.requests; i++ {
+				_, _, plan, err = selectOrPlanPoolSessionBead(
+					bp, &agent, "worker", nil, tt.request, map[string]bool{}, tt.usedSlots)
+			}
+			if tt.wantBackoff {
+				if !errors.Is(err, errPoolSessionCreateBackoff) {
+					t.Fatalf("request %d err = %v, want failed-create backoff", tt.requests, err)
+				}
+				if plan != nil {
+					t.Fatalf("request %d planned %q while the brake is active; the released slot let the pool grow past its brake", tt.requests, plan.qualifiedInstance)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v, want a create plan", err)
+			}
+			if plan == nil {
+				t.Fatal("no create plan; the count-only brake reached further than its slot")
+			}
+			if plan.qualifiedInstance != tt.wantInstance {
+				t.Fatalf("planned instance = %q, want %q", plan.qualifiedInstance, tt.wantInstance)
+			}
+		})
+	}
+}
