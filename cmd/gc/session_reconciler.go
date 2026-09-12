@@ -599,7 +599,8 @@ func finalizeDrainAckStoppedSession(
 		// close_reason and adds the machine-readable origin/reason pair.
 		drainOrigin, drainReason := resolveDrainAckOrigin(info, dops, name)
 		overlay := sessionpkg.DrainAckCloseOverlay(drainOrigin, drainReason)
-		demandClaimMismatch := isDemandClaimNoWorkDrain(info, drainOrigin, drainReason)
+		demandClaimMismatch := isDemandClaimNoWorkDrain(info, drainOrigin, drainReason) &&
+			!poolTriggerBeadClaimedBySession(store, rigStores, info)
 		if demandClaimMismatch {
 			retryPatch, retryErr := poolNoWorkDrainBackoffPatch(info, sessionFrontDoor(store), clk.Now().UTC())
 			if retryErr != nil {
@@ -702,6 +703,61 @@ func finalizeDrainAckStoppedSession(
 	}
 	// Non-close drain-ack: the snapshot fold is the ApplyPatchInfo result above.
 	return drainAckFinalizeResult{folded: &foldedInfo}
+}
+
+// poolTriggerBeadClaimedBySession reports whether the session itself took the
+// work bead its demand named. It is the second half of the mismatch predicate:
+// isDemandClaimNoWorkDrain establishes the SHAPE (a pool session that drained
+// itself on no_work), and this establishes whether that shape is a
+// disagreement at all.
+//
+// Without it the event cannot tell a phantom spawn from a session that claimed
+// the bead, finished it, and asked for more -- both write an identical row, and
+// the second is ordinary success. Measured over 2026-09-07..09-12 on the live
+// city: 489 of 552 recorded mismatches named a trigger bead, and 255 of those
+// were sessions that had claimed that exact bead. Suppressing them also
+// withholds the claim_no_work create backoff, which was braking the pool's
+// lowest free slot over a demand that had in fact been served.
+//
+// The evidence is the work bead's own gc.session_id back-reference, stamped by
+// `gc hook --claim` at claim time (hookClaimIdentityPatch) and durable on the
+// closed bead. The obvious alternative -- a claim counter on the SESSION bead --
+// is rejected and must stay rejected: f00a44e30 removed the post-claim session
+// update because bd's fuzzy ID resolver can redirect it onto a prefix-colliding
+// session when the intended one disappears concurrently.
+//
+// Unreadable means NOT claimed, deliberately. An absent bead, a rig store this
+// process did not open, or a store error all leave the mismatch firing: an
+// inflated count is a bad measurement, a suppressed one is a defect nobody
+// sees. One absence this cannot cover, and no reader should expect it to: a
+// session whose trigger was rebound mid-life (computePoolTriggerBindingPatch)
+// while it claimed the earlier bead still reports a mismatch, measured at 20 of
+// the 489.
+func poolTriggerBeadClaimedBySession(store beads.Store, rigStores map[string]beads.Store, info sessionpkg.Info) bool {
+	triggerID := strings.TrimSpace(info.TriggerBeadID)
+	if triggerID == "" {
+		// A count-only scale_check names no bead, so there is nothing to have
+		// claimed and nothing to suppress -- that population keeps its own
+		// empty-trigger brake (ci-d5l4y2).
+		return false
+	}
+	source := store
+	// The ref is a rig name for rig-store work and the city's own name
+	// otherwise, so anything that is not a live rig store resolves to the
+	// primary store rather than to nothing.
+	if ref := strings.TrimSpace(info.TriggerBeadStoreRef); ref != "" {
+		if rigStore, ok := rigStores[ref]; ok && rigStore != nil {
+			source = rigStore
+		}
+	}
+	if source == nil {
+		return false
+	}
+	trigger, err := source.Get(triggerID)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(trigger.Metadata[beadmeta.SessionIDMetadataKey]) == strings.TrimSpace(info.ID)
 }
 
 func isDemandClaimNoWorkDrain(info sessionpkg.Info, origin sessionpkg.DrainOrigin, reason string) bool {
