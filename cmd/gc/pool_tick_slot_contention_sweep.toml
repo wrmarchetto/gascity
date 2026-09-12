@@ -14,7 +14,7 @@ repo = "../.."
 argv = [
   "go", "test", "./cmd/gc/",
   "-count=1",
-  "-run", "TestFreshCreatePlannedFirstLeavesWorkingSlotsAlone|TestFreshCreateStillTakesADrainedSlotsNumber|TestWakeDoesNotRehomeOntoALiveWorkingSlot",
+  "-run", "TestFreshCreatePlannedFirstLeavesWorkingSlotsAlone|TestFreshCreateStillTakes|TestWakeDoesNotRehomeOntoALiveWorkingSlot",
 ]
 timeout_s = 900
 
@@ -22,11 +22,18 @@ timeout_s = 900
 # the lowest slot no EARLIER REQUEST claimed, which is slot 1, and the live
 # session wearing slot 1 loses its own resume to "concrete slot already
 # claimed".
+#
+# The `held` binding is inside the find half deliberately: left in place it is
+# declared and not used, the package fails to BUILD, and the row comes back
+# UNATTRIBUTABLE rather than as evidence. Measured on the first run of this spec.
 [[mutation]]
 id = "let-a-fresh-create-take-a-working-slots-number"
 path = "cmd/gc/build_desired_state_pool_info.go"
-find = '''		if used[slot] || held[slot] {'''
-replace = '''		if used[slot] {'''
+find = '''	held := poolSlotsHeldByWorkingSessionsInfo(bp, cfgAgent)
+	for slot := 1; ; slot++ {
+		if used[slot] || held[slot] {'''
+replace = '''	for slot := 1; ; slot++ {
+		if used[slot] {'''
 expect_output = ["concrete slot already claimed"]
 
 # Restores the call the reservation replaced. Same consequence by a different
@@ -53,9 +60,10 @@ replace = ''
 expect_output = ["a drained session reserved its slot"]
 
 # Drops the ownership condition, reserving the slot of every live session
-# whether it holds work or not. The drained case dies on the same assertion for
-# the opposite reason, which is what makes the pair of rows worth having: one
-# shows the scope is not too narrow, the other that it is not too wide.
+# whether it holds work or not. It SURVIVED the first run of this spec against
+# the drained case alone -- isDrainedSessionInfo excludes that session either
+# way -- which is what the asleep case was added for: a plain asleep ephemeral
+# is excluded ONLY by the condition this row removes.
 [[mutation]]
 id = "reserve-every-live-slot-not-only-working-ones"
 path = "cmd/gc/build_desired_state_pool_info.go"
@@ -63,7 +71,7 @@ find = '''		if !sessionBeadHasAssignedWorkInfo(bp.assignedWorkBeads, info) {
 			continue
 		}'''
 replace = ''
-expect_output = ["a drained session reserved its slot"]
+expect_output = ["an idle asleep session reserved its slot"]
 
 # The wake re-home's own live-slot refusal, which the contention fixture does
 # not reach: after the ownership fix a live slot's bead becomes a resume, so

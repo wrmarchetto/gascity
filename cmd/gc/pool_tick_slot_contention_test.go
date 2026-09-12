@@ -229,3 +229,52 @@ func TestFreshCreateStillTakesADrainedSlotsNumber(t *testing.T) {
 		t.Errorf("fresh create took slot %d, want 1 -- the drained session's number is exactly what a replacement is meant to reuse", slot)
 	}
 }
+
+// TestFreshCreateStillTakesAnIdleAsleepSlotsNumber pins the OTHER edge of the
+// reservation's scope: it must not widen to every live session.
+//
+// An asleep ephemeral is not restarted -- reusablePoolSessionInfo excludes it
+// so a fresh session is created in its place -- and it holds no work, so the
+// ownership condition is the only thing keeping its number available. Drop that
+// condition and this full two-slot pool has both numbers reserved, sending the
+// allocator's unbounded loop to slot 3.
+//
+// This case exists because a mutation sweep found the drained case could not
+// see the difference: isDrainedSessionInfo already excludes the drained
+// session whether the ownership condition is there or not, so
+// reserve-every-live-slot SURVIVED against that test alone. A plain asleep
+// session (SleepReason not "drained") is the shape only the ownership
+// condition excludes.
+func TestFreshCreateStillTakesAnIdleAsleepSlotsNumber(t *testing.T) {
+	base := time.Date(2026, 9, 11, 4, 44, 0, 0, time.UTC)
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents:    []config.Agent{poolAgent("worker", "rig", intPtr(2), 0)},
+	}
+	asleep := contentionSession(t, "ci-asleep", "rig/worker-1", "1", base)
+	asleep.MetadataState = "asleep"
+	live := contentionSession(t, "ci-live", "rig/worker-2", "2", base)
+
+	bp := &agentBuildParams{
+		city:                   cfg,
+		cityName:               cfg.EffectiveCityName(),
+		cityPath:               t.TempDir(),
+		agents:                 cfg.Agents,
+		beadStore:              beads.NewMemStore(),
+		sessionBeads:           newSessionBeadSnapshotFromInfos([]sessionpkg.Info{asleep, live}),
+		assignedWorkBeads:      []beads.Bead{contentionWork("wb-live", "rig/worker-2", "in_progress", -1)},
+		beaconTime:             base,
+		now:                    func() time.Time { return base },
+		providerHealthSnapshot: &providerHealthSnapshot{},
+	}
+	held := poolSlotsHeldByWorkingSessionsInfo(bp, &cfg.Agents[0])
+	if held[1] {
+		t.Fatal("an idle asleep session reserved its slot; with the pool full the replacement is pushed to rig/worker-3, past max_active_sessions")
+	}
+	if !held[2] {
+		t.Fatal("the live working session did not reserve its slot; this fixture no longer distinguishes the idle arm from an empty reservation")
+	}
+	if slot := claimFreshCreatePoolSlotInfo(bp, &cfg.Agents[0], map[int]bool{}); slot != 1 {
+		t.Errorf("fresh create took slot %d, want 1 -- an asleep ephemeral is replaced in place, not worked around", slot)
+	}
+}
