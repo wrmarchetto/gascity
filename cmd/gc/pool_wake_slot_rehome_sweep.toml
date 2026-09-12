@@ -49,8 +49,8 @@ expect_output = ["WakeInstance = \"rig/claude\", want \"rig/claude-3\""]
 [[mutation]]
 id = "steal-a-slot-taken-this-tick"
 path = "cmd/gc/build_desired_state_pool_info.go"
-find = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] {'''
-replace = '''	if !usablePoolIdentitySlot(cfgAgent, slot) {'''
+find = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] || held[slot] {'''
+replace = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || held[slot] {'''
 expect_output = ["a_slot_taken_this_tick_is_never_stolen", "planned instance = \"worker-3\", want \"worker-1\""]
 
 # Stops bounding the slot by the agent's own configuration. A bead stamped
@@ -61,8 +61,8 @@ expect_output = ["a_slot_taken_this_tick_is_never_stolen", "planned instance = \
 [[mutation]]
 id = "honor-a-slot-outside-the-configured-bound"
 path = "cmd/gc/build_desired_state_pool_info.go"
-find = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] {'''
-replace = '''	if slot <= 0 || used[slot] {'''
+find = '''	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] || held[slot] {'''
+replace = '''	if slot <= 0 || used[slot] || held[slot] {'''
 expect_output = ["a_slot_outside_the_configured_bound_falls_back", "planned instance = \"worker-9\", want \"worker-1\""]
 
 # Removes the fallback entirely, so a request the re-home refuses gets slot 0 --
@@ -72,9 +72,9 @@ expect_output = ["a_slot_outside_the_configured_bound_falls_back", "planned inst
 [[mutation]]
 id = "drop-the-lowest-free-slot-fallback"
 path = "cmd/gc/build_desired_state.go"
-find = '''	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots)
+find = '''	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots, workingSlots)
 	if slot == 0 {
-		slot = claimDesiredPoolSlotInfo(bp.city, cfgAgent, session.Info{}, usedSlots)
+		slot = claimFreshCreatePoolSlotInfo(bp, cfgAgent, usedSlots)
 	}'''
-replace = '''	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots)'''
+replace = '''	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots, workingSlots)'''
 expect_output = ["want \"worker-1\""]
