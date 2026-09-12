@@ -3981,7 +3981,26 @@ func selectOrPlanPoolSessionBead(
 			return info, slot, nil, err
 		}
 	}
-	slot := claimDesiredPoolSlotInfo(bp.city, cfgAgent, session.Info{}, usedSlots)
+	// A wake-known-identity request is re-homed onto the slot whose session
+	// died, because the replacement's own name is what every claim tier joins
+	// on: the work query asks `bd list --status in_progress --assignee=<own
+	// identity>`, and hookClaimExistingAssignment then requires the bead's
+	// assignee to be one of this session's identities. A session spawned at
+	// the lowest free slot for a bead stamped with a sibling slot's name is
+	// offered nothing, gets no_work and drains -- 51 such spawns measured on
+	// the live city over 2026-09-07..09-12 (ci-me7as9).
+	//
+	// KNOWN ABSENCE, recorded where a reader looks for it: the reuse paths
+	// above are not re-homed. A wake that finds an idle reusable session at
+	// another slot preserves that session and recovers nothing, which is the
+	// same defect without a spawn. It is left alone because the measured
+	// population is spawns, and skipping reuse for a wake would stop
+	// preserving an idle session the reconciler would then stop. Establishing
+	// it needs the reuse case separated in the event log first.
+	slot := claimWakeRehomePoolSlot(cfgAgent, request.WakeInstance, usedSlots)
+	if slot == 0 {
+		slot = claimDesiredPoolSlotInfo(bp.city, cfgAgent, session.Info{}, usedSlots)
+	}
 	_, qualifiedInstance, poolSlot := poolDesiredRequestIdentity(cfgAgent, slot)
 	metadata := poolTriggerMetadata(bp, cfgAgent, qualifiedInstance, request)
 

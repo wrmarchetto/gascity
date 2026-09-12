@@ -91,6 +91,44 @@ func claimPoolSlotWithConfigInfo(cfg *config.City, cfgAgent *config.Agent, info 
 	}
 }
 
+// claimWakeRehomePoolSlot claims the concrete slot a wake-known-identity
+// request names, or 0 when that slot cannot be served and the caller must fall
+// back to the lowest free one.
+//
+// This is the only allocator entry that reads an identity off a WORK bead
+// rather than off a session bead, and it has to be: a wake has no session bead
+// to point at -- that is what makes it a wake -- so the dead slot's name
+// survives nowhere else. Deliberately not folded into
+// claimPoolSlotWithConfigInfo, whose session.Info argument would have to be
+// forged from a string to carry this.
+//
+// Three refusals, and each one is load-bearing rather than defensive:
+//   - used[slot]: a slot another request already reserved this tick belongs to
+//     a session that is running now. Renaming it would strand work that IS
+//     being done to recover work that is not.
+//   - !usablePoolIdentitySlot: a slot number outside the agent's configured
+//     bound, which is what a bead stamped before max_active_sessions was
+//     lowered looks like. Honoring it would put a session outside the pool's
+//     own cap.
+//   - slot == 0: the assignee carries no slot number at all -- the bare pool
+//     door. That work is addressed to the pool, so any slot serves it.
+//
+// An alias collision with an unrelated live session is NOT refused here; that
+// is createPoolSessionBeadWithGuardedAlias's job, and for this caller its
+// handover predicate is exactly right -- the slot is reclaiming the alias from
+// its own outgoing incarnation.
+func claimWakeRehomePoolSlot(cfgAgent *config.Agent, wakeInstance string, used map[int]bool) int {
+	if cfgAgent == nil || cfgAgent.UsesCanonicalSingletonPoolIdentity() {
+		return 0
+	}
+	slot := resolvePersistedPoolIdentitySlot(cfgAgent, true, strings.TrimSpace(wakeInstance))
+	if !usablePoolIdentitySlot(cfgAgent, slot) || used[slot] {
+		return 0
+	}
+	used[slot] = true
+	return slot
+}
+
 // preferredPoolSlotAboveCapacityInfo recovers a preferred session's concrete
 // identity when the only configured bound it exceeds is max_active_sessions.
 //
