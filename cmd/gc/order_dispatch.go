@@ -370,6 +370,10 @@ type memoryOrderDispatcher struct {
 	cacheMu              sync.Mutex
 	lastRunCache         map[string]time.Time
 	gateBackoffUntil     map[string]time.Time
+	// nowFn reads wall time. Nil means time.Now, which is every production
+	// construction. It exists so a suite can drive the ring walk on a
+	// simulated clock; see wallNow.
+	nowFn func() time.Time
 
 	dispatchCtx    context.Context
 	dispatchCancel context.CancelFunc
@@ -556,6 +560,11 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 	}()
 	trackingIndex := newOrderDispatchTrackingIndex()
 	budgetSpent := 0
+	// The wall clock at the top of the ring walk, paired with `now` so the two
+	// can be differenced below. `now` is the caller's tick anchor and stays
+	// authoritative for what tick this is; tickWall is only ever used to
+	// measure how far into the tick a given order is being evaluated.
+	tickWall := m.wallNow()
 
 	total := len(m.aa)
 	if total == 0 {
@@ -580,6 +589,77 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		if m.orderRigSuspended(a) {
 			continue
 		}
+		// The instant THIS order is being evaluated, not the instant the tick
+		// began. Everything downstream that asks "how long since this order
+		// last ran" gets this.
+		//
+		// WHY IT IS NOT SIMPLY `now`. The cooldown clock an order is compared
+		// against is the CreatedAt of the tracking bead its previous run wrote
+		// (rememberLastRun below, read back as max(CreatedAt) by
+		// internal/orders/store_reads.go Store.LastRun), and that bead is
+		// written from inside this same loop. So an order evaluated late in
+		// the walk records a late clock, and with `now` pinned at the tick
+		// anchor the whole walk-to-here cost is subtracted from the next
+		// tick's elapsed -- the order is charged for the time the dispatcher
+		// spent on the orders AHEAD of it. Differencing against tickWall
+		// cancels that: both terms carry the same walk offset and what is left
+		// is the tick gap less this order's own gate and bead write.
+		//
+		// The correction only matters at the bottom of the schedule.
+		// checkCooldown absorbs the residual with a slack of
+		// min(tick/2, interval/6) -- 5s for a 30s order on the 30s grid, the
+		// smallest allowance any order gets -- and the walk cost crossed it.
+		//
+		// MEASURED, 2026-09-13, off the always-on controller trace rather
+		// than inferred from dispatch spacing (.gc/runtime/
+		// session-reconciler-trace, site_code orders.dispatch): the phase runs
+		// 6.7s p50 / 7.5s p90 for 41 orders, the tick itself starts on the
+		// grid (lateness p90 0.0s), and the work BEFORE `now` is 25ms p50. So
+		// the gap between the clock an order is compared against and its tick anchor is walk cost
+		// essentially in full. Joining each 30s-order dispatch to its trace
+		// cycle, the next-patrol fire rate is 0.86-1.00 for a gap in
+		// [0.5s, 4.5s] and 0.03 / 0.04 / 0.00 at 5.0 / 5.5 / 6.0s -- a step at
+		// exactly the 5s allowance. The three 30s orders delivered
+		// 1.42-1.53/min against 2.00 while every order at 2m and slower sat
+		// within 0.02/min of nominal (ci-l2n4i6).
+		//
+		// WHAT THIS DOES NOT FULLY CANCEL, so nobody reads it as a total fix:
+		// nextDispatchStart rotates the ring when the per-tick budget binds,
+		// so an order's walk offset at tick k+1 is not identical to its offset
+		// at k and the two terms only mostly cancel. A cycle is still lost
+		// when walk(k) - walk(k+1) plus the write this order does itself exceeds the
+		// allowance, estimated at a few percent of cycles against the ~25%
+		// measured above. Two further contributors are left standing and
+		// deliberately not addressed here: the per-tick budget, which 29% of
+		// patrol ticks now reach and which this change makes bind HARDER by
+		// putting the 30s orders back on every tick; and the phase cost
+		// itself, of which four event-trigger orders paying an uncached
+		// bdCursorAcrossStores scan each tick are the suspected bulk.
+		//
+		// THE REJECTED ALTERNATIVE is widening the allowance instead --
+		// flooring slack at a tick-scale quantity so it stops shrinking with
+		// the interval. It buys the same cycles and costs an invariant:
+		// slack*cooldownSlackIntervalDivisor <= interval is what bounds how
+		// early a poke tick can fire an order, and a tick-scale floor breaks
+		// it for every interval under two ticks
+		// (TestDefaultCooldownSlackStaysInsideItsTwoBounds). Correcting the
+		// measurement is free of that trade; the allowance keeps meaning what
+		// it says.
+		//
+		// A monotonic difference, deliberately, rather than a second
+		// time.Now() used directly: `now` is what names the tick to every
+		// other reader, and replacing it wholesale would move the cron
+		// window and the tracking-sweep watchdogs onto a different instant
+		// than the one the caller chose.
+		//
+		// The read is on its own line so that deleting the CORRECTION does
+		// not also delete the read. Wall time passes during the walk whether
+		// or not anything measures it, and a mutation that removed both would
+		// stop the clock as well as the fix -- which is exactly how
+		// TestCooldownDeadlineIsNotChargedTheRingWalkAheadOfIt first went
+		// green over its own defect.
+		sinceTickStart := m.wallNow().Sub(tickWall)
+		evalNow := now.Add(sinceTickStart)
 
 		target, err := resolveOrderStoreTarget(cityPath, m.cfg, a)
 		if err != nil {
@@ -632,7 +712,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		// These orders are still single-flight-bounded by their own cooldown
 		// interval plus the synchronous tracking bead created below.
 		if !a.NoWorkGate {
-			if m.gateBackoffActive(scoped, now) {
+			if m.gateBackoffActive(scoped, evalNow) {
 				continue
 			}
 			hasOpenTracking, err := gateOpenWorkBounded(ctx, orderGateTimeout, scoped, func() (bool, error) {
@@ -714,7 +794,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		// grid, not a different grid, and a clock-driven schedule has to be
 		// met by the clock-driven ticks.
 		triggerOpts.PatrolInterval = m.patrolInterval()
-		result := orders.CheckTriggerWithOptions(a, now, lastRunFn, m.ep, cursorFn, triggerOpts)
+		result := orders.CheckTriggerWithOptions(a, evalNow, lastRunFn, m.ep, cursorFn, triggerOpts)
 		if lastRunErr != nil {
 			logDispatchError(m.stderr, "gc: order dispatch: reading last run for %s: %v", a.ScopedName(), lastRunErr)
 			continue
@@ -741,7 +821,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 				refreshedLastRunFn := func(string) (time.Time, error) {
 					return refreshedLastRun, nil
 				}
-				result = orders.CheckTriggerWithOptions(a, now, refreshedLastRunFn, m.ep, cursorFn, triggerOpts)
+				result = orders.CheckTriggerWithOptions(a, evalNow, refreshedLastRunFn, m.ep, cursorFn, triggerOpts)
 				if !result.Due {
 					continue
 				}
@@ -1134,6 +1214,15 @@ func (m *memoryOrderDispatcher) legacyCityStoreForTarget(cityPath string, target
 // when the dispatcher was built without a city config -- which is the case in
 // the storeless CLI and API evaluators, and which correctly yields no cooldown
 // slack there.
+// wallNow reads the clock the ring walk advances against, defaulting to wall
+// time.
+func (m *memoryOrderDispatcher) wallNow() time.Time {
+	if m.nowFn != nil {
+		return m.nowFn()
+	}
+	return time.Now()
+}
+
 func (m *memoryOrderDispatcher) patrolInterval() time.Duration {
 	if m.cfg == nil {
 		return 0

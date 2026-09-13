@@ -10444,3 +10444,182 @@ func TestCountClosedOrderTrackingRetentionEligible(t *testing.T) {
 		}
 	})
 }
+
+// --- the cooldown deadline is charged this order's own latency, not the walk ---
+
+// ringWalkClock models the wall clock the ring walk advances against.
+//
+// Each read returns the tick anchor plus one more `step`, so the k-th order
+// the dispatcher reaches sees k*step of elapsed tick -- which is what the live
+// dispatcher does when it opens stores and runs a gate per order. `stamp`
+// returns the instant a tracking bead created at the current position is
+// written: that position plus this order's own write latency. Both are what
+// the production path produces, which is the only reason a simulated clock can
+// stand in for it here.
+//
+// It is injected rather than switched on: the dispatcher is told which clock
+// to read and the store is told which clock to stamp with, and neither is told
+// to skip anything. A flag that made the dispatcher bypass its own clock would
+// let the fix under test be deleted with this suite green.
+type ringWalkClock struct {
+	mu    sync.Mutex
+	tick  time.Time
+	step  time.Duration
+	write time.Duration
+	calls int
+	last  time.Time
+}
+
+func (c *ringWalkClock) startTick(at time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.tick = at
+	c.calls = 0
+	c.last = at
+}
+
+func (c *ringWalkClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	at := c.tick.Add(time.Duration(c.calls) * c.step)
+	c.calls++
+	c.last = at
+	return at
+}
+
+func (c *ringWalkClock) stamp() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last.Add(c.write)
+}
+
+// A cooldown order must be charged only its OWN dispatch latency, never the
+// time the tick spent on the orders ahead of it in the ring.
+//
+// THE DEFECT THIS PINS. The cooldown clock an order is compared against is the
+// CreatedAt of the tracking bead its previous run wrote, and that bead is
+// written from inside the ring walk. Comparing it against a `now` frozen at
+// the tick anchor subtracts the whole walk-to-here cost from the next tick's
+// elapsed. checkCooldown absorbs a residual of min(tick/2, interval/6), which
+// is 5s for a 30s order on the 30s grid -- the smallest allowance in the
+// schedule -- so the order at the bottom of the schedule is the one the walk
+// cost pushes past its deadline, and it then waits a whole further tick.
+// Measured on the live city 2026-09-13 over 719 dispatches: the three 30s
+// orders delivered 1.42-1.53/min against 2.00 demanded while every order at
+// 2m and slower sat within 0.02/min of nominal (ci-l2n4i6).
+//
+// WHY IT NEEDS THE DISPATCHER AND NOT checkCooldown. The suite in
+// internal/orders/cooldown_phase_test.go drives the same feedback loop and
+// goes green over this by construction: it hands checkCooldown a `now` and a
+// lastRun directly, so it can model a per-order latency but never the walk
+// that produces one. Only the real ring walk charges a late order more than an
+// early one.
+//
+// THE TWO CASES ARE A CONTROL AND THE MEASUREMENT, in that order, because the
+// measurement alone cannot be trusted to be measuring anything. `no walk ahead
+// of it` carries the same order and the same write latency with the ring cost
+// set to zero: it passes on the defective code too, which is what establishes
+// that the allowance covers this order's OWN write and that a failure in the
+// second case can only be the walk. Seen to fail, 2026-09-13: with the
+// correction removed the second case dispatched 20 times over 40 ticks -- the
+// every-other-tick spacing the live city shows -- while the first stayed
+// green.
+//
+// THE NUMBERS ARE DERIVED, not copied off the city. 24 filler orders ahead of
+// the fast one at 250ms each put its evaluation 6.0s into the tick, inside the
+// measured range for the last order dispatched in a tick: the trace that sized
+// dispatchWriteLatency in internal/orders read p90 2.38s at ring position 0
+// rising to 3.62s at position 7, for a ring that has since grown to 41 enabled
+// cooldown orders. Its own write is 400ms. Against a 30s interval on a 30s
+// grid the deadline is 25s, so charged the walk elapsed reads
+// 30 - 6.0 - 0.4 = 23.6s and the order fires every other tick; charged only
+// itself it reads 30 - 0.4 = 29.6s and fires on every one.
+//
+// WHAT THIS SUITE CANNOT REPRESENT, named so the gap is not mistaken for
+// coverage. Dolt rounds the CreatedAt of a bead to whole seconds, so the live
+// cooldown clock carries a +-0.5s quantization that a nanosecond MemStore
+// cannot produce -- which is why the live fire/skip step smears either side of
+// the 5s allowance while the step in the controller trace is sharp at exactly
+// 5.0s. It also drives the ring at a fixed walk offset per order, where
+// nextDispatchStart rotates the live ring whenever the per-tick budget binds;
+// the residual that rotation leaves is real and is recorded at the call site,
+// not covered here.
+//
+// THE PER-TICK BUDGET IS DISABLED HERE, deliberately. It is a second real
+// mechanism that drops dispatches -- measured at roughly a tenth of the same
+// shortfall -- and leaving it on would let these cases pass or fail for the
+// wrong reason. It is asserted off rather than merely set, so a future default
+// that ignores 0 cannot make them vacuous.
+func TestCooldownDeadlineIsNotChargedTheRingWalkAheadOfIt(t *testing.T) {
+	const (
+		tick    = 30 * time.Second
+		ticks   = 40
+		fillers = 24
+		write   = 400 * time.Millisecond
+	)
+	for _, tc := range []struct {
+		name string
+		step time.Duration
+	}{
+		{"no walk ahead of it", 0},
+		{"24 orders ahead of it", 250 * time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := &ringWalkClock{step: tc.step, write: write}
+			store := beads.NewMemStore()
+			store.Clock = clock.stamp
+
+			var aa []orders.Order
+			for i := 0; i < fillers; i++ {
+				// 6h, so every filler fires once on the first tick as
+				// "never run" and then stays quiet: they are here to cost
+				// ring-walk time, not to compete for dispatches.
+				aa = append(aa, orders.Order{
+					Name: fmt.Sprintf("filler-%02d", i), Trigger: "cooldown",
+					Interval: "6h", Exec: "true", NoWorkGate: true,
+				})
+			}
+			// Last in the ring, which is where the walk cost is largest.
+			aa = append(aa, orders.Order{
+				Name: "fast", Trigger: "cooldown", Interval: "30s",
+				Exec: "true", NoWorkGate: true,
+			})
+
+			ad := buildOrderDispatcherFromListExec(aa, store, nil, func(context.Context, string, string, []string) ([]byte, error) {
+				return []byte("ok\n"), nil
+			}, nil)
+			if ad == nil {
+				t.Fatal("expected non-nil dispatcher")
+			}
+			m := ad.(*memoryOrderDispatcher)
+			m.nowFn = clock.now
+			m.maxDispatchesPerTick = 0
+			if m.maxDispatchesPerTick > 0 {
+				t.Fatalf("per-tick budget is still %d; these cases measure the "+
+					"cooldown deadline, and a budget that binds would drop "+
+					"dispatches for a different reason", m.maxDispatchesPerTick)
+			}
+
+			dir := t.TempDir()
+			start := time.Date(2026, 9, 13, 3, 0, 0, 0, time.UTC)
+			for i := 0; i < ticks; i++ {
+				at := start.Add(time.Duration(i) * tick)
+				clock.startTick(at)
+				ad.dispatch(context.Background(), dir, at)
+				ad.drain(context.Background())
+			}
+
+			// An interval equal to the grid period can be served on every tick
+			// and on no more than every tick, so the expectation is the tick
+			// count -- derived from the grid, not read off a passing run.
+			got := len(trackingBeads(t, store, "order-run:fast"))
+			if got != ticks {
+				t.Fatalf("a 30s order on a %v grid dispatched %d times over %d "+
+					"ticks, want %d: with %v of ring walk ahead of it and a %v "+
+					"write of its own, its deadline is being charged both "+
+					"instead of only the second",
+					tick, got, ticks, ticks, time.Duration(fillers)*tc.step, write)
+			}
+		})
+	}
+}
