@@ -321,6 +321,7 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	register(doctor.NewControllerCheck(cityPath, controllerRunning))
 	register(doctor.NewSupervisorHTTPCheck(opts.SupervisorRunning))
 	register(doctor.NewSupervisorPackDriftCheck(opts.SupervisorRunning, opts.SupervisorPID, supervisorBundledPackHash))
+	register(newSupervisorUnitEnvDriftCheckForHost())
 
 	if cfgErr == nil && cfg != nil && !controllerRunning {
 		cityName := loadedCityName(cfg, cityPath)

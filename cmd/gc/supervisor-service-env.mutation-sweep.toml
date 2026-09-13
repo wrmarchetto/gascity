@@ -1,0 +1,240 @@
+# Mutation sweep for gs-cbhj: the supervisor service-environment declaration
+# and the doctor gate that compares an installed systemd unit against it.
+#
+# Each row flips one refusal to its accepting counterpart and requires the
+# suite to name the specific test that catches it. A gate whose green has
+# never been seen to turn red is not evidence, and gs-cbhj asked for this one
+# in particular -- "regenerate the unit with a flag deliberately omitted and
+# require the gate to go RED".
+#
+# repo is relative, so this sweeps the checkout the spec was read out of.
+
+[sweep]
+name = "supervisor service-env declaration and unit drift gate"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./cmd/gc/", "-run", "SupervisorServiceEnv|SupervisorUnitEnvDrift", "-count=1"]
+timeout_s = 900
+
+# --- the gate's three directions of disagreement ---
+
+[[mutation]]
+id = "gate-ignores-key-missing-from-unit"
+path = "cmd/gc/doctor_supervisor_unit_env.go"
+find = '''		case !inUnit && inDecl:
+			out = append(out, key+": declared, missing from the unit")'''
+replace = '''		case !inUnit && inDecl:'''
+expect_output = [
+  "FAIL: TestSupervisorUnitEnvDriftCatchesDroppedOptIn",
+  "FAIL: TestSupervisorUnitEnvDriftCatchesTheKeyNobodyListed",
+]
+
+[[mutation]]
+id = "gate-ignores-undeclared-unit-key"
+path = "cmd/gc/doctor_supervisor_unit_env.go"
+find = '''		case inUnit && !inDecl:
+			out = append(out, key+": present in the unit, not declared")'''
+replace = '''		case inUnit && !inDecl:'''
+expect_output = ["FAIL: TestSupervisorUnitEnvDriftCatchesUndeclaredUnitKey"]
+
+[[mutation]]
+id = "gate-ignores-changed-value"
+path = "cmd/gc/doctor_supervisor_unit_env.go"
+find = '''		case unitValue != declValue:
+			out = append(out, key+": declared and installed values differ")'''
+replace = '''		case unitValue != declValue:'''
+expect_output = ["FAIL: TestSupervisorUnitEnvDriftCatchesChangedValue"]
+
+# --- the gate's non-comparison outcomes ---
+
+[[mutation]]
+id = "absent-declaration-reads-as-ok"
+path = "cmd/gc/doctor_supervisor_unit_env.go"
+find = '''	if declared == nil {
+		return warnCheck(c.Name(),'''
+replace = '''	if declared == nil {
+		return okCheck(c.Name(), "no declaration") //nolint:staticcheck // mutation
+		return warnCheck(c.Name(),'''
+expect_output = ["FAIL: TestSupervisorUnitEnvDriftWarnsWhenDeclarationIsAbsent"]
+
+[[mutation]]
+id = "gate-leaks-values-in-details"
+path = "cmd/gc/doctor_supervisor_unit_env.go"
+find = '''			out = append(out, key+": declared, missing from the unit")'''
+replace = '''			out = append(out, key+": declared as "+declValue+", missing from the unit")'''
+expect_output = ["FAIL: TestSupervisorUnitEnvDriftRedactsValues"]
+
+# --- the declaration reader ---
+
+[[mutation]]
+id = "malformed-declaration-degrades-silently"
+path = "cmd/gc/supervisor_service_env.go"
+find = '''	if err := toml.Unmarshal(data, &decl); err != nil {
+		return nil, fmt.Errorf("parsing supervisor service env declaration %s: %w "+
+			"(fix or delete the file, then rerun 'gc supervisor install')", path, err)
+	}'''
+replace = '''	if err := toml.Unmarshal(data, &decl); err != nil {
+		return nil, nil
+	}'''
+expect_output = [
+  "FAIL: TestSupervisorServiceEnvMalformedDeclarationIsAnError",
+  "FAIL: TestSupervisorUnitEnvDriftErrorsOnMalformedDeclaration",
+]
+
+# sort.Strings(nil) rather than deleting the call: dropping it outright leaves
+# the sort import unused, and a build failure is red for the wrong reason.
+[[mutation]]
+id = "declaration-written-unsorted"
+path = "cmd/gc/supervisor_service_env.go"
+find = '''	sort.Strings(keys)'''
+replace = '''	sort.Strings(nil)'''
+expect_output = ["FAIL: TestSupervisorServiceEnvDeclarationRoundTrips"]
+
+[[mutation]]
+id = "declaration-written-world-readable"
+path = "cmd/gc/supervisor_service_env.go"
+find = '''	if err := tmp.Chmod(supervisorServiceFileMode); err != nil {'''
+replace = '''	if err := tmp.Chmod(0o644); err != nil {'''
+expect_output = ["FAIL: TestSupervisorServiceEnvDeclarationPermissions"]
+
+# --- the unit parser ---
+
+[[mutation]]
+id = "parser-keeps-surrounding-quotes"
+path = "cmd/gc/supervisor_service_env.go"
+find = '''		if strings.HasPrefix(value, `"`) {
+			unquoted, err := strconv.Unquote(value)
+			if err != nil {
+				return nil, fmt.Errorf("unit line %q has an unreadable quoted value: %w", line, err)
+			}
+			value = unquoted
+		}'''
+replace = '''		_ = strconv.Quote'''
+expect_output = ["FAIL: TestSupervisorServiceEnvUnitParserHandlesTemplateQuoting"]
+
+[[mutation]]
+id = "parser-splits-on-every-equals"
+path = "cmd/gc/supervisor_service_env.go"
+find = '''		name, value, ok := strings.Cut(assignment, "=")'''
+replace = '''		fields := strings.SplitN(assignment, "=", 3)
+		name, value, ok := fields[0], fields[1], len(fields) > 1'''
+expect_output = ["FAIL: TestSupervisorServiceEnvUnitParserHandlesTemplateQuoting"]
+
+# --- the env set every side is derived from ---
+
+[[mutation]]
+id = "envlines-drops-the-preserve-sessions-flag"
+path = "cmd/gc/supervisor_service_env.go"
+find = '''	out = append(out, supervisorServiceEnvVar{Name: supervisorPreserveSessionsOnSignalEnv, Value: "1"})'''
+replace = ''''''
+expect_output = [
+  "FAIL: TestSupervisorServiceEnvSystemdRenderMatchesRecordedUnit",
+  "FAIL: TestSupervisorServiceEnvOptInsSurviveAnEmptyEnvironment",
+]
+
+# --- the declaration tier inside env resolution ---
+
+[[mutation]]
+id = "declaration-tier-never-consulted"
+path = "cmd/gc/cmd_supervisor_lifecycle.go"
+find = '''	for key, val := range declared {
+		if val == "" {
+			continue
+		}
+		if _, ok := env[key]; ok {
+			continue
+		}
+		if !shouldPersistSupervisorEnv(key) && !explicitEnvKeySet[key] {
+			continue
+		}
+		env[key] = val
+	}'''
+replace = '''	_ = declared'''
+expect_output = ["FAIL: TestSupervisorServiceEnvLeanShellReproducesDeclaredValues"]
+
+[[mutation]]
+id = "declaration-tier-widens-persist-policy"
+path = "cmd/gc/cmd_supervisor_lifecycle.go"
+find = '''	for key, val := range declared {
+		if val == "" {
+			continue
+		}
+		if _, ok := env[key]; ok {
+			continue
+		}
+		if !shouldPersistSupervisorEnv(key) && !explicitEnvKeySet[key] {
+			continue
+		}
+		env[key] = val
+	}'''
+replace = '''	for key, val := range declared {
+		if val == "" {
+			continue
+		}
+		if _, ok := env[key]; ok {
+			continue
+		}
+		env[key] = val
+	}'''
+expect_output = [
+  "FAIL: TestSupervisorServiceEnvDeclarationCannotWidenPersistPolicy",
+  "FAIL: TestSupervisorServiceEnvDeclarationRespectsProviderCredOmit",
+]
+
+[[mutation]]
+id = "declaration-tier-outranks-the-shell"
+path = "cmd/gc/cmd_supervisor_lifecycle.go"
+find = '''	for key, val := range declared {
+		if val == "" {
+			continue
+		}
+		if _, ok := env[key]; ok {
+			continue
+		}
+		if !shouldPersistSupervisorEnv(key) && !explicitEnvKeySet[key] {
+			continue
+		}
+		env[key] = val
+	}'''
+replace = '''	for key, val := range declared {
+		if val == "" {
+			continue
+		}
+		if !shouldPersistSupervisorEnv(key) && !explicitEnvKeySet[key] {
+			continue
+		}
+		env[key] = val
+	}'''
+expect_output = ["FAIL: TestSupervisorServiceEnvShellWinsOverDeclaration"]
+
+[[mutation]]
+id = "xdg-runtime-dir-not-restored"
+path = "cmd/gc/cmd_supervisor_lifecycle.go"
+find = '''		xdgRuntimeDir = strings.TrimSpace(declared["XDG_RUNTIME_DIR"])'''
+replace = ''''''
+expect_output = ["FAIL: TestSupervisorServiceEnvDeclarationRestoresXDGRuntimeDir"]
+
+# --- where the install records the declaration ---
+
+[[mutation]]
+id = "install-records-nothing"
+path = "cmd/gc/cmd_supervisor_lifecycle.go"
+find = """	recordSupervisorServiceEnvDeclaration(data, stderr)
+	fmt.Fprintf(stdout, "Installed systemd service: %s\\n", path) //nolint:errcheck // best-effort stdout"""
+replace = """	fmt.Fprintf(stdout, "Installed systemd service: %s\\n", path) //nolint:errcheck // best-effort stdout"""
+expect_output = ["FAIL: TestSupervisorServiceEnvInstallRecordsTheDeclaration"]
+
+[[mutation]]
+id = "install-records-before-systemctl-succeeds"
+path = "cmd/gc/cmd_supervisor_lifecycle.go"
+find = """	if err := writeSupervisorServiceFile(path, []byte(content)); err != nil {
+		fmt.Fprintf(stderr, "gc supervisor install: writing unit: %v\\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}"""
+replace = """	if err := writeSupervisorServiceFile(path, []byte(content)); err != nil {
+		fmt.Fprintf(stderr, "gc supervisor install: writing unit: %v\\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	recordSupervisorServiceEnvDeclaration(data, stderr)"""
+expect_output = ["FAIL: TestSupervisorServiceEnvRollbackLeavesNoDeclaration"]
