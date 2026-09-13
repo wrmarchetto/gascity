@@ -54,6 +54,7 @@ beads-role
 controller
 supervisor-http-api
 supervisor-pack-drift
+supervisor-unit-env-drift
 agent-sessions
 zombie-sessions
 orphan-sessions

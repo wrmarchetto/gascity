@@ -1101,8 +1101,25 @@ func buildSupervisorServiceData() (*supervisorServiceData, error) {
 	homeDir, _ := os.UserHomeDir()
 	gcPath := resolveStableSupervisorBinaryPath(homeDir, stableSupervisorBinaryGopath(homeDir), gcExe)
 	home := supervisor.DefaultHome()
+	declared, err := loadSupervisorServiceEnvDeclaration()
+	if err != nil {
+		return nil, err
+	}
 	xdgRuntimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
+	if xdgRuntimeDir == "" {
+		// The one fixed key that can genuinely vanish. GC_HOME and PATH are
+		// always resolvable and the two opt-in flags are literals, but
+		// XDG_RUNTIME_DIR comes straight from the invoking environment: a
+		// unit regenerated from a cron- or ssh-style session drops the line
+		// and the supervisor loses its runtime directory. The declaration
+		// restores what the last install captured.
+		xdgRuntimeDir = strings.TrimSpace(declared["XDG_RUNTIME_DIR"])
+	}
 	if supervisor.UsesIsolatedGCHomeOverride() {
+		// Isolated homes keep their runtime state under GC_HOME so they
+		// cannot collide with the host supervisor's socket. This clear comes
+		// after the restore on purpose: a declaration recorded on the default
+		// home must not follow GC_HOME somewhere else.
 		xdgRuntimeDir = ""
 	}
 	return &supervisorServiceData{
@@ -1113,7 +1130,7 @@ func buildSupervisorServiceData() (*supervisorServiceData, error) {
 		LaunchdLabel:      supervisorLaunchdLabel(),
 		SafeName:          sanitizeServiceName(filepath.Base(home)),
 		Path:              searchpath.ExpandPath(homeDir, goruntime.GOOS, os.Getenv("PATH")),
-		ExtraEnv:          supervisorServiceExtraEnv(),
+		ExtraEnv:          supervisorServiceExtraEnv(declared),
 		PortInUseExitCode: supervisorExitCodePortInUse,
 	}, nil
 }
@@ -1220,7 +1237,11 @@ var supervisorServiceFixedEnvKeys = map[string]bool{
 	"XDG_RUNTIME_DIR":                     true,
 }
 
-func supervisorServiceExtraEnv() []supervisorServiceEnvVar {
+// supervisorServiceExtraEnv resolves the non-fixed service environment.
+// declared is the previous install's record (nil when there is none) and is
+// the LAST tier consulted: it fills what every live source left unset, so a
+// regeneration from a lean shell reproduces the unit instead of thinning it.
+func supervisorServiceExtraEnv(declared map[string]string) []supervisorServiceEnvVar {
 	env := make(map[string]string)
 	explicitEnvKeys := supervisorServiceExplicitEnvKeys(os.Getenv("GC_SUPERVISOR_ENV"))
 	explicitEnvKeySet := make(map[string]bool, len(explicitEnvKeys))
@@ -1290,6 +1311,26 @@ func supervisorServiceExtraEnv() []supervisorServiceEnvVar {
 			env[key] = val
 		}
 	}
+	// Last tier: the previous install's declaration. It restores a value the
+	// live environment no longer offers, and nothing more -- every key still
+	// has to clear the same persist gate the other tiers clear, so a file
+	// written by an earlier install can never widen the allowlist or outvote
+	// a GC_SUPERVISOR_ENV opt-in that has since been withdrawn. Absent on
+	// purpose, and the surprising half: a key captured under an opt-in that
+	// is no longer set does NOT come back.
+	for key, val := range declared {
+		if val == "" {
+			continue
+		}
+		if _, ok := env[key]; ok {
+			continue
+		}
+		if !shouldPersistSupervisorEnv(key) && !explicitEnvKeySet[key] {
+			continue
+		}
+		env[key] = val
+	}
+
 	// This process is a Gas City-owned recursive child. Assign the canonical
 	// fixed value after every inherited, explicit, secrets-file, and launchctl
 	// tier so none can re-enable product metrics in the service process.
@@ -1443,18 +1484,7 @@ const supervisorLaunchdTemplate = `<?xml version="1.0" encoding="UTF-8"?>
     <string>{{xmlesc .LogPath}}</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>GC_HOME</key>
-        <string>{{xmlesc .GCHome}}</string>
-        {{if .XDGRuntimeDir}}
-        <key>XDG_RUNTIME_DIR</key>
-        <string>{{xmlesc .XDGRuntimeDir}}</string>
-        {{end}}
-        <key>PATH</key>
-        <string>{{xmlesc .Path}}</string>
-        <key>GC_SUPERVISOR_PRESERVE_SESSIONS_ON_SIGNAL</key>
-        <string>1</string>
-        {{range .ExtraEnv}}
-        <key>{{xmlesc .Name}}</key>
+        {{range .EnvLines}}<key>{{xmlesc .Name}}</key>
         <string>{{xmlesc .Value}}</string>
         {{end}}
     </dict>
@@ -1482,11 +1512,7 @@ RestartSec=5s
 RestartPreventExitStatus={{.PortInUseExitCode}}
 StandardOutput=append:{{.LogPath}}
 StandardError=append:{{.LogPath}}
-Environment=GC_HOME="{{.GCHome}}"
-{{if .XDGRuntimeDir}}Environment=XDG_RUNTIME_DIR="{{.XDGRuntimeDir}}"
-{{end}}Environment=PATH="{{.Path}}"
-Environment=GC_SUPERVISOR_PRESERVE_SESSIONS_ON_SIGNAL="1"
-{{range .ExtraEnv}}Environment={{systemdenv .Name .Value}}
+{{range .EnvLines}}Environment={{systemdenv .Name .Value}}
 {{end}}
 
 [Install]
@@ -1853,6 +1879,29 @@ func warnSupervisorSystemdWarmRefreshPreservedUnit(stderr io.Writer, service str
 	fmt.Fprintf(stderr, "gc supervisor install: leaving refreshed systemd unit %s in place after warm-refresh failure; not restoring the previous unit because it may lack KillMode=process. Resolve the error, then run 'systemctl --user start %s' or rerun 'gc supervisor install'.\n", service, service) //nolint:errcheck // best-effort stderr
 }
 
+// recordSupervisorServiceEnvDeclaration persists the environment the install
+// just rendered into the service file, so the next regeneration reproduces it
+// rather than re-deriving it from whatever shell runs that install.
+//
+// It runs only on the success path: on a rollback the restored service file
+// is the previous one, and a declaration describing the abandoned render
+// would put the doctor gate in a red state the operator did not cause.
+//
+// A failure here warns rather than failing the install. The service is
+// already installed and running at this point, so returning nonzero would
+// send `gc supervisor start` down its bare-start fallback over a bookkeeping
+// error. The cost of the warning being missed is bounded and visible: the
+// gate reports the declaration as absent until the next successful install.
+func recordSupervisorServiceEnvDeclaration(data *supervisorServiceData, stderr io.Writer) {
+	if err := writeSupervisorServiceEnvDeclaration(data.EnvLines()); err != nil {
+		fmt.Fprintf(stderr, //nolint:errcheck // best-effort stderr
+			"gc supervisor install: warning: recording the service environment declaration: %v. "+
+				"The service file is installed and running; 'gc doctor' will report "+
+				"supervisor-unit-env-drift as unrecorded until a later 'gc supervisor install' succeeds.\n",
+			err)
+	}
+}
+
 func installSupervisorLaunchd(data *supervisorServiceData, stdout, stderr io.Writer) int {
 	sweepStaleIsolatedSupervisorServices(stderr)
 	content, err := renderSupervisorTemplate(supervisorLaunchdTemplate, data)
@@ -1882,6 +1931,7 @@ func installSupervisorLaunchd(data *supervisorServiceData, stdout, stderr io.Wri
 		}
 	}
 	if contentUnchanged && supervisorAliveHook() != 0 {
+		recordSupervisorServiceEnvDeclaration(data, stderr)
 		fmt.Fprintf(stdout, "Installed launchd service: %s\n", path) //nolint:errcheck // best-effort stdout
 		return 0
 	}
@@ -1920,6 +1970,7 @@ func installSupervisorLaunchd(data *supervisorServiceData, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "gc supervisor install: warning: %v\n", err) //nolint:errcheck // best-effort stderr
 	}
 
+	recordSupervisorServiceEnvDeclaration(data, stderr)
 	fmt.Fprintf(stdout, "Installed launchd service: %s\n", path) //nolint:errcheck // best-effort stdout
 	return 0
 }
@@ -2151,6 +2202,7 @@ func installSupervisorSystemd(data *supervisorServiceData, stdout, stderr io.Wri
 
 	ensureSupervisorLinger(stdout, stderr)
 
+	recordSupervisorServiceEnvDeclaration(data, stderr)
 	fmt.Fprintf(stdout, "Installed systemd service: %s\n", path) //nolint:errcheck // best-effort stdout
 	return 0
 }
