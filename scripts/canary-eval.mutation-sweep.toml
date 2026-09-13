@@ -1,0 +1,172 @@
+# Proves every refusal in scripts/canary-eval.py is actually enforced.
+#
+# The evaluator's value is almost entirely in what it REFUSES to answer. A
+# version of it that answered "keep" wherever it could not measure would pass a
+# read of the suite, pass every happy-path assertion, and retire the epic's
+# open question by silence -- which is the one outcome the commissioning bead
+# (gs-jbyc) says must not happen. So each row below flips one refusal to its
+# accepting counterpart and requires the suite to go red.
+#
+# NOT SWEPT here, deliberately: whether the figures the evaluator reads are the
+# right figures. The join, the de-duplication and the window bounds belong to
+# `gc usage` and `bd`, which have their own suites; this sweep is about the
+# decision layer alone.
+
+[sweep]
+name = "canary-eval refuses to answer when it cannot separate the regimes"
+repo = ".."
+
+[sweep.gate]
+argv = ["go", "test", "./scripts/", "-count=1", "-run", "TestCanary"]
+timeout_s = 600
+
+# The control exists so a fleet-wide move is not read as one agent's
+# regression. Flipped, a control breach is simply ignored and the subject's
+# crossing -- caused by the same fleet-wide move -- reverts a level on evidence
+# that says nothing about it.
+[[mutation]]
+id = "control-breach-ignored"
+path = "scripts/canary-eval.py"
+find = '''        elif role == "control":'''
+replace = '''        elif role == "control" and False:'''
+expect_output = ["TestCanaryAMovedControlVoidsTheRunInsteadOfRevertingASubject"]
+
+# A void must outrank a revert, because both are true at once exactly when the
+# control says the revert is not attributable.
+[[mutation]]
+id = "revert-outranks-void"
+path = "scripts/canary-eval.py"
+find = '''    if voids:
+        verdict, code = "no-verdict", EXIT_NO_VERDICT
+    elif reverts:
+        verdict, code = "revert", EXIT_REVERT'''
+replace = '''    if reverts:
+        verdict, code = "revert", EXIT_REVERT
+    elif voids:
+        verdict, code = "no-verdict", EXIT_NO_VERDICT'''
+expect_output = ["TestCanaryAMovedControlVoidsTheRunInsteadOfRevertingASubject"]
+
+# The sample floor on the window side. Flipped, a window holding three beads
+# answers with the same confidence as one holding three hundred.
+[[mutation]]
+id = "window-sample-floor-removed"
+path = "scripts/canary-eval.py"
+find = '''    if win_value is None or have_win < floor:'''
+replace = '''    if win_value is None:'''
+expect_output = ["TestCanaryARowUnderItsBeadFloorIsNoVerdictNotAPass"]
+
+# The day floor. Flipped, a single day's burst satisfies a rule whose margin
+# was derived from day-to-day spread -- the one quantity a single day cannot
+# be compared against.
+[[mutation]]
+id = "day-floor-removed"
+path = "scripts/canary-eval.py"
+find = '''    if len(window.days) < min_days:'''
+replace = '''    if False:'''
+expect_output = ["TestCanaryARowUnderItsDayFloorIsNoVerdictNotAPass"]
+
+# The witness. Flipped, a row whose level never reached a running session is
+# compared against the wrong regime and reported as a clean result.
+[[mutation]]
+id = "witness-never-checked"
+path = "scripts/canary-eval.py"
+find = '''    if spec.get("witness") == "output_per_invocation_not_up":'''
+replace = '''    if False:'''
+expect_output = ["TestCanaryAWitnessGoingTheWrongWayVoidsTheRow"]
+
+# The witness for a row judged on what it AUTHORED. Flipped back to the bead
+# join, it is silently absent for exactly that row -- the agent that closes no
+# beads of its own -- so a planner still running the old level reads clean.
+[[mutation]]
+id = "authored-row-witness-read-off-the-join"
+path = "scripts/canary-eval.py"
+find = '''        base_opi = baseline_witness.output_per_invocation
+        win_opi = window_witness.output_per_invocation'''
+replace = '''        base_opi = baseline.output_per_invocation
+        win_opi = window.output_per_invocation'''
+expect_output = ["TestCanaryAnAuthoredRateRowStillGetsAWitness"]
+
+# Cost sharing across a session that closed several beads. Flipped, a session
+# that finished three beads reads as three times more expensive than one that
+# finished one, which inverts the metric.
+[[mutation]]
+id = "shared-session-charged-in-full"
+path = "scripts/canary-eval.py"
+find = '''        share = 1.0 / len(held)'''
+replace = '''        share = 1.0'''
+expect_output = ["TestCanaryASessionHoldingSeveralBeadsSplitsItsCost"]
+
+# report-only rows are the thin agents, which cross any line on noise alone.
+# Flipped, they vote, and the run answers at random rather than declining.
+[[mutation]]
+id = "report-only-rows-vote"
+path = "scripts/canary-eval.py"
+find = '''        if role == "subject":'''
+replace = '''        if role in ("subject", "report-only"):'''
+expect_output = ["TestCanaryReportOnlyRowsNeverChangeTheVerdict"]
+
+# The line is recomputed from the baseline. Flipped to a literal, the tool
+# still passes every happy-path assertion while comparing against a figure
+# that no longer tracks the log it came from.
+[[mutation]]
+id = "line-pinned-instead-of-recomputed"
+path = "scripts/canary-eval.py"
+find = '''    line = base_value * (1.0 + margin)'''
+replace = '''    line = 24.0'''
+expect_output = ["TestCanaryTheLineIsRecomputedFromTheBaselineNotPinnedInTheCriteria"]
+
+# An agent the window never observed. Flipped, it is silently inside its line,
+# and the epic is declared safe for an agent no measurement covered.
+[[mutation]]
+id = "unmeasured-agent-reads-as-inside"
+path = "scripts/canary-eval.py"
+find = '''            elif state != "inside":
+                voids.append(f"{agent_type}: {state} ({detail})")'''
+replace = '''            elif state == "never-happens":
+                voids.append(f"{agent_type}: {state} ({detail})")'''
+expect_output = ["TestCanaryAnAgentWithNoWindowDataIsNoVerdictNotAPass"]
+
+# The machinery filter. Flipped, this city's ~9,000 daily order-tracking
+# records land in the per-bead denominator and every regression reads as a
+# large improvement.
+[[mutation]]
+id = "machinery-beads-counted-as-work"
+path = "scripts/canary-eval.py"
+find = '''def is_work_bead(bead):
+    """Whether a bead record is a unit of delivered work."""'''
+replace = '''def is_work_bead(bead):
+    """Whether a bead record is a unit of delivered work."""
+    return True'''
+expect_output = ["TestCanaryMachineryBeadsAreNotUnitsOfWork"]
+
+# Local-day bucketing for the day floor. Flipped to UTC, the floor counts a
+# calendar that does not match the window the baseline states.
+[[mutation]]
+id = "day-floor-counts-utc-days"
+path = "scripts/canary-eval.py"
+find = '''        .astimezone(LOCAL)'''
+replace = '''        .astimezone(timezone.utc)'''
+expect_output = ["TestCanaryDayFloorCountsLocalDaysNotUTCDays"]
+
+# An unrecorded verdict is not a pass. Flipped, the authored-fail rate falls
+# whenever outcome recording slips, which reads as the planner improving.
+[[mutation]]
+id = "unrecorded-outcome-counts-as-a-verdict"
+path = "scripts/canary-eval.py"
+find = '''        if outcome is None:
+            continue
+        sample.verdicts += 1'''
+replace = '''        sample.verdicts += 1'''
+expect_output = ["TestCanaryAuthorFailRateUnderItsVerdictFloorIsNoVerdict"]
+
+# Every crossed subject is named, not just the first. A revert decision is per
+# agent, so a report that stopped at the first crossing would leave a level
+# un-reverted with the run reading as handled.
+[[mutation]]
+id = "only-the-first-crossing-is-reported"
+path = "scripts/canary-eval.py"
+find = '''            if state == "crossed":
+                reverts.append(agent_type)'''
+replace = '''            if state == "crossed" and not reverts:
+                reverts.append(agent_type)'''
+expect_output = ["TestCanaryEveryCrossedSubjectIsNamedNotJustTheFirst"]
