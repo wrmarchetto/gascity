@@ -39,6 +39,16 @@ type MemStore struct {
 	// keyed by bead ID then key. Deliberately excluded from
 	// restoreFrom/snapshot so FileStore's disk persistence never touches it.
 	localStrings map[string]map[string]string
+
+	// Clock supplies the CreatedAt/UpdatedAt stamp. Nil means time.Now, which
+	// is every existing caller. It exists because a bead's CreatedAt IS the
+	// order dispatcher's cooldown clock (internal/orders/store_reads.go
+	// Store.LastRun reduces to max(CreatedAt)), so a suite driving the
+	// dispatcher across a simulated tick grid has to stamp on that grid --
+	// a wall-clock stamp against a simulated `now` yields an elapsed of days
+	// and every cooldown reads due. Injected rather than switched: the store
+	// is told which clock to read, never told to skip the stamp.
+	Clock func() time.Time
 }
 
 var _ ConditionalAssignmentReleaser = (*MemStore)(nil)
@@ -46,6 +56,16 @@ var _ ConditionalAssignmentReleaser = (*MemStore)(nil)
 // NewMemStore returns a new empty MemStore.
 func NewMemStore() *MemStore {
 	return &MemStore{}
+}
+
+// now reads the stamp clock, defaulting to wall time. Round(0) strips the
+// monotonic reading so a stamp compares against a caller-supplied time the
+// same way a stamp read back off disk does.
+func (m *MemStore) now() time.Time {
+	if m.Clock != nil {
+		return m.Clock().Round(0)
+	}
+	return time.Now().Round(0)
 }
 
 // NewMemStoreFrom returns a MemStore seeded with existing beads, deps, and
@@ -109,7 +129,7 @@ func (m *MemStore) Create(b Bead) (Bead, error) {
 	if b.Type == "" {
 		b.Type = "task"
 	}
-	b.CreatedAt = time.Now().Round(0)
+	b.CreatedAt = m.now()
 	b.UpdatedAt = b.CreatedAt
 	b.Revision = 1   // first version; every subsequent mutation bumps it
 	b.ClaimFence = 0 // no ownership history yet; the first claim bumps it to 1

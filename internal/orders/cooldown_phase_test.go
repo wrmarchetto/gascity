@@ -10,11 +10,28 @@
 // defective code. Only driving the tick loop, with the recorded last-run fed
 // back the way the dispatcher feeds it back, goes red.
 //
-// The loop here mirrors cmd/gc/order_dispatch.go: `now` is captured once at
-// tick start (see the tick-start comment at order_dispatch.go:646), and the
-// remembered last-run is the tracking bead's CreatedAt, written after the
-// gates and Dolt reads that precede it (order_dispatch.go:691, :781). The
-// gap between the two is dispatchWriteLatency below.
+// The loop here mirrors cmd/gc/order_dispatch.go: the remembered last-run is
+// the tracking bead's CreatedAt, written after this order's own gates and
+// Dolt reads, and `now` is the instant the order is EVALUATED. The gap
+// between the two is dispatchWriteLatency below.
+//
+// THAT SECOND CLAUSE CHANGED, and with it what the constant means. `now` used
+// to be the tick anchor, frozen before the ring walk, so the gap carried the
+// cost of every order dispatched ahead of this one as well as its own write
+// -- and on a ring that had grown to 41 enabled cooldown orders that sum
+// crossed the 5s allowance a 30s order gets, costing the three fastest orders
+// about a quarter of their cycles (ci-l2n4i6). The dispatcher now differences
+// against the wall clock at the walk position, which cancels the shared
+// prefix; the residual this suite models is the write this order does itself.
+// dispatchWriteLatency was measured on the old basis and is therefore a
+// conservative upper bound on the new one, which is the safe direction for a
+// suite whose whole job is to prove the allowance covers it. It is NOT a
+// current measurement of the residual and must not be cited as one.
+//
+// The cmd/gc-side case is TestCooldownDeadlineIsNotChargedTheRingWalkAheadOfIt,
+// which drives the real ring walk; this suite structurally cannot, because it
+// hands checkCooldown a `now` and a lastRun directly and so has no walk to
+// charge.
 //
 // WHAT THIS SUITE CANNOT REPRESENT, so it does not pretend to: the poke ticks
 // that arm from event traffic. Live, they land between patrol ticks and let a
@@ -65,9 +82,15 @@ const dispatchWriteLatency = 3620 * time.Millisecond
 // runPatrolLoop drives count patrol ticks at period tick and returns the
 // times at which the order was dispatched.
 //
-// lastRun is fed back as (tick + latency), which is what the dispatcher
-// durably records. tick is passed through TriggerOptions as the grid period,
-// leaving the slack sizing where the implementation owns it.
+// lastRun is fed back as (evaluation instant + latency), which is what the
+// dispatcher durably records. tick is passed through TriggerOptions as the
+// grid period, leaving the slack sizing where the implementation owns it.
+//
+// The evaluation instant is the tick here, with no walk offset, and the
+// absence is deliberate rather than an omission: a constant offset added to
+// every tick cancels out of the difference and would model nothing, and a
+// VARYING one is the dispatcher-side concern that
+// TestCooldownDeadlineIsNotChargedTheRingWalkAheadOfIt owns.
 func runPatrolLoop(a Order, start time.Time, tick, latency time.Duration, count int) []time.Time {
 	var lastRun time.Time
 	var fires []time.Time

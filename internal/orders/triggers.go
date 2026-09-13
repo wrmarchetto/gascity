@@ -137,6 +137,25 @@ func CheckTriggerWithOptions(a Order, now time.Time, lastRunFn LastRunFunc, ep e
 // clock to stop being a timestamp written after the work
 // (cmd/gc/order_dispatch.go:781), which is a change to the bead write path
 // and is deliberately NOT attempted here.
+//
+// WHAT THE ALLOWANCE NO LONGER HAS TO COVER, since the figures above were
+// taken: the rest of the tick. Those position-dependent numbers are the walk
+// -- the dispatcher opening stores and running a gate for each order ahead of
+// this one -- and the caller now differences against the wall clock at the
+// walk position rather than the tick anchor, so that shared prefix cancels
+// and only the write this order does itself is charged (ci-l2n4i6). The sizing above
+// therefore has MORE margin than it was given, not less, and 6 is left where
+// it is: the tail it was chosen against is the per-order tail, which nobody
+// has re-measured in isolation. Re-deriving the divisor from the smaller
+// residual would trade real margin for a number with no measurement behind
+// it.
+//
+// IT REMAINS THE SMALLEST ALLOWANCE ANY ORDER GETS, and that is structural:
+// interval/6 shrinks with the interval while the latency it compensates does
+// not, so the fastest order on any schedule is always the first to be pushed
+// past its deadline. Nothing here fails when that happens -- the city-side
+// check doctor/order-capacity names the orders short of their own configured
+// rate, and it is the only instrument that would.
 const cooldownSlackIntervalDivisor = 6
 
 // defaultCooldownSlack sizes the dispatch-latency allowance for one order.
