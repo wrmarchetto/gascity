@@ -223,6 +223,14 @@ def measure_authored(beads, author):
     return sample
 
 
+def format_value(metric, value):
+    if value is None:
+        return "-"
+    if metric == "author_fail_rate":
+        return f"{100 * value:.2f}%"
+    return f"{value:,.2f}"
+
+
 def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     """Judge one criteria row, returning (state, line, detail).
 
@@ -246,9 +254,17 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     else:
         raise SystemExit(f"canary-eval: unknown metric {metric!r} in criteria")
 
-    if base_value is None or have_base < floor:
+    # The two sides are not the same size and never will be: the baseline is a
+    # closed window that cannot grow while the canary window is twice its
+    # length. A floor sized for the window is therefore unsatisfiable on the
+    # baseline side, and the row reports no-baseline forever rather than
+    # failing conservatively. The default is still the window's floor, so
+    # omitting the key can only tighten, never loosen.
+    baseline_floor = int(spec.get("min_baseline_" + floor_key[4:], floor))
+
+    if base_value is None or have_base < baseline_floor:
         return ("no-baseline", None,
-                f"baseline {floor_key}={have_base} under floor {floor}")
+                f"baseline {floor_key}={have_base} under floor {baseline_floor}")
     if win_value is None or have_win < floor:
         return ("insufficient", None,
                 f"window {floor_key}={have_win} under floor {floor}")
@@ -281,15 +297,9 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
                     "the row is probably not running the level under test")
 
     state = "crossed" if win_value > line else "inside"
-    return (state, line, f"{base_value:,.2f} -> {win_value:,.2f}, line {line:,.2f}")
-
-
-def format_value(metric, value):
-    if value is None:
-        return "-"
-    if metric == "author_fail_rate":
-        return f"{100 * value:.2f}%"
-    return f"{value:,.2f}"
+    shown = format_value(metric, base_value), format_value(metric, win_value), \
+        format_value(metric, line)
+    return (state, line, f"{shown[0]} -> {shown[1]}, line {shown[2]}")
 
 
 def main(argv=None):
@@ -396,14 +406,14 @@ def main(argv=None):
         }, indent=1))
         return code
 
-    print(f"{'agent':<24}{'role':<12}{'metric':<22}"
+    print(f"{'agent':<26}{'role':<12}{'metric':<22}"
           f"{'baseline':>12}{'window':>12}{'line':>12}  state")
     for row in rows:
-        print(f"{row['type']:<24}{row['role']:<12}{row['metric']:<22}"
+        print(f"{row['type']:<26}{row['role']:<12}{row['metric']:<22}"
               f"{format_value(row['metric'], row['baseline']):>12}"
               f"{format_value(row['metric'], row['window']):>12}"
               f"{format_value(row['metric'], row['line']):>12}  {row['state']}")
-        print(f"{'':<24}{row['detail']}")
+        print(f"{'':<26}{row['detail']}")
     print()
     print(f"VERDICT: {verdict}")
     for agent in reverts:

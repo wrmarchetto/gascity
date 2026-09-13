@@ -352,6 +352,59 @@ func TestCanaryARowUnderItsBeadFloorIsNoVerdictNotAPass(t *testing.T) {
 	}
 }
 
+// TestCanaryTheBaselineFloorIsSeparateFromTheWindowFloor pins a distinction
+// the first cut of this tool got wrong.
+//
+// The two sides of the comparison are not the same size and never will be:
+// the baseline is a closed six-day window that cannot grow, and the canary
+// window is twice that. A single floor sized for the window is therefore
+// unsatisfiable on the baseline side, and the row reports "no-baseline"
+// forever -- which is not a conservative failure, it is a row that silently
+// never participates. Found by running the evaluator against the real
+// baseline before the window opened; the planner row was dead on arrival.
+//
+// The default is deliberately the strict one: a row that names no baseline
+// floor gets the window's, so forgetting the key cannot loosen anything.
+func TestCanaryTheBaselineFloorIsSeparateFromTheWindowFloor(t *testing.T) {
+	strict := `
+schema = 1
+
+[[agent]]
+type = "alpha"
+role = "subject"
+metric = "invocations_per_bead"
+margin = 0.20
+min_beads = 10
+min_days = 3
+witness = "none"
+`
+	var baseSess, winSess []canarySession
+	baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
+	winBeads := canaryBeads("win", 12, 3, 20, "alpha", &winSess)
+
+	withoutFloor := runCanaryEval(t, canaryFixture{
+		criteria: strict, baselineUsage: baseSess, windowUsage: winSess,
+		baselineBeads: baseBeads, windowBeads: winBeads,
+	})
+	if withoutFloor.exit != canaryExitNoVerdict {
+		t.Fatalf("exit = %d, want %d; a baseline under the shared floor must "+
+			"not be judged\nstdout:\n%s",
+			withoutFloor.exit, canaryExitNoVerdict, withoutFloor.stdout)
+	}
+
+	relaxed := strings.Replace(strict, "min_beads = 10",
+		"min_beads = 10\nmin_baseline_beads = 5", 1)
+	withFloor := runCanaryEval(t, canaryFixture{
+		criteria: relaxed, baselineUsage: baseSess, windowUsage: winSess,
+		baselineBeads: baseBeads, windowBeads: winBeads,
+	})
+	if withFloor.exit != canaryExitKeep {
+		t.Fatalf("exit = %d, want %d; min_baseline_beads did not relax the "+
+			"baseline side\nstdout:\n%s",
+			withFloor.exit, canaryExitKeep, withFloor.stdout)
+	}
+}
+
 // TestCanaryARowUnderItsDayFloorIsNoVerdictNotAPass gives the window enough
 // beads but delivers all of them on one day.
 //

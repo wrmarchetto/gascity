@@ -1,0 +1,258 @@
+# Revert criteria for epic:agent-efficiency, fixed before the window opened.
+#
+# Read engdocs/contributors/agent-efficiency-canary.md first. It carries the
+# measured spread every margin below was derived from, what each agent's level
+# changed from and to, and -- the part no threshold can express -- the size of
+# regression this window is too small to see.
+#
+# This file is the criterion. The prose is the reasoning; if the two ever
+# disagree, scripts/canary-eval.py reads THIS, and the disagreement is a bug in
+# the document.
+#
+# EVERY MARGIN HERE WAS CHOSEN BEFORE ANY WINDOW FIGURE EXISTED, on
+# 2026-09-12, from the gs-cm0w baseline alone. Changing one after the window
+# closes converts a criterion into a rationalization, which is the specific
+# failure gs-jbyc was written to prevent. If a margin turns out to be wrong,
+# say so in the writeup and leave the number alone -- a recorded wrong
+# threshold is evidence; a quietly corrected one is not.
+#
+# No baseline figure appears in this file. The evaluator recomputes the
+# baseline side from the stated window on every run, because a figure copied
+# out of the log is a second copy of a derived value and drifts from it.
+
+schema = 1
+
+# --- how each margin was derived ---
+#
+# margin = max(A, B), rounded up to the next 5%, where for each agent:
+#
+#   A  the largest single-day excursion of its per-bead figure above its own
+#      six-day baseline mean
+#   B  three standard deviations of that figure's day-to-day spread, divided
+#      by sqrt(3) -- a 14-day window read as only three independent blocks of
+#      work rather than fourteen independent days
+#
+# B's sqrt(3) is deliberately pessimistic. Measured on the baseline, averaging
+# days shrank the spread about as fast as independent days would (2-day block
+# ratios 0.38 / 0.79 / 0.75 against the 0.71 independence predicts), which
+# argues for sqrt(14) and much tighter lines. Three blocks was kept anyway:
+# that measurement rests on three blocks of its own and cannot carry the
+# weight, and a line placed too tight fires on every agent at once during one
+# hard week -- the exact failure mode gs-jbyc names.
+#
+# The cost of the pessimism is stated rather than hidden: it is why the
+# smallest regression this canary can catch is 25-57% depending on the agent,
+# and why a 10% real regression passes silently. See the document.
+#
+# The rate metric uses the same 3-sigma convention over a two-sample binomial
+# standard error rather than a day-to-day spread, because a rate over a few
+# hundred verdicts is dominated by counting noise and its day-to-day swing IS
+# that noise -- the planner's own authored-fail rate moved between 0% and
+# 12.5% across single baseline days purely on n around 40.
+#
+# EACH ROW CARRIES TWO SAMPLE FLOORS. The baseline is a closed six-day window
+# that cannot grow; the canary window is fourteen days. One floor sized for
+# the window is unsatisfiable on the baseline side and the row then reports
+# no-baseline forever, which is a row that silently never participates rather
+# than a conservative failure. Found by running the evaluator against the real
+# baseline before the window opened -- the planner row was dead on arrival at
+# min_verdicts = 400.
+
+# --- subjects: agents whose level gs-yvxt actually changed ---
+
+# max -> xhigh, opus-5 unchanged. The tightest spread of any subject, because
+# it is the second highest-volume agent in the fleet.
+[[agent]]
+type = "lab.engineer"
+role = "subject"
+metric = "invocations_per_bead"
+margin = 0.20                      # max(13% day, 17% 3sd)
+min_beads = 96                     # the baseline's own count; 14 days projects ~224
+min_baseline_beads = 90
+min_days = 7
+witness = "output_per_invocation_not_up"
+
+# max -> high, fable-5 unchanged. A two-step drop, and the agent that closes
+# more beads than any other in the city.
+[[agent]]
+type = "lab.pm"
+role = "subject"
+metric = "invocations_per_bead"
+margin = 0.30                      # max(22% day, 25% 3sd)
+min_beads = 303
+min_baseline_beads = 280
+min_days = 7
+witness = "output_per_invocation_not_up"
+
+# max -> xhigh, opus-5 unchanged. Bursty: two sessions on one baseline day and
+# forty-eight on another, which is most of why its margin is wider than the
+# lab engineer's on the same effort change.
+[[agent]]
+type = "bench-engineer"
+role = "subject"
+metric = "invocations_per_bead"
+margin = 0.30                      # max(20% day, 27% 3sd)
+min_beads = 64
+min_baseline_beads = 58
+min_days = 7
+witness = "output_per_invocation_not_up"
+
+# max -> high, fable-5 unchanged. Ten invocations a bead, so its per-bead
+# figure is the noisiest of the judged rows and its line is correspondingly
+# the loosest.
+[[agent]]
+type = "governor"
+role = "subject"
+metric = "invocations_per_bead"
+margin = 0.45                      # max(32% day, 42% 3sd)
+min_beads = 67
+min_baseline_beads = 60
+min_days = 7
+witness = "output_per_invocation_not_up"
+
+# max -> xhigh, reversing a decision taken deliberately on 2026-08-11: "the
+# mayor keeps max, because it holds the plan and one bad judgment there
+# cascades" (a2ca19b). That makes this the highest-stakes row in the epic.
+#
+# It is judged on the beads it AUTHORED, not on what its own session cost,
+# because a planner's token spend says how hard it thought and never whether
+# it thought correctly. Baseline 11 failures in 243 authored verdicts.
+#
+# The margin was 0.75 in the first draft of this file, from a one-sample
+# calculation that treated the baseline rate as exact. CORRECTED to 1.05 on
+# 2026-09-12, still before the window opened and with no window figure in
+# existence, after redoing it as a two-sample comparison: the baseline is 243
+# verdicts, not infinitely many, and its own uncertainty is most of the total.
+# Pooled standard error 1.59%, so 0.75 put the line at 2.2 sigma where every
+# other row here sits at 3. 1.05 puts it at 9.28%, 2.98 sigma. The original
+# figure is recorded rather than quietly replaced, because a threshold whose
+# history is erased cannot be told from one that was tuned.
+#
+# The mayor is ALSO the one row whose level cannot be confirmed from config:
+# it is a single always-awake session that a supervisor restart does not
+# recycle. Confirm it from the live process command line before trusting this
+# row -- the document carries the exact check and the trap that caught the
+# last reader.
+[[agent]]
+type = "mayor"
+role = "subject"
+metric = "author_fail_rate"
+author = "mayor"
+margin = 1.05
+min_verdicts = 400                 # 14 days projects ~567 authored verdicts
+min_baseline_verdicts = 200        # the baseline's own count is 243 and cannot grow
+min_days = 7
+witness = "output_per_invocation_not_up"
+
+# --- controls: agents whose level did NOT change ---
+#
+# A control that moves says the fleet moved, and nothing measured in that run
+# can be attributed to the effort change. The evaluator therefore lets a
+# control VOID the run rather than revert anything.
+
+# Pinned to opus-5 / high on 2026-08-11 (a2ca19b), a month before the baseline
+# window opened, so both sides of this comparison run the same level. It is
+# also the highest-volume agent in the fleet and has the tightest spread of
+# any row here, which makes it the most sensitive drift detector available --
+# the control is the row most likely to notice a fleet-wide change, not the
+# least.
+#
+# a2ca19b left an explicit, never-resolved revert criterion for this agent:
+# "Revert to max if bead quality drops -- more re-derived work, more wrong
+# turns, more beads closed fail -- judged over a day rather than one bead."
+# This window settles it as a side effect, which is why the row is measured
+# and reported rather than merely excluded.
+[[agent]]
+type = "toolsmith"
+role = "control"
+metric = "invocations_per_bead"
+margin = 0.20                      # max(14% day, 17% 3sd)
+min_beads = 291
+min_baseline_beads = 270
+min_days = 7
+witness = "none"
+
+# gpt-5.6-terra / high on both sides: packs/lab/agents/engineer-codex is one
+# of the few agent files gs-yvxt did not touch. A second control on a
+# DIFFERENT provider, so a change that reached only the Claude lane cannot
+# hide behind it and a change that reached both is visible as such.
+#
+# Its margin is nearly four times the Claude engineer's on the same metric.
+# That is the measurement, not a concession: its per-bead figure swung -70% to
+# +33% across baseline days, and a control this noisy can only void a run on a
+# large move.
+[[agent]]
+type = "lab.engineer-codex"
+role = "control"
+metric = "invocations_per_bead"
+margin = 0.75                      # max(33% day, 70% 3sd)
+min_beads = 60
+min_baseline_beads = 54
+min_days = 7
+witness = "none"
+
+# --- report-only: measured, never allowed to decide ---
+#
+# Each of these had fewer than eight joinable beads in the baseline, or a
+# regime change inside the baseline window itself. They are kept in the table
+# because an agent silently dropped from a comparison is a missing
+# measurement that looks like a clean one -- but a row this thin crosses any
+# line on noise alone, so none of them votes.
+
+# max -> high, sonnet unchanged. Three baseline beads. The bench lane's
+# throughput is set by operator sittings, not by reasoning effort, so this row
+# is expected to stay uninformative however long the window runs.
+[[agent]]
+type = "bench-sitting-astoria"
+role = "report-only"
+metric = "invocations_per_bead"
+margin = 0.45
+min_beads = 8
+min_days = 5
+witness = "none"
+
+# City default effort high after gs-yvxt, opus-5. Too few joinable beads to
+# rank in the baseline's per-bead table at all.
+[[agent]]
+type = "bd.dog"
+role = "report-only"
+metric = "invocations_per_bead"
+margin = 0.45
+min_beads = 8
+min_days = 5
+witness = "none"
+
+# max -> high, fable-5 unchanged. Five sessions in the whole baseline window.
+[[agent]]
+type = "adversarial-reader-claude"
+role = "report-only"
+metric = "invocations_per_bead"
+margin = 0.45
+min_beads = 8
+min_days = 5
+witness = "none"
+
+# EXCLUDED FROM ATTRIBUTION, and this one is not about sample size. Both codex
+# agents below moved from gpt-5.6-terra to gpt-6-astra on 2026-09-05 (0629341)
+# -- inside the baseline window -- and their effort moved with it. Their
+# baseline is therefore a blend of two regimes and their window is a third,
+# and none of that is gs-yvxt's doing. They are reported so the fleet table is
+# complete and so nobody re-derives this in a month; any move in these two
+# rows belongs to 0629341, not to this epic.
+[[agent]]
+type = "toolsmith-codex"
+role = "report-only"
+metric = "invocations_per_bead"
+margin = 0.75
+min_beads = 13
+min_days = 5
+witness = "none"
+
+[[agent]]
+type = "bench-operator-codex"
+role = "report-only"
+metric = "invocations_per_bead"
+margin = 0.75
+min_beads = 9
+min_days = 5
+witness = "none"
