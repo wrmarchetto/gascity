@@ -145,7 +145,9 @@ func closeSessionBeadIfReachableStoreUnassignedWithTerminalPatch(
 	}
 	assignedWorkProbe := sessionHasOpenAssignedWorkForReachableStore
 	if excludeOwnDrainStep {
-		assignedWorkProbe = sessionHasOpenAssignedWorkForReachableStoreForCloseGate
+		assignedWorkProbe = func(cityPath string, cfg *config.City, store beads.Store, rigStores map[string]beads.Store, info sessionpkg.Info) (bool, error) {
+			return sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, info, true)
+		}
 	}
 	hasAssignedWork, err := assignedWorkProbe(cityPath, cfg, store, rigStores, info)
 	if err != nil {
