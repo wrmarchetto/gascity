@@ -652,6 +652,54 @@ func TestCanaryAuthorFailRateUnderItsVerdictFloorIsNoVerdict(t *testing.T) {
 	}
 }
 
+// TestCanaryABeadWithNoRecordedOutcomeIsNotAPass pads the window with
+// authored beads that closed without any gc.outcome at all.
+//
+// This is the majority case, not an edge: 581 of the 1,153 work beads in the
+// gs-cm0w baseline window carry no outcome, and 72 of the 315 the planner
+// authored are in that state. Counting them as verdicts would put them in the
+// denominator as passes, so the measured rate would fall whenever outcome
+// recording slipped -- and slipping recording would read as the planner
+// improving. The fixture holds a genuine 25% window rate that only survives
+// if unrecorded beads stay out of the count entirely: fold them in and the
+// same failures read as 8.3%, comfortably inside the line.
+func TestCanaryABeadWithNoRecordedOutcomeIsNotAPass(t *testing.T) {
+	mk := func(prefix string, n, fails, unrecorded int) []canaryBead {
+		out := make([]canaryBead, 0, n+unrecorded)
+		for i := 0; i < n; i++ {
+			outcome := "pass"
+			if i < fails {
+				outcome = "fail"
+			}
+			out = append(out, canaryBead{
+				ID: fmt.Sprintf("%s-b%d", prefix, i), IssueType: "task",
+				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
+				CreatedBy: "alpha",
+				Metadata:  map[string]string{"gc.outcome": outcome},
+			})
+		}
+		for i := 0; i < unrecorded; i++ {
+			out = append(out, canaryBead{
+				ID: fmt.Sprintf("%s-u%d", prefix, i), IssueType: "task",
+				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
+				CreatedBy: "alpha",
+				Metadata:  map[string]string{},
+			})
+		}
+		return out
+	}
+	got := runCanaryEval(t, canaryFixture{
+		criteria:      authorCriteria,
+		baselineBeads: mk("base", 20, 2, 0),
+		windowBeads:   mk("win", 20, 5, 40),
+	})
+	if got.exit != canaryExitRevert {
+		t.Fatalf("exit = %d, want %d (revert); beads that closed with no "+
+			"recorded outcome were counted as passes\nstdout:\n%s",
+			got.exit, canaryExitRevert, got.stdout)
+	}
+}
+
 // TestCanaryAnAuthoredRateRowStillGetsAWitness closes the gap that the
 // witness had while it was read off the bead join.
 //

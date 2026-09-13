@@ -157,7 +157,7 @@ find = '''        if outcome is None:
             continue
         sample.verdicts += 1'''
 replace = '''        sample.verdicts += 1'''
-expect_output = ["TestCanaryAuthorFailRateUnderItsVerdictFloorIsNoVerdict"]
+expect_output = ["TestCanaryABeadWithNoRecordedOutcomeIsNotAPass"]
 
 # Every crossed subject is named, not just the first. A revert decision is per
 # agent, so a report that stopped at the first crossing would leave a level
