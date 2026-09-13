@@ -587,7 +587,7 @@ func finalizeDrainAckStoppedSession(
 			Payload:   api.SessionLifecyclePayloadJSON(info.ID, template, "drain acknowledged"),
 		})
 	}
-	hasAssignedWork, assignedErr := sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, info)
+	hasAssignedWork, assignedErr := sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, info, true)
 	if assignedErr != nil {
 		fmt.Fprintf(stderr, "session reconciler: checking assigned work for drain-acked %s: %v\n", name, assignedErr) //nolint:errcheck
 		hasAssignedWork = true
@@ -654,7 +654,7 @@ func finalizeDrainAckStoppedSession(
 			recordStopped(false)
 			return drainAckFinalizeResult{witnessInfo: &witnessInfo}
 		}
-		assignedAfterCloseGate, closeGateAssignedErr := sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, info)
+		assignedAfterCloseGate, closeGateAssignedErr := sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, info, true)
 		if closeGateAssignedErr != nil {
 			fmt.Fprintf(stderr, "session reconciler: checking assigned work after failed drain-ack close gate for %s: %v\n", name, closeGateAssignedErr) //nolint:errcheck
 			assignedAfterCloseGate = true
@@ -2452,7 +2452,7 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 						continue
 					}
 					if alive {
-						hasAssignedWork, assignedErr := sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, infoByID[id])
+						hasAssignedWork, assignedErr := sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, infoByID[id], true)
 						if assignedErr != nil {
 							fmt.Fprintf(stderr, "session reconciler: checking assigned work for drain-acked %s: %v\n", name, assignedErr) //nolint:errcheck
 							hasAssignedWork = true
@@ -3890,7 +3890,27 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 		poolFreeable := !shouldWake && !target.alive && isPoolSessionSlotFreeableInfo(info) && isPoolManagedSessionInfo(info)
 		if poolFreeable {
 			var assignedErr error
-			hasAssignedWork, assignedErr = sessionHasOpenAssignedWorkForReachableStore(cityPath, cfg, store, rigStores, info)
+			// The close-gate probe, with the own-drain-step exclusion OFF. Only
+			// the queue-alias half is wanted here: on a canonical singleton pool
+			// the slot's alias and the pool's queue address are the same string,
+			// so open unpinned work merely ADDRESSED to the alias is the next
+			// occupant's, not this one's, and counting it made the release
+			// unsatisfiable -- the holder can only give the alias up by being
+			// closed, and the close was refused because work was addressed to
+			// the alias. Same shape drain-ack hit at ci-fx4duc; this is the
+			// pool-slot-release half of it, measured on bench-engineer over
+			// ~8h of stalled queue (ci-l38chb).
+			//
+			// in_progress is never excluded by that half, which is exactly the
+			// discriminator this gate needs: a claim is instance ownership under
+			// whichever identity it was claimed, so a session that stalled
+			// mid-task still pins its slot and keeps its context.
+			//
+			// excludeOwnDrainStep stays FALSE: that exclusion belongs to the
+			// drain-ack finalize decision alone, where the session has already
+			// signaled completion of the step. Here it has not, and a session
+			// still owing its own drain step is not idle.
+			hasAssignedWork, assignedErr = sessionHasOpenAssignedWorkForReachableStoreForCloseGate(cityPath, cfg, store, rigStores, info, false)
 			if assignedErr != nil {
 				fmt.Fprintf(stderr, "session reconciler: checking assigned work for drained %s: %v\n", name, assignedErr) //nolint:errcheck
 				hasAssignedWork = true
@@ -4174,6 +4194,7 @@ func sessionHasOpenAssignedWorkForReachableStoreForCloseGate(
 	store beads.Store,
 	rigStores map[string]beads.Store,
 	info sessionpkg.Info,
+	excludeOwnDrainStep bool,
 ) (bool, error) {
 	identifiers := sessionAssignmentIdentifiersForConfigInfo(info, cfg)
 	queueAliases := poolQueueAliasIdentities(info)
@@ -4182,7 +4203,7 @@ func sessionHasOpenAssignedWorkForReachableStoreForCloseGate(
 		return false, err
 	}
 	for _, s := range stores {
-		if has, err := sessionHasOpenAssignedWorkInStoreByIdentifiersForCloseGate(s, identifiers, queueAliases); err != nil || has {
+		if has, err := sessionHasOpenAssignedWorkInStoreByIdentifiersForCloseGate(s, identifiers, queueAliases, excludeOwnDrainStep); err != nil || has {
 			return has, err
 		}
 	}
@@ -4220,11 +4241,11 @@ func poolQueueAliasIdentities(info sessionpkg.Info) map[string]struct{} {
 	return aliases
 }
 
-func sessionHasOpenAssignedWorkInStoreByIdentifiersForCloseGate(store beads.Store, identifiers []string, queueAliases map[string]struct{}) (bool, error) {
-	return sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store, identifiers, []string{"open", "in_progress"}, queueAliases)
+func sessionHasOpenAssignedWorkInStoreByIdentifiersForCloseGate(store beads.Store, identifiers []string, queueAliases map[string]struct{}, excludeOwnDrainStep bool) (bool, error) {
+	return sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store, identifiers, []string{"open", "in_progress"}, queueAliases, excludeOwnDrainStep)
 }
 
-func sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store beads.Store, identifiers []string, statuses []string, queueAliases map[string]struct{}) (bool, error) {
+func sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store beads.Store, identifiers []string, statuses []string, queueAliases map[string]struct{}, excludeOwnDrainStep bool) (bool, error) {
 	if store == nil {
 		return false, nil
 	}
@@ -4240,10 +4261,10 @@ func sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store bea
 			}
 			seen[key] = struct{}{}
 			_, viaQueueAlias := queueAliases[assignee]
-			if has, err := sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierIssues, true, viaQueueAlias); err != nil || has {
+			if has, err := sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierIssues, true, viaQueueAlias, excludeOwnDrainStep); err != nil || has {
 				return has, err
 			}
-			if has, err := sessionHasOpenAssignedWispWorkForCloseGate(store, assignee, status, viaQueueAlias); err != nil || has {
+			if has, err := sessionHasOpenAssignedWispWorkForCloseGate(store, assignee, status, viaQueueAlias, excludeOwnDrainStep); err != nil || has {
 				return has, err
 			}
 		}
@@ -4255,13 +4276,13 @@ func sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store bea
 // but filters through hasNonSessionNonOwnDrainStepWork instead of the shared
 // wa.HasNonSessionWork, so the drain-step exclusion cannot leak into
 // sessionHasOpenAssignedWorkForTier's other caller (the awake-work chain).
-func sessionHasOpenAssignedWorkForTierForCloseGate(store beads.Store, assignee, status string, tierMode beads.TierMode, live, viaQueueAlias bool) (bool, error) {
+func sessionHasOpenAssignedWorkForTierForCloseGate(store beads.Store, assignee, status string, tierMode beads.TierMode, live, viaQueueAlias, excludeOwnDrainStep bool) (bool, error) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: store})
 	items, err := wa.OpenAssignedTo(assignee, status, tierMode, live)
 	if err != nil {
 		return false, err
 	}
-	return hasNonSessionNonOwnDrainStepWork(store, items, viaQueueAlias), nil
+	return hasNonSessionNonOwnDrainStepWork(store, items, viaQueueAlias, excludeOwnDrainStep), nil
 }
 
 // sessionHasOpenAssignedWispWorkForCloseGate mirrors sessionHasOpenAssignedWispWork
@@ -4269,8 +4290,8 @@ func sessionHasOpenAssignedWorkForTierForCloseGate(store beads.Store, assignee, 
 // path: that cache is a positive-only accelerator built on the shared
 // wa.HasNonSessionWork filter, and drain-ack is not a hot loop, so the extra
 // live read here is cheap and keeps the exclusion correct rather than stale.
-func sessionHasOpenAssignedWispWorkForCloseGate(store beads.Store, assignee, status string, viaQueueAlias bool) (bool, error) {
-	return sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierWisps, true, viaQueueAlias)
+func sessionHasOpenAssignedWispWorkForCloseGate(store beads.Store, assignee, status string, viaQueueAlias, excludeOwnDrainStep bool) (bool, error) {
+	return sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierWisps, true, viaQueueAlias, excludeOwnDrainStep)
 }
 
 // hasNonSessionNonOwnDrainStepWork is wa.HasNonSessionWork plus two close-gate
@@ -4281,12 +4302,12 @@ func sessionHasOpenAssignedWispWorkForCloseGate(store beads.Store, assignee, sta
 //
 // The name is left naming two of the three exclusions rather than renamed, to
 // keep this upstream-owned chain a minimal diff; the list here is the contract.
-func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, viaQueueAlias bool) bool {
+func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, viaQueueAlias, excludeOwnDrainStep bool) bool {
 	for _, item := range items {
 		if sessionpkg.IsSessionBeadOrRepairable(item) {
 			continue
 		}
-		if isSessionOwnDrainStepBead(store, item) {
+		if excludeOwnDrainStep && isSessionOwnDrainStepBead(store, item) {
 			continue
 		}
 		if viaQueueAlias && isUnpinnedQueuedWorkBead(item) {

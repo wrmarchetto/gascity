@@ -58,10 +58,21 @@ func TestIsPoolSessionSlotFreeable_Matrix(t *testing.T) {
 		{"asleep+failed-create", map[string]string{"state": "asleep", "sleep_reason": "failed-create"}, true},
 		{"asleep+runtime-missing", map[string]string{"state": "asleep", "sleep_reason": string(sessionpkg.SleepReasonRuntimeMissing)}, true},
 		{"asleep+provider-terminal-error", map[string]string{"state": "asleep", "sleep_reason": string(sessionpkg.SleepReasonProviderTerminalError)}, true},
+		{"asleep+assigned-work-exhausted", map[string]string{"state": "asleep", "sleep_reason": string(sessionpkg.SleepReasonAssignedWorkExhausted)}, true},
 		{"asleep+empty-reason", map[string]string{"state": "asleep", "sleep_reason": ""}, false},
 		{"asleep+missing-reason", map[string]string{"state": "asleep"}, false},
 		{"asleep+wait-hold", map[string]string{"state": "asleep", "sleep_reason": "wait-hold"}, false},
 		{"asleep+context-churn", map[string]string{"state": "asleep", "sleep_reason": "context-churn"}, false},
+		// The four rows below are the ABSENCES isPoolSessionSlotFreeable's
+		// header argues for, pinned so widening the allowlist to any of them
+		// has to change this table and answer that argument. max-session-age
+		// is the one a reader will reach for first: it produces the same
+		// starved-alias shape, but no occurrence has been measured and
+		// DecideMaxSessionAge cannot stop a session that holds work.
+		{"asleep+max-session-age", map[string]string{"state": "asleep", "sleep_reason": string(sessionpkg.SleepReasonMaxSessionAge)}, false},
+		{"asleep+quarantine", map[string]string{"state": "asleep", "sleep_reason": string(sessionpkg.SleepReasonQuarantine)}, false},
+		{"asleep+rate-limit", map[string]string{"state": "asleep", "sleep_reason": string(sessionpkg.SleepReasonRateLimit)}, false},
+		{"asleep+user-hold", map[string]string{"state": "asleep", "sleep_reason": string(sessionpkg.SleepReasonUserHold)}, false},
 		{"asleep+unknown", map[string]string{"state": "asleep", "sleep_reason": "future-reason"}, false},
 		{"awake", map[string]string{"state": "awake"}, false},
 		{"creating", map[string]string{"state": "creating"}, false},

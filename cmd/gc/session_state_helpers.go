@@ -63,6 +63,36 @@ func poolSessionIsLiveInfo(i sessionpkg.Info) bool {
 // failure, so its slot must be reaped — otherwise the dead bead and its worktree
 // leak indefinitely while still excluded from pool capacity.
 //
+// A session stopped by the assigned-work-exhausted backstop is freeable for
+// the same reason as idle: DecideAssignedWorkExhausted fires only after the
+// session has re-deferred the idle kill on one anchor bead past the
+// consecutive-defer limit, which is the reconciler concluding that this
+// incarnation will not make progress. Leaving its slot occupied made the
+// conclusion unactionable -- on a canonical singleton pool the alias IS the
+// queue address, so the dead holder absorbed every later assignment while
+// nothing could wake it (ComputeAwakeSet matches no alias) and nothing could
+// replace it (its resume request spends the only cap slot). Measured on the
+// live city 2026-09-13: bench-engineer sessions ci-5co05c and ci-v2ocb2 each
+// held the alias ~4h against a ready P1, freed only by a hand-run
+// `gc session close` (ci-l38chb). The close itself stays gated on the
+// session owning no claim -- see the pool-slot-release probe at the
+// reconciler's poolFreeable site.
+//
+// ABSENT, and each absence is a decision:
+//
+//   - max-session-age. The same starvation is REACHABLE through it, but
+//     DecideMaxSessionAge has no override for its assigned-work defer rung, so
+//     it can only stop a session that holds nothing, and no occurrence has
+//     been measured. Predicted, not observed; adding it needs its own evidence.
+//   - context-churn, quarantine, rate_limit. Each parks a bead the recovery
+//     path still needs: churn feeds the circuit breaker, a quarantined bead
+//     must keep consuming pool demand for its whole window
+//     (reusablePoolSessionInfo says why), and a rate-limited session resumes
+//     when its account window resets. Freeing any of them spawns a
+//     replacement into the condition the park exists to wait out.
+//   - user-hold, wait-hold. Deliberate parks; freeing them discards an
+//     operator's or a human gate's intent.
+//
 // An explicit sleep_reason is required: deny-by-default for unknown or
 // missing reasons so writes that land in state=asleep without a known
 // reason (legacy beads, regressions, write races) cannot silently free
@@ -78,7 +108,8 @@ func isPoolSessionSlotFreeable(session beads.Bead) bool {
 	switch reason {
 	case string(sessionpkg.SleepReasonIdle), string(sessionpkg.SleepReasonIdleTimeout),
 		string(sessionpkg.SleepReasonCityStop), string(sessionpkg.SleepReasonFailedCreate),
-		string(sessionpkg.SleepReasonRuntimeMissing), string(sessionpkg.SleepReasonProviderTerminalError):
+		string(sessionpkg.SleepReasonRuntimeMissing), string(sessionpkg.SleepReasonProviderTerminalError),
+		string(sessionpkg.SleepReasonAssignedWorkExhausted):
 		return true
 	}
 	return false
@@ -96,7 +127,8 @@ func isPoolSessionSlotFreeableInfo(i sessionpkg.Info) bool {
 	switch reason {
 	case string(sessionpkg.SleepReasonIdle), string(sessionpkg.SleepReasonIdleTimeout),
 		string(sessionpkg.SleepReasonCityStop), string(sessionpkg.SleepReasonFailedCreate),
-		string(sessionpkg.SleepReasonRuntimeMissing), string(sessionpkg.SleepReasonProviderTerminalError):
+		string(sessionpkg.SleepReasonRuntimeMissing), string(sessionpkg.SleepReasonProviderTerminalError),
+		string(sessionpkg.SleepReasonAssignedWorkExhausted):
 		return true
 	}
 	return false
