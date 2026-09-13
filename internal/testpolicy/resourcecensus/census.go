@@ -204,8 +204,15 @@ var bootstrapPolicy = Ledger{
 			// the other requires every directive form the gate accepts to be
 			// one shellcheck parses. A stand-in for shellcheck would answer
 			// both from the stand-in and prove nothing.
-			BaselineCalls:   625,
-			BaselineFiles:   183,
+			// +1 call / 1 file (gs-jbyc): scripts/canary_eval_test.go drives
+			// scripts/canary-eval.py as a real subprocess. The script IS the
+			// artifact under test -- it is the committed enforcement of the
+			// agent-efficiency revert criteria -- and its contract is its three
+			// exit codes, which only a real process carries. One literal
+			// exec.Command serves all eighteen tests through runCanaryEval; a
+			// second would be new debt for no gain.
+			BaselineCalls:   626,
+			BaselineFiles:   184,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -276,8 +283,11 @@ var bootstrapPolicy = Ledger{
 			// scope and summed over the same 414/121 base.
 			// +6 calls / 1 file (gs-dzj): the shell-lint gate's contract suite,
 			// recorded on the all-source audit row above and counted again here.
-			BaselineCalls:   426,
-			BaselineFiles:   125,
+			// +1 call / 1 file (gs-jbyc): the canary evaluator's contract
+			// suite, recorded on the all-source audit row above and counted
+			// again here.
+			BaselineCalls:   427,
+			BaselineFiles:   126,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -652,8 +662,15 @@ var bootstrapPolicy = Ledger{
 			// fixture is a t.TempDir() git repository and the gate only reads
 			// the tree it is pointed at -- so nothing about them wants a Medium
 			// declaration; they are irreducible rather than heavy.
-			BaselineCalls:   415,
-			BaselineFiles:   119,
+			// +1 call / 1 file (gs-jbyc): the canary evaluator's contract
+			// suite, which stays Small debt for the same reason. Its one spawn
+			// runs a pure Python evaluator over files in a t.TempDir() -- no
+			// network, no store, no process state -- and the eighteen tests
+			// share it through runCanaryEval. An exact Medium owner would not
+			// cover it anyway: the call sits in a helper, and a resource inside
+			// a helper stays Small debt however Medium its callers are.
+			BaselineCalls:   416,
+			BaselineFiles:   120,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",

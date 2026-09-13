@@ -6,6 +6,15 @@ comparison against the figures below, and a comparison is only as good as the
 window it names -- so the window, what produced it, and what it cannot show
 are all part of the record.
 
+That canary opened on 2026-09-13 and its revert criteria, the measured spread
+they were derived from, and the regressions it is too small to catch are in
+[`agent-efficiency-canary.md`](agent-efficiency-canary.md). One figure here is
+load-bearing for it and easy to miss: the per-bead and per-type numbers below
+are means over a six-day window, and their DAY-TO-DAY spread -- not shown
+here, measured in the canary document -- is two to five times what resampling
+the beads suggests. A threshold set from these means alone fires on ordinary
+work-mix variation.
+
 Reproduce any figure here with:
 
 ```bash

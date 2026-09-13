@@ -43,8 +43,14 @@ resource = "subprocess"
 # building the fixture repositories the gate enumerates with `git ls-files`,
 # and shellcheck itself. Two of those tests exist to measure the REAL linter,
 # so a stand-in would answer from the stand-in. See census.go.
-baseline_calls = 625
-baseline_files = 183
+# +1 call / 1 file (gs-jbyc): scripts/canary_eval_test.go drives
+# scripts/canary-eval.py as a real subprocess. The script IS the artifact under
+# test -- it is the committed enforcement of the agent-efficiency revert
+# criteria -- and its contract is its three exit codes, which only a real
+# process carries. One literal exec.Command serves all eighteen tests through
+# runCanaryEval; a second would be new debt for no gain.
+baseline_calls = 626
+baseline_files = 184
 reported_calls = 495
 reported_files = 135
 owner_bead = "ga-80po0c.2"
@@ -109,8 +115,10 @@ resource = "subprocess"
 # 414/121 base.
 # +6 calls / 1 file (gs-dzj): the shell-lint gate's contract suite, recorded on
 # the all-source audit row above and counted again here.
-baseline_calls = 426
-baseline_files = 125
+# +1 call / 1 file (gs-jbyc): the canary evaluator's contract suite, recorded
+# on the all-source audit row above and counted again here.
+baseline_calls = 427
+baseline_files = 126
 reported_calls = 380
 reported_files = 98
 owner_bead = "ga-80po0c.2"
@@ -479,8 +487,14 @@ resource = "subprocess"
 # Small debt. Its spawns are cheap and hermetic -- each fixture is a
 # t.TempDir() git repository and the gate only reads the tree it is pointed at
 # -- so they are irreducible rather than heavy.
-baseline_calls = 415
-baseline_files = 119
+# +1 call / 1 file (gs-jbyc): the canary evaluator's contract suite, which
+# stays Small debt for the same reason. Its one spawn runs a pure Python
+# evaluator over files in a t.TempDir() -- no network, no store, no process
+# state -- and the eighteen tests share it through runCanaryEval. An exact
+# Medium owner would not cover it anyway: the call sits in a helper, and a
+# resource inside a helper stays Small debt however Medium its callers are.
+baseline_calls = 416
+baseline_files = 120
 reported_calls = 394
 reported_files = 105
 owner_bead = "ga-80po0c.2.1"
