@@ -62,6 +62,7 @@ type canarySession struct {
 	Invocations int      `json:"invocations"`
 	OutputToks  int      `json:"output_tokens"`
 	CacheRead   int      `json:"cache_read_tokens"`
+	SpanSeconds float64  `json:"span_seconds_lower_bound"`
 }
 
 // canaryBead is one row of bd list --json, reduced the same way.
@@ -844,6 +845,79 @@ witness = "none"
 		if !strings.Contains(got.stdout, want) {
 			t.Fatalf("revert verdict omits %q:\n%s", want, got.stdout)
 		}
+	}
+}
+
+// TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric pins the
+// reported columns against quiet loss.
+//
+// gs-jbyc asks the window to compare per-bead tokens, wall-clock and rework
+// signals. Only one figure fires the revert rule -- deliberately, since the
+// lever under test moves tokens per turn by construction -- but the other two
+// are part of the answer, and a tool that computed them and printed only its
+// own trigger would satisfy every other test in this file while delivering
+// less than was asked for.
+//
+// Wall-clock carries its observation count beside it. The baseline records a
+// span for most sessions and a true wall-clock for 8.5% of them, so a row
+// reporting a small number needs to say whether that is a short window or a
+// thin one; a bare figure cannot distinguish not-observed from zero.
+func TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric(t *testing.T) {
+	var baseSess, winSess []canarySession
+	baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
+	winBeads := canaryBeads("win", 6, 3, 20, "alpha", &winSess)
+	for i := range winSess {
+		winSess[i].SpanSeconds = 900
+	}
+	for i := range baseSess {
+		baseSess[i].SpanSeconds = 600
+	}
+	got := runCanaryEval(t, canaryFixture{
+		criteria: oneSubjectCriteria, baselineUsage: baseSess, windowUsage: winSess,
+		baselineBeads: baseBeads, windowBeads: winBeads,
+		extraArguments: []string{"--json"},
+	})
+	var doc struct {
+		Rows []struct {
+			Type                 string   `json:"type"`
+			BaselineOutputPerB   *float64 `json:"baseline_output_tokens_per_bead"`
+			WindowOutputPerBead  *float64 `json:"window_output_tokens_per_bead"`
+			BaselineCachePerBead *float64 `json:"baseline_cache_read_tokens_per_bead"`
+			WindowCachePerBead   *float64 `json:"window_cache_read_tokens_per_bead"`
+			BaselineSpanPerBead  *float64 `json:"baseline_span_seconds_per_bead"`
+			WindowSpanPerBead    *float64 `json:"window_span_seconds_per_bead"`
+			WindowSpanObserved   *int     `json:"window_span_observed_beads"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &doc); err != nil {
+		t.Fatalf("parse --json output: %v\n%s", err, got.stdout)
+	}
+	if len(doc.Rows) != 1 {
+		t.Fatalf("want 1 row, got %d", len(doc.Rows))
+	}
+	row := doc.Rows[0]
+	for name, field := range map[string]*float64{
+		"baseline_output_tokens_per_bead":     row.BaselineOutputPerB,
+		"window_output_tokens_per_bead":       row.WindowOutputPerBead,
+		"baseline_cache_read_tokens_per_bead": row.BaselineCachePerBead,
+		"window_cache_read_tokens_per_bead":   row.WindowCachePerBead,
+		"baseline_span_seconds_per_bead":      row.BaselineSpanPerBead,
+		"window_span_seconds_per_bead":        row.WindowSpanPerBead,
+	} {
+		if field == nil {
+			t.Fatalf("json row carries no %s:\n%s", name, got.stdout)
+		}
+	}
+	if *row.WindowOutputPerBead != 20000 {
+		t.Fatalf("window output tokens per bead = %v, want 20000", *row.WindowOutputPerBead)
+	}
+	if *row.WindowSpanPerBead != 900 {
+		t.Fatalf("window span seconds per bead = %v, want 900", *row.WindowSpanPerBead)
+	}
+	if row.WindowSpanObserved == nil || *row.WindowSpanObserved != 6 {
+		t.Fatalf("window span observation count missing or wrong; a span figure "+
+			"with no count cannot distinguish a thin window from a short one: %v",
+			row.WindowSpanObserved)
 	}
 }
 

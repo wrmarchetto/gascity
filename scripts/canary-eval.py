@@ -130,6 +130,13 @@ class Sample:
         self.invocations = 0.0
         self.output_tokens = 0.0
         self.cache_read_tokens = 0.0
+        self.span_seconds = 0.0
+        # Counted separately from `beads` because a session with fewer than two
+        # recorded invocations bounds no interval and reports nothing. Dividing
+        # the span total by the bead count instead would silently read those as
+        # zero-duration work, which is the not-observed-versus-zero confusion
+        # the baseline document spends a section on.
+        self.span_beads = 0
         self.verdicts = 0
         self.failures = 0
 
@@ -144,6 +151,18 @@ class Sample:
     @property
     def fail_rate(self):
         return self.failures / self.verdicts if self.verdicts else None
+
+    @property
+    def output_tokens_per_bead(self):
+        return self.output_tokens / self.beads if self.beads else None
+
+    @property
+    def cache_read_tokens_per_bead(self):
+        return self.cache_read_tokens / self.beads if self.beads else None
+
+    @property
+    def span_seconds_per_bead(self):
+        return self.span_seconds / self.span_beads if self.span_beads else None
 
 
 def measure_session_cost(beads, usage, agent_type):
@@ -176,6 +195,10 @@ def measure_session_cost(beads, usage, agent_type):
             sample.invocations += (group.get("invocations") or 0) * share
             sample.output_tokens += (group.get("output_tokens") or 0) * share
             sample.cache_read_tokens += (group.get("cache_read_tokens") or 0) * share
+            span = group.get("span_seconds_lower_bound")
+            if span:
+                sample.span_seconds += span * share
+                sample.span_beads += 1
     return sample
 
 
@@ -229,6 +252,11 @@ def format_value(metric, value):
     if metric == "author_fail_rate":
         return f"{100 * value:.2f}%"
     return f"{value:,.2f}"
+
+
+def format_reported(value):
+    """A reported figure, with absence spelled as absence rather than zero."""
+    return "-" if value is None else f"{value:,.0f}"
 
 
 def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
@@ -383,6 +411,19 @@ def main(argv=None):
             "window_days": len(window.days),
             "baseline_output_per_invocation": baseline_witness.output_per_invocation,
             "window_output_per_invocation": window_witness.output_per_invocation,
+            # Reported, never thresholded. gs-jbyc asks the window to compare
+            # per-bead tokens and wall-clock as well as the trigger metric, but
+            # neither can carry a revert line: the effort change moves output
+            # tokens per turn by construction, and span is a sparse lower bound
+            # whose per-bead figure swung +72% to +150% across baseline days.
+            "baseline_output_tokens_per_bead": baseline.output_tokens_per_bead,
+            "window_output_tokens_per_bead": window.output_tokens_per_bead,
+            "baseline_cache_read_tokens_per_bead": baseline.cache_read_tokens_per_bead,
+            "window_cache_read_tokens_per_bead": window.cache_read_tokens_per_bead,
+            "baseline_span_seconds_per_bead": baseline.span_seconds_per_bead,
+            "window_span_seconds_per_bead": window.span_seconds_per_bead,
+            "baseline_span_observed_beads": baseline.span_beads,
+            "window_span_observed_beads": window.span_beads,
         })
 
     # A void outranks a revert. Both can be true at once -- a fleet-wide rise
@@ -414,6 +455,17 @@ def main(argv=None):
               f"{format_value(row['metric'], row['window']):>12}"
               f"{format_value(row['metric'], row['line']):>12}  {row['state']}")
         print(f"{'':<26}{row['detail']}")
+        print(f"{'':<26}reported: out tok/bead "
+              f"{format_reported(row['baseline_output_tokens_per_bead'])} -> "
+              f"{format_reported(row['window_output_tokens_per_bead'])}"
+              f" | cache-read tok/bead "
+              f"{format_reported(row['baseline_cache_read_tokens_per_bead'])} -> "
+              f"{format_reported(row['window_cache_read_tokens_per_bead'])}"
+              f" | span s/bead (lower bound) "
+              f"{format_reported(row['baseline_span_seconds_per_bead'])}"
+              f" over {row['baseline_span_observed_beads']} -> "
+              f"{format_reported(row['window_span_seconds_per_bead'])}"
+              f" over {row['window_span_observed_beads']}")
     print()
     print(f"VERDICT: {verdict}")
     for agent in reverts:
