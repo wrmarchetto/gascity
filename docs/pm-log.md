@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-3ml0 2026-09-11T20:09:56Z
+last_seen: gs-quyd 2026-09-13T14:55:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4892,3 +4892,34 @@ report, verdict delivered) and gs-3ml0 filed and claimed (this summons).
 No other bead moved.
 
 Source: pm-log #141
+
+## 143. Sweep summons gs-quyd: gs-cbhj ruled standalone, eighth in the substrate class (2026-09-13)
+
+gs-cbhj (supervisor unit bakes its env at install time, so a later
+install silently drops opt-ins) carried no epic label. It is finding 2
+of gs-hzrg split out as engineering work: make the two opt-ins
+(GC_DISABLE_USAGE_METRICS, GC_SUPERVISOR_PRESERVE_SESSIONS_ON_SIGNAL)
+configured rather than baked, gated by a check that fails when the live
+unit disagrees with the declaration.
+
+Ruling: standalone. The only open epic is agent-efficiency, and none of
+its seven criteria (token observability, prefix hygiene, explicit
+model+effort, canary, account affinity, memory-drift remediation, prompt
+audit) closes over supervisor unit generation or machine-state gating.
+GC_DISABLE_USAGE_METRICS is bd telemetry intent (ci-lf9auf), not agent
+token efficiency. Same descent-is-not-coverage standard as #131, which
+ruled parent gs-hzrg standalone; gs-cbhj joins that class as its eighth
+member (pm-open #3 updated in this commit). Labeled with
+`bd update gs-cbhj --add-label standalone`.
+
+Drift since last_seen (gs-3ml0 2026-09-11T20:09:56Z): gs-jbyc closed --
+canary window OPEN 2026-09-13 to 2026-09-27, criteria fixed before it
+opened, gs-n3lh filed and deferred to 2026-09-27 to take the reading
+(agent-efficiency criterion 4 pending that verdict). gs-z2on closed --
+account-affinity reshuffle landed city-side on
+feat/gs-z2on-account-affinity-reshuffle at de07763, criterion 5's
+carrier (same scope split as #138). gs-cbhj filed and claimed by
+lab.engineer-1, gs-quyd filed (this summons). agent-efficiency's open
+work is now only the deferred canary reading.
+
+Source: pm-log #131

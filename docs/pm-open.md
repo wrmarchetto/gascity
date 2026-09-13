@@ -145,6 +145,15 @@ in-epic by gs-msc2. Per the mayor's mail of the same hour
 on this machine, remedying finding 1 while the standing question below
 stays open.
 
+Update 2026-09-13 (pm-log #143): gs-cbhj (supervisor unit env baked at
+install time -- make the opt-ins configured and gated) joins the class,
+eighth after gs-z39, gs-c6f, gs-eep, gs-olu, gs-dzj, gs-a6j, and gs-hzrg.
+Summons gs-quyd ruled it standalone: it is finding 2 of gs-hzrg split out
+as engineering work, and no epic:agent-efficiency criterion closes over
+supervisor unit generation. Same descent-is-not-coverage standard as
+pm-log #131. The class at eight members is itself further evidence for
+settling the standing question below.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?
