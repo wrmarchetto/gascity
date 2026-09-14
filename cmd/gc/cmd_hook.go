@@ -376,10 +376,28 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 	resolvedAgentName := a.QualifiedName()
 	agentForQuery := resolvedAgentName
 	sessionForQuery := ""
-	if sessionTemplateContext {
+	// Non-empty only at the pool door: an explicit target whose configured
+	// name no session of that agent carries. See Agent.PoolDoorProbeIdentity
+	// for why the bare name cannot be presented there and why blanking it is
+	// worse than either.
+	poolDoorProbe := ""
+	if !sessionTemplateContext && !hookCallerClaimsIdentity(resolvedAgentName) {
+		poolDoorProbe = a.PoolDoorProbeIdentity()
+	}
+	switch {
+	case sessionTemplateContext:
 		agentForQuery = hookSessionAgentForQuery()
 		sessionForQuery = os.Getenv("GC_SESSION_NAME")
-	} else {
+	case poolDoorProbe != "":
+		// cliSessionName is deliberately NOT consulted on this branch. Its
+		// store lookup (findSessionNameByTemplate) returns the FIRST open
+		// session bead carrying this template, so for a multi-slot pool it
+		// hands back a live slot's session name, chosen by list order -- a
+		// second and non-deterministic way to present an identity the caller
+		// does not have.
+		agentForQuery = poolDoorProbe
+		sessionForQuery = poolDoorProbe
+	default:
 		sessionForQuery = cliSessionName(cityPath, cityName, resolvedAgentName, cfg.Workspace.SessionTemplate)
 	}
 	overrides, err := hookQueryEnv(cityPath, cfg, &a)
@@ -406,16 +424,22 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 		overrides["GC_TEMPLATE"] = os.Getenv("GC_TEMPLATE")
 		overrides["BEADS_ACTOR"] = os.Getenv("BEADS_ACTOR")
 	} else {
-		overrides["GC_ALIAS"] = resolvedAgentName
+		overrides["GC_ALIAS"] = agentForQuery
 		overrides["GC_SESSION_ID"] = ""
 		overrides["GC_SESSION_ORIGIN"] = ""
 		overrides["GC_TEMPLATE"] = ""
 		// NOT "" like the session-only keys above. This path is an explicit
-		// `gc hook <agent>` probe, so the actor IS the resolved agent, and an
-		// empty value would silently re-open the leak from the other side --
-		// a query's own-assigned arm would skip its $BEADS_ACTOR probe and
-		// fall through to whatever identity it checks next.
-		overrides["BEADS_ACTOR"] = resolvedAgentName
+		// `gc hook <agent>` probe, so the actor IS whoever the probe models --
+		// the resolved agent, or the pool door -- and an empty value would
+		// silently re-open the leak from the other side: a query's
+		// own-assigned arm would skip its $BEADS_ACTOR probe and fall through
+		// to whatever identity it checks next. It moves WITH the other three
+		// rather than staying on the bare name, because a work_query is
+		// entitled to probe any of them as "who am I" and a door that answers
+		// one of the four differently is the same divergence one spelling
+		// further out. It is the query actor only: every claim-time write
+		// overrides BEADS_ACTOR with its own assignee (hookClaimEnvMap).
+		overrides["BEADS_ACTOR"] = agentForQuery
 	}
 	queryEnv := mergeRuntimeEnv(os.Environ(), overrides)
 	failureTemplate, emitFailureEvent := hookWorkQueryFailureTemplate(len(args) > 0, sessionTemplateContext, a.QualifiedName())
@@ -476,9 +500,27 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 		sessionID := strings.TrimSpace(overrides["GC_SESSION_ID"])
 		sessionName := strings.TrimSpace(sessionForQuery)
 		alias := strings.TrimSpace(overrides["GC_ALIAS"])
+		claimAgentForQuery := agentForQuery
+		if poolDoorProbe != "" {
+			// The door's identity is a query-only stand-in that no session
+			// presents and no bead carries, so a claim made through this
+			// invocation writes and adopts under the resolved agent instead.
+			// Writing the stand-in would mint by hand exactly the unclaimable
+			// assignee internal/doctor/checks_unclaimable_assignee.go exists
+			// to report -- a name no queue returns again and nothing logs.
+			//
+			// The session name is dropped from the adoption set rather than
+			// narrowed, and that is a fix of its own: on this branch it came
+			// from cliSessionName, which for a multi-slot pool resolves to a
+			// LIVE slot's session name, so adopting on it let the door take
+			// over a running session's bead.
+			alias = resolvedAgentName
+			claimAgentForQuery = resolvedAgentName
+			sessionName = ""
+		}
 		// Write the alias/agent form that read paths query through GC_AGENT.
 		// Session forms remain fallbacks for unaliased workers.
-		assignee := firstNonEmptyHookValue(alias, agentForQuery, resolvedAgentName, sessionName, sessionID)
+		assignee := firstNonEmptyHookValue(alias, claimAgentForQuery, resolvedAgentName, sessionName, sessionID)
 		claimOpts := hookClaimOptions{
 			Assignee: assignee,
 			// IdentityCandidates governs ADOPTION of already-owned in_progress/open
@@ -507,7 +549,7 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 				sessionID,
 				sessionName,
 				alias,
-				agentForQuery,
+				claimAgentForQuery,
 			),
 			RouteTargets: hookClaimAgentRouteTargets(
 				&a,
@@ -753,6 +795,32 @@ func expandHookClaimRoutes(cityPath, cityName string, a *config.Agent, rigs []co
 		routes = append(routes, expandAgentCommandTemplate(cityPath, cityName, a, rigs, "claim_routes", route, stderr))
 	}
 	return routes
+}
+
+// hookCallerClaimsIdentity reports whether the calling process presents name
+// as one of its own identities.
+//
+// It is what separates the pool door from a session asking about itself. A
+// caller that names itself gets its identity back unchanged, however
+// pool-shaped its agent config is: a pool instance whose GC_TEMPLATE is unset
+// takes the explicit-target branch with GC_AGENT set to its own instance name,
+// and substituting a door stand-in there would take its in-flight work off its
+// own hook -- the failure this whole change exists to avoid, inverted.
+//
+// GC_SESSION_ID is deliberately ABSENT: it is a bead id, never a name, so it
+// can never equal a resolved agent name and testing it would only suggest it
+// could.
+func hookCallerClaimsIdentity(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for _, key := range []string{"GC_ALIAS", "GC_AGENT", "GC_SESSION_NAME"} {
+		if strings.TrimSpace(os.Getenv(key)) == name {
+			return true
+		}
+	}
+	return false
 }
 
 func hookSessionAgentForQuery() string {
