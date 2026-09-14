@@ -709,8 +709,19 @@ func validManagedRuntimeState(state managedRuntimeState, cityRoot string) bool {
 		return false
 	}
 	host := managedCityHost()
-	if managedCityHostRequiresLocalPID(host) && !contractPIDAlive(state.PID) {
+	if !managedCityHostRequiresLocalPID(host) {
+		return contractPortReachable(host, strconv.Itoa(state.Port))
+	}
+	if !contractPIDAlive(state.PID) {
 		return false
+	}
+	// The socket table answers the question the dial only approximated --
+	// whether THIS PID serves this port -- and answers it without costing the
+	// server an accept. The dial remains for every host that cannot attribute
+	// a socket; see pidHoldsListeningPort for why cannot-answer must not
+	// collapse into not-listening.
+	if holds, answered := pidHoldsListeningPort(state.PID, state.Port); answered {
+		return holds
 	}
 	return contractPortReachable(host, strconv.Itoa(state.Port))
 }
@@ -719,7 +730,23 @@ func contractPIDAlive(pid int) bool {
 	return pidutil.Alive(pid)
 }
 
-func contractPortReachable(host, port string) bool {
+// contractPortReachable is the fallback reachability signal, used only where
+// the socket table cannot attribute a listener to a PID. It is deliberately
+// the weaker check: it reports that SOMETHING answers on the port, never that
+// the process named by the runtime state file is the one answering.
+//
+// A var rather than a func so tests can count the dials it performs. That
+// count is the assertion in TestValidManagedRuntimeStateSkipsTheDialWhenOwnershipAnswers,
+// which cannot be written against a plain function -- the absence of a dial
+// is invisible from outside the package.
+//
+// Each call costs the Dolt server a full accept: vitess allocates a
+// connection ID and writes the HandshakeV10 greeting on accept, so the close
+// here races that greeting. Measured 2026-09-14 over 200 probes of the live
+// city server: 200 accepts, 52 RST-terminated and 140 into TIME_WAIT. Which
+// side of that split a probe lands on does not matter to the server, which
+// paid for the accept either way.
+var contractPortReachable = func(host, port string) bool {
 	if strings.TrimSpace(port) == "" {
 		return false
 	}
