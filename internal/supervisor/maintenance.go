@@ -693,6 +693,17 @@ func (s *sqlDoltOps) Close() error {
 //
 // Query failures are swallowed by design: maintenance scheduling is
 // best-effort and must tolerate a missing or unreadable event log.
+//
+// DO NOT BOUND THIS READ THE WAY storehealth.LastMaintenance IS BOUNDED, even
+// though the two queries are byte-identical today. That one may narrow toward
+// "unknown" because its only consumers are display fields that are omitted on
+// a zero. Here a zero is the fresh-install SIGNAL: bound the read and a city
+// whose last compaction predates the window looks newly installed, so the
+// scheduler fires a compaction of the whole Dolt store -- 13.2 GB on the city
+// that raised ci-euzkz1 -- at every supervisor start. The unbounded scan here
+// is a real cost (it reads the full event history once per start) and is worth
+// fixing, but only with a mechanism that keeps "never ran" distinguishable
+// from "ran before the window".
 func SeedLastRunAt(provider events.Provider) time.Time {
 	if provider == nil {
 		return time.Time{}
