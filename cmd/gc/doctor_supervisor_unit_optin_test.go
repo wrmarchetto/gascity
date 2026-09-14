@@ -264,37 +264,60 @@ func TestSupervisorUnitOptInCatchesADetachedSupervisor(t *testing.T) {
 	}
 }
 
-// TestSupervisorUnitOptInNeverNamesAValue pins the redaction across both
-// sources. Doctor output is pasted into beads, mail and scrollback, and the
-// process side is the supervisor, which holds every credential the fleet uses.
+// TestSupervisorUnitOptInNeverNamesAValue pins the redaction across every
+// source and BOTH reporting branches. Doctor output is pasted into beads, mail
+// and scrollback, and the process side is the supervisor, which holds every
+// credential the fleet uses.
+//
+// The sub-tests are not redundant: the no-process branch builds its own detail
+// strings, and a 2026-09-14 mutation sweep found it uncovered -- a version
+// that interpolated the secret there passed the whole suite, because the only
+// redaction test at the time ran with a live process and never reached those
+// lines.
 func TestSupervisorUnitOptInNeverNamesAValue(t *testing.T) {
 	const secret = "xapp-1-do-not-print-this"
-	homeDir := t.TempDir()
-	t.Setenv("HOME", homeDir)
-	t.Setenv("GC_HOME", filepath.Join(homeDir, ".gc"))
-	unitPath := filepath.Join(homeDir, "gascity-supervisor.service")
-	if err := os.WriteFile(unitPath, []byte("[Service]\n"), 0o600); err != nil {
-		t.Fatalf("writing unit: %v", err)
-	}
-	writeSupervisorSecretsEnvFile(t,
-		supervisorServiceOptInEnv+"=WIDGET_API_TOKEN\nWIDGET_API_TOKEN="+secret+"\n")
-	procRoot := filepath.Join(homeDir, "proc")
-	if err := os.MkdirAll(filepath.Join(procRoot, "4242"), 0o700); err != nil {
-		t.Fatalf("creating proc fixture: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(procRoot, "4242", "environ"),
-		[]byte("WIDGET_OTHER="+secret+"\x00"), 0o600); err != nil {
-		t.Fatalf("writing environ fixture: %v", err)
-	}
+	for _, tc := range []struct {
+		name   string
+		pid    int
+		hasDir bool
+	}{
+		{name: "live supervisor", pid: 4242, hasDir: true},
+		{name: "no supervisor", pid: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			homeDir := t.TempDir()
+			t.Setenv("HOME", homeDir)
+			t.Setenv("GC_HOME", filepath.Join(homeDir, ".gc"))
+			unitPath := filepath.Join(homeDir, "gascity-supervisor.service")
+			if err := os.WriteFile(unitPath, []byte("[Service]\n"), 0o600); err != nil {
+				t.Fatalf("writing unit: %v", err)
+			}
+			writeSupervisorSecretsEnvFile(t,
+				supervisorServiceOptInEnv+"=WIDGET_API_TOKEN\nWIDGET_API_TOKEN="+secret+"\n")
 
-	got := newSupervisorUnitOptInCheck(unitPath, supervisorSecretsEnvFilePath(), 4242, procRoot).Run(nil)
-	if got.Status != doctor.StatusError {
-		t.Fatalf("reported %v, want error: %s %v", got.Status, got.Message, got.Details)
-	}
-	for _, text := range append([]string{got.Message}, got.Details...) {
-		if strings.Contains(text, secret) {
-			t.Fatalf("check output leaked the secret value: %q", text)
-		}
+			procRoot := ""
+			if tc.hasDir {
+				procRoot = filepath.Join(homeDir, "proc")
+				if err := os.MkdirAll(filepath.Join(procRoot, strconv.Itoa(tc.pid)), 0o700); err != nil {
+					t.Fatalf("creating proc fixture: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(procRoot, strconv.Itoa(tc.pid), "environ"),
+					[]byte("WIDGET_OTHER="+secret+"\x00"), 0o600); err != nil {
+					t.Fatalf("writing environ fixture: %v", err)
+				}
+			}
+
+			got := newSupervisorUnitOptInCheck(
+				unitPath, supervisorSecretsEnvFilePath(), tc.pid, procRoot).Run(nil)
+			if got.Status != doctor.StatusError {
+				t.Fatalf("reported %v, want error: %s %v", got.Status, got.Message, got.Details)
+			}
+			for _, text := range append([]string{got.Message}, got.Details...) {
+				if strings.Contains(text, secret) {
+					t.Fatalf("check output leaked the secret value: %q", text)
+				}
+			}
+		})
 	}
 }
 
