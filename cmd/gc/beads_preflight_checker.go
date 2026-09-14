@@ -11,11 +11,36 @@ import (
 )
 
 func newBeadsPreflightChecker(cityPath, provider string) contract.PreflightChecker {
+	return newBeadsPreflightCheckerWithProbes(
+		cityPath,
+		provider,
+		processPreflightMemo,
+		preflightBDContextReader(cityPath),
+		preflightDatabaseProjectIDReader(cityPath),
+	)
+}
+
+// newBeadsPreflightCheckerWithProbes builds the checker over caller-supplied
+// probes. The seam exists so a test can count probe runs with its own
+// stand-ins; production supplies the two real ones above. A test-only flag on
+// the production path was the rejected alternative -- it is read before the
+// code under test runs, so the suite would pin the switch rather than the
+// caching, and the real probes could be stubbed out with the suite still green.
+func newBeadsPreflightCheckerWithProbes(
+	cityPath, provider string,
+	memo *preflightMemo,
+	bdContext func(scope string) (contract.PreflightBDContext, error),
+	databaseProjectID func(scope string) (string, bool, error),
+) contract.PreflightChecker {
 	return contract.PreflightChecker{
-		FS:                        fsys.OSFS{},
-		Provider:                  provider,
-		BDContext:                 preflightBDContextReader(cityPath),
-		DatabaseProjectID:         preflightDatabaseProjectIDReader(cityPath),
+		FS:       fsys.OSFS{},
+		Provider: provider,
+		BDContext: func(scope string) (contract.PreflightBDContext, error) {
+			return memo.memoizedBDContext(cityPath, scope, bdContext)
+		},
+		DatabaseProjectID: func(scope string) (string, bool, error) {
+			return memo.memoizedDatabaseProjectID(cityPath, scope, databaseProjectID)
+		},
 		DeferIdentityToNativeOpen: preflightIdentityDeferredReader(cityPath),
 	}
 }
