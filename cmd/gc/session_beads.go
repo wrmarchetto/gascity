@@ -2829,6 +2829,26 @@ func sweepProcessTableOrphans(
 		if cityPath != "" && normalizePathForCompare(strings.TrimSpace(live.City)) != cityPath {
 			continue
 		}
+		// Qualification for the scan is GC_SESSION_ID alone, and that name is
+		// public -- an operator's shell exports it to run `gc hook`, a test
+		// fixture hands a child a synthetic one (ci-mynicc: session=ci-test,
+		// pid 1860664, reaped mid-suite). GC_RUNTIME_EPOCH is gc's own
+		// incarnation counter, written only by session.RuntimeEnv and floored
+		// at DefaultGeneration on every start path, so a zero epoch means gc
+		// did not start this process and must not destroy it.
+		//
+		// Narrowing proctable's scan predicate instead was rejected: the scan
+		// also serves killExistingOrphans, which matches an EXACT known
+		// session id -- attribution strong enough to need no second marker,
+		// and narrowing it would only cost pre-start orphan detection.
+		//
+		// COST, so it is not rediscovered as a bug: a genuinely orphaned
+		// runtime carrying no epoch stops being reaped here. No start path
+		// produces one, and 8 of 8 scan roots on the city host carried one
+		// when this was measured.
+		if live.Epoch <= 0 {
+			continue
+		}
 		bead, err := store.Get(live.SessionID)
 		switch {
 		case err == nil && bead.Status != "closed":
