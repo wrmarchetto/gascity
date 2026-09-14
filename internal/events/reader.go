@@ -383,8 +383,19 @@ func readFilteredTailFromFile(f *os.File, size int64, filter Filter, limit int) 
 	const chunkSize int64 = 64 * 1024
 	var reversed []Event
 	var pending []byte
+	// belowFloor is set once the backward walk passes AfterSeq. The log is
+	// append-only and seq is monotonic, so the first event at or below that
+	// floor guarantees every earlier line is too -- there is nothing left to
+	// find and the remaining chunks need not be read or decoded at all.
+	//
+	// Without this, a tail read that finds fewer than `limit` matches walks the
+	// whole file, so proving a rare event's ABSENCE costs the entire active
+	// log. That is what made storehealth.LastMaintenance a 10.4s probe on a
+	// 1.3M-event city (ci-euzkz1): its two type filters matched nothing, so
+	// every bound expressed as a match count left the scan unbounded.
+	belowFloor := false
 	end := size
-	for end > 0 && len(reversed) < limit {
+	for end > 0 && len(reversed) < limit && !belowFloor {
 		n := chunkSize
 		if end < n {
 			n = end
@@ -405,7 +416,7 @@ func readFilteredTailFromFile(f *os.File, size int64, filter Filter, limit int) 
 		} else {
 			pending = nil
 		}
-		for i := len(parts) - 1; i >= firstComplete && len(reversed) < limit; i-- {
+		for i := len(parts) - 1; i >= firstComplete && len(reversed) < limit && !belowFloor; i-- {
 			line := bytes.TrimSuffix(parts[i], []byte{'\r'})
 			if len(bytes.TrimSpace(line)) == 0 {
 				continue
@@ -413,6 +424,13 @@ func readFilteredTailFromFile(f *os.File, size int64, filter Filter, limit int) 
 			var e Event
 			if err := json.Unmarshal(line, &e); err != nil {
 				continue
+			}
+			// Seq 0 means the line carries no sequence number, which cannot be
+			// compared against the floor; such a line is matched normally
+			// rather than treated as the end of the walk.
+			if filter.AfterSeq > 0 && e.Seq > 0 && e.Seq <= filter.AfterSeq {
+				belowFloor = true
+				break
 			}
 			if matchesFilter(e, filter) {
 				reversed = append(reversed, e)

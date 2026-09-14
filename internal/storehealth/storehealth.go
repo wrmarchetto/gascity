@@ -115,13 +115,65 @@ func WalkSize(path string) int64 {
 	return total
 }
 
+// MaintenanceScanEvents bounds how far back LastMaintenance reads, in events.
+//
+// Why a bound exists at all: the probe filters on Type, and Type is not a
+// prunable dimension for the archive reader (events.archiveOverlapsFilter), so
+// an unbounded read gunzips and JSON-decodes every archive plus the whole
+// active log -- once per event type, twice per call. On the city that found
+// this (ci-euzkz1) that was ~1.3M events and ~1.44GB of JSON per
+// `gc status --json`, costing 10.4-12.7s of CPU against a caller allowing 10s,
+// and matching nothing at all because store maintenance had never run there.
+//
+// Why a SEQ bound and not a time window: a seq range prunes whole archives
+// (archiveOverlapsFilter skips any archive whose LastSeq is at or below
+// AfterSeq) without gunzipping them, and it is independent of how fast this
+// city produces events. A time window would have to be chosen against an
+// event RATE that varies per city and per day, and it would silently re-read
+// everything on a quiet one.
+//
+// THE COST OF THE BOUND, stated because it is a real narrowing: a maintenance
+// event older than the most recent MaintenanceScanEvents events is reported as
+// absent rather than as an old timestamp. Both render the same way -- the
+// caller omits the field on a zero time -- and both mean the same thing to an
+// operator reading a health panel, which is that maintenance is overdue. What
+// would NOT be acceptable is reporting a stale success as current, and the
+// bound cannot do that: it only ever narrows toward "unknown".
+const MaintenanceScanEvents = 100_000
+
 // LastMaintenance returns the timestamp and status ("success" or
 // "failed") of the most-recent store-maintenance event in provider.
 // Zero time and empty status when no events, provider is nil, or the
 // provider returns an error.
+//
+// The read is bounded to the newest MaintenanceScanEvents events; see that
+// constant for why, and for what the bound gives up.
 func LastMaintenance(ep events.Provider) (time.Time, string) {
+	return lastMaintenanceWithin(ep, MaintenanceScanEvents)
+}
+
+// lastMaintenanceWithin is LastMaintenance with the scan bound injected.
+//
+// The bound is a parameter so the cost invariant can be driven at a size a
+// test can build, rather than by adding a switch that production reads -- a
+// switch would be evaluated before the code under test and would let the real
+// bound be stubbed away with the suite still green. The exported entry point
+// above is the only production caller and always passes the constant.
+//
+// maxEvents <= 0 reads unbounded.
+func lastMaintenanceWithin(ep events.Provider, maxEvents uint64) (time.Time, string) {
 	if ep == nil {
 		return time.Time{}, ""
+	}
+	// A provider that cannot report its head seq is read unbounded rather than
+	// not at all: the bound is an optimization, and a wrong guess at the head
+	// would silently hide events. Small providers (fakes, fresh cities) have a
+	// head below the bound and are unaffected either way.
+	var afterSeq uint64
+	if maxEvents > 0 {
+		if latest, err := ep.LatestSeq(); err == nil && latest > maxEvents {
+			afterSeq = latest - maxEvents
+		}
 	}
 	var (
 		latestTs     time.Time
@@ -134,7 +186,23 @@ func LastMaintenance(ep events.Provider) (time.Time, string) {
 		{events.StoreMaintenanceDone, "success"},
 		{events.StoreMaintenanceFailed, "failed"},
 	} {
-		evts, err := ep.List(events.Filter{Type: spec.typ})
+		filter := events.Filter{Type: spec.typ, AfterSeq: afterSeq}
+		// The tail path is what makes the bound real. A plain List prunes whole
+		// archives on AfterSeq but still reads the active log end to end, so on
+		// a city where these events never appear the cost stays proportional to
+		// that log. The backward read stops at the seq floor instead, which is
+		// the only shape that bounds the ABSENCE case -- and absence is the
+		// normal case here, since a city that has never run store maintenance
+		// has no such event anywhere.
+		var (
+			evts []events.Event
+			err  error
+		)
+		if tp, ok := ep.(events.TailProvider); ok && afterSeq > 0 {
+			evts, err = tp.ListTail(filter, 1)
+		} else {
+			evts, err = ep.List(filter)
+		}
 		if err != nil {
 			continue
 		}
