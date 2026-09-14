@@ -2969,14 +2969,24 @@ name = "worker"
 		t.Fatalf("cmdHook() = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "agent=worker") {
-		t.Fatalf("stdout = %q, want GC_AGENT=worker", out)
+	// An agent declaring no max_active_sessions has UNLIMITED capacity, so its
+	// sessions are named worker-1, worker-2, ... and never "worker". This
+	// invocation is therefore the pool door, and exports the door identity for
+	// all three spellings -- GC_TMUX_SESSION included, since that override
+	// names a tmux session and the door has none. Why the bare name cannot be
+	// exported here: Agent.PoolDoorProbeIdentity. Which shapes are doors and
+	// which keep their configured name: cmd_hook_pool_door_identity_test.go.
+	if !strings.Contains(out, "agent=worker:pool-door") {
+		t.Fatalf("stdout = %q, want GC_AGENT=worker:pool-door", out)
 	}
-	if !strings.Contains(out, "session=host-session") {
-		t.Fatalf("stdout = %q, want GC_SESSION_NAME=host-session", out)
+	if !strings.Contains(out, "session=worker:pool-door") {
+		t.Fatalf("stdout = %q, want GC_SESSION_NAME=worker:pool-door", out)
+	}
+	if strings.Contains(out, "host-session") {
+		t.Fatalf("stdout = %q, leaked a caller-supplied tmux session name into a pool-door identity", out)
 	}
 	// Tiered query: first tier checks in_progress assigned to session name.
-	if !strings.Contains(out, `args=list --status in_progress --assignee=host-session --exclude-type=message --json --limit=1`) {
+	if !strings.Contains(out, `args=list --status in_progress --assignee=worker:pool-door --exclude-type=message --json --limit=1`) {
 		t.Fatalf("stdout = %q, want metadata-routed work query", out)
 	}
 }
@@ -3021,8 +3031,11 @@ dir = "myrig"
 	t.Setenv("GC_CITY", cityDir)
 	t.Setenv("GC_DIR", rigDir)
 
-	wantAgent := "myrig/worker"
-	wantSession := cliSessionName(cityDir, "test-city", wantAgent, "")
+	// The rig qualifier is what this test exists for: the identity must carry
+	// it so the query reads that rig's store scope. This agent shape is a pool
+	// door for the reason given in the sibling test above, so the door suffix
+	// rides on the qualified name exactly as the bare name used to.
+	wantIdentity := "myrig/worker:pool-door"
 
 	var stdout, stderr bytes.Buffer
 	code := cmdHook([]string{"worker"}, &stdout, &stderr)
@@ -3030,14 +3043,17 @@ dir = "myrig"
 		t.Fatalf("cmdHook() = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "agent="+wantAgent) {
-		t.Fatalf("stdout = %q, want GC_AGENT=%s", out, wantAgent)
+	if !strings.Contains(out, "agent="+wantIdentity) {
+		t.Fatalf("stdout = %q, want GC_AGENT=%s", out, wantIdentity)
 	}
-	if !strings.Contains(out, "session="+wantSession) {
-		t.Fatalf("stdout = %q, want GC_SESSION_NAME=%s", out, wantSession)
+	if !strings.Contains(out, "session="+wantIdentity) {
+		t.Fatalf("stdout = %q, want GC_SESSION_NAME=%s", out, wantIdentity)
+	}
+	if strings.Contains(out, "host-session") {
+		t.Fatalf("stdout = %q, leaked a caller-supplied tmux session name into a pool-door identity", out)
 	}
 	// Tiered query: first tier checks in_progress assigned to session name.
-	if !strings.Contains(out, `args=list --status in_progress --assignee=host-session --exclude-type=message --json --limit=1`) {
+	if !strings.Contains(out, `args=list --status in_progress --assignee=`+wantIdentity+` --exclude-type=message --json --limit=1`) {
 		t.Fatalf("stdout = %q, want metadata-routed work query", out)
 	}
 }
@@ -3279,7 +3295,7 @@ name = "test-city"
 
 [[agent]]
 name = "worker"
-work_query = 'printf %%s "${BEADS_ACTOR:-}" > %s; printf "[]"'
+work_query = 'printf "%%s\n%%s" "${BEADS_ACTOR:-}" "${GC_ALIAS:-}" > %s; printf "[]"'
 `, actorPath)
 	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(cityToml), 0o644); err != nil {
 		t.Fatal(err)
@@ -3295,14 +3311,30 @@ work_query = 'printf %%s "${BEADS_ACTOR:-}" > %s; printf "[]"'
 	cmd.SetArgs([]string{"worker"})
 	_ = cmd.Execute() //nolint:errcheck // an empty offer exits nonzero; the env is what is under test
 
-	got, err := os.ReadFile(actorPath)
+	raw, err := os.ReadFile(actorPath)
 	if err != nil {
 		t.Fatalf("work query did not record BEADS_ACTOR: %v; stderr=%s", err, stderr.String())
 	}
-	if string(got) == "stranger-1" {
-		t.Fatalf("work query inherited caller BEADS_ACTOR=%q; want the resolved agent identity", got)
+	recorded := strings.SplitN(string(raw), "\n", 2)
+	if len(recorded) != 2 {
+		t.Fatalf("record %q does not carry both BEADS_ACTOR and GC_ALIAS", raw)
 	}
-	if string(got) != "worker" {
-		t.Fatalf("BEADS_ACTOR = %q, want %q (must match GC_AGENT/GC_ALIAS on this path)", got, "worker")
+	actor, alias := recorded[0], recorded[1]
+	if actor == "stranger-1" {
+		t.Fatalf("work query inherited caller BEADS_ACTOR=%q; want this invocation's own identity", actor)
+	}
+	// Agreement with GC_ALIAS rather than with a literal, because WHICH
+	// identity this path exports is contested and settled elsewhere: a plain
+	// "worker" for an agent whose sessions carry that name, a pool-door
+	// stand-in for one whose sessions do not
+	// (cmd_hook_pool_door_identity_test.go). What must never vary is that a
+	// work query probing any identity spelling as "who am I" gets ONE answer
+	// -- a fifth spelling answering differently is ci-aklxty one variable
+	// further out.
+	if actor != alias {
+		t.Fatalf("BEADS_ACTOR = %q but GC_ALIAS = %q; a work query probing either as its owner identity would get two different answers", actor, alias)
+	}
+	if !strings.HasPrefix(actor, "worker") {
+		t.Fatalf("BEADS_ACTOR = %q, want an identity derived from the resolved agent %q", actor, "worker")
 	}
 }

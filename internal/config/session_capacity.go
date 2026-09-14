@@ -155,3 +155,54 @@ func (a *Agent) ResolvedMaxActiveSessions(cfg *City) *int {
 	}
 	return nil // unlimited
 }
+
+// poolDoorProbeSuffix marks an identity as belonging to the pool door rather
+// than to a session. The colon is load-bearing: no agent name may carry one
+// (validNamedSessionTemplate, config.go), so the value cannot collide with a
+// slot name -- including a namepool's, whose names come from a file and are
+// otherwise unconstrained.
+const poolDoorProbeSuffix = ":pool-door"
+
+// PoolDoorProbeIdentity returns the identity a session-less probe of this
+// agent must present to a work query, or "" when the configured name is
+// already a session's own identity and must be presented unchanged.
+//
+// `gc hook <agent>` run with no session of its own is the pool door -- how the
+// city's stall guardrail asks a pool whether a starting session would find
+// work. A pool that mints suffixed slot names has no session named for the
+// agent itself; the slots are worker-1, worker-2. Presenting the configured
+// name there models a caller that does not exist, and it reaches the work
+// query's own-identity arm, which does NOT exclude hold labels -- deliberately,
+// per internal/beadmeta/hold_labels.go, because that arm hands a session back
+// its OWN in-flight work and a hold must not strand it. The door was therefore
+// offered held beads no real slot would be (ci-45nrw8).
+//
+// Returning "" for every other shape is the half that keeps crash recovery.
+// Where the configured name IS a session's identity, `bd list --status
+// in_progress --assignee=<name>` is the only tier that finds work a crashed
+// session left behind; `bd ready` excludes in_progress by design, so no
+// hold-excluding tier can serve it.
+//
+// Exporting NOTHING was tried and reverted, and it is silently wrong rather
+// than merely wrong: gc hook's explicit-target branch already leaves
+// GC_SESSION_ID empty, so blanking the other two empties every identity the
+// Stop gate iterates. Its loop body never runs, held work comes back as an
+// empty list and the gate reports an ESTABLISHED absence -- letting a session
+// end a turn on an outstanding claim. Pinned by
+// TestStopGateIdentitySurvivesAnExplicitHookProbe.
+//
+// A representative SLOT name such as "worker-1" was the other rejected shape.
+// Slot 1 is usually occupied, so the door would report that running session's
+// in-flight bead as work a starting session could take -- trading a hold-label
+// false positive for a busy-slot one.
+//
+// This is a QUERY identity and is never written. gc hook's claim path keeps
+// the resolved agent name as its assignee, so this string cannot land on a
+// bead and become the unclaimable assignee
+// internal/doctor/checks_unclaimable_assignee.go reports.
+func (a *Agent) PoolDoorProbeIdentity() string {
+	if a == nil || !a.SupportsExpandedSessionIdentities() {
+		return ""
+	}
+	return a.QualifiedName() + poolDoorProbeSuffix
+}
