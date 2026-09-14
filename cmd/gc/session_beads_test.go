@@ -7402,10 +7402,10 @@ func TestSweepProcessTableOrphansReapsClosedAndAbsentUntrackedRuntimes(t *testin
 	}, nil)
 	snapshot := newSessionBeadSnapshot([]beads.Bead{{ID: "gm-open", Status: "open"}})
 	sp := newProcessTableSweepProvider(
-		runtime.LiveRuntime{SessionID: "gm-open", PID: 101, IsTracked: false},
-		runtime.LiveRuntime{SessionID: "gm-closed", PID: 102, IsTracked: false},
-		runtime.LiveRuntime{SessionID: "gm-missing", PID: 103, IsTracked: false},
-		runtime.LiveRuntime{SessionID: "gm-tracked-closed", PID: 104, IsTracked: true},
+		runtime.LiveRuntime{SessionID: "gm-open", PID: 101, Epoch: 1, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-closed", PID: 102, Epoch: 1, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-missing", PID: 103, Epoch: 1, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-tracked-closed", PID: 104, Epoch: 1, IsTracked: true},
 	)
 
 	var stderr bytes.Buffer
@@ -7424,6 +7424,71 @@ func TestSweepProcessTableOrphansReapsClosedAndAbsentUntrackedRuntimes(t *testin
 	}
 }
 
+// A pid qualifies for the process-table scan on GC_SESSION_ID alone, and that
+// name is public: anything integrating with gc sets it, including an
+// operator's shell and a test fixture handing a child a synthetic id. The
+// sweep destroys processes, so it must require a marker gc itself writes.
+// Both reap branches are covered here -- the confirmed-closed bead and the
+// absent one -- because the absent branch is the one that reaped a live
+// fixture child (ci-mynicc, pid 1860664).
+func TestSweepProcessTableOrphansSparesRuntimeWithoutGCWrittenEpoch(t *testing.T) {
+	store := beads.NewMemStoreFrom(0, []beads.Bead{
+		{ID: "gm-closed", Status: "closed"},
+	}, nil)
+	sp := newProcessTableSweepProvider(
+		// Closed bead, no epoch: gc did not start this, leave it alone.
+		runtime.LiveRuntime{SessionID: "gm-closed", PID: 101, Epoch: 0, IsTracked: false},
+		// Absent bead, no epoch: the fixture shape from ci-mynicc.
+		runtime.LiveRuntime{SessionID: "ci-test", PID: 102, Epoch: 0, IsTracked: false},
+		// Same absent-bead shape, but carrying gc's incarnation counter.
+		runtime.LiveRuntime{SessionID: "gm-missing", PID: 103, Epoch: 1, IsTracked: false},
+	)
+
+	var stderr bytes.Buffer
+	got := sweepProcessTableOrphans(sp, nil, store, "", &stderr)
+	if got != 1 {
+		t.Fatalf("sweepProcessTableOrphans() = %d, want 1 (only the epoch-carrying runtime); stderr=%q", got, stderr.String())
+	}
+	if ids := terminatedSessionIDs(sp.terminated); ids != "gm-missing" {
+		t.Fatalf("terminated = %s, want gm-missing (a runtime with no gc-written epoch must be spared)", ids)
+	}
+}
+
+// The epoch guard above is worth exactly as much as the producer's floor: if
+// session.RuntimeEnv stopped writing GC_RUNTIME_EPOCH, or wrote a zero, the
+// guard would spare every runtime and the sweep would stop reaping with no
+// test going red. Derive the epoch from RuntimeEnv and parse it the way
+// proctable's scan does rather than writing a literal, so that regression
+// lands here.
+func TestSweepProcessTableOrphansReapsRuntimeCarryingRuntimeEnvEpoch(t *testing.T) {
+	env := session.RuntimeEnv(
+		"gm-missing",
+		"gm-missing-name",
+		session.DefaultGeneration,
+		session.DefaultContinuationEpoch,
+		"instance-token",
+	)
+	raw, ok := env["GC_RUNTIME_EPOCH"]
+	if !ok {
+		t.Fatalf("session.RuntimeEnv wrote no GC_RUNTIME_EPOCH; the sweep's epoch guard would spare every runtime")
+	}
+	epoch, err := strconv.Atoi(raw)
+	if err != nil {
+		t.Fatalf("session.RuntimeEnv wrote GC_RUNTIME_EPOCH=%q, which proctable's scan cannot parse: %v", raw, err)
+	}
+
+	store := beads.NewMemStore()
+	sp := newProcessTableSweepProvider(
+		runtime.LiveRuntime{SessionID: "gm-missing", PID: 101, Epoch: epoch, IsTracked: false},
+	)
+
+	var stderr bytes.Buffer
+	got := sweepProcessTableOrphans(sp, nil, store, "", &stderr)
+	if got != 1 {
+		t.Fatalf("sweepProcessTableOrphans() = %d, want 1 for a runtime carrying session.RuntimeEnv's epoch %q; stderr=%q", got, raw, stderr.String())
+	}
+}
+
 // The process-table scan is supervisor-wide, but the sweep runs per city with
 // that city's store. A sibling city's live session (a different GC_CITY_PATH)
 // is absent from this city's store and untracked by this city's provider, so
@@ -7437,13 +7502,13 @@ func TestSweepProcessTableOrphansSkipsOtherCityRuntimes(t *testing.T) {
 	}, nil)
 	sp := newProcessTableSweepProvider(
 		// This city's own closed/untracked runtime — must be reaped.
-		runtime.LiveRuntime{SessionID: "gm-closed", City: myCity, PID: 101, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-closed", City: myCity, PID: 101, Epoch: 1, IsTracked: false},
 		// A sibling city's session, absent from this store and untracked here.
 		// Must NOT be reaped despite looking like an orphan from here.
-		runtime.LiveRuntime{SessionID: "sq-eeq", City: "/home/jaword/sqtest", PID: 102, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "sq-eeq", City: "/home/jaword/sqtest", PID: 102, Epoch: 1, IsTracked: false},
 		// A runtime with no attributable city — must NOT be reaped when we
 		// know our own city (cannot confirm it belongs to us).
-		runtime.LiveRuntime{SessionID: "unknown", City: "", PID: 103, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "unknown", City: "", PID: 103, Epoch: 1, IsTracked: false},
 	)
 
 	var stderr bytes.Buffer
@@ -7466,7 +7531,7 @@ func TestSweepProcessTableOrphansNormalizesCityPathBeforeCompare(t *testing.T) {
 		{ID: "gm-closed", Status: "closed"},
 	}, nil)
 	sp := newProcessTableSweepProvider(
-		runtime.LiveRuntime{SessionID: "gm-closed", City: realCity, PID: 101, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-closed", City: realCity, PID: 101, Epoch: 1, IsTracked: false},
 	)
 
 	var stderr bytes.Buffer
@@ -7482,8 +7547,8 @@ func TestSweepProcessTableOrphansNormalizesCityPathBeforeCompare(t *testing.T) {
 func TestSweepProcessTableOrphansContinuesAfterErrors(t *testing.T) {
 	store := beads.NewMemStore()
 	sp := newProcessTableSweepProvider(
-		runtime.LiveRuntime{SessionID: "gm-reaped", PID: 201, IsTracked: false},
-		runtime.LiveRuntime{SessionID: "gm-term-fails", PID: 202, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-reaped", PID: 201, Epoch: 1, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-term-fails", PID: 202, Epoch: 1, IsTracked: false},
 	)
 	sp.findErr = errors.New("partial scan failed")
 	sp.terminateErr[202] = errors.New("terminate failed")
@@ -7533,7 +7598,7 @@ func TestSweepProcessTableOrphansSkipsOnTransientStoreError(t *testing.T) {
 	inner := beads.NewMemStore()
 	store := &flakyGetStore{Store: inner, failID: "gm-flaky", failErr: errors.New("dolt: connection reset")}
 	sp := newProcessTableSweepProvider(
-		runtime.LiveRuntime{SessionID: "gm-flaky", PID: 301, IsTracked: false},
+		runtime.LiveRuntime{SessionID: "gm-flaky", PID: 301, Epoch: 1, IsTracked: false},
 	)
 	var stderr bytes.Buffer
 	if got := sweepProcessTableOrphans(sp, nil, store, "", &stderr); got != 0 {

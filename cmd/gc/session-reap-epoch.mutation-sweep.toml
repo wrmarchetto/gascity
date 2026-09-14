@@ -1,0 +1,47 @@
+# Mutation sweep for ci-cddvr9: the process-table reap's requirement that a
+# process carry gc's own incarnation counter before it is destroyed.
+#
+# The guard and the producer it reads are in different packages, and neither
+# half is checkable from the other's tests -- that split is the failure mode
+# the third row exists for. A GC_RUNTIME_EPOCH that stopped being written, or
+# a floor that fell to zero, would make the guard spare EVERY runtime and the
+# sweep would quietly stop reaping with the suite still green.
+#
+# repo is relative, so this sweeps the checkout the spec was read out of.
+
+[sweep]
+name = "process-table reap requires a gc-written runtime epoch"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./cmd/gc/", "-run", "TestSweepProcessTableOrphans", "-count=1"]
+timeout_s = 900
+
+# --- the refusal itself ---
+
+[[mutation]]
+id = "reap-accepts-any-epoch"
+path = "cmd/gc/session_beads.go"
+find = '''		if live.Epoch <= 0 {
+			continue
+		}'''
+replace = '''		if live.Epoch < 0 {
+			continue
+		}'''
+expect_output = ["FAIL: TestSweepProcessTableOrphansSparesRuntimeWithoutGCWrittenEpoch"]
+
+# --- the producer the refusal reads ---
+
+[[mutation]]
+id = "runtime-env-stops-writing-the-epoch"
+path = "internal/session/lifecycle.go"
+find = '''		"GC_RUNTIME_EPOCH":      strconv.Itoa(generation),'''
+replace = ''''''
+expect_output = ["FAIL: TestSweepProcessTableOrphansReapsRuntimeCarryingRuntimeEnvEpoch"]
+
+[[mutation]]
+id = "first-generation-falls-to-zero"
+path = "internal/session/lifecycle.go"
+find = '''	DefaultGeneration = 1'''
+replace = '''	DefaultGeneration = 0'''
+expect_output = ["FAIL: TestSweepProcessTableOrphansReapsRuntimeCarryingRuntimeEnvEpoch"]
