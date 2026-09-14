@@ -211,8 +211,21 @@ var bootstrapPolicy = Ledger{
 			// exit codes, which only a real process carries. One literal
 			// exec.Command serves all eighteen tests through runCanaryEval; a
 			// second would be new debt for no gain.
-			BaselineCalls:   626,
-			BaselineFiles:   184,
+			// +2 calls / 1 file (gs-1soi):
+			// scripts/dashboard_bundle_generated_tree_test.go, which pins the
+			// shape the upstream-merge procedure reads. Both spawns are the
+			// tool that DEFINES the answer. `git ls-files` is asked whether
+			// the bundle is TRACKED, and a filesystem walk cannot answer that
+			// -- an untracked bundle cannot conflict at all, which makes the
+			// procedure unnecessary rather than wrong, and that is the
+			// distinction the test exists to keep. `make -n dashboard-build`
+			// reads the EXPANDED recipe, so a regenerator moved behind a
+			// variable or into a sibling target still shows up where reading
+			// the Makefile text would miss it; -n executes nothing, which is
+			// the only reason a test can afford to name a target whose real
+			// run is an npm build.
+			BaselineCalls:   628,
+			BaselineFiles:   185,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -286,8 +299,11 @@ var bootstrapPolicy = Ledger{
 			// +1 call / 1 file (gs-jbyc): the canary evaluator's contract
 			// suite, recorded on the all-source audit row above and counted
 			// again here.
-			BaselineCalls:   427,
-			BaselineFiles:   126,
+			// +2 calls / 1 file (gs-1soi): the dashboard-bundle shape
+			// guard, recorded on the all-source audit row above and counted
+			// again here.
+			BaselineCalls:   429,
+			BaselineFiles:   127,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -669,8 +685,13 @@ var bootstrapPolicy = Ledger{
 			// share it through runCanaryEval. An exact Medium owner would not
 			// cover it anyway: the call sits in a helper, and a resource inside
 			// a helper stays Small debt however Medium its callers are.
-			BaselineCalls:   416,
-			BaselineFiles:   120,
+			// +2 calls / 1 file (gs-1soi): the dashboard-bundle shape
+			// guard, which stays Small debt. Neither spawn touches the
+			// network, a store or process state -- one reads the index, the
+			// other prints a recipe without running it -- so they are
+			// irreducible rather than heavy.
+			BaselineCalls:   418,
+			BaselineFiles:   121,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
