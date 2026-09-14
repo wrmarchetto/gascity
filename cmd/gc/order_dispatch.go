@@ -582,6 +582,20 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		return m.maxDispatchesPerTick > 0 && budgetSpent >= m.maxDispatchesPerTick
 	}
 
+	// Per-order ring-walk cost. Accumulated from the offset the loop ALREADY
+	// reads, NOT from a fresh clock read per order: a second read would be
+	// charged to the order it measures, and it would perturb the injected
+	// clock the ring-walk suites drive -- ringWalkClock advances per CALL, so
+	// an extra call per order silently changes the walk those tests simulate.
+	//
+	// Deferred rather than placed after the loop because spendDispatchBudget
+	// returns straight out of the walk when the per-tick budget binds, which
+	// 29% of patrol ticks reach. Emitting after the loop would therefore go
+	// silent on exactly the ticks where the budget and the walk cost interact,
+	// which is the case the breakdown exists to inform.
+	walk := ringWalkCosts{}
+	defer func() { m.reportRingWalkCosts(&walk) }()
+
 	for offset := 0; offset < total; offset++ {
 		idx := (start + offset) % total
 		a := m.aa[idx]
@@ -659,6 +673,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		// TestCooldownDeadlineIsNotChargedTheRingWalkAheadOfIt first went
 		// green over its own defect.
 		sinceTickStart := m.wallNow().Sub(tickWall)
+		walk.observe(a.ScopedName(), sinceTickStart)
 		evalNow := now.Add(sinceTickStart)
 
 		target, err := resolveOrderStoreTarget(cityPath, m.cfg, a)
@@ -3595,4 +3610,91 @@ func appendUniquePoolTarget(values []string, want string) []string {
 		}
 	}
 	return append(values, want)
+}
+
+// ringWalkDiagnosticThreshold is the smallest cooldown allowance any order
+// gets. checkCooldown's slack is min(tick/2, interval/6), which for a 30s
+// order on the 30s patrol grid is 5s, and the walk crossing it is what costs
+// such an order its cycle. Below it the walk cannot lose anybody a cycle and
+// the breakdown stays silent.
+//
+// NOT a nominal figure chosen for tidiness. The phase measured 7.4-7.6s p50
+// on 2026-09-14 (city bead ci-hefnfv), so this threshold sits BELOW the
+// observed distribution and the breakdown prints on most ticks of a city in
+// that state. That is the intent -- it goes quiet when the deficit does, so
+// its silence is the signal that the walk stopped costing cycles.
+const ringWalkDiagnosticThreshold = 5 * time.Second
+
+// ringWalkSlowOrdersReported bounds the breakdown to a single log line. Five
+// of 42 names the bulk of a 7.5s walk; printing every order once per tick is
+// the unreadable diagnostic this replaces.
+const ringWalkSlowOrdersReported = 5
+
+// ringWalkOrderCost is one order's evaluation cost within a single ring walk.
+type ringWalkOrderCost struct {
+	name string
+	cost time.Duration
+}
+
+// ringWalkCosts accumulates per-order ring-walk costs by differencing the
+// walk offsets the dispatch loop already reads.
+//
+// The LAST order observed has no successor to difference against, so its cost
+// is unknown here and the order is reported as lastUnmeasured rather than
+// omitted -- a missing row must never read as a cheap order. Measuring it
+// needs exactly the extra clock read rejected at the call site. The blind spot
+// rotates with nextDispatchStart whenever the per-tick budget binds, so across
+// ticks every ring position does get measured.
+type ringWalkCosts struct {
+	costs      []ringWalkOrderCost
+	prevName   string
+	prevOffset time.Duration
+	// walkToLast is the offset at which the last observed order BEGAN
+	// evaluating, so it understates the full walk by that order's own cost.
+	// Named for what it is; the emitted line says so too.
+	walkToLast time.Duration
+	observed   int
+}
+
+// observe records that the order named began evaluating at offset into the walk.
+func (w *ringWalkCosts) observe(name string, offset time.Duration) {
+	if w.prevName != "" {
+		w.costs = append(w.costs, ringWalkOrderCost{name: w.prevName, cost: offset - w.prevOffset})
+	}
+	w.prevName, w.prevOffset = name, offset
+	w.walkToLast = offset
+	w.observed++
+}
+
+// reportRingWalkCosts emits one line naming the orders that spent the walk,
+// when the walk was long enough to cost an order its cycle.
+func (m *memoryOrderDispatcher) reportRingWalkCosts(w *ringWalkCosts) {
+	if m == nil || m.stderr == nil || w == nil {
+		return
+	}
+	if w.walkToLast < ringWalkDiagnosticThreshold || len(w.costs) == 0 {
+		return
+	}
+	slowest := make([]ringWalkOrderCost, len(w.costs))
+	copy(slowest, w.costs)
+	// Ties broken by name so two orders of equal cost render in a stable
+	// order; an unsorted tie-break would make the line differ between ticks
+	// that measured the same thing.
+	sort.Slice(slowest, func(i, j int) bool {
+		if slowest[i].cost != slowest[j].cost {
+			return slowest[i].cost > slowest[j].cost
+		}
+		return slowest[i].name < slowest[j].name
+	})
+	if len(slowest) > ringWalkSlowOrdersReported {
+		slowest = slowest[:ringWalkSlowOrdersReported]
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "gc: orderWalk: %dms to the last of %d order(s) evaluated; slowest",
+		w.walkToLast.Milliseconds(), w.observed)
+	for _, c := range slowest {
+		fmt.Fprintf(&b, " %s=%dms", c.name, c.cost.Milliseconds())
+	}
+	fmt.Fprintf(&b, "; lastUnmeasured=%s\n", w.prevName)
+	fmt.Fprint(m.stderr, b.String()) //nolint:errcheck // best-effort stderr
 }
