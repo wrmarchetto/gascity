@@ -29,6 +29,15 @@ package main
 // the NUL framing /proc actually uses; TestSupervisorUnitOptInParsesRealProc
 // reads this test process's own environ to cover that one byte-level claim.
 //
+// Mutation-proven 2026-09-14: 14/14 flipped guards died across this suite,
+// cmd_supervisor_test.go and supervisor_service_env_test.go, including
+// gate-judges-the-unit-file (the rejected file-only design) and both
+// value-redaction branches. Two earlier rounds each left one survivor -- the
+// two-channel union and the no-process redaction branch -- and the tests that
+// close them were written from those rows, not from a read of the code. The
+// spec is a one-off and lives outside this tree; the verdict is recorded here
+// because a sweep whose result lives only in a session log is a prediction.
+//
 // Run: go test ./cmd/gc/ -run SupervisorUnitOptIn -count=1
 
 import (
