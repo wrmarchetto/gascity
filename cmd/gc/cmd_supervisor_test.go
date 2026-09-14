@@ -6890,3 +6890,41 @@ func TestBuildSupervisorServiceDataRefusesSelfNamedOptIn(t *testing.T) {
 			got["WIDGET_API_TOKEN"], "widget-value", got)
 	}
 }
+
+// TestBuildSupervisorServiceDataUnionsBothOptInChannels asserts that a key
+// opted in by the shell and a key opted in by ${GC_HOME}/secrets.env BOTH
+// reach the service env when each channel names a different key.
+//
+// Neither single-channel test can see this. One sets only the shell and one
+// sets only the file, so a resolver that consulted the file only when the
+// shell declared nothing -- or the reverse -- passes both of them and loses a
+// key the moment an operator uses both channels at once. A mutation sweep on
+// 2026-09-14 found exactly that: every other guard here died and the union
+// direction survived, because no input made the difference observable.
+func TestBuildSupervisorServiceDataUnionsBothOptInChannels(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("GC_HOME", filepath.Join(homeDir, ".gc"))
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	t.Setenv("GC_SUPERVISOR_ENV", "WIDGET_SHELL_TOKEN")
+	t.Setenv("WIDGET_SHELL_TOKEN", "from-shell")
+	t.Setenv("WIDGET_FILE_TOKEN", "")
+
+	writeSupervisorSecretsEnvFile(t,
+		"GC_SUPERVISOR_ENV=WIDGET_FILE_TOKEN\nWIDGET_FILE_TOKEN=from-file\n")
+
+	data, err := buildSupervisorServiceData()
+	if err != nil {
+		t.Fatalf("buildSupervisorServiceData: %v", err)
+	}
+	got := supervisorServiceEnvMap(data.ExtraEnv)
+	for key, want := range map[string]string{
+		"WIDGET_SHELL_TOKEN": "from-shell",
+		"WIDGET_FILE_TOKEN":  "from-file",
+	} {
+		if got[key] != want {
+			t.Fatalf("ExtraEnv[%s] = %q, want %q -- the two opt-in channels must union, "+
+				"not shadow each other (all env: %#v)", key, got[key], want, got)
+		}
+	}
+}
