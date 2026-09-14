@@ -571,3 +571,60 @@ func TestSupervisorServiceEnvRollbackLeavesNoDeclaration(t *testing.T) {
 		t.Fatalf("a rolled-back install left a declaration behind (stat err: %v)", err)
 	}
 }
+
+// TestSupervisorServiceEnvSecretsFileOptInReachesTheRenderedUnit closes the
+// producer/consumer gap in the test above it. TestBuildSupervisorServiceData-
+// HonorsSecretsFileOptIn asserts the resolver returns the key; this one
+// asserts it survives EnvLines and the systemd template and comes back out of
+// the parser the doctor gate reads units with.
+//
+// The two ends are worth separating because ci-cblj0v was diagnosed from the
+// unit file, not from the resolver: a key resolved but never rendered is
+// invisible to a suite that stops at ExtraEnv, and produces exactly the
+// artifact the operator found -- a unit silently short by the keys that
+// mattered.
+//
+// The key name is deliberately unrelated to any service this tree knows
+// about. Pinning BRIDGE_SLACK_APP_TOKEN here would make the test a second
+// copy of the city's required-key list and would put a role name in Go.
+func TestSupervisorServiceEnvSecretsFileOptInReachesTheRenderedUnit(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("GC_HOME", filepath.Join(homeDir, ".gc"))
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("GC_SUPERVISOR_ENV", "")
+	t.Setenv("WIDGET_API_TOKEN", "")
+
+	writeSupervisorSecretsEnvFile(t, "GC_SUPERVISOR_ENV=WIDGET_API_TOKEN\nWIDGET_API_TOKEN=widget-value\n")
+
+	data, err := buildSupervisorServiceData()
+	if err != nil {
+		t.Fatalf("buildSupervisorServiceData: %v", err)
+	}
+	unit, err := renderSupervisorTemplate(supervisorSystemdTemplate, data)
+	if err != nil {
+		t.Fatalf("renderSupervisorTemplate: %v", err)
+	}
+	env, err := parseSupervisorUnitEnvironment(unit)
+	if err != nil {
+		t.Fatalf("parseSupervisorUnitEnvironment: %v", err)
+	}
+	if env["WIDGET_API_TOKEN"] != "widget-value" {
+		t.Fatalf("rendered unit WIDGET_API_TOKEN = %q, want %q (all env: %#v)",
+			env["WIDGET_API_TOKEN"], "widget-value", env)
+	}
+	// The install records what it rendered, so the declaration must carry the
+	// key too -- otherwise the next regeneration from a shell that lost the
+	// secrets file would thin the unit and supervisor-unit-env-drift, whose
+	// two sides an install writes together, would still report agreement.
+	declLines := data.EnvLines()
+	found := false
+	for _, item := range declLines {
+		if item.Name == "WIDGET_API_TOKEN" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("EnvLines omits the opted-in key: %#v", declLines)
+	}
+}

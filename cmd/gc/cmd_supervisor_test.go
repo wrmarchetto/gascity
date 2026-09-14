@@ -6793,3 +6793,138 @@ func TestRunSupervisorNoWarningForLowAPIPort(t *testing.T) {
 		t.Errorf("stdout = %q, want API listening message for low port", stdout.String())
 	}
 }
+
+// TestBuildSupervisorServiceDataHonorsSecretsFileOptIn asserts that a
+// GC_SUPERVISOR_ENV opt-in declared inside ${GC_HOME}/secrets.env reaches the
+// service env, with the variable absent from the calling shell.
+//
+// This is the shape the operator actually uses and the one the live failure
+// took: secrets.env is the durable, machine-local record, so an opt-in
+// written beside the values it names must survive a regeneration from any
+// shell. Reading the opt-in only from the invoking environment makes the
+// whole arrangement conditional on who ran the install, which is invisible at
+// install time and surfaces a day later as a crash-looping service.
+//
+// The shell's own GC_SUPERVISOR_ENV is stripped rather than merely unset to a
+// narrower list: an assertion that survives because the ambient environment
+// happened to export the key proves nothing about the file tier.
+func TestBuildSupervisorServiceDataHonorsSecretsFileOptIn(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("GC_HOME", filepath.Join(homeDir, ".gc"))
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	t.Setenv("GC_SUPERVISOR_ENV", "")
+	t.Setenv("BRIDGE_SLACK_APP_TOKEN", "")
+	t.Setenv("BRIDGE_SLACK_CHANNEL_ID", "")
+	t.Setenv("UNRELATED_SECRET", "")
+
+	writeSupervisorSecretsEnvFile(t, `GC_SUPERVISOR_ENV=BRIDGE_SLACK_APP_TOKEN,BRIDGE_SLACK_CHANNEL_ID
+BRIDGE_SLACK_APP_TOKEN=xapp-from-file
+BRIDGE_SLACK_CHANNEL_ID=C0FROMFILE
+UNRELATED_SECRET=do-not-persist
+`)
+
+	data, err := buildSupervisorServiceData()
+	if err != nil {
+		t.Fatalf("buildSupervisorServiceData: %v", err)
+	}
+
+	got := supervisorServiceEnvMap(data.ExtraEnv)
+	for key, want := range map[string]string{
+		"BRIDGE_SLACK_APP_TOKEN":  "xapp-from-file",
+		"BRIDGE_SLACK_CHANNEL_ID": "C0FROMFILE",
+	} {
+		if got[key] != want {
+			t.Fatalf("ExtraEnv[%s] = %q, want %q (all env: %#v)", key, got[key], want, got)
+		}
+	}
+	// The file's opt-in list widens nothing beyond the keys it names.
+	if _, ok := got["UNRELATED_SECRET"]; ok {
+		t.Fatalf("ExtraEnv should not include non-allowlisted UNRELATED_SECRET: %#v", got)
+	}
+	// GC_SUPERVISOR_ENV is a control key, not service env: persisting it
+	// would make the next regeneration's opt-in set depend on the unit it is
+	// about to overwrite.
+	if _, ok := got["GC_SUPERVISOR_ENV"]; ok {
+		t.Fatalf("ExtraEnv should not carry the control key GC_SUPERVISOR_ENV itself: %#v", got)
+	}
+}
+
+// TestBuildSupervisorServiceDataRefusesSelfNamedOptIn asserts that
+// GC_SUPERVISOR_ENV cannot opt ITSELF into the service environment.
+//
+// The assertion in TestBuildSupervisorServiceDataHonorsSecretsFileOptIn that
+// the control key is absent cannot catch this: its opt-in list does not name
+// the control key, so the exclusion is never reached and the assertion holds
+// whether or not the exclusion exists. This test names it, which is the only
+// input that makes the difference observable.
+//
+// What the exclusion prevents: a persisted GC_SUPERVISOR_ENV is inherited by
+// the next `gc supervisor install`, whose opt-in set would then be read from
+// the unit it is about to overwrite. One install from a shell that happened to
+// set the variable would become permanent policy, and withdrawing it would
+// need a unit edit rather than an edit to the file that declares it.
+func TestBuildSupervisorServiceDataRefusesSelfNamedOptIn(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("GC_HOME", filepath.Join(homeDir, ".gc"))
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	t.Setenv("GC_SUPERVISOR_ENV", "")
+	t.Setenv("WIDGET_API_TOKEN", "")
+
+	writeSupervisorSecretsEnvFile(t,
+		"GC_SUPERVISOR_ENV=GC_SUPERVISOR_ENV,WIDGET_API_TOKEN\nWIDGET_API_TOKEN=widget-value\n")
+
+	data, err := buildSupervisorServiceData()
+	if err != nil {
+		t.Fatalf("buildSupervisorServiceData: %v", err)
+	}
+	got := supervisorServiceEnvMap(data.ExtraEnv)
+	if _, ok := got["GC_SUPERVISOR_ENV"]; ok {
+		t.Fatalf("GC_SUPERVISOR_ENV opted itself into the service env: %#v", got)
+	}
+	// The rest of the list still applies -- the refusal is scoped to the
+	// control key, not to a list that mentions it.
+	if got["WIDGET_API_TOKEN"] != "widget-value" {
+		t.Fatalf("ExtraEnv[WIDGET_API_TOKEN] = %q, want %q (all env: %#v)",
+			got["WIDGET_API_TOKEN"], "widget-value", got)
+	}
+}
+
+// TestBuildSupervisorServiceDataUnionsBothOptInChannels asserts that a key
+// opted in by the shell and a key opted in by ${GC_HOME}/secrets.env BOTH
+// reach the service env when each channel names a different key.
+//
+// Neither single-channel test can see this. One sets only the shell and one
+// sets only the file, so a resolver that consulted the file only when the
+// shell declared nothing -- or the reverse -- passes both of them and loses a
+// key the moment an operator uses both channels at once. A mutation sweep on
+// 2026-09-14 found exactly that: every other guard here died and the union
+// direction survived, because no input made the difference observable.
+func TestBuildSupervisorServiceDataUnionsBothOptInChannels(t *testing.T) {
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	t.Setenv("GC_HOME", filepath.Join(homeDir, ".gc"))
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+	t.Setenv("GC_SUPERVISOR_ENV", "WIDGET_SHELL_TOKEN")
+	t.Setenv("WIDGET_SHELL_TOKEN", "from-shell")
+	t.Setenv("WIDGET_FILE_TOKEN", "")
+
+	writeSupervisorSecretsEnvFile(t,
+		"GC_SUPERVISOR_ENV=WIDGET_FILE_TOKEN\nWIDGET_FILE_TOKEN=from-file\n")
+
+	data, err := buildSupervisorServiceData()
+	if err != nil {
+		t.Fatalf("buildSupervisorServiceData: %v", err)
+	}
+	got := supervisorServiceEnvMap(data.ExtraEnv)
+	for key, want := range map[string]string{
+		"WIDGET_SHELL_TOKEN": "from-shell",
+		"WIDGET_FILE_TOKEN":  "from-file",
+	} {
+		if got[key] != want {
+			t.Fatalf("ExtraEnv[%s] = %q, want %q -- the two opt-in channels must union, "+
+				"not shadow each other (all env: %#v)", key, got[key], want, got)
+		}
+	}
+}

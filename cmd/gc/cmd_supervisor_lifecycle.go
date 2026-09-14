@@ -1243,7 +1243,8 @@ var supervisorServiceFixedEnvKeys = map[string]bool{
 // regeneration from a lean shell reproduces the unit instead of thinning it.
 func supervisorServiceExtraEnv(declared map[string]string) []supervisorServiceEnvVar {
 	env := make(map[string]string)
-	explicitEnvKeys := supervisorServiceExplicitEnvKeys(os.Getenv("GC_SUPERVISOR_ENV"))
+	secretsFileEntries := supervisorSecretsEnvFileEntries()
+	explicitEnvKeys := supervisorServiceOptInKeys(secretsFileEntries)
 	explicitEnvKeySet := make(map[string]bool, len(explicitEnvKeys))
 	for _, key := range explicitEnvKeys {
 		explicitEnvKeySet[key] = true
@@ -1271,7 +1272,7 @@ func supervisorServiceExtraEnv(declared map[string]string) []supervisorServiceEn
 	// entry must clear the same gate the other tiers use — the persist
 	// allowlist or an explicit opt-in — so a stray key cannot bloat the
 	// service env.
-	for key, val := range supervisorSecretsEnvFileEntries() {
+	for key, val := range secretsFileEntries {
 		if val == "" {
 			continue
 		}
@@ -1384,19 +1385,85 @@ func supervisorSecretsEnvFilePath() string {
 // GC_SUPERVISOR_ENV opt-in.
 func supervisorSecretsEnvFileEntries() map[string]string {
 	path := supervisorSecretsEnvFilePath()
-	data, err := os.ReadFile(path)
+	entries, err := supervisorSecretsEnvFileEntriesAt(path)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "gc: reading supervisor secrets file %q: %v\n", path, err)
-		}
-		return nil
-	}
-	entries, err := processenv.ParseEnvFile(string(data))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "gc: parsing supervisor secrets file %q: %v\n", path, err)
+		fmt.Fprintf(os.Stderr, "gc: %v\n", err)
 		return nil
 	}
 	return entries
+}
+
+// supervisorSecretsEnvFileEntriesAt reads the dotenv file at path and returns
+// its parsed key/value pairs. A missing file yields (nil, nil).
+//
+// It reports the error its caller above swallows. The split exists for the
+// doctor gate, which must fail closed on a file it cannot parse: an
+// unparseable secrets.env drops the GC_SUPERVISOR_ENV opt-in along with every
+// value, so a gate that treated it as "no keys opted in" would go green over
+// precisely the state that produces a short unit.
+func supervisorSecretsEnvFileEntriesAt(path string) (map[string]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading supervisor secrets file %q: %w", path, err)
+	}
+	entries, err := processenv.ParseEnvFile(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("parsing supervisor secrets file %q: %w", path, err)
+	}
+	return entries, nil
+}
+
+// supervisorServiceOptInEnv is the variable that names which otherwise
+// non-persisted keys the service file must carry.
+const supervisorServiceOptInEnv = "GC_SUPERVISOR_ENV"
+
+// supervisorServiceOptInKeys resolves the opt-in key set from both channels
+// that may declare it: the invoking shell, and ${GC_HOME}/secrets.env.
+//
+// The file channel exists because the shell one is not durable. `gc supervisor
+// start` regenerates the unit on every invocation, so an opt-in that lives
+// only in the operator's interactive environment is silently absent from any
+// install run by a cron job, an agent session or a bare ssh -- and the unit
+// that regeneration writes is short by exactly the keys nobody was there to
+// export. Measured 2026-09-13 (ci-cblj0v): a regeneration at 09:48 dropped the
+// three keys the Slack bridge needs, both halves crash-looped for a day, and
+// outbound alerting went on working because it uses a different key on a
+// different path, so nothing looked wrong.
+//
+// The two are UNIONED rather than one overriding the other. A shell opt-in is
+// "also carry this, for this install"; the file is the durable record beside
+// the values it names. Withdrawing a key is therefore an edit to secrets.env,
+// which is the same asymmetry the declaration tier has and for the same
+// reason: every channel here adds, and removal is always an explicit edit.
+//
+// Absent on purpose: any tier below these two. The previous install's
+// declaration records resolved VALUES, never the opt-in that admitted them,
+// so reading the opt-in from it would make a withdrawn key come back -- and
+// the declaration is written by the same install whose output the opt-in is
+// supposed to gate, which is the rebuilt-from-the-same-state comparison that
+// leaves a guard permanently green.
+func supervisorServiceOptInKeys(secretsFileEntries map[string]string) []string {
+	keys := supervisorServiceExplicitEnvKeys(os.Getenv(supervisorServiceOptInEnv))
+	fileKeys := supervisorServiceExplicitEnvKeys(secretsFileEntries[supervisorServiceOptInEnv])
+	if len(fileKeys) == 0 {
+		return keys
+	}
+	seen := make(map[string]bool, len(keys)+len(fileKeys))
+	for _, key := range keys {
+		seen[key] = true
+	}
+	for _, key := range fileKeys {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func supervisorServiceExplicitEnvKeys(raw string) []string {
@@ -1405,7 +1472,12 @@ func supervisorServiceExplicitEnvKeys(raw string) []string {
 	seen := make(map[string]bool, len(fields))
 	for _, field := range fields {
 		key := strings.TrimSpace(field)
-		if key == "" || seen[key] || !supervisorServiceEnvNameRE.MatchString(key) || supervisorServiceFixedEnvKeys[key] {
+		// The control key cannot opt itself in. Persisting it would make the
+		// NEXT regeneration's opt-in set depend on the unit this one is about
+		// to overwrite, so a single install run from a shell that set it
+		// would silently become permanent policy.
+		if key == "" || seen[key] || key == supervisorServiceOptInEnv ||
+			!supervisorServiceEnvNameRE.MatchString(key) || supervisorServiceFixedEnvKeys[key] {
 			continue
 		}
 		seen[key] = true

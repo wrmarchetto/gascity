@@ -55,6 +55,7 @@ controller
 supervisor-http-api
 supervisor-pack-drift
 supervisor-unit-env-drift
+supervisor-unit-optin-dropped
 agent-sessions
 zombie-sessions
 orphan-sessions
