@@ -506,3 +506,203 @@ func TestUnclaimableAssigneeRigScopeReportsARigStoreOpenFailure(t *testing.T) {
 		t.Errorf("message = %q, want the underlying store error", r.Message)
 	}
 }
+
+// --- bare pool name, split by status (ci-1ztzgt) ---
+
+// inProgressBead builds a claimed task assigned to assignee. Status is written
+// as the literal bd emits: both store backends normalize through
+// beads.mapBdStatus, whose only non-"open" outputs are "in_progress" and
+// "closed".
+func inProgressBead(id, assignee string) beads.Bead {
+	b := workBead(id, assignee)
+	b.Status = "in_progress"
+	return b
+}
+
+// TestUnclaimableAssigneeSplitsBarePoolNameCoverageByStatus pins the whole
+// residual ci-45nrw8 left behind: the bare pool name is claimable for OPEN
+// work and, on a pool that mints suffixed slot names, claimable by NOBODY
+// for in_progress work.
+//
+// Only one tier reaches a bare pool name -- bdReadyPoolAliasDemandShell, the
+// route-scoped transfer tier ci-c000 added -- and it is `bd ready`, which
+// excludes in_progress by design. The own-identity tier that DOES serve
+// in_progress probes $GC_SESSION_ID / $GC_SESSION_NAME / $GC_ALIAS, and since
+// ci-45nrw8 no session in an expanded pool carries the bare name in any of
+// them. So the same string is two different facts depending on the status
+// being asked about, and before this the set held only one of them.
+//
+// Both beads sit on the SAME name in every case, which is what makes the
+// assertion about status rather than about spelling: an implementation that
+// simply dropped the bare name reports the open sibling too, and that is the
+// false-positive flood the check was written to avoid.
+//
+// The singleton rows are not padding. At max_active_sessions=1 the session's
+// GC_ALIAS IS the bare name (config.Agent.UsesCanonicalSingletonPoolIdentity),
+// so its in_progress work is genuinely served by the own-identity tier -- the
+// mayor's held bead must never be reported.
+func TestUnclaimableAssigneeSplitsBarePoolNameCoverageByStatus(t *testing.T) {
+	cases := []struct {
+		shape                  string
+		agent                  config.Agent
+		wantInProgressReported bool
+	}{
+		{
+			shape:                  "capped multi-slot pool",
+			agent:                  config.Agent{Name: "toolsmith", MaxActiveSessions: intPtr(2)},
+			wantInProgressReported: true,
+		},
+		{
+			shape:                  "uncapped pool",
+			agent:                  config.Agent{Name: "polecat"},
+			wantInProgressReported: true,
+		},
+		{
+			shape:                  "namepool",
+			agent:                  config.Agent{Name: "crew", NamepoolNames: []string{"ada", "grace"}},
+			wantInProgressReported: true,
+		},
+		{
+			shape:                  "singleton pool",
+			agent:                  config.Agent{Name: "mayor", MaxActiveSessions: intPtr(1), MinActiveSessions: intPtr(1)},
+			wantInProgressReported: false,
+		},
+		{
+			shape:                  "named-session agent",
+			agent:                  config.Agent{Name: "overseer", MaxActiveSessions: intPtr(1)},
+			wantInProgressReported: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.shape, func(t *testing.T) {
+			pool := tc.agent.Name
+			cfg := &config.City{Agents: []config.Agent{tc.agent}}
+			r := runUnclaimableAssigneeCheck(t, cfg, []beads.Bead{
+				workBead("ci-open", pool),
+				inProgressBead("ci-inflight", pool),
+			})
+			if tc.wantInProgressReported {
+				assertReports(t, r, "ci-inflight")
+				return
+			}
+			assertReports(t, r)
+		})
+	}
+}
+
+// TestUnclaimableAssigneeAcceptsInProgressPoolWorkALiveSessionCanCarry pins
+// that the status split is a floor, not a ceiling: a name reachable by any
+// other tier stays claimable in every status.
+//
+// The live session here is an adopted or ad-hoc one whose alias happens to be
+// the bare pool name -- config never declares it, so the own-identity tier is
+// the only thing covering the bead, and an implementation that let the
+// open-only classification win over the live-session tier reports work a
+// running session is actively holding.
+func TestUnclaimableAssigneeAcceptsInProgressPoolWorkALiveSessionCanCarry(t *testing.T) {
+	cfg := &config.City{Agents: []config.Agent{{Name: "toolsmith", MaxActiveSessions: intPtr(2)}}}
+	r := runUnclaimableAssigneeCheck(t, cfg, []beads.Bead{
+		liveSessionBead("ci-sess4", "toolsmith"),
+		inProgressBead("ci-inflight", "toolsmith"),
+	})
+	assertReports(t, r)
+}
+
+// TestUnclaimableAssigneeAcceptsInProgressWorkOnAnExternalAssignee pins the
+// operator's escape hatch against the status split.
+//
+// This is not hypothetical in this city: `bd close` refuses a bead assigned to
+// "human", so operator work sits in_progress on that name for as long as it
+// takes. A status split applied to the declared external names would report
+// every one of them.
+func TestUnclaimableAssigneeAcceptsInProgressWorkOnAnExternalAssignee(t *testing.T) {
+	cfg := &config.City{
+		Agents: []config.Agent{{Name: "toolsmith", MaxActiveSessions: intPtr(2)}},
+		Doctor: config.DoctorConfig{ExternalAssignees: []string{"human"}},
+	}
+	r := runUnclaimableAssigneeCheck(t, cfg, []beads.Bead{inProgressBead("ci-for-operator", "human")})
+	assertReports(t, r)
+}
+
+// TestUnclaimableAssigneeNamesTheReleaseRemedyForInProgressPoolWork pins that
+// this shape gets its own sentence and its own command.
+//
+// The generic finding is actively WRONG here -- it says the name "is not an
+// agent, a pool slot, a named session or a live session", and the name is in
+// fact the pool's own. The generic FixHint is wrong too: bd refuses
+// `bd update --assignee` on a bead another assignee holds in_progress
+// (measured on the live store 2026-09-14: `cannot reassign ci-j6nevy: held by
+// "toolsmith" (in_progress)`), so the remedy a reader would reach for fails.
+// release-if-current is the one that works, and the check knows both of its
+// arguments.
+func TestUnclaimableAssigneeNamesTheReleaseRemedyForInProgressPoolWork(t *testing.T) {
+	cfg := &config.City{Agents: []config.Agent{{Name: "toolsmith", MaxActiveSessions: intPtr(2)}}}
+	r := runUnclaimableAssigneeCheck(t, cfg, []beads.Bead{inProgressBead("ci-inflight", "toolsmith")})
+	detail := strings.Join(r.Details, "\n")
+	for _, want := range []string{
+		"ci-inflight",
+		`"toolsmith"`,
+		"gc bd release-if-current ci-inflight toolsmith",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail does not name %q; got:\n%s", want, detail)
+		}
+	}
+	if strings.Contains(detail, "not an agent") {
+		t.Errorf("detail uses the not-an-identity sentence for a live pool name; got:\n%s", detail)
+	}
+}
+
+// TestUnclaimableAssigneeStillSuggestsAQualifierForAnExpandedRigPool pins that
+// routing the bare pool name into the open-only tier did not stop indexing its
+// unqualified spelling.
+//
+// The qualifier suggestion is built from the same identities the claim set
+// holds, so a split that indexed only the fully-claimable half would silently
+// drop the ci-tuy2u9 remedy for every rig pool above max_active_sessions=1 --
+// which is every rig pool that matters. The bead here is OPEN, so nothing but
+// the indexing can explain a missing suggestion.
+func TestUnclaimableAssigneeStillSuggestsAQualifierForAnExpandedRigPool(t *testing.T) {
+	cfg := rigPoolConfig(fixtureRig)
+	r := runRigUnclaimableAssigneeCheck(t, cfg, nil, []beads.Bead{
+		workBead("as-unqualified", fixturePool),
+	})
+	if detail := strings.Join(r.Details, "\n"); !strings.Contains(detail,
+		"gc bd update as-unqualified --assignee "+fixtureRig+"/"+fixturePool) {
+		t.Errorf("detail dropped the qualifier remedy; got:\n%s", detail)
+	}
+}
+
+// TestUnclaimableAssigneeNamesEachQualifiedFormOnce pins that an identity
+// reaching the claim set by two routes is suggested once.
+//
+// Splitting the set gave the qualified-form index two callers, and each tier
+// keeps its own membership map, so the dedup that used to fall out of the
+// exact-map early return has to be done in the index itself. Without it the
+// ambiguous-name finding lists the same rig twice and reads as two rigs
+// declaring the pool -- a report that tells the operator to make a choice
+// between one candidate and itself.
+//
+// The external_assignees entry is what puts the rig-qualified pool name in
+// BOTH tiers: the agent is an expanded pool, so config routes it open-only,
+// and the operator's list adds the identical string as fully claimable.
+func TestUnclaimableAssigneeNamesEachQualifiedFormOnce(t *testing.T) {
+	qualified := fixtureRig + "/" + fixturePool
+	cfg := rigPoolConfig(fixtureRig)
+	cfg.Doctor.ExternalAssignees = []string{qualified}
+	r := runRigUnclaimableAssigneeCheck(t, cfg, nil, []beads.Bead{
+		workBead("as-unqualified", fixturePool),
+	})
+	detail := strings.Join(r.Details, "\n")
+	// The single-candidate sentence is the assertion, not a substring count:
+	// the qualified string legitimately appears twice in it, once as the name
+	// meant and once inside the command. A duplicated index entry shows up as
+	// the AMBIGUOUS sentence instead, offering a choice between one rig and
+	// itself and withholding the command that would have fixed it.
+	if !strings.Contains(detail, "run gc bd update as-unqualified --assignee "+qualified) {
+		t.Errorf("detail does not offer the single qualifier remedy; got:\n%s", detail)
+	}
+	if strings.Contains(detail, "rigs declare it") {
+		t.Errorf("one rig declaring the pool reported as ambiguous; got:\n%s", detail)
+	}
+}
