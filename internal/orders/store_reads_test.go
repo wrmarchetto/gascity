@@ -259,7 +259,7 @@ func TestMarkFailedSingleUpdate(t *testing.T) {
 	if len(updates) != 1 {
 		t.Fatalf("want exactly 1 Update, got %d", len(updates))
 	}
-	want := []string{"wisp", "wisp-failed", "order:rig/agent", "seq:9"}
+	want := []string{"wisp", "wisp-failed", "order:rig/agent", "seq:9", "order-cursor"}
 	if !reflect.DeepEqual(updates[0].Opts.Labels, want) {
 		t.Fatalf("labels = %v, want %v", updates[0].Opts.Labels, want)
 	}

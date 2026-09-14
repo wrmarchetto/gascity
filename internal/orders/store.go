@@ -41,6 +41,13 @@ const (
 	labelOrderTitlePrefix = "order:"
 	labelSeqPrefix        = "seq:"
 
+	// labelOrderCursor marks the bead per order that currently carries the live
+	// event cursor. It is the shared selector behind the dispatcher's single
+	// grouped cursor read; RetireCursorMarkers keeps the marked set at roughly
+	// one row per event-triggered order, and markedCursorBeads is where both
+	// properties are argued.
+	labelOrderCursor = "order-cursor"
+
 	labelExec           = "exec"
 	labelExecFailed     = "exec-failed"
 	labelExecIncomplete = "exec-incomplete"
@@ -339,18 +346,99 @@ func (s *Store) SetDispatchFailure(runID, reason string) error {
 	return nil
 }
 
-// SetCursor stamps the event cursor as the label pair (order:<scoped>,
-// seq:<N>) on an existing tracking bead. Replaces the cursor-persist Update
-// sites in order_dispatch.go.
-func (s *Store) SetCursor(runID, scoped string, cursor EventCursor) error {
-	labels := []string{
+// CursorLabels is the label set that records cursor as scoped's event-bus
+// high-water mark on the bead it is stamped on: the order:<scoped> + seq:<N>
+// pair every reader has always folded with MaxSeqFromLabels, plus the shared
+// labelOrderCursor marker the dispatcher's single grouped read selects on.
+//
+// It is exported as a label SET rather than as a write so the wisp paths, which
+// stamp the cursor on a molecule root in the same Update that carries the
+// order-run label and the routing metadata, keep writing exactly once. Splitting
+// them into two Updates would put a window between a labeled root and a marked
+// one, which the grouped read would see as an order with no cursor.
+//
+// There is deliberately no matching "clear the cursor" helper. The cursor is a
+// forward-only high-water mark, so the only supported way down is an operator
+// deleting the run beads outright; a supported clear would be a foot-gun that
+// replays every consumed event for that order.
+func CursorLabels(scoped string, cursor EventCursor) []string {
+	return []string{
 		labelOrderTitlePrefix + scoped,
 		fmt.Sprintf("%s%d", labelSeqPrefix, uint64(cursor)),
+		labelOrderCursor,
 	}
-	if err := s.store.Update(runID, beads.UpdateOpts{Labels: labels}); err != nil {
+}
+
+// SetCursor stamps the event cursor as the label pair (order:<scoped>,
+// seq:<N>) plus the live-cursor marker on an existing tracking bead, then
+// retires the marker from the order's earlier runs. Replaces the cursor-persist
+// Update sites in order_dispatch.go.
+//
+// Retirement lives HERE rather than at each caller so the exec-shaped writers --
+// the dispatcher's dispatchExec, doOrderRunExecTracked, and CreateRunClosed,
+// which all funnel through this method -- cannot individually forget it and let
+// the marked set grow back to one row per run. The two WISP stamp sites
+// (dispatchWisp, and gc order run's formula shape) are the exception and call
+// RetireCursorMarkers themselves: they stamp the cursor in the SAME Update that
+// carries the order-run label and the routing metadata, and splitting that write
+// to route it through here would open a window where a labeled root is not yet a
+// marked one.
+//
+// A retirement failure is logged, never returned. Callers treat a SetCursor
+// error as a failed run -- dispatchExec stamps exec-failed and abandons the
+// command -- and an unretired predecessor is a cost, not a correctness fault, so
+// returning it would trade a real dispatch for a spare row.
+func (s *Store) SetCursor(runID, scoped string, cursor EventCursor) error {
+	if err := s.store.Update(runID, beads.UpdateOpts{Labels: CursorLabels(scoped, cursor)}); err != nil {
 		return fmt.Errorf("setting order run cursor on %q: %w", runID, err)
 	}
+	if err := s.RetireCursorMarkers(scoped, runID, cursor); err != nil {
+		runtimeHelpersLogf("orders: %v", err)
+	}
 	return nil
+}
+
+// RetireCursorMarkers drops labelOrderCursor from the beads of scoped whose
+// recorded seq is STRICTLY BELOW keepSeq. keepID and any row at an equal or
+// higher seq keep their marker; in steady state that leaves exactly one, which
+// is what holds the grouped cursor read at one row per order.
+//
+// The strictly-below test is the safety property, not an optimization. Retiring
+// by identity ("everything that is not keepID") would let a writer that stamps
+// an OUT-OF-ORDER cursor -- a manual gc order run racing a tick, a clock or
+// event-provider anomaly -- silently unmark the bead holding the true maximum,
+// which regresses the cursor and replays consumed events. Comparing seqs means
+// the marked set can only ever lose rows that are provably not the max.
+//
+// The sweep reaches whatever legs the receiving *Store was built with, and the
+// two wisp call sites build a single-leg store over the one that holds the root.
+// A city with a SPLIT orders/graph store that converts an order between exec and
+// wisp therefore strands one marker on the leg it moved off. That is a known,
+// bounded absence and not worth a cross-leg write: the stranded row carries an
+// older, lower seq, CursorIndex reads both legs and folds with max, so it costs
+// one row and can never lower a cursor.
+//
+// Errors are returned for logging, never for aborting the dispatch that called
+// it: a run whose cursor is stamped but whose predecessors keep their markers is
+// correct and merely costs one extra row on the next read.
+func (s *Store) RetireCursorMarkers(scoped, keepID string, keepSeq EventCursor) error {
+	marked, err := s.markedCursorBeads()
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, b := range marked {
+		if b.ID == keepID || !beadLabelsContain(b.Labels, labelOrderTitlePrefix+scoped) {
+			continue
+		}
+		if MaxSeqFromLabels([][]string{b.Labels}) >= uint64(keepSeq) {
+			continue
+		}
+		if err := s.store.Update(b.ID, beads.UpdateOpts{RemoveLabels: []string{labelOrderCursor}}); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("retiring stale cursor marker on %q: %w", b.ID, err)
+		}
+	}
+	return firstErr
 }
 
 // CloseRun closes a tracking bead, stamping close_reason so validation.on-close
