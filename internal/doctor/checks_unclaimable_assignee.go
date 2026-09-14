@@ -25,11 +25,20 @@ import (
 // it found (work hand-assigned to a bare pool name) left the general class
 // just as invisible.
 //
-// Two shapes produce it. A typo or a stale name, which was never an identity;
-// and a name that WAS one and stopped being one -- work left on toolsmith-3
-// after max_active_sessions drops to 2. Nothing writes anything when the
-// second happens, which is why config and store have to be reconciled here
-// rather than at the moment of the change.
+// Three shapes produce it. A typo or a stale name, which was never an
+// identity; a name that WAS one and stopped being one -- work left on
+// toolsmith-3 after max_active_sessions drops to 2; and, since ci-1ztzgt, a
+// live pool's OWN bare name holding in_progress work. Nothing writes anything
+// when the second happens, which is why config and store have to be reconciled
+// here rather than at the moment of the change.
+//
+// The third is why claimability is asked per status rather than per name. Only
+// one tier reaches a bare pool name -- the route-scoped
+// bdReadyPoolAliasDemandShell -- and it is `bd ready`, which excludes
+// in_progress by design, while the tier that does serve in_progress probes the
+// session's own identity, which above max_active_sessions=1 is a suffixed slot
+// name. So the same string is claimable open and claimable by nobody claimed.
+// See claimIdentitySet.covers and addRouteTarget.
 //
 // Why doctor and not `gc hook`: the hook sees only its own store scope and
 // only runs when a session exists, so by construction it cannot report the
@@ -153,7 +162,7 @@ func (c *UnclaimableAssigneeCheck) Run(_ *CheckContext) *CheckResult {
 		if b.Assignee == "" || !scannedForClaimability(b) {
 			continue
 		}
-		if claimable.covers(b.Assignee) {
+		if claimable.covers(b.Assignee, b.Status) {
 			continue
 		}
 		details = append(details, unclaimableAssigneeDetail(b, claimable))
@@ -187,7 +196,25 @@ func (c *UnclaimableAssigneeCheck) Run(_ *CheckContext) *CheckResult {
 // gets NO single command. Reassigning rig work to the wrong rig's pool strands
 // it again under a name that now looks correct, so the candidates are listed
 // and the choice is left with the reader.
+//
+// The in_progress pool-name case is checked FIRST and takes both sentences'
+// place, because for it the other two are wrong rather than merely vague. The
+// generic line says the name "is not an agent, a pool slot, a named session or
+// a live session" when the name is in fact the pool's own, and the generic
+// FixHint's reassign remedy is refused by bd on a bead another assignee holds
+// in_progress (measured on the live city store 2026-09-14:
+// `cannot reassign ci-j6nevy: held by "toolsmith" (in_progress)`).
+//
+// Documented absence: a bead that is in_progress AND on an unqualified rig
+// pool name still gets the qualifier sentence, whose command bd will refuse
+// for the same lease reason. It is left alone because its remedy is two steps
+// -- release, then reassign -- and inventing that wording here would be
+// untested against any shape anyone has observed.
 func unclaimableAssigneeDetail(b beads.Bead, claimable claimIdentitySet) string {
+	if isInProgressStatus(b.Status) && claimable.isOpenOnlyRouteTarget(b.Assignee) {
+		return fmt.Sprintf("%s (%s) assigned to %q, a pool whose slots carry suffixed names, so no session answers to that name and the pool-alias tier cannot serve claimed work: run gc bd release-if-current %s %s to return it to open",
+			b.ID, b.Status, b.Assignee, b.ID, b.Assignee)
+	}
 	forms := claimable.qualifiedFormsOf(b.Assignee)
 	switch len(forms) {
 	case 0:
@@ -246,8 +273,16 @@ func scannedForClaimability(b beads.Bead) bool {
 type claimIdentitySet struct {
 	// exact holds identities that can be enumerated: agent and named-session
 	// qualified names, bounded pool slots, live session identities, and the
-	// operator's declared external assignees.
+	// operator's declared external assignees. Membership here is claimable in
+	// every status.
 	exact map[string]struct{}
+	// openOnly holds names reachable ONLY through the route-scoped pool-alias
+	// tier (config.bdReadyPoolAliasDemandShell), which is `bd ready` and so
+	// cannot return in_progress work. A name lands here instead of `exact`
+	// when it is the bare name of a pool that mints suffixed slot identities;
+	// `exact` still wins, so a live session or a declared external assignee
+	// carrying the same string restores full coverage.
+	openOnly map[string]struct{}
 	// slotPrefixes holds "<qualified-name>-" for pools with no session cap,
 	// where the reachable slot names are unbounded and cannot be listed. A
 	// positive integer suffix is required, so polecat-47 is covered and
@@ -275,6 +310,7 @@ type claimIdentitySet struct {
 func newClaimIdentitySet(cfg *config.City, sessionBeads []beads.Bead) claimIdentitySet {
 	s := claimIdentitySet{
 		exact:          make(map[string]struct{}, 32),
+		openOnly:       make(map[string]struct{}, 8),
 		qualifiedForms: make(map[string][]string, 16),
 	}
 	if cfg == nil {
@@ -285,9 +321,10 @@ func newClaimIdentitySet(cfg *config.City, sessionBeads []beads.Bead) claimIdent
 		a := &cfg.Agents[i]
 		// The qualified name is both the agent's own identity and the pool
 		// route target (config.Agent.poolDemandTarget), so it covers work
-		// hand-assigned to a bare pool name -- the tier ci-c000 added.
-		s.add(a.QualifiedName())
-		s.add(a.PoolName)
+		// hand-assigned to a bare pool name -- the tier ci-c000 added. That
+		// coverage is status-dependent; addRouteTarget carries the split.
+		s.addRouteTarget(a, a.QualifiedName())
+		s.addRouteTarget(a, a.PoolName)
 		s.addPoolSlots(a)
 	}
 
@@ -314,8 +351,8 @@ func newClaimIdentitySet(cfg *config.City, sessionBeads []beads.Bead) claimIdent
 	return s
 }
 
-// add records a trimmed, non-empty identity, and indexes its unqualified
-// spelling when it carries a rig qualifier.
+// add records a trimmed, non-empty identity as claimable in every status, and
+// indexes its unqualified spelling when it carries a rig qualifier.
 func (s *claimIdentitySet) add(identity string) {
 	identity = strings.TrimSpace(identity)
 	if identity == "" {
@@ -325,12 +362,78 @@ func (s *claimIdentitySet) add(identity string) {
 		return
 	}
 	s.exact[identity] = struct{}{}
-	// config.ParseQualifiedName splits on the LAST "/", the same rule
-	// Agent.QualifiedName composes with, so the bare form indexed here is
-	// exactly the string an operator gets by dropping the rig prefix.
-	if dir, bare := config.ParseQualifiedName(identity); dir != "" && bare != "" {
-		s.qualifiedForms[bare] = append(s.qualifiedForms[bare], identity)
+	s.indexQualifiedForm(identity)
+}
+
+// addOpenOnly records a name the claim ladder reaches only while the work is
+// still open. It does NOT touch `exact`, so an identity added by both routes
+// keeps full coverage whichever order the two calls happen in.
+//
+// The qualified form is indexed here as well as in add. Skipping it was the
+// bug this split would otherwise introduce: every rig pool above
+// max_active_sessions=1 leaves `exact` through this path, and the ci-tuy2u9
+// missing-qualifier remedy is built from that index, so the suggestion would
+// vanish for exactly the pools that have one.
+func (s *claimIdentitySet) addOpenOnly(identity string) {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return
 	}
+	if _, exists := s.openOnly[identity]; exists {
+		return
+	}
+	s.openOnly[identity] = struct{}{}
+	s.indexQualifiedForm(identity)
+}
+
+// indexQualifiedForm records a rig-qualified identity under its bare spelling.
+//
+// config.ParseQualifiedName splits on the LAST "/", the same rule
+// Agent.QualifiedName composes with, so the bare form indexed here is exactly
+// the string an operator gets by dropping the rig prefix.
+func (s *claimIdentitySet) indexQualifiedForm(identity string) {
+	dir, bare := config.ParseQualifiedName(identity)
+	if dir == "" || bare == "" {
+		return
+	}
+	for _, existing := range s.qualifiedForms[bare] {
+		if existing == identity {
+			return
+		}
+	}
+	s.qualifiedForms[bare] = append(s.qualifiedForms[bare], identity)
+}
+
+// addRouteTarget records a pool route target, splitting its coverage by the
+// status the ladder can serve it in.
+//
+// Agent.SupportsExpandedSessionIdentities is the same predicate ci-45nrw8 used
+// to stop the pool door presenting the bare name as an identity, and it has to
+// stay the same one: it is true exactly when the pool mints suffixed slot
+// names, so nothing carries the bare name in $GC_ALIAS and the own-identity
+// tier -- the only tier that serves in_progress -- cannot reach it. At
+// max_active_sessions=1 it is false and GC_ALIAS IS the bare name
+// (Agent.UsesCanonicalSingletonPoolIdentity), so the mayor's held bead stays
+// fully covered. It is also false at max_active_sessions=0, where no session
+// runs at all: reporting a deliberately disabled agent's whole queue is the
+// false-positive flood, not a finding.
+//
+// Rejected alternative: dropping the bare name from the set outright. That
+// re-reports every legitimately hand-assigned OPEN bead the ci-c000 tier
+// exists to serve -- the shape TestUnclaimableAssigneeAcceptsTheBarePoolName
+// pins.
+//
+// Documented constraint: this reads an agent as a TEMPLATE, which is what
+// loadCityConfig hands the check. Pool expansion (cmd/gc/pool.go) rewrites
+// Name to the slot spelling and moves the template name into PoolName; hand
+// this an expanded list and a slot identity would be classified open-only.
+// Nothing constructs the check that way today.
+func (s *claimIdentitySet) addRouteTarget(a *config.Agent, identity string) {
+	if a.SupportsExpandedSessionIdentities() {
+		s.addOpenOnly(identity)
+		return
+	}
+	s.add(identity)
 }
 
 // addSlotPrefix records an uncapped pool's slot prefix, skipping the duplicate
@@ -410,14 +513,27 @@ func qualifyInstance(a *config.Agent, member string) string {
 	return a.Dir + "/" + member
 }
 
-// covers reports whether some session can hold work assigned to this name.
+// covers reports whether some session can hold work assigned to this name in
+// this status.
 //
 // The assignee is matched verbatim, never trimmed. bd matches --assignee
 // exactly, so an assignee with a stray trailing space really is claimable by
 // nobody, and %q in the report makes it visible.
-func (s claimIdentitySet) covers(assignee string) bool {
+//
+// Only in_progress narrows the set, and only for the openOnly tier. Documented
+// absence: "blocked" is deliberately NOT narrowed even though `bd ready`
+// excludes it too. A blocked bead is waiting, not stranded -- it returns to
+// open when its blocker closes and the pool-alias tier serves it then. An
+// in_progress one never transitions back on its own, which is what makes it
+// claimable by nobody rather than claimable later.
+func (s claimIdentitySet) covers(assignee, status string) bool {
 	if _, ok := s.exact[assignee]; ok {
 		return true
+	}
+	if !isInProgressStatus(status) {
+		if _, ok := s.openOnly[assignee]; ok {
+			return true
+		}
 	}
 	for _, prefix := range s.slotPrefixes {
 		if slot, found := strings.CutPrefix(assignee, prefix); found && isPositiveSlotNumber(slot) {
@@ -426,6 +542,28 @@ func (s claimIdentitySet) covers(assignee string) bool {
 	}
 	return false
 }
+
+// isOpenOnlyRouteTarget reports whether this name is a pool route target the
+// claim ladder reaches only while the work is still open -- the shape that
+// earns its own finding sentence.
+//
+// It is called only for an assignee covers already rejected, so a name sitting
+// in both tiers can never arrive here. A defensive `exact` lookup is
+// deliberately ABSENT: no caller can reach it, so no mutation can prove it,
+// and an unprovable guard reads as tested when it is not.
+func (s claimIdentitySet) isOpenOnlyRouteTarget(assignee string) bool {
+	_, ok := s.openOnly[assignee]
+	return ok
+}
+
+// inProgressStatus is bd's spelling of a claimed bead. Both store backends
+// normalize through beads.mapBdStatus, whose switch is an exact, case-
+// sensitive match emitting only "closed", "in_progress" and "open", so a
+// verbatim compare here cannot miss a casing bd never produces.
+const inProgressStatus = "in_progress"
+
+// isInProgressStatus reports whether a bead is claimed.
+func isInProgressStatus(status string) bool { return status == inProgressStatus }
 
 // qualifiedFormsOf returns the rig-qualified identities whose unqualified
 // spelling is exactly assignee, sorted so a report is stable across runs. An
