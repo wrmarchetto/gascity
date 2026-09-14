@@ -38,6 +38,22 @@ ref that holds it does not clear the row. It moves the row off rule 1, onto
 rule 3, and onto the ERROR arm. The tracker's most tempting cleanup is the
 one that turns a silent warning into a blocking red.
 
+MEASURED on `gs-dzj`, 2026-09-13, rather than read off the severity table.
+`recover/gs-dzj` was the only ref holding `f2f45af63`, and the bead's close
+reason names that sha alongside the landed one. Deleting the branch and
+re-running the check:
+
+| | before | after |
+| --- | --- | --- |
+| exit status | 1 (warning) | **2 (error)** |
+| the row | `[unmerged] ... (1 via close-reason)` | `[unmerged-unreferenced] ... held by NO ref or worktree` |
+
+The branch was restored from the recorded sha in the same minute and the
+check returned to exit 1 with the row back on its warning arm. Note what the
+error costs beyond the row: `gc doctor` exits nonzero, and
+`orders/doctor-findings-sweep.toml` polls it every 5m and escalates an ERROR
+to the mayor -- so the cleanup files a summons within five minutes.
+
 The test is mechanical: dump the close reason's hex tokens before touching a
 ref.
 
@@ -76,14 +92,15 @@ close reason belongs in that baseline and should stay there.
 
 Nine rows, triaged against local `main` at `967922634`. Every "superseded"
 below was established by reading the landed commit, not by trusting a close
-reason.
+reason. The check went from 78 unlanded rows to 75 across the three actions
+that had one available; the other six have none, for the reason above.
 
 | Bead | Attributed by | Verdict |
 | --- | --- | --- |
 | `ci-cfu3es` | close-reason `72d12b390` | no work exists -- see below |
 | `ci-m2du2o` | ref-name | superseded by `69ad854e8`; ref moved to `salvage/` |
 | `ci-ui81lu` | ref-name x2 | superseded by `9b9063199` and `f9b0bcef2`; refs deleted |
-| `ci-zspx` | ref-name | LANDED here; original ref retired |
+| `ci-zspx` | ref-name | landed by this branch; original ref retired |
 | `gs-22c` | close-reason `02c043b66` | no work of its own is unlanded |
 | `gs-33z` | close-reason `a4cca6771` | superseded by `cf2ef5676` |
 | `gs-8ra` | close-reason `5ba13f57b` | superseded by `9b34e5a51` and `8e8c9c644` |
