@@ -377,12 +377,78 @@ func uniqueNonEmptyIDs(ids []string) []string {
 func (s *Store) MarkFailed(runID, scoped string, outcome RunOutcome, cursor *EventCursor) error {
 	labels := outcome.Labels()
 	if cursor != nil {
-		labels = append(labels,
-			labelOrderTitlePrefix+scoped,
-			fmt.Sprintf("%s%d", labelSeqPrefix, uint64(*cursor)),
-		)
+		labels = append(labels, CursorLabels(scoped, *cursor)...)
 	}
 	return s.store.Update(runID, beads.UpdateOpts{Labels: labels})
+}
+
+// markedCursorBeads returns every bead carrying labelOrderCursor across the
+// orders leg and the graph leg -- roughly one row per event-triggered order.
+//
+// Deliberately NO Limit and therefore NO AllowBackingCreatedLimit question: the
+// marker retirement in RetireCursorMarkers is what bounds the result, so nothing
+// is ever cut and the created-desc id-ASC tie-break that forbids a bounded
+// backing read on the exact per-order scan cannot arise here. Adding a Limit
+// later would re-introduce exactly that hazard on a read that folds to max(seq),
+// a DIFFERENT column than the sort key -- do not.
+//
+// A leg error is RETURNED even with rows in hand, which is the opposite of the
+// partial-tolerance the sibling LastRun/Cursor reads apply, and deliberately so.
+// Those reads fold to max(created_at), where a missing scope makes an order look
+// less recently run and it fires early -- an extra run. This one folds to
+// max(seq), where a missing scope makes an order look less far along and it
+// REPLAYS consumed events. Surfacing the error routes the caller to the exact
+// per-order scan instead, which is slow and right.
+func (s *Store) markedCursorBeads() ([]beads.Bead, error) {
+	var out []beads.Bead
+	for _, store := range s.mixedLegStores() {
+		results, err := store.List(beads.ListQuery{
+			Label:         labelOrderCursor,
+			IncludeClosed: true,
+			TierMode:      beads.TierBoth,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("listing live-cursor markers: %w", err)
+		}
+		out = append(out, results...)
+	}
+	return out, nil
+}
+
+// CursorIndex reports the event cursor of every order that has a live cursor
+// marker, in ONE read per leg rather than one read per order.
+//
+// It is the batched replacement for the dispatcher's per-order cursor scan.
+// An order ABSENT from the returned map has no marker anywhere -- it has never
+// run, or its last run predates the marker -- and the caller must fall back to
+// the exact per-order read rather than treating the absence as a zero cursor.
+// That distinction is the whole upgrade story: a city whose orders all ran
+// before this label existed pays the old cost for exactly one tick per order,
+// with no backfill sweep and no window in which the cursor reads low.
+func (s *Store) CursorIndex() (map[string]EventCursor, error) {
+	marked, err := s.markedCursorBeads()
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[string]EventCursor, len(marked))
+	for _, b := range marked {
+		seq := EventCursor(MaxSeqFromLabels([][]string{b.Labels}))
+		for _, l := range b.Labels {
+			name, ok := strings.CutPrefix(l, labelOrderTitlePrefix)
+			if !ok || name == "" {
+				continue
+			}
+			// Presence is tested explicitly rather than compared against the
+			// zero value: an order marked at seq 0 -- a first run against an
+			// empty event log -- is PRESENT at zero, and collapsing that into
+			// "absent" would send it to the exact per-order scan on every tick
+			// forever, silently restoring the cost this read removes.
+			if cur, seen := index[name]; !seen || seq > cur {
+				index[name] = seq
+			}
+		}
+	}
+	return index, nil
 }
 
 // LastRun reports the most recent run time (the cooldown clock) for the named

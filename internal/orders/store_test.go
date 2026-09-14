@@ -97,7 +97,12 @@ func TestSetOutcomeLabelSets(t *testing.T) {
 }
 
 // TestSetCursorLabelPair proves the cursor is encoded as (order:<scoped>,
-// seq:<N>), matching order_dispatch.go:1021/1390.
+// seq:<N>) plus the shared order-cursor marker the dispatcher's single grouped
+// cursor read selects on. The marker is asserted here, in the exact label set,
+// because a writer that stamps the pair but drops the marker leaves that order
+// invisible to the grouped read -- which is not an error anywhere: the
+// dispatcher silently falls back to the per-order full-history scan this label
+// exists to retire, and the only symptom is the cost regression of ci-jg1k70.
 func TestSetCursorLabelPair(t *testing.T) {
 	st, rec := recordingOrdersStore()
 	seeded, err := st.store.Create(beads.Bead{Title: "order:rig/agent"})
@@ -110,7 +115,7 @@ func TestSetCursorLabelPair(t *testing.T) {
 		t.Fatalf("SetCursor: %v", err)
 	}
 	got := rec.CallsForOp("Update")[0].Opts.Labels
-	want := []string{"order:rig/agent", "seq:7"}
+	want := []string{"order:rig/agent", "seq:7", "order-cursor"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("cursor labels = %v, want %v", got, want)
 	}
@@ -181,9 +186,11 @@ func TestCreateRunClosedCooldownOnly(t *testing.T) {
 	}
 }
 
-// TestCreateRunClosedWithCursor proves the cursor label pair is stamped before
+// TestCreateRunClosedWithCursor proves the cursor label set is stamped before
 // close when supplied (the event-exec manual path), matching the
-// (Create, Update cursor, Update outcome, Close) raw sequence.
+// (Create, Update cursor, Update outcome, Close) raw sequence. The Update count
+// is still 2: SetCursor's marker retirement writes only to OTHER beads, and
+// this run has no predecessor to retire.
 func TestCreateRunClosedWithCursor(t *testing.T) {
 	st, rec := recordingOrdersStore()
 	cur := EventCursor(9)
@@ -195,8 +202,8 @@ func TestCreateRunClosedWithCursor(t *testing.T) {
 	if len(updates) != 2 {
 		t.Fatalf("Update calls = %d, want 2 (cursor + outcome)", len(updates))
 	}
-	if got := updates[0].Opts.Labels; !reflect.DeepEqual(got, []string{"order:rig/agent", "seq:9"}) {
-		t.Errorf("cursor labels = %v, want [order:rig/agent seq:9]", got)
+	if got := updates[0].Opts.Labels; !reflect.DeepEqual(got, []string{"order:rig/agent", "seq:9", "order-cursor"}) {
+		t.Errorf("cursor labels = %v, want [order:rig/agent seq:9 order-cursor]", got)
 	}
 	if got := updates[1].Opts.Labels; !reflect.DeepEqual(got, []string{"exec"}) {
 		t.Errorf("outcome labels = %v, want [exec]", got)

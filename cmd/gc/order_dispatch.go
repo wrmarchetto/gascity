@@ -394,6 +394,16 @@ type orderDispatchTrackingIndex struct {
 	mu      sync.Mutex
 	entries map[string]map[string]orderTrackingSummary
 	errs    map[string]error
+	// cursors is the per-tick live-cursor index: ONE federated read shared by
+	// every event-triggered order in the ring, replacing the per-order
+	// full-history scan that made those orders ~86% of the dispatch phase
+	// (ci-jg1k70). cursorsRead is a separate flag rather than a nil-map test
+	// because an empty index is a legitimate answer on a city with no marked
+	// orders, and re-reading it every order would restore the per-order cost it
+	// exists to remove.
+	cursors     map[string]orders.EventCursor
+	cursorsRead bool
+	cursorsErr  error
 }
 
 type orderTrackingSummary struct {
@@ -643,12 +653,13 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		// at k and the two terms only mostly cancel. A cycle is still lost
 		// when walk(k) - walk(k+1) plus the write this order does itself exceeds the
 		// allowance, estimated at a few percent of cycles against the ~25%
-		// measured above. Two further contributors are left standing and
-		// deliberately not addressed here: the per-tick budget, which 29% of
-		// patrol ticks now reach and which this change makes bind HARDER by
-		// putting the 30s orders back on every tick; and the phase cost
-		// itself, of which four event-trigger orders paying an uncached
-		// bdCursorAcrossStores scan each tick are the suspected bulk.
+		// measured above. The per-tick budget is left standing and deliberately
+		// not addressed here: 29% of patrol ticks now reach it, and this change
+		// makes it bind HARDER by putting the 30s orders back on every tick.
+		// The other contributor named here -- four event-trigger orders paying
+		// an uncached bdCursorAcrossStores scan each tick -- was CONFIRMED as
+		// the bulk of the phase cost and is now fixed by the live-cursor index
+		// below (ci-jg1k70), so do not go hunting it again.
 		//
 		// THE REJECTED ALTERNATIVE is widening the allowance instead --
 		// flooring slack at a tick-scale quantity so it stops shrinking with
@@ -763,10 +774,25 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		}
 		cursorFn := orders.CursorAcross(orderFrontDoorsForStores(storesForGate))
 		if a.Trigger == "event" {
-			cursor, err := bdCursorAcrossStores(a.ScopedName(), storesForGate...)
-			if err != nil {
-				logDispatchError(m.stderr, "gc: order dispatch: reading event cursor for %s: %v", a.ScopedName(), err)
-				continue
+			// The per-tick live-cursor index answers every event order from one
+			// federated read. Two cases still pay the exact per-order scan: an
+			// order with no marker anywhere -- one whose last run predates the
+			// marker, or which has never run, whose next dispatch stamps one, so
+			// an upgraded city self-heals within one tick per order and needs no
+			// backfill sweep -- and a failed index read, which is sticky for the
+			// whole tick, so ONE bad leg puts EVERY event order back on the old
+			// cost until the next tick and logs a line per order, not per tick.
+			indexed, ok, err := trackingIndex.cursorFor(storesForGate, a.ScopedName())
+			cursor := uint64(indexed)
+			if err != nil || !ok {
+				if err != nil {
+					logDispatchError(m.stderr, "gc: order dispatch: reading live cursor index for %s: %v", a.ScopedName(), err)
+				}
+				cursor, err = bdCursorAcrossStores(a.ScopedName(), storesForGate...)
+				if err != nil {
+					logDispatchError(m.stderr, "gc: order dispatch: reading event cursor for %s: %v", a.ScopedName(), err)
+					continue
+				}
 			}
 			cursorFn = func(string) uint64 {
 				return cursor
@@ -1113,6 +1139,41 @@ func (idx *orderDispatchTrackingIndex) lastRunFunc(
 		}
 		return latest, nil
 	}
+}
+
+// cursorFor reports the named order's event cursor from the per-tick live-cursor
+// index, building the index on first use. ok distinguishes absent from zero --
+// see orders.CursorIndex for why that distinction is load-bearing and what the
+// caller owes it.
+//
+// The index is built once per tick and shared by every event order, so the read
+// it replaces stops scaling with the number of event-triggered orders. A nil
+// index (the storeless CLI/API evaluators) reports not-found rather than
+// fabricating a cursor, so those callers keep their existing exact read.
+func (idx *orderDispatchTrackingIndex) cursorFor(stores []beads.Store, scopedName string) (orders.EventCursor, bool, error) {
+	if idx == nil {
+		return 0, false, nil
+	}
+	idx.mu.Lock()
+	read, index, readErr := idx.cursorsRead, idx.cursors, idx.cursorsErr
+	idx.mu.Unlock()
+	if !read {
+		// The lock is dropped across the store read, matching entriesForStore
+		// and for the same reason: gate goroutines take this mutex, and holding
+		// it across a slow or contended federated read would stall the siblings
+		// gateOpenWorkBounded exists to keep independent. A concurrent caller may
+		// therefore repeat the read; both computed the same result from the same
+		// stores, so last writer wins.
+		index, readErr = orders.CursorIndexAcross(orderFrontDoorsForStores(stores))
+		idx.mu.Lock()
+		idx.cursors, idx.cursorsErr, idx.cursorsRead = index, readErr, true
+		idx.mu.Unlock()
+	}
+	if readErr != nil {
+		return 0, false, readErr
+	}
+	cursor, ok := index[scopedName]
+	return cursor, ok, nil
 }
 
 func (idx *orderDispatchTrackingIndex) lastRunForStore(store beads.Store, storeKey, scopedName string) (time.Time, error) {
@@ -1921,10 +1982,7 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 	// are what union it back with the tracking bead's own order-run evidence.
 	update := beads.UpdateOpts{Labels: []string{"order-run:" + scoped}}
 	if a.Trigger == "event" && m.ep != nil {
-		update.Labels = append(update.Labels,
-			fmt.Sprintf("order:%s", scoped),
-			fmt.Sprintf("seq:%d", headSeq),
-		)
+		update.Labels = append(update.Labels, orders.CursorLabels(scoped, orders.EventCursor(headSeq))...)
 	}
 	if a.Pool != "" {
 		update.Metadata = map[string]string{beadmeta.RoutedToMetadataKey: pool}
@@ -1936,6 +1994,16 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 		reason := fmt.Sprintf("wisp %s created but label failed: %v", rootID, err)
 		m.failWispDispatch(store, trackingID, scoped, reason, a, headSeq)
 		return
+	}
+	// Retire the previous run's marker only AFTER this one is durable. Retiring
+	// first would, on the Update failure handled just above, leave the order with
+	// no marked carrier at all -- which the next tick reads as "never ran" and
+	// answers with the full-history scan this whole mechanism exists to retire.
+	// It runs in the dispatch goroutine, off the ring walk.
+	if a.Trigger == "event" && m.ep != nil {
+		if err := orders.NewStore(beads.OrdersStore{Store: graphStore}).RetireCursorMarkers(scoped, rootID, orders.EventCursor(headSeq)); err != nil {
+			logDispatchError(m.stderr, "gc: order %s: %v", scoped, err)
+		}
 	}
 
 	m.rec.Record(events.Event{

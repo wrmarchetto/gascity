@@ -859,10 +859,7 @@ func doOrderRunWithJSON(aa []orders.Order, name, rig, cityPath string, store bea
 		Labels: []string{"order-run:" + scoped},
 	}
 	if a.Trigger == "event" && ep != nil {
-		update.Labels = append(update.Labels,
-			"order:"+scoped,
-			fmt.Sprintf("seq:%d", headSeq),
-		)
+		update.Labels = append(update.Labels, orders.CursorLabels(scoped, orders.EventCursor(headSeq))...)
 	}
 	if a.Pool != "" {
 		update.Metadata = map[string]string{beadmeta.RoutedToMetadataKey: pool}
@@ -870,6 +867,17 @@ func doOrderRunWithJSON(aa []orders.Order, name, rig, cityPath string, store bea
 	if err := store.Update(rootID, update); err != nil {
 		fmt.Fprintf(stderr, "gc order run: labeling wisp: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
+	}
+	// The wisp paths stamp the cursor inside the root's combined label+metadata
+	// Update rather than through Store.SetCursor, so they are the two sites that
+	// retire predecessors explicitly. See SetCursor for why the split exists,
+	// and do NOT hoist this above the Update: retiring before the new marker is
+	// durable leaves the order with no marked carrier at all when that Update
+	// fails, which the next read answers with a full-history scan.
+	if a.Trigger == "event" && ep != nil {
+		if err := orders.NewStore(beads.OrdersStore{Store: store}).RetireCursorMarkers(scoped, rootID, orders.EventCursor(headSeq)); err != nil {
+			fmt.Fprintf(stderr, "warning: gc order run: %v\n", err) //nolint:errcheck // successful run is preserved
+		}
 	}
 
 	// Record the run in the order-tracking history index so a manual formula
@@ -2008,6 +2016,11 @@ func findOrder(aa []orders.Order, name, rig string) (orders.Order, bool) {
 // when a same-second burst exceeds the cap.
 const bdCursorRecentRunsLimit = 256
 
+// bdCursor is the EXACT per-order cursor read, and since ci-jg1k70 it is the
+// dispatcher's cold path only: orders.CursorIndex serves the steady state from
+// one grouped read, and this fires for an order with no live-cursor marker or
+// after an index read fails. It stays because it is the only read that works on
+// a store predating the marker.
 func bdCursor(store beads.Store, orderName string) (uint64, error) {
 	beadList, err := store.List(beads.ListQuery{
 		Label:         "order:" + orderName,

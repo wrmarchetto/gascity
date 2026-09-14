@@ -63,8 +63,33 @@ func RecentRunsAcross(stores []*Store, name string, limit int) ([]OrderRun, erro
 	return runs, nil
 }
 
+// CursorIndexAcross merges the live-cursor index across a federation of order
+// front doors, taking the max seq per order. nil entries are skipped; a
+// per-scope error aborts and propagates, because a silently dropped scope here
+// would under-report a cursor and replay consumed events.
+func CursorIndexAcross(stores []*Store) (map[string]EventCursor, error) {
+	merged := make(map[string]EventCursor)
+	for _, s := range stores {
+		if s == nil {
+			continue
+		}
+		index, err := s.CursorIndex()
+		if err != nil {
+			return nil, err
+		}
+		for name, seq := range index {
+			if seq > merged[name] {
+				merged[name] = seq
+			}
+		}
+	}
+	return merged, nil
+}
+
 // CursorAcross returns a CursorFunc merging the event seq cursor for a named
-// order across a federation of order front doors. Each *Store performs its own
+// order across a federation of order front doors. It is the per-NAME read; the
+// dispatcher's steady state runs on CursorIndexAcross instead, and reaches this
+// one only for an order carrying no live-cursor marker. Each *Store performs its own
 // MIXED orders+graph Cursor read; the max seq across scopes wins. nil entries
 // are skipped.
 func CursorAcross(stores []*Store) CursorFunc {
