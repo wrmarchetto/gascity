@@ -154,6 +154,15 @@ supervisor unit generation. Same descent-is-not-coverage standard as
 pm-log #131. The class at eight members is itself further evidence for
 settling the standing question below.
 
+Update 2026-09-13 (pm-log #144): gs-1soi (triage 9 closed beads whose
+work never reached main -- the rig-side half of the ci-qof1bz backlog
+triage) joins the class, ninth after gs-z39, gs-c6f, gs-eep, gs-olu,
+gs-dzj, gs-a6j, gs-hzrg, and gs-cbhj. Summons gs-e5bi ruled it
+standalone: landing hygiene for closed beads' branches, covered by no
+epic:agent-efficiency criterion, and three of its nine rows are prior
+class members' own commits. The class at nine members is itself further
+evidence for settling the standing question below.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?

@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-quyd 2026-09-13T14:55:00Z
+last_seen: gs-e5bi 2026-09-14T00:40:15Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4921,5 +4921,33 @@ feat/gs-z2on-account-affinity-reshuffle at de07763, criterion 5's
 carrier (same scope split as #138). gs-cbhj filed and claimed by
 lab.engineer-1, gs-quyd filed (this summons). agent-efficiency's open
 work is now only the deferred canary reading.
+
+Source: pm-log #131
+
+## 144. Sweep summons gs-e5bi: gs-1soi ruled standalone, ninth in the substrate class (2026-09-13)
+
+gs-1soi (triage 9 closed beads whose work never reached main -- LAND,
+ABANDON, or MOVE each row) carried no epic label. It is the rig-side half
+of the ci-qof1bz backlog triage: the doctor/closed-bead-unlanded check
+baselined these rows, and ci-sepm4q routed the disposition here because
+minting an eligible ref for a rig branch is a rig landing decision.
+
+Ruling: standalone. The only open epic is agent-efficiency, and none of
+its seven criteria (token observability, prefix hygiene, explicit
+model+effort, canary, account affinity, memory-drift remediation, prompt
+audit) closes over landing hygiene for closed beads' branches. This is
+branch/landing hygiene of the same substrate-maintenance kind as gs-z39
+and gs-dzj -- indeed three of its nine rows (gs-22c, gs-c6f, gs-dzj) are
+prior members' own commits. Same descent-is-not-coverage standard as
+#131 and #143; gs-1soi joins the class as its ninth member (pm-open #3
+updated in this commit). Labeled with
+`bd update gs-1soi --add-label standalone`.
+
+Drift since last_seen (gs-quyd 2026-09-13T14:55:00Z): gs-cbhj closed --
+shipped fc8999056 on feat/gs-cbhj-supervisor-service-env-declaration,
+merged to main as 6e64551b0 (EnvLines single producer, install-time env
+no longer baked). gs-1soi filed and claimed by lab.engineer-1, gs-e5bi
+filed (this summons). agent-efficiency's open work is still only the
+deferred canary reading gs-n3lh.
 
 Source: pm-log #131
