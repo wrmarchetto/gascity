@@ -27,6 +27,9 @@ description: The shortest path for new contributors to get productive in Gas Cit
 - [Merging upstream through the committed dashboard bundle](upstream-merge-dashboard-bundle.md)
   before resolving a single conflict in `internal/api/dashboardspa/dist` -- the
   bundle is generated output and is rebuilt, never merged
+- [Triaging a closed bead whose work never reached main](unlanded-closed-bead-triage.md)
+  before deleting any branch a `doctor/closed-bead-unlanded` row names -- for
+  most rows that deletion raises the finding from a warning to an error
 - [Release Gate Criteria Conventions](release-gate-criteria-conventions.md)
   when signing off the "Tests pass" criterion on a `release-gates/*.md`
   deploy gate — it must cite the CI jobs `ci-required` actually gates on
