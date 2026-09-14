@@ -728,8 +728,13 @@ func buildDesiredStateWithSessionBeads(
 		}
 		if len(assignedWorkBeads) > 0 {
 			fmt.Fprintf(stderr, "assignedWorkBeads: %d beads found\n", len(assignedWorkBeads)) //nolint:errcheck
-			for _, wb := range assignedWorkBeads {
-				fmt.Fprintf(stderr, "  %s assignee=%s routed=%s status=%s\n", wb.ID, wb.Assignee, wb.Metadata[beadmeta.RoutedToMetadataKey], wb.Status) //nolint:errcheck
+			for i, wb := range assignedWorkBeads {
+				storeRef := ""
+				if i < len(assignedWorkStoreRefs) {
+					storeRef = assignedWorkStoreRefs[i]
+				}
+				ready := readyAssigned[storeScopedBeadKey{StoreRef: storeRef, ID: wb.ID}]
+				fmt.Fprintf(stderr, "  %s\n", formatAssignedWorkBeadRow(wb, ready, beaconTime)) //nolint:errcheck
 			}
 		} else {
 			fmt.Fprintf(stderr, "assignedWorkBeads: 0 beads (rigStores=%d)\n", len(rigStores)) //nolint:errcheck

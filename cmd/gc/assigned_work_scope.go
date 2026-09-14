@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/agentutil"
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	sessionpkg "github.com/gastownhall/gascity/internal/session"
@@ -311,4 +314,61 @@ func readyAssignedFlagsForBeads(readyAssigned map[storeScopedBeadKey]bool, beadL
 		flags[i] = readyAssigned[storeScopedBeadKey{StoreRef: storeRefs[i], ID: beadList[i].ID}]
 	}
 	return flags
+}
+
+// formatAssignedWorkBeadRow renders one row of the controller's per-tick
+// `assignedWorkBeads:` diagnostic, which is the only per-bead account of why a
+// pool is the size it is.
+//
+// `ready` is the controller's own demand verdict for this tick (readyAssigned,
+// the same value the gate at line 167 above decides on). It was computed and
+// then dropped from the row, leaving a reader to re-derive it from fields that
+// cannot support the inference.
+//
+// `status` is a DERIVED value and NOT the store's: mapBdStatus collapses bd's
+// deferred, blocked, review and testing to "open" on the cached tier, so a
+// deliberately parked bead prints as ordinary ready work. Measured 2026-09-14
+// -- city bead ci-2qb5bb was `deferred` with defer_until 2026-09-16 in the
+// store and reached this row as `status=open`. An operator read three such rows
+// and recorded "not a hold label and not a deferred status" as a ruled-out
+// cause on a P1 while the sizing code was correct throughout, so the holds and
+// the deferral are printed from the fields demand is actually decided on.
+//
+// Absent deliberately: the bead's non-hold labels. Only DispatchHoldLabels
+// change demand, and a row carrying every tag of a heavily-labeled bead is a
+// row an operator stops reading -- the same failure, not a smaller one.
+// Pinned by build_desired_state_demand_diagnostic_test.go.
+func formatAssignedWorkBeadRow(wb beads.Bead, ready bool, now time.Time) string {
+	row := fmt.Sprintf("%s assignee=%s routed=%s status=%s ready=%t",
+		wb.ID, wb.Assignee, wb.Metadata[beadmeta.RoutedToMetadataKey], wb.Status, ready)
+	if holds := dispatchHoldLabelsOn(wb.Labels); len(holds) > 0 {
+		row += " holds=" + strings.Join(holds, ",")
+	}
+	// Only a FUTURE deferral suppresses demand. An expired one is reported as
+	// nothing rather than as a deferral, so the row cannot be read as a reason
+	// for a bead that is in fact raising demand.
+	if beads.IsDeferred(wb, now) {
+		row += " defer=" + wb.DeferUntil.UTC().Format(time.RFC3339)
+	}
+	return row
+}
+
+// dispatchHoldLabelsOn returns the beadmeta.DispatchHoldLabels values present
+// on labels, in the canonical order of that slice rather than the bead's own,
+// so two beads holding the same pair render identically.
+func dispatchHoldLabelsOn(labels []string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	present := make(map[string]bool, len(labels))
+	for _, l := range labels {
+		present[strings.TrimSpace(l)] = true
+	}
+	var holds []string
+	for _, hold := range beadmeta.DispatchHoldLabels {
+		if present[hold] {
+			holds = append(holds, hold)
+		}
+	}
+	return holds
 }
