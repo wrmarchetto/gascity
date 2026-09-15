@@ -306,13 +306,24 @@ func unclaimableWorkGrace(cfg *config.City) (time.Duration, error) {
 // unclaimableWorkWithinGrace reports whether b is young enough that its missing
 // address may still be on its way.
 //
-// A zero CreatedAt counts as OLD. A bead whose store did not report a creation
-// time has no measurable age, and calling that "just created" would withhold
-// every finding from a store that stopped populating the column -- the check
-// would go quiet and read as healthy, which is the one failure mode a detector
-// must not have. Reporting it is the recoverable error.
+// A zero CreatedAt counts as OLD, and the subtraction alone gets that right: a
+// bead whose store did not report a creation time dates from year 1, and
+// time.Sub SATURATES at the maximum Duration rather than overflowing, so its
+// age exceeds every window an operator could write. An explicit IsZero clause
+// was written here first and deleted -- a mutation sweep reported it SURVIVED,
+// because no flip of it changes any answer, and an inert clause in a refusal is
+// what makes the next sweep's output noise. The CONTRACT survives in
+// TestUnclaimableWorkGraceCountsAnUndatedBeadAsOld, which is where it belongs:
+// calling an unmeasurable age "just created" would withhold every finding from
+// a store that stopped populating the column, and the check would go quiet and
+// read as healthy. That is the one failure mode a detector must not have, so
+// reporting is the recoverable error.
+//
+// The zero-window refusal below is NOT redundant in the same way, and its own
+// test says why -- a negative age, the store's clock ahead of the host's, is
+// below every window including the unset one.
 func unclaimableWorkWithinGrace(b beads.Bead, reason string, grace time.Duration, now func() time.Time) bool {
-	if grace <= 0 || reason != unclaimableWorkNoAddressReason || b.CreatedAt.IsZero() {
+	if grace <= 0 || reason != unclaimableWorkNoAddressReason {
 		return false
 	}
 	return now().Sub(b.CreatedAt) < grace
