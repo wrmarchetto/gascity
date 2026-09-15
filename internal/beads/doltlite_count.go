@@ -24,7 +24,7 @@ import (
 // so a metadata query cannot be counted exactly in SQL and returns
 // ErrCountUnsupported. The wisp and both tiers also return
 // ErrCountUnsupported because their tier filters and unions are still applied
-// List-side, and CreatedBefore/ParentID filters return ErrCountUnsupported
+// List-side, and CreatedBefore/CreatedAfter/ParentID filters return ErrCountUnsupported
 // because List applies them with Go-side semantics a single COUNT cannot
 // reproduce. Limited queries are excluded because the Counter contract is
 // List cardinality parity, not full-result total cardinality. UpdatedBefore
@@ -146,6 +146,13 @@ func doltliteCountSupported(query ListQuery) bool {
 		return false
 	}
 	if !query.CreatedBefore.IsZero() || !query.UpdatedBefore.IsZero() {
+		return false
+	}
+	// CreatedAfter reaches SQL widened by a second (createdAfterBackingFloor),
+	// so a COUNT over it overcounts by whatever sits in the slack -- the same
+	// class as CreatedBefore, which the read path corrects Go-side and a bare
+	// COUNT cannot.
+	if !query.CreatedAfter.IsZero() {
 		return false
 	}
 	// The compound (created_at, id) seek boundary is resolved Go-side (to keep

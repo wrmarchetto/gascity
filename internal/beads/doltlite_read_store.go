@@ -911,11 +911,18 @@ func (s *DoltliteReadStore) queryIssuesOrderedInTables(query ListQuery, sets []d
 		if len(sets) > 1 {
 			tableLimit = 0
 		}
-		// A seek boundary is applied Go-side (filterDoltliteBeforeTimes) after
+		// A seek boundary is applied Go-side (filterDoltliteResidualTimes) after
 		// this fetch; a SQL LIMIT cut before that filter would silently drop
 		// page rows, so seeked reads fetch unbounded and let the Go
 		// filter+sort+limit below cut the exact page.
 		if query.SeekAfter != nil {
+			tableLimit = 0
+		}
+		// Same class: the created-after window reaches SQL widened by a second,
+		// so rows the Go filter will drop can occupy a bounded read's rows and
+		// leave it short. Unbounding the fetch still reads only the widened
+		// window, which is what the bound was there to avoid reading past.
+		if !query.CreatedAfter.IsZero() {
 			tableLimit = 0
 		}
 		rows, err := s.queryIssueTable(query, tables, extraWhere, extraArgs, tableLimit, orderBy)
@@ -933,7 +940,7 @@ func (s *DoltliteReadStore) queryIssuesOrderedInTables(query ListQuery, sets []d
 	if len(query.Metadata) > 0 {
 		merged = filterDoltliteMetadata(merged, query.Metadata)
 	}
-	merged = filterDoltliteBeforeTimes(merged, query)
+	merged = filterDoltliteResidualTimes(merged, query)
 	if orderBy == "" {
 		sortBeadsForQuery(merged, doltliteSortOrder(query.Sort))
 	}
@@ -959,6 +966,7 @@ func doltliteCanSelectBoundedTopN(query ListQuery, sets []doltliteTableSet, extr
 		query.ParentID == "" &&
 		len(query.Metadata) == 0 &&
 		query.CreatedBefore.IsZero() &&
+		query.CreatedAfter.IsZero() &&
 		query.UpdatedBefore.IsZero() &&
 		query.SeekAfter == nil
 }
@@ -1306,6 +1314,14 @@ func (s *DoltliteReadStore) buildDoltliteTableQuery(query ListQuery, tables dolt
 		where = append(where, "julianday(i.created_at) < julianday(?)")
 		args = append(args, doltliteSQLiteTime(query.CreatedBefore))
 	}
+	// julianday() is a float day count, so it resolves to roughly a microsecond
+	// over modern dates and cannot be trusted at the boundary instant. The bound
+	// is widened by a second so the SQL window is a SUPERSET of the caller's and
+	// filterDoltliteResidualTimes below cuts the exact set.
+	if !query.CreatedAfter.IsZero() {
+		where = append(where, "julianday(i.created_at) >= julianday(?)")
+		args = append(args, doltliteSQLiteTime(createdAfterBackingFloor(query.CreatedAfter)))
+	}
 	if !query.UpdatedBefore.IsZero() {
 		where = append(where, "julianday(COALESCE(NULLIF(i.updated_at, ''), i.created_at)) < julianday(?)")
 		args = append(args, doltliteSQLiteTime(query.UpdatedBefore))
@@ -1448,13 +1464,18 @@ func doltliteSQLiteTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02 15:04:05.999999999-07:00")
 }
 
-func filterDoltliteBeforeTimes(rows []Bead, query ListQuery) []Bead {
-	if len(rows) == 0 || (query.CreatedBefore.IsZero() && query.UpdatedBefore.IsZero() && query.SeekAfter == nil) {
+func filterDoltliteResidualTimes(rows []Bead, query ListQuery) []Bead {
+	if len(rows) == 0 || (query.CreatedBefore.IsZero() && query.CreatedAfter.IsZero() && query.UpdatedBefore.IsZero() && query.SeekAfter == nil) {
 		return rows
 	}
 	out := rows[:0]
 	for _, row := range rows {
 		if !query.CreatedBefore.IsZero() && !row.CreatedAt.Before(query.CreatedBefore) {
+			continue
+		}
+		// The SQL window above is deliberately a second wide of this one, so
+		// this is where the caller's exact lower bound is enforced.
+		if !query.CreatedAfter.IsZero() && row.CreatedAt.Before(query.CreatedAfter) {
 			continue
 		}
 		if !query.UpdatedBefore.IsZero() && !beadUpdatedReferenceTime(row).Before(query.UpdatedBefore) {

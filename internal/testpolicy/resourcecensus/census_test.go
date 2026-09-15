@@ -1994,8 +1994,12 @@ func TestBootstrapPolicyOwnsNetListenDebtAndExactMediumOwners(t *testing.T) {
 	t.Parallel()
 
 	debt := findRow(t, bootstrapPolicy.Debt, ScopeUntagged, ResourceNetListen)
-	if debt.BaselineCalls != 97 || debt.BaselineFiles != 37 || debt.ReportedCalls != 92 || debt.ReportedFiles != 34 {
-		t.Fatalf("stream-listener source baseline/reported = %d/%d, %d/%d; want 97/37, 92/34", debt.BaselineCalls, debt.BaselineFiles, debt.ReportedCalls, debt.ReportedFiles)
+	// 97/37 -> 100/38 (ci-0hifv5): the three managed-Dolt port-ownership
+	// listeners banked at the commit that added them, ce3d12bb2. Spelled as
+	// literals on purpose -- this is the third copy of the pair, and a number
+	// derived from the ledger would agree with any value the ledger held.
+	if debt.BaselineCalls != 100 || debt.BaselineFiles != 38 || debt.ReportedCalls != 92 || debt.ReportedFiles != 34 {
+		t.Fatalf("stream-listener source baseline/reported = %d/%d, %d/%d; want 100/38, 92/34", debt.BaselineCalls, debt.BaselineFiles, debt.ReportedCalls, debt.ReportedFiles)
 	}
 	smallDebt := findRow(t, bootstrapPolicy.SmallDebt, ScopeUntagged, ResourceNetListen)
 	if smallDebt.BaselineCalls != 95 || smallDebt.BaselineFiles != 36 {
@@ -2025,6 +2029,31 @@ func TestBootstrapPolicyOwnsNetListenDebtAndExactMediumOwners(t *testing.T) {
 	}
 	if len(wantOwners) != 0 {
 		t.Fatalf("missing exact herdr stream-listener Medium owners: %v", wantOwners)
+	}
+
+	// The managed-Dolt port-ownership owners are pinned the same way, and for
+	// the same reason: without an exact list, deleting one of these rows only
+	// moves its calls back into the Small ratchet, which then fails somewhere
+	// else entirely and reads as unrelated drift.
+	wantContractOwners := map[string]bool{
+		"TestManagedPortOwnershipSeesARealListenerInThisProcess":          true,
+		"TestValidManagedRuntimeStateSkipsTheDialWhenOwnershipAnswers":    true,
+		"TestValidManagedRuntimeStateStillDialsWhenOwnershipCannotAnswer": true,
+	}
+	for _, row := range bootstrapPolicy.Medium {
+		if row.PackageDir != "internal/beads/contract" || row.PackageName != "contract" || !wantContractOwners[row.Owner] {
+			continue
+		}
+		if len(row.Resources) != 1 || row.Resources[0] != ResourceNetListen {
+			t.Fatalf("contract Medium owner %s resources = %v, want net_listen", row.Owner, row.Resources)
+		}
+		if row.OwnerBead != "ci-0hifv5" || row.MigrationTarget != "P0.4c-listener" {
+			t.Fatalf("contract Medium owner %s policy = %q/%q, want ci-0hifv5/P0.4c-listener", row.Owner, row.OwnerBead, row.MigrationTarget)
+		}
+		delete(wantContractOwners, row.Owner)
+	}
+	if len(wantContractOwners) != 0 {
+		t.Fatalf("missing exact managed-Dolt stream-listener Medium owners: %v", wantContractOwners)
 	}
 }
 

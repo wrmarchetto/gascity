@@ -76,6 +76,9 @@ func (s *NativeDoltStore) Count(ctx context.Context, query ListQuery, excludeTyp
 //     other non-excluded status would be overcounted.
 //   - Assignees / ParentIDs / SeekAfter / UpdatedBefore: not translated
 //     into the filter at all; List narrows them Go-side.
+//   - CreatedAfter: translated, but DELIBERATELY widened by a second so the
+//     backend result is a superset (createdAfterBackingFloor) -- a COUNT over
+//     that widened window is not the List cardinality.
 //   - Metadata / CreatedBefore / ParentID: translated, but List re-applies
 //     them through Matches with Go-side semantics (exact metadata match vs
 //     the backend's own predicate, Before() precision, the parent
@@ -104,6 +107,7 @@ func nativeDoltCountSupported(query ListQuery, excludeTypes []string) bool {
 		query.UpdatedBefore.IsZero() &&
 		len(query.Metadata) == 0 &&
 		query.CreatedBefore.IsZero() &&
+		query.CreatedAfter.IsZero() &&
 		query.ParentID == "" &&
 		query.Limit == 0
 }

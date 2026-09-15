@@ -80,6 +80,9 @@ func TestNativeCreatedLimitPushdownGates(t *testing.T) {
 		{"wisp tier strips", ListQuery{Sort: SortCreatedDesc, Limit: 5, AllowBackingCreatedLimit: true, TierMode: TierWisps}, 0},
 		{"default sort pushes", ListQuery{Sort: SortDefault, Limit: 5}, 5},
 		{"zero limit stays zero", ListQuery{Sort: SortCreatedDesc, Limit: 0, AllowBackingCreatedLimit: true}, 0},
+		{"desc opt-in with created-after pushes", ListQuery{Sort: SortCreatedDesc, Limit: 5, AllowBackingCreatedLimit: true, CreatedAfter: time.Unix(3, 0).UTC()}, 5},
+		{"asc with created-after strips", ListQuery{Sort: SortCreatedAsc, Limit: 5, CreatedAfter: time.Unix(3, 0).UTC()}, 0},
+		{"default sort with created-after strips", ListQuery{Sort: SortDefault, Limit: 5, CreatedAfter: time.Unix(3, 0).UTC()}, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -303,8 +306,18 @@ func TestNativeDoltStoreListSeekAfterFetchesFullSetForCreatedDesc(t *testing.T) 
 // sorts by (created_at <dir>, id ASC) — sqlbuild.OrderBy hardcodes the id ASC
 // tie-break — then apply the row limit as a prefix cut.
 func backingSortLimitForTest(all []*beadslib.Issue, f beadslib.IssueFilter) []*beadslib.Issue {
-	out := make([]*beadslib.Issue, len(all))
-	copy(out, all)
+	out := make([]*beadslib.Issue, 0, len(all))
+	for _, iss := range all {
+		// Upstream renders CreatedAfter as `created_at > ?` with the argument
+		// formatted RFC3339 -- strictly greater, and truncated to the whole
+		// second (storage/dolt/transaction.go, storage/sqlbuild/filter.go). Both
+		// properties are load-bearing for the gc-side margin, so the fake models
+		// them rather than the semantics gc's own ListQuery declares.
+		if f.CreatedAfter != nil && !iss.CreatedAt.After(f.CreatedAfter.Truncate(time.Second)) {
+			continue
+		}
+		out = append(out, iss)
+	}
 	if f.SortBy == "created" {
 		desc := !f.SortDesc // SortDefs["created"] defaults DESC; SortDesc flips it
 		sort.SliceStable(out, func(i, j int) bool {
@@ -342,4 +355,66 @@ func assertBeadIDsForTest(t *testing.T, got []Bead, want ...string) {
 			t.Fatalf("got IDs %v, want %v", gotIDs, want)
 		}
 	}
+}
+
+// The gc-side CreatedAfter bound is INCLUSIVE, the backing's is a strict
+// `created_at > ?` whose argument is formatted to whole seconds, so handing the
+// cutoff over verbatim drops every row inside the cutoff's own second -- and a
+// window derived from a run's timestamp loses that run. A second of slack makes
+// the pushed-down predicate a SUPERSET, which is the contract; ApplyListQuery
+// still cuts the exact set client-side.
+func TestNativeIssueFilterPushesCreatedAfterAsASuperset(t *testing.T) {
+	cutoff := time.Date(2026, 9, 15, 1, 22, 42, 500_000_000, time.UTC)
+	filter := nativeIssueFilterFromListQuery(ListQuery{
+		Label:        "order-run:digest",
+		CreatedAfter: cutoff,
+		Sort:         SortCreatedDesc,
+	})
+	if filter.CreatedAfter == nil {
+		t.Fatal("CreatedAfter = nil; the window never reaches the backing and the read costs the whole retained corpus")
+	}
+	if want := cutoff.Add(-time.Second); !filter.CreatedAfter.Equal(want) {
+		t.Fatalf("CreatedAfter = %v, want %v (one second of slack over the strict, second-truncated backing predicate)", filter.CreatedAfter, want)
+	}
+}
+
+func TestNativeIssueFilterLeavesCreatedAfterUnsetWhenUnwindowed(t *testing.T) {
+	filter := nativeIssueFilterFromListQuery(ListQuery{Label: "order-run:digest", Sort: SortCreatedDesc})
+	if filter.CreatedAfter != nil {
+		t.Fatalf("CreatedAfter = %v, want nil", filter.CreatedAfter)
+	}
+}
+
+// End to end through the backing fake, which models the strict second-truncated
+// predicate: a row created AT the cutoff must survive the round trip. This is
+// the assertion a verbatim pushdown fails -- and it fails silently, as a window
+// that is quietly one second short.
+func TestNativeDoltStoreListCreatedAfterKeepsTheBoundaryRow(t *testing.T) {
+	cutoff := time.Date(2026, 9, 15, 1, 22, 42, 0, time.UTC)
+	issues := []*beadslib.Issue{
+		{ID: "gc-at", Title: "t", Status: beadslib.StatusOpen, IssueType: beadslib.TypeTask, Priority: 2, CreatedAt: cutoff},
+		{ID: "gc-old", Title: "t", Status: beadslib.StatusOpen, IssueType: beadslib.TypeTask, Priority: 2, CreatedAt: cutoff.Add(-time.Hour)},
+		{ID: "gc-new", Title: "t", Status: beadslib.StatusOpen, IssueType: beadslib.TypeTask, Priority: 2, CreatedAt: cutoff.Add(time.Hour)},
+	}
+	var pushedCreatedAfter *time.Time
+	storage := &nativeDoltStorageSpy{
+		searchIssues: func(_ context.Context, _ string, f beadslib.IssueFilter) ([]*beadslib.Issue, error) {
+			pushedCreatedAfter = f.CreatedAfter
+			return backingSortLimitForTest(issues, f), nil
+		},
+	}
+
+	got, err := newNativeDoltStoreForTest(storage).List(ListQuery{
+		AllowScan:                true,
+		Sort:                     SortCreatedDesc,
+		CreatedAfter:             cutoff,
+		AllowBackingCreatedLimit: true,
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if pushedCreatedAfter == nil {
+		t.Fatal("the window never reached the backing")
+	}
+	assertBeadIDsForTest(t, got, "gc-new", "gc-at")
 }

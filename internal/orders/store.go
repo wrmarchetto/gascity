@@ -514,12 +514,34 @@ func (s *Store) CreateRunClosed(scoped string, outcome RunOutcome, cursor *Event
 // cosmetic, unlike the Cursor read (store_reads.go), whose max-seq reduction is
 // over a different column and therefore must NOT opt in.
 func (s *Store) RecentRuns(scoped string, limit int) ([]OrderRun, error) {
+	return s.RecentRunsWindow(scoped, limit, time.Time{})
+}
+
+// RecentRunsWindow is RecentRuns restricted to runs created at or after
+// notBefore. A zero notBefore reads every retained run, so RecentRuns is this
+// with no window.
+//
+// The window exists because the limit alone cannot express what `gc order
+// history --since` asks. The limit is applied at the FETCH and the window after
+// it, so a caller that needs EVERY run inside a window -- the order-capacity
+// doctor check, which would fabricate a deficit from a truncation it could not
+// see -- has to read unbounded and pay for the whole retained corpus: 18.6s
+// against a 7s floor on a 122k-row city, and rising with retention rather than
+// with the window it measures (ci-a2lyow). Pushed down, that read costs what the
+// window holds.
+//
+// The bound is inclusive at notBefore and composes with the limit only because
+// this read sorts created-desc, where the in-window runs are a prefix of the
+// ordering -- see ListQuery.CreatedAfter. Callers wanting a window's newest N
+// therefore get the same rows whichever end the backing applies first.
+func (s *Store) RecentRunsWindow(scoped string, limit int, notBefore time.Time) ([]OrderRun, error) {
 	if s.store.Store == nil {
 		return nil, nil
 	}
 	beadsList, err := s.store.List(beads.ListQuery{
 		Label:                    labelOrderRunPrefix + scoped,
 		Limit:                    limit,
+		CreatedAfter:             notBefore,
 		IncludeClosed:            true,
 		Sort:                     beads.SortCreatedDesc,
 		TierMode:                 beads.TierBoth,

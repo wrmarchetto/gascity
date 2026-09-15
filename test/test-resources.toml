@@ -238,8 +238,8 @@ expires = "2026-11-09"
 [[debt]]
 scope = "untagged"
 resource = "net_listen"
-baseline_calls = 97
-baseline_files = 37
+baseline_calls = 100
+baseline_files = 38
 reported_calls = 92
 reported_files = 34
 owner_bead = "ga-80po0c.2.2.2"
@@ -313,6 +313,39 @@ expires = "2026-11-09"
 # that removing a socket leaves the server running, and a fake executor cannot
 # exhibit that. Confined to one test, which kills the server it starts on every
 # path (ci-87655r).
+[[medium]]
+package_dir = "internal/beads/contract"
+package_name = "contract"
+owner = "TestManagedPortOwnershipSeesARealListenerInThisProcess"
+resources = ["net_listen"]
+owner_bead = "ci-0hifv5"
+invariant = "the managed-Dolt port-ownership proof is a checked Medium owner: it holds ONE real loopback listener in this process and asks /proc whether the port is attributed to this PID"
+resource_owner = "the stream listener is confined to TestManagedPortOwnershipSeesARealListenerInThisProcess, which cannot use a procfs fixture -- a tree the test wrote agrees with itself, not with the kernel"
+migration_target = "P0.4c-listener"
+expires = "2026-11-09"
+
+[[medium]]
+package_dir = "internal/beads/contract"
+package_name = "contract"
+owner = "TestValidManagedRuntimeStateSkipsTheDialWhenOwnershipAnswers"
+resources = ["net_listen"]
+owner_bead = "ci-0hifv5"
+invariant = "the managed-Dolt port-ownership proof is a checked Medium owner: it holds ONE real loopback listener in this process and asks /proc whether the port is attributed to this PID"
+resource_owner = "the stream listener is confined to TestValidManagedRuntimeStateSkipsTheDialWhenOwnershipAnswers, which cannot use a procfs fixture -- a tree the test wrote agrees with itself, not with the kernel"
+migration_target = "P0.4c-listener"
+expires = "2026-11-09"
+
+[[medium]]
+package_dir = "internal/beads/contract"
+package_name = "contract"
+owner = "TestValidManagedRuntimeStateStillDialsWhenOwnershipCannotAnswer"
+resources = ["net_listen"]
+owner_bead = "ci-0hifv5"
+invariant = "the managed-Dolt port-ownership proof is a checked Medium owner: it holds ONE real loopback listener in this process and asks /proc whether the port is attributed to this PID"
+resource_owner = "the stream listener is confined to TestValidManagedRuntimeStateStillDialsWhenOwnershipCannotAnswer, which cannot use a procfs fixture -- a tree the test wrote agrees with itself, not with the kernel"
+migration_target = "P0.4c-listener"
+expires = "2026-11-09"
+
 [[medium]]
 package_dir = "test/tmuxtest"
 package_name = "tmuxtest"

@@ -1308,6 +1308,16 @@ func sqliteListSQL(q ListQuery, projection string) (string, []any) {
 		where = append(where, "b.created_at < ?")
 		args = append(args, q.CreatedBefore.UnixNano())
 	}
+	// Exact, so it needs none of the slack the native and DoltLite stores add:
+	// created_at is stored and bound as an integer nanosecond count, which
+	// compares identically to the Go-side CreatedAfter check. That is also why
+	// sqliteListCanPushLimit leaves the limit pushdown alone here -- the SQL
+	// window is the same set the Go filter keeps, so nothing arrives to be
+	// dropped after the LIMIT.
+	if !q.CreatedAfter.IsZero() {
+		where = append(where, "b.created_at >= ?")
+		args = append(args, q.CreatedAfter.UnixNano())
+	}
 	if !q.UpdatedBefore.IsZero() {
 		where = append(where, "COALESCE(NULLIF(b.updated_at, 0), b.created_at) < ?")
 		args = append(args, q.UpdatedBefore.UnixNano())
