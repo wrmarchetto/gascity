@@ -567,6 +567,46 @@ func TestUnclaimableWorkGraceWithholdsOnlyBeadsInsideTheDeclaredWindow(t *testin
 	}
 }
 
+// TestUnclaimableWorkGraceEndsAtTheDeclaredLengthExactly pins the boundary in
+// the reporting direction. An operator reads "5m" as "report it after five
+// minutes", so a bead that has reached exactly that age is outside the window,
+// not on its edge. Nothing else here places a bead on the boundary, so without
+// this row the comparison could be widened by one tick unnoticed.
+func TestUnclaimableWorkGraceEndsAtTheDeclaredLengthExactly(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(graceCfg("5m"), now, []beads.Bead{
+		{
+			ID: "W-exact", Title: "exactly the window old", Type: "task", Status: "open",
+			CreatedAt: now.Add(-5 * time.Minute),
+		},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-exact" {
+		t.Fatalf("reported %v, want W-exact: the window ends AT the declared length", got)
+	}
+}
+
+// TestUnclaimableWorkUndeclaredGraceWithholdsNothingUnderClockSkew pins the one
+// case where the zero window is not the arithmetic's own answer. A bead created
+// in the future -- the bead store's clock ahead of the host's, which is two
+// processes and possibly two machines -- has a NEGATIVE age, and every negative
+// age is below every window including the unset one. Without the explicit
+// zero-window refusal a skewed clock would withhold findings from a city that
+// declared no grace at all, which is the silent direction.
+func TestUnclaimableWorkUndeclaredGraceWithholdsNothingUnderClockSkew(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(poolAgentCfg(4), now, []beads.Bead{
+		{
+			ID: "W-skewed", Title: "store clock ahead of the host", Type: "task", Status: "open",
+			CreatedAt: now.Add(1 * time.Minute),
+		},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-skewed" {
+		t.Fatalf("reported %v, want W-skewed: an unset window must withhold nothing at any clock offset", got)
+	}
+}
+
 // TestUnclaimableWorkGraceCountsAnUndatedBeadAsOld pins the direction the
 // unknown answer falls in. A bead whose store did not report a creation time
 // has no measurable age, and treating that as "just created" would withhold
