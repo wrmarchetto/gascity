@@ -439,3 +439,156 @@ func TestWorkRecordEnforceEnabled(t *testing.T) {
 		}
 	}
 }
+
+// initWorkRecordRepo builds a throwaway git repository holding one commit on
+// branch, and returns the repo path and that commit's SHA. The content is
+// salted with the repo's own path so two repos built in one test can never
+// produce an identical commit SHA -- a cross-repo reachability test whose two
+// repos share a SHA proves nothing about which repo answered.
+func initWorkRecordRepo(t *testing.T, branch string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "init", "--initial-branch="+branch)
+	runGit(t, dir, "config", "user.name", "Gas City Test")
+	runGit(t, dir, "config", "user.email", "gc-test@test.local")
+	if err := os.WriteFile(filepath.Join(dir, "artifact.txt"), []byte(dir+"\n"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	runGit(t, dir, "add", "artifact.txt")
+	runGit(t, dir, "commit", "-m", "test: "+branch)
+	return dir, strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
+}
+
+// TestEvaluateWorkRecordCloseGateFindsCommitInScopeRootRepo pins that a shipped
+// close whose artifact landed in the SCOPE ROOT's repository passes, even
+// though gc.work_dir names a worktree of a DIFFERENT repository.
+//
+// That pairing is not a malformed record: gc.work_dir is machine-stamped at
+// claim time with the claiming agent's own worktree (cmd_hook_claim.go), while
+// an agent whose bead is a city file commits in the city repo instead. Before
+// this, the gate resolved exactly one repo -- gc.work_dir -- so git answered
+// "not a valid commit name" and every such close warned falsely.
+func TestEvaluateWorkRecordCloseGateFindsCommitInScopeRootRepo(t *testing.T) {
+	scopeRoot, scopeCommit := initWorkRecordRepo(t, "fix/ci-scope-work")
+	workDir, workCommit := initWorkRecordRepo(t, "main")
+	if scopeCommit == workCommit {
+		t.Fatalf("two repos produced the same commit %s; the test cannot attribute the answer", scopeCommit)
+	}
+
+	store := beads.NewMemStoreFrom(1, []beads.Bead{{
+		ID:     "wr-cross-repo",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			beadmeta.WorkDirMetadataKey:     workDir,
+			beadmeta.WorkOutcomeMetadataKey: beadmeta.WorkOutcomeShipped,
+			beadmeta.WorkCommitMetadataKey:  scopeCommit,
+			beadmeta.WorkBranchMetadataKey:  "fix/ci-scope-work",
+		},
+	}}, nil)
+
+	var stderr strings.Builder
+	if block := evaluateWorkRecordCloseGate([]string{"close", "wr-cross-repo"}, store, nil, scopeRoot, true, &stderr); block {
+		t.Fatalf("close blocked for a commit reachable in the scope root; stderr=%s", stderr.String())
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("close warned for a commit reachable in the scope root: %q", got)
+	}
+}
+
+// TestEvaluateWorkRecordCloseGateFindsCommitInWorkDirRepo is the mirror of the
+// test above, and pins the reason gc.work_dir is a candidate at all: an agent
+// working a rig from its own worktree commits there, not in the scope root, so
+// searching only the scope root would warn falsely for the ordinary case. Both
+// directions need a behavior test -- a candidate list checked only as a list
+// goes green when the gate stops consulting one of its entries.
+func TestEvaluateWorkRecordCloseGateFindsCommitInWorkDirRepo(t *testing.T) {
+	scopeRoot, scopeCommit := initWorkRecordRepo(t, "main")
+	workDir, workCommit := initWorkRecordRepo(t, "fix/ci-rig-work")
+	if scopeCommit == workCommit {
+		t.Fatalf("two repos produced the same commit %s; the test cannot attribute the answer", workCommit)
+	}
+
+	store := beads.NewMemStoreFrom(1, []beads.Bead{{
+		ID:     "wr-rig-repo",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			beadmeta.WorkDirMetadataKey:     workDir,
+			beadmeta.WorkOutcomeMetadataKey: beadmeta.WorkOutcomeShipped,
+			beadmeta.WorkCommitMetadataKey:  workCommit,
+			beadmeta.WorkBranchMetadataKey:  "fix/ci-rig-work",
+		},
+	}}, nil)
+
+	var stderr strings.Builder
+	if block := evaluateWorkRecordCloseGate([]string{"close", "wr-rig-repo"}, store, nil, scopeRoot, true, &stderr); block {
+		t.Fatalf("close blocked for a commit reachable in the stamped work dir; stderr=%s", stderr.String())
+	}
+	if got := stderr.String(); got != "" {
+		t.Fatalf("close warned for a commit reachable in the stamped work dir: %q", got)
+	}
+}
+
+// TestEvaluateWorkRecordCloseGateWarnsWhenNoCandidateRepoHasTheCommit pins the
+// other half: searching a second repository must not degrade the rule to
+// "reachable somewhere". The commit here is real and the branch exists, in the
+// same repo -- they just do not meet, which is precisely the drain-without-
+// artifact close the gate was built to catch.
+func TestEvaluateWorkRecordCloseGateWarnsWhenNoCandidateRepoHasTheCommit(t *testing.T) {
+	scopeRoot, scopeCommit := initWorkRecordRepo(t, "main")
+	workDir, _ := initWorkRecordRepo(t, "main")
+	// A branch cut before a second commit: the branch exists in the scope
+	// root's repo and the commit exists there too, on main alone.
+	runGit(t, scopeRoot, "branch", "fix/ci-orphan-branch", scopeCommit)
+	if err := os.WriteFile(filepath.Join(scopeRoot, "later.txt"), []byte("later\n"), 0o644); err != nil {
+		t.Fatalf("write later artifact: %v", err)
+	}
+	runGit(t, scopeRoot, "add", "later.txt")
+	runGit(t, scopeRoot, "commit", "-m", "test: later commit off the branch")
+	later := strings.TrimSpace(runGit(t, scopeRoot, "rev-parse", "HEAD"))
+
+	store := beads.NewMemStoreFrom(1, []beads.Bead{{
+		ID:     "wr-unreachable",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			beadmeta.WorkDirMetadataKey:     workDir,
+			beadmeta.WorkOutcomeMetadataKey: beadmeta.WorkOutcomeShipped,
+			beadmeta.WorkCommitMetadataKey:  later,
+			beadmeta.WorkBranchMetadataKey:  "fix/ci-orphan-branch",
+		},
+	}}, nil)
+
+	var stderr strings.Builder
+	if block := evaluateWorkRecordCloseGate([]string{"close", "wr-unreachable"}, store, nil, scopeRoot, true, &stderr); !block {
+		t.Fatalf("close allowed for a commit on no candidate repo's branch; stderr=%s", stderr.String())
+	}
+	if got := stderr.String(); !strings.Contains(got, "is not reachable on") {
+		t.Fatalf("missing reachability violation; stderr=%q", got)
+	}
+}
+
+func TestWorkRecordRepoCandidates(t *testing.T) {
+	tests := []struct {
+		name      string
+		workDir   string
+		scopeRoot string
+		want      []string
+	}{
+		{"both distinct, work dir first", "/w", "/s", []string{"/w", "/s"}},
+		{"identical paths collapse", "/w", "/w", []string{"/w"}},
+		{"unstamped work dir falls back", "", "/s", []string{"/s"}},
+		{"blank work dir is not a repo", "   ", "/s", []string{"/s"}},
+		{"no scope root", "/w", "", []string{"/w"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bead := beads.Bead{Metadata: map[string]string{beadmeta.WorkDirMetadataKey: tt.workDir}}
+			got := workRecordRepoCandidates(bead, tt.scopeRoot)
+			if strings.Join(got, "\x00") != strings.Join(tt.want, "\x00") {
+				t.Fatalf("workRecordRepoCandidates = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

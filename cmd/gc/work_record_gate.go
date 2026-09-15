@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
@@ -115,6 +116,55 @@ func gitCommitReachableOnBranch(repoDir, commit, branch string) bool {
 		return false
 	}
 	return exec.Command("git", "-C", repoDir, "merge-base", "--is-ancestor", commit, branch).Run() == nil
+}
+
+// workRecordRepoCandidates returns the repositories the close gate searches for
+// a bead's work commit, in order: the claiming agent's own worktree
+// (gc.work_dir), then the store's scope root. Paths that repeat are collapsed,
+// so the ordinary single-repo agent resolves exactly one repo as before.
+//
+// Two candidates rather than one because gc.work_dir is NOT a statement about
+// where the artifact landed. It is machine-stamped at claim time with the
+// worktree the agent runs in (hookClaimIdentityPatch) and re-stamped on every
+// hook tick, and an agent can commit into a second repository the city owns --
+// a city-file bead claimed by a rig agent lands in the city repo while its
+// gc.work_dir names the rig worktree. Resolving only gc.work_dir made git
+// answer "not a valid commit name" there, and the gate reported a false "not
+// reachable" for every bead of that shape (ci-n2yxq5).
+//
+// The rejected alternative was to have such an agent re-stamp gc.work_dir to
+// the repo it committed in. That overloads a key with a different owner and a
+// different meaning: gc.work_dir is worktree-ownership evidence read by the
+// worktree reaper's borrow-veto scan (scanBorrowVetoReferences), it is
+// compare-and-skipped against the live worker dir on every hook tick -- so a
+// hand-written value is reverted by the next tick -- and it would fix one
+// agent's prompt while every other multi-repo agent kept warning.
+func workRecordRepoCandidates(bead beads.Bead, scopeRoot string) []string {
+	var dirs []string
+	for _, dir := range []string{
+		strings.TrimSpace(bead.Metadata[beadmeta.WorkDirMetadataKey]),
+		strings.TrimSpace(scopeRoot),
+	} {
+		if dir == "" || slices.Contains(dirs, dir) {
+			continue
+		}
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}
+
+// commitReachableInAnyRepo reports whether commit is an ancestor of branch in
+// any of dirs. The commit and the branch must meet in the SAME repository --
+// answering from a commit found in one and a branch found in another would
+// turn the rule into "both strings exist somewhere", which proves nothing
+// about the artifact.
+func commitReachableInAnyRepo(dirs []string, commit, branch string) bool {
+	for _, dir := range dirs {
+		if gitCommitReachableOnBranch(dir, commit, branch) {
+			return true
+		}
+	}
+	return false
 }
 
 // workRecordCloseTargets returns the bead IDs a bd invocation closes, and
@@ -234,16 +284,13 @@ func evaluateWorkRecordCloseGate(bdArgs []string, store beads.Store, preFetched 
 		}
 		var projectionErr error
 		bead, projectionErr = applyWorkRecordUpdateMetadata(bead, bdArgs)
-		repoDir := strings.TrimSpace(bead.Metadata[beadmeta.WorkDirMetadataKey])
-		if repoDir == "" {
-			repoDir = scopeRoot
-		}
+		repoDirs := workRecordRepoCandidates(bead, scopeRoot)
 		var violations []string
 		if projectionErr != nil {
 			violations = []string{projectionErr.Error()}
 		} else {
 			violations = validateWorkRecordOnClose(bead, func(commit, branch string) bool {
-				return gitCommitReachableOnBranch(repoDir, commit, branch)
+				return commitReachableInAnyRepo(repoDirs, commit, branch)
 			})
 		}
 		for _, v := range violations {
