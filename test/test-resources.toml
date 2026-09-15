@@ -102,9 +102,14 @@ expires = "2026-11-09"
 [[audit_baseline]]
 scope = "all"
 resource = "listener_helper"
-baseline_calls = 58
+# 58 -> 59 (ci-6mp9hs): gc session reset gained an attached-session refusal,
+# and the fixture proving it needs a controller socket -- the command pings
+# and pokes the controller before it reaches the guard, so a test that stands
+# one up is the only way to reach the branch at all. Same file as the
+# command's existing reset tests, so the file total is unchanged.
+baseline_calls = 59
 baseline_files = 23
-reported_calls = 58
+reported_calls = 59
 reported_files = 23
 owner_bead = "ga-80po0c.2.2.3"
 invariant = "all-source listener-helper call/file totals cannot drift without an explicit checked policy update"
@@ -219,9 +224,10 @@ expires = "2026-11-09"
 [[debt]]
 scope = "untagged"
 resource = "listener_helper"
-baseline_calls = 38
+# 38 -> 39 (ci-6mp9hs): see the all-scope row above.
+baseline_calls = 39
 baseline_files = 13
-reported_calls = 38
+reported_calls = 39
 reported_files = 13
 owner_bead = "ga-80po0c.2.2.3"
 invariant = "untagged listener-helper call/file totals cannot grow; reductions must lower this baseline"
@@ -591,9 +597,10 @@ expires = "2026-11-09"
 [[small_debt]]
 scope = "untagged"
 resource = "listener_helper"
-baseline_calls = 38
+# 38 -> 39 (ci-6mp9hs): see the all-scope row above.
+baseline_calls = 39
 baseline_files = 13
-reported_calls = 38
+reported_calls = 39
 reported_files = 13
 owner_bead = "ga-80po0c.2.2.3"
 invariant = "untagged Small listener-helper call/file totals cannot grow; reductions must lower this baseline"

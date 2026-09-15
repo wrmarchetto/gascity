@@ -4160,6 +4160,11 @@ work remain attached to the existing session bead. For named sessions, reset
 also clears any tripped named-session respawn circuit breaker before requesting
 the fresh restart.
 
+A session someone is attached to is REFUSED, because the restart discards the
+provider conversation and an attached terminal is somebody reading it. Pass
+--force to reset it anyway. A session whose attachment cannot be observed is
+refused on the same terms.
+
 Accepts a session ID (e.g., gc-42) or session alias (e.g., mayor).
 
 ```
@@ -4168,6 +4173,7 @@ gc session reset <session-id-or-alias> [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--force` | bool |  | reset even while a terminal is attached, or when attachment cannot be observed |
 | `--json` | bool |  | emit JSONL |
 
 ## gc session submit
