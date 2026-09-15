@@ -404,10 +404,19 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-11-09",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceNetListen,
-			BaselineCalls:   97,
-			BaselineFiles:   37,
+			Scope:    ScopeUntagged,
+			Resource: ResourceNetListen,
+			// +3 calls / 1 file (ci-0hifv5, banking ce3d12bb2): the managed-Dolt
+			// port-ownership tests in internal/beads/contract. The subject is
+			// whether /proc's socket table attributes a listening port to this
+			// PID, so the listener has to be real and held by this process --
+			// every other case in that file reads a procfs tree the file wrote
+			// itself and therefore agrees with the fixture rather than with the
+			// kernel. Declared Medium owners below, which clears Small debt;
+			// source ratchets are not test-size entries and do not exempt, so
+			// the debt is banked here because it is real.
+			BaselineCalls:   100,
+			BaselineFiles:   38,
 			ReportedCalls:   92,
 			ReportedFiles:   34,
 			OwnerBead:       "ga-80po0c.2.2.2",
@@ -477,6 +486,45 @@ var bootstrapPolicy = Ledger{
 		},
 	},
 	Medium: []MediumOwner{
+		{
+			// A real listener is the subject, not an incidental dependency:
+			// this is the one case in the file that reads the REAL /proc socket table; every other case reads a tree the test itself wrote, so they agree with the fixture rather than with the kernel's own formatting.
+			PackageDir:      "internal/beads/contract",
+			PackageName:     "contract",
+			Owner:           "TestManagedPortOwnershipSeesARealListenerInThisProcess",
+			Resources:       []Resource{ResourceNetListen},
+			OwnerBead:       "ci-0hifv5",
+			Invariant:       "the managed-Dolt port-ownership proof is a checked Medium owner: it holds ONE real loopback listener in this process and asks /proc whether the port is attributed to this PID",
+			ResourceOwner:   "the stream listener is confined to TestManagedPortOwnershipSeesARealListenerInThisProcess, which cannot use a procfs fixture -- a tree the test wrote agrees with itself, not with the kernel",
+			MigrationTarget: "P0.4c-listener",
+			Expires:         "2026-11-09",
+		},
+		{
+			// A real listener is the subject, not an incidental dependency:
+			// the property is that a resolvable managed state costs the Dolt server no accept at all, which only a genuinely listening port this process holds can put to the socket table.
+			PackageDir:      "internal/beads/contract",
+			PackageName:     "contract",
+			Owner:           "TestValidManagedRuntimeStateSkipsTheDialWhenOwnershipAnswers",
+			Resources:       []Resource{ResourceNetListen},
+			OwnerBead:       "ci-0hifv5",
+			Invariant:       "the managed-Dolt port-ownership proof is a checked Medium owner: it holds ONE real loopback listener in this process and asks /proc whether the port is attributed to this PID",
+			ResourceOwner:   "the stream listener is confined to TestValidManagedRuntimeStateSkipsTheDialWhenOwnershipAnswers, which cannot use a procfs fixture -- a tree the test wrote agrees with itself, not with the kernel",
+			MigrationTarget: "P0.4c-listener",
+			Expires:         "2026-11-09",
+		},
+		{
+			// A real listener is the subject, not an incidental dependency:
+			// the fallback is only exercised by a port that is really reachable while the socket table cannot attribute it, so the dial has to have something to connect to.
+			PackageDir:      "internal/beads/contract",
+			PackageName:     "contract",
+			Owner:           "TestValidManagedRuntimeStateStillDialsWhenOwnershipCannotAnswer",
+			Resources:       []Resource{ResourceNetListen},
+			OwnerBead:       "ci-0hifv5",
+			Invariant:       "the managed-Dolt port-ownership proof is a checked Medium owner: it holds ONE real loopback listener in this process and asks /proc whether the port is attributed to this PID",
+			ResourceOwner:   "the stream listener is confined to TestValidManagedRuntimeStateStillDialsWhenOwnershipCannotAnswer, which cannot use a procfs fixture -- a tree the test wrote agrees with itself, not with the kernel",
+			MigrationTarget: "P0.4c-listener",
+			Expires:         "2026-11-09",
+		},
 		{
 			// A real tmux server is the point, not an incidental dependency:
 			// the defect is that removing a socket leaves the server running,
