@@ -2513,6 +2513,15 @@ func bdListRequiresClientLimit(query, serverQuery ListQuery, clientFilteredAssig
 	if len(serverQuery.Metadata) > 0 || !serverQuery.CreatedBefore.IsZero() || !serverQuery.UpdatedBefore.IsZero() {
 		return true
 	}
+	// CreatedAfter is NOT pushed to bd at all, though `bd list --created-after`
+	// exists upstream: BdStore talks to whatever bd binary is installed rather
+	// than to the vendored module, so a flag it does not recognize is a hard
+	// failure on a read that today merely costs more. The store the windowed
+	// read actually runs against on a live city is NativeDoltStore, which pushes
+	// it. Revisit when a bd floor makes the flag safe to assume.
+	if !serverQuery.CreatedAfter.IsZero() {
+		return true
+	}
 	// bd list exposes no compound (created_at, id) seek flag; the boundary is
 	// resolved Go-side (identical tie-break to the in-memory sort), so a
 	// bd-side limit would cut rows before that filter runs — fetch unbounded
@@ -2669,6 +2678,7 @@ func canApplyWispsServerLimit(query ListQuery) bool {
 	// CreatedBefore.
 	return (query.Sort == SortDefault || query.Sort == SortCreatedDesc) &&
 		query.CreatedBefore.IsZero() &&
+		query.CreatedAfter.IsZero() &&
 		query.UpdatedBefore.IsZero() &&
 		len(query.Metadata) == 0 &&
 		query.SeekAfter == nil

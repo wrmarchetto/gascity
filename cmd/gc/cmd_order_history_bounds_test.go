@@ -284,3 +284,83 @@ func (s *orderHistoryListSpy) List(q beads.ListQuery) ([]beads.Bead, error) {
 	s.queries = append(s.queries, q)
 	return s.Store.List(q)
 }
+
+// orderHistoryQuerySpy records every List query reaching the backing store.
+type orderHistoryQuerySpy struct {
+	beads.Store
+	queries []beads.ListQuery
+}
+
+func (s *orderHistoryQuerySpy) List(q beads.ListQuery) ([]beads.Bead, error) {
+	s.queries = append(s.queries, q)
+	return s.Store.List(q)
+}
+
+// TestOrderHistorySincePushesTheWindowToTheStore pins WHERE the `--since`
+// cutoff is applied. Filtering it in Go after an unbounded fetch produces the
+// same rows -- TestOrderHistorySinceDropsOlderRuns already covers that -- while
+// costing the whole retained corpus, so a correctness test cannot see this
+// regress. The observable is the query the store is handed.
+//
+// Limit 0 is the shape under test because that is what the order-capacity
+// doctor check must use: gc applies --limit at the fetch and --since after it,
+// so any bound is a truncation the check cannot distinguish from a real
+// shortage of supply.
+func TestOrderHistorySincePushesTheWindowToTheStore(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	spy := &orderHistoryQuerySpy{Store: orderHistoryRunsStore(t, now)}
+	aa := []orders.Order{{Name: "digest", Formula: "mol-digest"}}
+	resolver := func(orders.Order) ([]beads.OrdersStore, error) {
+		return []beads.OrdersStore{{Store: spy}}, nil
+	}
+
+	window := 5*time.Hour + 30*time.Minute
+	before := time.Now()
+	var stdout, stderr bytes.Buffer
+	code := doOrderHistoryBounded("digest", "", aa, resolver, orderHistoryBounds{Since: window, Limit: 0}, true, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("doOrderHistoryBounded = %d, want 0; stderr: %s", code, stderr.String())
+	}
+	after := time.Now()
+
+	if len(spy.queries) == 0 {
+		t.Fatal("no list query reached the store")
+	}
+	for i, q := range spy.queries {
+		if q.CreatedAfter.IsZero() {
+			t.Fatalf("query %d: CreatedAfter is zero; the --since window never reached the store, so the read still costs the full retained corpus", i)
+		}
+		// The cutoff is computed inside the call, so it is pinned to the
+		// interval the call spans rather than to a literal.
+		if q.CreatedAfter.Before(before.Add(-window)) || q.CreatedAfter.After(after.Add(-window)) {
+			t.Fatalf("query %d: CreatedAfter = %v, want now-%s computed during the call (%v..%v)", i, q.CreatedAfter, window, before.Add(-window), after.Add(-window))
+		}
+	}
+}
+
+// TestOrderHistoryWithoutSinceLeavesTheQueryUnwindowed pins the absence. An
+// operator who asks for no window must not get one: a defaulted cutoff would
+// hide old runs from `gc order history` while every count still looked
+// plausible.
+func TestOrderHistoryWithoutSinceLeavesTheQueryUnwindowed(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	spy := &orderHistoryQuerySpy{Store: orderHistoryRunsStore(t, now)}
+	aa := []orders.Order{{Name: "digest", Formula: "mol-digest"}}
+	resolver := func(orders.Order) ([]beads.OrdersStore, error) {
+		return []beads.OrdersStore{{Store: spy}}, nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := doOrderHistoryBounded("digest", "", aa, resolver, orderHistoryBounds{}, true, &stdout, &stderr); code != 0 {
+		t.Fatalf("doOrderHistoryBounded = %d, want 0; stderr: %s", code, stderr.String())
+	}
+
+	if len(spy.queries) == 0 {
+		t.Fatal("no list query reached the store")
+	}
+	for i, q := range spy.queries {
+		if !q.CreatedAfter.IsZero() {
+			t.Fatalf("query %d: CreatedAfter = %v, want zero", i, q.CreatedAfter)
+		}
+	}
+}

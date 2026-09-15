@@ -48,7 +48,7 @@ func TestDoltliteFilterBeforeTimesAppliesSeek(t *testing.T) {
 		Sort:      SortCreatedDesc,
 		SeekAfter: &SeekBoundary{CreatedAt: ts, ID: "gc-2"},
 	}
-	out := filterDoltliteBeforeTimes(rows, q)
+	out := filterDoltliteResidualTimes(rows, q)
 	if len(out) != 2 || out[0].ID != "gc-1" || out[1].ID != "gc-0" {
 		ids := make([]string, len(out))
 		for i, b := range out {

@@ -439,3 +439,63 @@ func TestBdIssueDecodesRevision(t *testing.T) {
 		t.Fatalf("toBead().Revision (absent) = %d, want 0", got)
 	}
 }
+
+// TestListQueryCreatedAfterKeepsTheBoundaryRow pins the INCLUSIVE lower bound.
+// A strict `>` reads as the obvious mirror of CreatedBefore's `<` and is what a
+// store pushing the bound into SQL gets for free (upstream renders
+// IssueFilter.CreatedAfter as `created_at > ?`), so the boundary row is exactly
+// the one a careless pushdown drops -- and it disappears from a window whose
+// cutoff was derived from that same row's timestamp.
+func TestListQueryCreatedAfterKeepsTheBoundaryRow(t *testing.T) {
+	base := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	items := []Bead{
+		{ID: "at-cutoff", Title: "at cutoff", Status: "closed", CreatedAt: base, Labels: []string{"order-run:digest"}},
+		{ID: "just-below", Title: "just below", Status: "closed", CreatedAt: base.Add(-time.Nanosecond), Labels: []string{"order-run:digest"}},
+	}
+
+	got := ApplyListQuery(items, ListQuery{
+		Label:         "order-run:digest",
+		CreatedAfter:  base,
+		IncludeClosed: true,
+		Sort:          SortCreatedDesc,
+	})
+
+	if idsOf(got) != "at-cutoff" {
+		t.Fatalf("IDs = %q, want at-cutoff", idsOf(got))
+	}
+}
+
+// TestListQueryCreatedAfterFiltersBeforeLimit pins the window as a filter over
+// the whole candidate set rather than over a limited prefix of it. The ascending
+// sort is the shape that separates the two: under created-desc the in-window
+// rows are a prefix of the ordering, so limit-then-filter accidentally agrees,
+// and a store that pushed its row limit past an unhonored CreatedAfter would
+// still pass.
+func TestListQueryCreatedAfterFiltersBeforeLimit(t *testing.T) {
+	base := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
+	items := []Bead{
+		{ID: "out-of-window", Title: "out", Status: "closed", CreatedAt: base.Add(-time.Hour), Labels: []string{"order-run:digest"}},
+		{ID: "in-window-1", Title: "in 1", Status: "closed", CreatedAt: base, Labels: []string{"order-run:digest"}},
+		{ID: "in-window-2", Title: "in 2", Status: "closed", CreatedAt: base.Add(time.Minute), Labels: []string{"order-run:digest"}},
+	}
+
+	got := ApplyListQuery(items, ListQuery{
+		Label:         "order-run:digest",
+		CreatedAfter:  base,
+		Limit:         1,
+		IncludeClosed: true,
+		Sort:          SortCreatedAsc,
+	})
+
+	if idsOf(got) != "in-window-1" {
+		t.Fatalf("IDs = %q, want in-window-1", idsOf(got))
+	}
+}
+
+func TestListQueryHasFilterIncludesCreatedAfter(t *testing.T) {
+	query := ListQuery{CreatedAfter: time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)}
+
+	if !query.HasFilter() {
+		t.Fatal("HasFilter() = false, want true for CreatedAfter")
+	}
+}

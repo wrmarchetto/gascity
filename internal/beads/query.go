@@ -80,6 +80,22 @@ type ListQuery struct {
 	ParentIDs     []string
 	Metadata      map[string]string
 	CreatedBefore time.Time
+	// CreatedAfter matches beads whose CreatedAt is AT OR AFTER this timestamp,
+	// the inclusive lower bound that pairs with CreatedBefore's exclusive upper
+	// one: together they select the half-open window [CreatedAfter,
+	// CreatedBefore). Inclusive rather than strict because every caller so far
+	// derives it as now-minus-a-window and then keeps `!CreatedAt.Before(cutoff)`
+	// Go-side; a strict `>` here would disagree with that at the boundary
+	// instant.
+	//
+	// A backing store that cannot express it must return a SUPERSET and let
+	// ApplyListQuery cut the exact set -- a store that narrows past this bound
+	// re-introduces the truncation the field exists to remove. Pushing it down
+	// composes with a pushed-down Limit ONLY under SortCreatedDesc, where the
+	// matching rows are a prefix of the ordering so limit-then-filter and
+	// filter-then-limit agree. Under SortCreatedAsc or SortDefault they do not,
+	// and the store's limit-pushdown gate must refuse.
+	CreatedAfter time.Time
 	// UpdatedBefore matches beads whose UpdatedAt is before this timestamp.
 	// Legacy beads with zero UpdatedAt fall back to CreatedAt. Purge callers
 	// using CachingStore must also set Live: true to avoid stale cached timestamps.
@@ -133,6 +149,25 @@ type ListQuery struct {
 	SeekAfter *SeekBoundary
 }
 
+// createdAfterBackingFloor widens ListQuery.CreatedAfter into a bound a backing
+// store can push down without ever dropping a row the caller asked for.
+//
+// Two backings render a created-at lower bound at a coarser resolution than the
+// Go-side contract: upstream's IssueFilter emits a strict `created_at > ?` with
+// the argument formatted RFC3339 (whole seconds), and DoltLite compares through
+// julianday(), a float day count good to about a microsecond. Handed the cutoff
+// verbatim, either can discard rows inside the cutoff's own second -- and a
+// window derived from some row's own timestamp then silently loses that row. A
+// second of slack makes the pushed-down predicate a SUPERSET, which is what the
+// pushdown contract requires; ApplyListQuery cuts the exact set afterwards.
+//
+// A store whose comparison is exact -- SQLiteStore, which stores and binds
+// integer nanoseconds -- must NOT use this: the slack would buy nothing and
+// would cost that store its limit pushdown.
+func createdAfterBackingFloor(cutoff time.Time) time.Time {
+	return cutoff.Add(-time.Second)
+}
+
 // SeekBoundary identifies the last row a pagination client has seen, in the
 // (created_at, id) total order (#3208). The boundary row itself is excluded.
 type SeekBoundary struct {
@@ -182,6 +217,7 @@ func (q ListQuery) HasFilter() bool {
 		q.ParentID != "" ||
 		len(q.Metadata) > 0 ||
 		!q.CreatedBefore.IsZero() ||
+		!q.CreatedAfter.IsZero() ||
 		!q.UpdatedBefore.IsZero() ||
 		q.SeekAfter != nil
 }
@@ -245,6 +281,9 @@ func (q ListQuery) Matches(b Bead) bool {
 		return false
 	}
 	if !q.CreatedBefore.IsZero() && !b.CreatedAt.Before(q.CreatedBefore) {
+		return false
+	}
+	if !q.CreatedAfter.IsZero() && b.CreatedAt.Before(q.CreatedAfter) {
 		return false
 	}
 	if !q.UpdatedBefore.IsZero() && !beadUpdatedReferenceTime(b).Before(q.UpdatedBefore) {

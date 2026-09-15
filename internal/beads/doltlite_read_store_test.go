@@ -476,6 +476,75 @@ func TestDoltliteReadStoreBeforeFiltersRespectCutoff(t *testing.T) {
 	}
 }
 
+// The created-after window is the one filter here whose SQL can only ever
+// NARROW the result -- the Go-side residual can drop a row the predicate let
+// through, but nothing can put back one the predicate excluded. So the
+// assertions that matter are the rows at and just inside the boundary, and the
+// clause is exercised through real SQL rather than through Matches.
+func TestDoltliteReadStoreCreatedAfterKeepsBoundaryAndInsideRows(t *testing.T) {
+	store, closeStore := newTestDoltliteReadStore(t)
+	defer closeStore()
+	writer := openTestDoltliteWriter(t, store.db)
+	defer writer.Close() //nolint:errcheck // test cleanup
+
+	// Whole seconds throughout: this store round-trips created_at through a
+	// DATETIME column and hands back a second-resolution time, so a sub-second
+	// cutoff would be compared against a truncated row and the test would be
+	// asserting the driver's rounding rather than the window.
+	cutoff := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC)
+	for _, issue := range []struct {
+		id        string
+		createdAt time.Time
+	}{
+		{id: "gc-window-out", createdAt: cutoff.Add(-time.Hour)},
+		// Exactly on the widened SQL bound, so SQL admits it and only the
+		// Go-side residual can cut it -- which is what makes the widening safe
+		// rather than merely wider.
+		{id: "gc-window-slack", createdAt: cutoff.Add(-time.Second)},
+		{id: "gc-window-at", createdAt: cutoff},
+		{id: "gc-window-in", createdAt: cutoff.Add(time.Hour)},
+	} {
+		if _, err := writer.Exec(`INSERT INTO issues (
+			id, title, status, issue_type, priority, created_at, updated_at,
+			assignee, description, design, acceptance_criteria, notes, metadata
+		) VALUES (?, ?, 'open', 'task', 2, ?, ?, 'rig/window', '', '', '', '', '{}')`,
+			issue.id, issue.id, doltliteSQLiteTime(issue.createdAt), doltliteSQLiteTime(issue.createdAt)); err != nil {
+			t.Fatalf("insert window issue %s: %v", issue.id, err)
+		}
+	}
+
+	rows, err := store.List(ListQuery{
+		Assignee:     "rig/window",
+		CreatedAfter: cutoff,
+		Sort:         SortCreatedAsc,
+		SkipLabels:   true,
+	})
+	if err != nil {
+		t.Fatalf("List CreatedAfter: %v", err)
+	}
+	if got := testBeadIDs(rows); !slices.Equal(got, []string{"gc-window-at", "gc-window-in"}) {
+		t.Fatalf("CreatedAfter ids = %v, want [gc-window-at gc-window-in]; rows=%#v", got, rows)
+	}
+
+	// Ascending with a bound is the shape where the widened SQL window and a
+	// pushed-down LIMIT disagree: the slack row sorts FIRST, so a store that
+	// kept its SQL limit here would spend it on a row the residual then drops
+	// and come back empty.
+	bounded, err := store.List(ListQuery{
+		Assignee:     "rig/window",
+		CreatedAfter: cutoff,
+		Limit:        1,
+		Sort:         SortCreatedAsc,
+		SkipLabels:   true,
+	})
+	if err != nil {
+		t.Fatalf("List CreatedAfter bounded: %v", err)
+	}
+	if got := testBeadIDs(bounded); !slices.Equal(got, []string{"gc-window-at"}) {
+		t.Fatalf("bounded CreatedAfter ids = %v, want [gc-window-at]; rows=%#v", got, bounded)
+	}
+}
+
 func TestDoltliteReadStoreCachesInvalidateOnWorkingSetWrites(t *testing.T) {
 	store, closeStore := newTestDoltliteReadStore(t)
 	defer closeStore()
