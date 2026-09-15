@@ -2,6 +2,7 @@ package orders
 
 import (
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
 )
@@ -74,6 +75,55 @@ func TestRecentRunsUnlimitedStaysUnlimited(t *testing.T) {
 	for i, q := range spy.queries {
 		if q.Limit != 0 {
 			t.Fatalf("query %d: Limit = %d, want 0 (unlimited opt-out)", i, q.Limit)
+		}
+	}
+}
+
+// TestRecentRunsWindowPushesCutoffToBacking is the guard for `gc order history
+// --since`. The window is what the caller is asking about, so it has to reach
+// the backing: with the cutoff applied Go-side instead, the read still fetches
+// every retained run and the cost tracks RETENTION rather than the window --
+// measured 18.6s unbounded against a 7s floor on a 122k-row city (ci-a2lyow),
+// growing without bound as retention does.
+//
+// The limit is deliberately 0 here. A bounded read was already fast; the
+// unbounded one is the shape the order-capacity doctor check is forced into,
+// because gc applies --limit before --since and a bound it cannot see would
+// understate supply.
+func TestRecentRunsWindowPushesCutoffToBacking(t *testing.T) {
+	spy := &listSpyStore{Store: beads.NewMemStore()}
+	store := NewStore(beads.OrdersStore{Store: spy})
+	cutoff := time.Now().Add(-time.Hour)
+
+	if _, err := store.RecentRunsWindow("digest", 0, cutoff); err != nil {
+		t.Fatalf("RecentRunsWindow(): %v", err)
+	}
+	if len(spy.queries) == 0 {
+		t.Fatal("RecentRunsWindow issued no list query")
+	}
+	for i, q := range spy.queries {
+		if !q.CreatedAfter.Equal(cutoff) {
+			t.Fatalf("query %d: CreatedAfter = %v, want %v; an unpushed cutoff makes the read cost track retention", i, q.CreatedAfter, cutoff)
+		}
+	}
+}
+
+// TestRecentRunsLeavesTheWindowUnbounded pins the absence: the plain RecentRuns
+// spelling asks for every retained run and must not acquire a cutoff of its own.
+// A defaulted window would silently hide runs from every existing caller.
+func TestRecentRunsLeavesTheWindowUnbounded(t *testing.T) {
+	spy := &listSpyStore{Store: beads.NewMemStore()}
+	store := NewStore(beads.OrdersStore{Store: spy})
+
+	if _, err := store.RecentRuns("digest", 20); err != nil {
+		t.Fatalf("RecentRuns(): %v", err)
+	}
+	if len(spy.queries) == 0 {
+		t.Fatal("RecentRuns issued no list query")
+	}
+	for i, q := range spy.queries {
+		if !q.CreatedAfter.IsZero() {
+			t.Fatalf("query %d: CreatedAfter = %v, want zero", i, q.CreatedAfter)
 		}
 	}
 }

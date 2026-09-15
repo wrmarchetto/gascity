@@ -1611,7 +1611,13 @@ func doOrderHistoryBounded(name, rig string, aa []orders.Order, resolveStores or
 			if store.Store == nil {
 				continue
 			}
-			results, err := orders.NewStore(store).RecentRuns(a.ScopedName(), bounds.Limit)
+			// The cutoff goes to the store, not just to the loop below: the
+			// Go-side drop is still the authoritative filter (a backing that
+			// cannot express the window returns a superset), but without the
+			// pushdown this read fetches every retained run to count the few
+			// inside the window -- 18.6s against a 7s floor on a 122k-row city,
+			// and scaling with retention rather than with the window (ci-a2lyow).
+			results, err := orders.NewStore(store).RecentRunsWindow(a.ScopedName(), bounds.Limit, cutoff)
 			if err != nil {
 				fmt.Fprintf(stderr, "gc order history: %v\n", err) //nolint:errcheck // best-effort stderr
 				if i == 0 && len(results) == 0 {

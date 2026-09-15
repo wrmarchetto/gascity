@@ -926,6 +926,64 @@ func RunStoreTestsWithOptions(t *testing.T, newStore func() beads.Store, opts Op
 		}
 	})
 
+	// A window read is the shape `gc order history --since` issues, and its cost
+	// is the whole reason ListQuery.CreatedAfter exists: a store that ignores the
+	// bound answers correctly only because ApplyListQuery re-filters, and answers
+	// slowly forever. Correctness is what this pins; the cost is measured in the
+	// bead, not here.
+	//
+	// The rows are separated by a real clock wait rather than by planted
+	// timestamps because every Store stamps created_at itself and several
+	// backends keep only whole seconds -- a store-level window test has no other
+	// way to place a cutoff BETWEEN two rows. The cutoff is read back from the
+	// store's own row, so the assertion holds at whatever precision that backend
+	// kept.
+	t.Run("ListCreatedAfterWindow", func(t *testing.T) {
+		s := newStore()
+		const label = "created-after-window"
+		oldest := createAtNextSecond(t, s, "window-oldest", label)
+		middle := createAtNextSecond(t, s, "window-middle", label)
+		newest := createAtNextSecond(t, s, "window-newest", label)
+		_ = newest
+
+		// The cutoff IS the middle row's own timestamp, so this fails for any
+		// store that renders the bound as a strict `created_at > ?` -- which is
+		// what the native backing filter does, and what the Go-side contract
+		// (at-or-after) deliberately does not.
+		inWindow, err := s.List(beads.ListQuery{
+			Label:        label,
+			CreatedAfter: middle.CreatedAt,
+			Sort:         beads.SortCreatedDesc,
+		})
+		if err != nil {
+			t.Fatalf("List created-after window: %v", err)
+		}
+		if got := titlesOf(inWindow); !hasExactly(got, "window-middle", "window-newest") {
+			t.Errorf("window titles = %v, want [window-middle window-newest]", got)
+		}
+
+		// Ascending is the direction that separates a filtered window from a
+		// limited prefix: under created-desc the in-window rows are a prefix of
+		// the ordering, so a store that applied its row limit BEFORE an
+		// unhonored cutoff would agree by accident.
+		bounded, err := s.List(beads.ListQuery{
+			Label:        label,
+			CreatedAfter: middle.CreatedAt,
+			Limit:        1,
+			Sort:         beads.SortCreatedAsc,
+		})
+		if err != nil {
+			t.Fatalf("List created-after window with limit: %v", err)
+		}
+		if got := titlesOf(bounded); !hasExactly(got, "window-middle") {
+			t.Errorf("bounded window titles = %v, want [window-middle]", got)
+		}
+
+		if oldest.CreatedAt.After(middle.CreatedAt) {
+			t.Fatalf("seed ordering inverted: oldest %v after middle %v", oldest.CreatedAt, middle.CreatedAt)
+		}
+	})
+
 	// SetLocalString/GetLocalString cover only behavior common to every Store
 	// implementation. Unknown-bead-id handling is deliberately excluded here:
 	// in-process stores validate and return ErrNotFound while external-process
@@ -1346,4 +1404,21 @@ func hasLabel(labels []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// createAtNextSecond creates a labeled bead whose created_at is guaranteed to
+// land in a later whole second than the previous call's. Backends that keep
+// created_at only to the second would otherwise stamp a burst of Create calls
+// identically, leaving no instant between two rows for a window cutoff to sit
+// at.
+func createAtNextSecond(t *testing.T, s beads.Store, title, label string) beads.Bead {
+	t.Helper()
+	for start := time.Now(); time.Now().Truncate(time.Second).Equal(start.Truncate(time.Second)); {
+		time.Sleep(20 * time.Millisecond)
+	}
+	b, err := s.Create(beads.Bead{Title: title, Labels: []string{label}})
+	if err != nil {
+		t.Fatalf("Create %s: %v", title, err)
+	}
+	return b
 }

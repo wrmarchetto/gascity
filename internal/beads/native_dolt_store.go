@@ -1992,10 +1992,20 @@ func nativeCreatedLimitPushdown(query ListQuery) int {
 	if query.SeekAfter != nil || !query.UpdatedBefore.IsZero() || len(query.Assignees) > 0 {
 		return 0
 	}
+	// A pushed-down CreatedAfter is a SUPERSET of the caller's window (see
+	// nativeCreatedAfterFloor), so the backing can return rows the Go-side filter
+	// then drops. Under created-desc that is harmless -- the in-window rows are a
+	// prefix of the ordering, so the slack rows sit past the bound -- but under
+	// created-asc or the default sort they sit BEFORE it, and a bounded read
+	// spends its rows on them and comes back short.
+	windowed := !query.CreatedAfter.IsZero()
 	switch query.Sort {
 	case SortCreatedAsc:
 		// The backing renders created-asc ties as `id ASC`, matching the
 		// canonical (created_at ASC, id ASC) order, so a bounded asc read is exact.
+		if windowed {
+			return 0
+		}
 		return query.Limit
 	case SortCreatedDesc:
 		// The backing renders created-desc ties as `id ASC` (upstream
@@ -2014,12 +2024,26 @@ func nativeCreatedLimitPushdown(query ListQuery) int {
 	case SortDefault:
 		// The default backing order (priority, created_at DESC, id ASC) is
 		// deterministic, so a bounded default read cuts a stable prefix.
+		if windowed {
+			return 0
+		}
 		return query.Limit
 	default:
 		// Non-mappable sorts can't page server-side; fetch unbounded and sort
 		// client-side in ApplyListQuery.
 		return 0
 	}
+}
+
+// nativeCreatedAfterFloor renders ListQuery.CreatedAfter as the widened bound
+// the upstream IssueFilter can carry -- createdAfterBackingFloor (query.go)
+// explains why it has to be widened at all -- or nil for an unwindowed query.
+func nativeCreatedAfterFloor(cutoff time.Time) *time.Time {
+	if cutoff.IsZero() {
+		return nil
+	}
+	floor := createdAfterBackingFloor(cutoff)
+	return &floor
 }
 
 func nativeIssueFilterFromListQuery(query ListQuery) beadslib.IssueFilter {
@@ -2037,6 +2061,7 @@ func nativeIssueFilterFromListQuery(query ListQuery) beadslib.IssueFilter {
 		SortDesc:            sortDesc,
 		MetadataFields:      query.Metadata,
 		CreatedBefore:       zeroTimePtr(query.CreatedBefore),
+		CreatedAfter:        nativeCreatedAfterFloor(query.CreatedAfter),
 		IncludeDependencies: true,
 	}
 	switch query.TierMode {
