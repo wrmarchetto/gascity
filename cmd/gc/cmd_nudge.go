@@ -921,6 +921,7 @@ func deliverSessionNudgeWithWorker(target nudgeTarget, store beads.Store, sp run
 		fmt.Fprintf(stderr, "gc session nudge: %v\n", err) //nolint:errcheck
 		return 1
 	}
+	deliveryStart := time.Now()
 	result, err := handle.Nudge(context.Background(), worker.NudgeRequest{
 		Text:     message,
 		Delivery: delivery,
@@ -942,6 +943,12 @@ func deliverSessionNudgeWithWorker(target nudgeTarget, store beads.Store, sp run
 	if mode == nudgeDeliveryWaitIdle && !result.Delivered {
 		return queueSessionNudgeWithWorker(target, store, sp, message, mode, jsonOutput, stdout, stderr)
 	}
+	// This path stamped nothing before ci-49vlf3, which is what made the live
+	// `gc session nudge` the cheapest way to buy a wedged session another full
+	// idle_timeout: the keystrokes advanced the terminal activity clock and no
+	// record of them ever left this process.
+	stampNudgeDelivery(sessionFrontDoor(sessStore), target.sessionID, time.Now(),
+		deliveredKeystrokePoke(sp, target.sessionName, deliveryStart))
 	if jsonOutput {
 		return writeCLIJSONLineOrExit(stdout, stderr, "gc session nudge", sessionNudgeJSON{
 			SchemaVersion: "1",
@@ -1287,6 +1294,7 @@ func sendMailNotifyWithWorker(target nudgeTarget, store beads.Store, sp runtime.
 	if obs.Running {
 		handle, err := workerHandleForNudgeTarget(target, sessStore, sp)
 		if err == nil {
+			deliveryStart := time.Now()
 			result, nudgeErr := handle.Nudge(context.Background(), worker.NudgeRequest{
 				Text:     msg,
 				Delivery: worker.NudgeDeliveryWaitIdle,
@@ -1300,7 +1308,8 @@ func sendMailNotifyWithWorker(target nudgeTarget, store beads.Store, sp runtime.
 				if store != nil {
 					sessFront = sessionFrontDoor(sessStore)
 				}
-				stampLastNudgeDeliveredAt(sessFront, target.sessionID, time.Now())
+				stampNudgeDelivery(sessFront, target.sessionID, time.Now(),
+					deliveredKeystrokePoke(sp, target.sessionName, deliveryStart))
 				return mailNotifyOutcome{Delivered: true}, nil
 			case nudgeErr == nil:
 				skip = result.Skip
@@ -1570,6 +1579,7 @@ func tryDeliverQueuedNudgesByPollerWithDecision(target nudgeTarget, store, sessS
 		relErr := releaseQueuedNudgeClaims(target.cityPath, queuedNudgeIDs(items))
 		return false, errors.Join(bookkeepErr, err, relErr)
 	}
+	deliveryStart := time.Now()
 	result, err := handle.Nudge(context.Background(), worker.NudgeRequest{
 		Text:     msg,
 		Delivery: worker.NudgeDeliveryDefault,
@@ -1583,7 +1593,8 @@ func tryDeliverQueuedNudgesByPollerWithDecision(target nudgeTarget, store, sessS
 			// with incomplete observation, not a retryable delivery failure: a
 			// retry would paste the same reminder into an already-started turn.
 			telemetry.RecordNudge(context.Background(), target.agentKey(), nil)
-			stampLastNudgeDeliveredAt(deliverySessFront, target.sessionID, time.Now())
+			stampNudgeDelivery(deliverySessFront, target.sessionID, time.Now(),
+				deliveredKeystrokePoke(sp, target.sessionName, deliveryStart))
 			return true, errors.Join(bookkeepErr, ackQueuedNudges(target.cityPath, queuedNudgeIDs(items)))
 		}
 		telemetry.RecordNudge(context.Background(), target.agentKey(), err)
@@ -1609,7 +1620,8 @@ func tryDeliverQueuedNudgesByPollerWithDecision(target nudgeTarget, store, sessS
 		return false, errors.Join(bookkeepErr, relErr)
 	}
 	telemetry.RecordNudge(context.Background(), target.agentKey(), nil)
-	stampLastNudgeDeliveredAt(deliverySessFront, target.sessionID, time.Now())
+	stampNudgeDelivery(deliverySessFront, target.sessionID, time.Now(),
+		deliveredKeystrokePoke(sp, target.sessionName, deliveryStart))
 	return true, errors.Join(bookkeepErr, ackQueuedNudges(target.cityPath, queuedNudgeIDs(items)))
 }
 
@@ -1619,13 +1631,70 @@ func recordNudgePollDecision(record nudgePollDecisionRecorder, reason string, ca
 	}
 }
 
+// stampLastNudgeDeliveredAt records a delivery that reached the agent WITHOUT
+// keystrokes -- the hook transport, which hands the payload to the agent's own
+// nudge drain. Nothing echoed into the terminal, so there is deliberately no
+// poke to record: stamping one would discount the agent's genuine activity and
+// suppress idle detection rather than restore it.
 func stampLastNudgeDeliveredAt(sessFront *session.Store, sessionID string, t time.Time) {
-	if sessFront == nil || sessionID == "" {
+	stampNudgeDelivery(sessFront, sessionID, t, runtime.Poke{})
+}
+
+// stampNudgeDelivery records a delivered nudge on the session bead: the
+// delivery time always, and the durable poke when the delivery reached the
+// agent as KEYSTROKES.
+//
+// Both land in one patch because they are read together. The poke is the
+// controller's only way to tell gc's own send-keys echo from an agent turn --
+// the runtime's poke record is in-process and this process is not the
+// controller (ci-49vlf3) -- and a `prior` that arrived without its `at` cannot
+// be used at all.
+func stampNudgeDelivery(sessFront *session.Store, sessionID string, t time.Time, poke runtime.Poke) {
+	// Backed(), not a nil check: sessionFrontDoor always returns a non-nil
+	// *Store, so an unbacked front door is only detectable through it.
+	if !sessFront.Backed() || sessionID == "" {
 		return
+	}
+	patch := session.MetadataPatch{
+		session.MetadataLastNudgeDeliveredAt: t.UTC().Format(time.RFC3339),
+	}
+	// An incomplete poke is left entirely unwritten rather than half-written:
+	// a stale `at` beside a fresh `prior` would discount against the wrong
+	// instant. Any previous record stays, and ages out of the echo window on
+	// its own.
+	if poke.Complete() {
+		for k, v := range session.StampPokePatch(poke) {
+			patch[k] = v
+		}
 	}
 	// Best-effort stamp. Delivery already succeeded, so a metadata write
 	// failure here must not bubble back to the caller and force a redelivery.
-	_ = sessFront.SetMarker(sessionID, session.MetadataLastNudgeDeliveredAt, t.UTC().Format(time.RFC3339))
+	_ = sessFront.ApplyPatch(sessionID, patch)
+}
+
+// deliveredKeystrokePoke returns the poke the runtime recorded for a delivery
+// that started at or after `since`, and a zero Poke when the delivery sent no
+// keystrokes -- an ACP or hook-transport delivery, or a runtime that records
+// nothing.
+//
+// The `since` bound is not belt-and-braces. The queued-nudge poller is one
+// long-lived process per session that delivers repeatedly, so its runtime
+// still holds the PREVIOUS delivery's poke; without the bound, a delivery that
+// recorded no poke of its own would re-stamp that older pair and discount
+// activity against an instant that has nothing to do with it.
+func deliveredKeystrokePoke(sp runtime.Provider, sessionName string, since time.Time) runtime.Poke {
+	if sp == nil || sessionName == "" {
+		return runtime.Poke{}
+	}
+	reporter, ok := sp.(runtime.PokeReporter)
+	if !ok {
+		return runtime.Poke{}
+	}
+	pk, ok := reporter.LastPoke(sessionName)
+	if !ok || !pk.Complete() || pk.At.Before(since) {
+		return runtime.Poke{}
+	}
+	return pk
 }
 
 func pollerSessionIdleEnough(target nudgeTarget, sp runtime.Provider, quiescence time.Duration, obs worker.LiveObservation) bool {

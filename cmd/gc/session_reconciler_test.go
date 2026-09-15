@@ -43,7 +43,7 @@ func newFakeIdleTracker() *fakeIdleTracker {
 	}
 }
 
-func (f *fakeIdleTracker) checkIdle(sessionName, template string, _ runtime.Provider, _ time.Time) bool {
+func (f *fakeIdleTracker) checkIdle(sessionName, template string, _ runtime.Provider, _ time.Time, _ runtime.Poke) bool {
 	if f.idle[sessionName] {
 		return true
 	}
@@ -10633,10 +10633,15 @@ func TestReconcileSessionBeads_MaxAgeBusyDeferFallsThroughToIdleTimeout(t *testi
 // tracer.detail, and ensureAutoArm needs an armStore this literal has none
 // of) — mirrors the literal already proven in
 // TestReconcileSessionBeads_MaxAgeBusyDeferFallsThroughToIdleTimeout.
-func idleTimeoutBackstopTrace(templateName string) *sessionReconcilerTraceCycle {
+//
+// The template is fixed at "witness" rather than a parameter: every caller in
+// this file builds its session on that template, so a parameter only invited
+// a key that does not match the session under test -- which fails by
+// recording nothing, not by erroring.
+func idleTimeoutBackstopTrace() *sessionReconcilerTraceCycle {
 	return &sessionReconcilerTraceCycle{
 		tracer: &SessionReconcilerTracer{
-			detail: map[string]TraceSource{templateName: TraceSourceManual},
+			detail: map[string]TraceSource{"witness": TraceSourceManual},
 		},
 		dropReasons:       map[string]int{},
 		pendingDetail:     map[string][]SessionReconcilerTraceRecord{},
@@ -10717,7 +10722,7 @@ func TestReconcileSessionBeads_AssignedWorkDeferBackstopForcesStopAfterLimit(t *
 
 	runTick := func() (*sessionReconcilerTraceCycle, *events.Fake) {
 		rec := events.NewFake()
-		trace := idleTimeoutBackstopTrace("witness")
+		trace := idleTimeoutBackstopTrace()
 		reconcileSessionBeadsTraced(
 			context.Background(), "", []beads.Bead{session}, env.desiredState, cfgNames, env.cfg, env.sp,
 			env.store, nil, nil, nil, nil, env.dt, poolDesired, false, nil, "",
@@ -10798,7 +10803,7 @@ func TestReconcileSessionBeads_AssignedWorkDeferBackstopResetsOnAnchorChange(t *
 			"currently_processing_bead_id": anchorBeadID,
 		})
 		rec := events.NewFake()
-		trace := idleTimeoutBackstopTrace("witness")
+		trace := idleTimeoutBackstopTrace()
 		reconcileSessionBeadsTraced(
 			context.Background(), "", []beads.Bead{session}, env.desiredState, cfgNames, env.cfg, env.sp,
 			env.store, nil, nil, nil, nil, env.dt, poolDesired, false, nil, "",
@@ -10864,7 +10869,7 @@ func TestReconcileSessionBeads_AssignedWorkDeferBackstopResetsOnOtherOutcome(t *
 
 	runTick := func() *events.Fake {
 		rec := events.NewFake()
-		trace := idleTimeoutBackstopTrace("witness")
+		trace := idleTimeoutBackstopTrace()
 		reconcileSessionBeadsTraced(
 			context.Background(), "", []beads.Bead{session}, env.desiredState, cfgNames, env.cfg, env.sp,
 			env.store, nil, nil, nil, nil, env.dt, poolDesired, false, nil, "",

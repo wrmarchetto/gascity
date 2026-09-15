@@ -70,6 +70,28 @@ const LabelSession = "gc:session"
 // the wall-clock time of the most recent successful queued-nudge delivery.
 const MetadataLastNudgeDeliveredAt = "last_nudge_delivered_at"
 
+// Durable poke record. gc wakes and nudges tmux-backed agents by sending
+// keystrokes, which advances the terminal's activity clock whether or not the
+// agent ever runs a turn. The runtime discounts that echo, but only from the
+// process that sent it -- and the sender is never the controller, so the
+// controller's idle check read the raw, echo-advanced value and every nudge
+// bought the session another full idle_timeout of immunity (ci-49vlf3).
+//
+// These two keys are that record made durable, and they are a PAIR: the `at`
+// alone says a keystroke landed, the `prior` says what the last genuine
+// activity was, and the discount needs both. They are written together in one
+// patch (StampPokePatch) and only by a delivery that actually sent keystrokes
+// -- a hook-injected or ACP delivery records neither, because nothing echoed.
+//
+// Deliberately separate from MetadataLastNudgeDeliveredAt, which every
+// delivery path stamps: reusing it as the `at` would let a keystroke-free
+// delivery advance `at` past a still-valid `prior` and make the discount
+// compare against the wrong instant.
+const (
+	MetadataLastPokeAt            = "last_poke_at"
+	MetadataLastPokePriorActivity = "last_poke_prior_activity_at"
+)
+
 // Failed-create retry metadata records a pool session creation that the
 // provider aborted before completing. The controller uses the fields as a
 // durable, per-trigger retry ledger so a transient provider outage cannot
@@ -114,7 +136,12 @@ type Info struct {
 	// Surfaced in `gc session list` so operators can spot warm sessions
 	// whose delivery loop has stalled.
 	LastNudgeDeliveredAt time.Time
-	Attached             bool
+	// LastPokeAt / LastPokePriorActivity are the durable poke record (see
+	// MetadataLastPokeAt). Both zero when the most recent delivery sent no
+	// keystrokes, which is the "do not discount" case.
+	LastPokeAt            time.Time
+	LastPokePriorActivity time.Time
+	Attached              bool
 	// ContinuationEpoch is the persisted continuation_epoch marker, used by the
 	// wait registration/retry paths to stamp registered_epoch on wait beads.
 	// Additive, internal-only: it is NOT emitted on the HTTP session-response

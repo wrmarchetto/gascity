@@ -3392,8 +3392,13 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 		// for, trading the kill/wake treadmill (ga-3ox7rk) for the opposite
 		// mismatch.
 		if it != nil && alive {
+			// The durable poke travels with the Info, not with sp: the
+			// provider's own poke map lives in whichever process sent the
+			// keystrokes, and that is the nudge CLI or its per-session poller,
+			// never this one. Reading it off the provider here is what silently
+			// returned false for every nudged session (ci-49vlf3).
 			facts := sessionpkg.TimerFacts{
-				Triggered: it.checkIdle(name, tp.TemplateName, sp, clk.Now()),
+				Triggered: it.checkIdle(name, tp.TemplateName, sp, clk.Now(), infoByID[id].DurablePoke()),
 			}
 			if facts.Triggered {
 				facts.Blocker = lifecycleTimerBlockerInfo(infoByID[id], clk.Now())

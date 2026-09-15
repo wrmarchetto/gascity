@@ -177,6 +177,19 @@ func infoFromPersistedBeadFrozen(b beads.Bead) Info {
 			info.LastNudgeDeliveredAt = parsed
 		}
 	}
+	// Durable poke pair, read the long way on purpose: this oracle is a
+	// hand-written second reader, so it must not call the codec's own
+	// parseRFC3339Metadata or it would agree with any bug that helper carries.
+	if raw := strings.TrimSpace(b.Metadata[MetadataLastPokeAt]); raw != "" {
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			info.LastPokeAt = parsed
+		}
+	}
+	if raw := strings.TrimSpace(b.Metadata[MetadataLastPokePriorActivity]); raw != "" {
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			info.LastPokePriorActivity = parsed
+		}
+	}
 	return info
 }
 
@@ -198,6 +211,10 @@ func TestInfoCodecProjectionParity(t *testing.T) {
 		{"wake_attempts": " 3 "}, // Atoi rejects whitespace -> 0
 		{MetadataLastNudgeDeliveredAt: "garbage"},
 		{MetadataLastNudgeDeliveredAt: " 2025-06-01T00:00:00Z "},
+		{MetadataLastPokeAt: "garbage"},
+		{MetadataLastPokeAt: " 2025-06-01T00:00:00Z "},
+		{MetadataLastPokePriorActivity: "garbage"},
+		{MetadataLastPokePriorActivity: " 2025-06-01T00:00:00Z "},
 		{aliasHistoryMetadataKey: " a , b ,a, c "},
 		{aliasHistoryMetadataKey: ""},
 		{"pool_managed": " true ", "dependency_only": " true ", "manual_session": "TRUE"},
@@ -322,7 +339,7 @@ func TestInfoCodecFieldsDisjoint(t *testing.T) {
 		case NamedSessionMetadataKey, "pool_managed", "dependency_only",
 			"manual_session", "session_drainable", "pending_create_claim":
 			return "true"
-		case MetadataLastNudgeDeliveredAt:
+		case MetadataLastNudgeDeliveredAt, MetadataLastPokeAt, MetadataLastPokePriorActivity:
 			return "2025-06-01T00:00:00Z"
 		default:
 			return "1"
