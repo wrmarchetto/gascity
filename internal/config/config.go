@@ -2360,6 +2360,29 @@ type DoctorConfig struct {
 	// the check exists for; the operator silences them by naming them.
 	ExternalAssignees []string `toml:"external_assignees,omitempty"`
 
+	// UnaddressedGrace is how long a bead may carry neither an assignee nor a
+	// gc.routed_to before the unclaimable-work check reports it. It exists
+	// because that check makes a permanence claim -- "nothing will ever spawn
+	// a session to claim this" -- from a single instantaneous sample, and a
+	// city whose routing arrives asynchronously produces the unaddressed shape
+	// on every mint. Go duration string ("5m"); unparseable makes the check
+	// report StatusWarning rather than fall back to a window nobody chose.
+	//
+	// gc ships no default and that absence is the design, the same as
+	// ExternalAssignees above. WHICH asynchronous router a city runs, and how
+	// long it takes, is city-local: a cooldown order that stamps routes from
+	// labels, a dispatcher resolving a run target at cook. An invented default
+	// would withhold real findings from every city that runs none of them, and
+	// no measurement here could justify its length. Leaving it unset reports
+	// every unaddressed bead immediately, which is the behavior the check was
+	// written with.
+	//
+	// It narrows to the unrouted race ALONE. A bead already carrying a
+	// gc.routed_to that names no active agent is not waiting on a write, so
+	// this never withholds one -- see strandedReason in
+	// cmd/gc/doctor_unclaimable_work.go.
+	UnaddressedGrace string `toml:"unaddressed_grace,omitempty"`
+
 	// Checks holds city-local inline doctor checks declared via
 	// [[doctor.check]] in city.toml.
 	Checks []LocalDoctorCheck `toml:"check,omitempty"`

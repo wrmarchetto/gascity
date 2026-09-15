@@ -29,6 +29,42 @@
 //	                    assigned rows, and it is the shape a filer who forgets
 //	                    to route produces.
 //
+// THE [doctor] unaddressed_grace WINDOW, and why the predicate needed one
+// (ci-9l2kos). The shape above is a PERMANENCE claim -- nothing will EVER spawn
+// a session -- and this check evaluates it from a single instantaneous sample,
+// which cannot tell unaddressed-forever from unaddressed-for-four-seconds. Any
+// city whose addressing arrives asynchronously therefore reports a false
+// positive on every mint. Measured in one such city on 2026-09-15: a bench
+// sitting is minted with a `harness:<name>` label and no route, and a cooldown
+// order stamps gc.routed_to from that label within 2m, so the bead is genuinely
+// unaddressed and genuinely about to be addressed. Two firings were counted
+// that day, both self-resolving, and the cost was not the line -- the city's
+// sweep pages its mayor when the SET of failing checks CHANGES, so each mint
+// bought a change-in and a change-out carrying no information.
+//
+// The window is an operator declaration and ships empty (config.DoctorConfig,
+// which carries the rest of the reasoning). Three alternatives were weighed:
+//
+//	a built-in default        rejected. Nothing here could justify its length,
+//	                          and it would withhold real findings from every
+//	                          city running no asynchronous router.
+//	stamp the route at mint   rejected. It is the city's own call, but it
+//	                          reintroduces exactly the coupling its label-to-
+//	                          route order exists to remove: an author would
+//	                          have to know an agent name to file bench work.
+//	leave it                  rejected on the attention budget. The finding
+//	                          this check was built for -- ci-mqqe, 7h23m of a
+//	                          ready P1 -- was invisible in that same budget.
+//
+// The cost of the window is bounded and was measured against the detection path
+// that exists rather than against zero: the city order that consumes this check
+// samples every 5m, so a grace no longer than that adds nothing to the
+// worst-case latency on a genuinely stranded bead, against a real catch of
+// 7h23m. It narrows to the unrouted reason alone, an undated bead counts as
+// old, and the withheld count is stated on both result paths -- each of those
+// is a way the window could have gone quiet instead of narrow, and each is
+// pinned by its own test.
+//
 // WHY A DOCTOR CHECK AND NOT A SHELL PROBE, considered and rejected. The city
 // order that pages on a stalled queue could ask the same question in Python, and
 // would have to re-derive which routes resolve -- gc's own answer moves (the
@@ -59,6 +95,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/agentutil"
 	"github.com/gastownhall/gascity/internal/beadmeta"
@@ -77,6 +114,11 @@ type unclaimableWorkCheck struct {
 	cfg      *config.City
 	cityPath string
 	newStore func(string) (beads.Store, error)
+	// now is the wall clock the [doctor] unaddressed_grace window is measured
+	// against. A seam rather than a direct time.Now call because an age
+	// assertion is only observable if the test can place a bead inside and
+	// outside the window; the constructor installs the real clock.
+	now func() time.Time
 }
 
 type unclaimableWorkStore struct {
@@ -91,7 +133,7 @@ type scopedUnclaimableWorkBead struct {
 }
 
 func newUnclaimableWorkCheck(cfg *config.City, cityPath string, newStore func(string) (beads.Store, error)) *unclaimableWorkCheck {
-	return &unclaimableWorkCheck{cfg: cfg, cityPath: cityPath, newStore: newStore}
+	return &unclaimableWorkCheck{cfg: cfg, cityPath: cityPath, newStore: newStore, now: time.Now}
 }
 
 func (c *unclaimableWorkCheck) Name() string { return "unclaimable-work" }
@@ -127,11 +169,29 @@ const unclaimableWorkDeliberatelyDoorlessLabel = "gc:deliberately-doorless"
 // overflow is always stated rather than silently truncated.
 const unclaimableWorkSummaryIDs = 5
 
+// unclaimableWorkNoAddressReason is the one stranded reason [doctor]
+// unaddressed_grace may withhold, and it is compared by value rather than
+// re-derived so the two cannot drift apart silently. The other reason -- a
+// route naming no active agent -- is deliberately outside the window: that
+// bead already HAS an address, so no later write is coming to make it
+// claimable and there is nothing for a grace to wait for.
+const unclaimableWorkNoAddressReason = "no assignee and no gc.routed_to"
+
+// unclaimableWorkGraceConfigKey is how the key is spelled back to an operator
+// in a message. The bare field name would not tell them which table to edit.
+const unclaimableWorkGraceConfigKey = "[doctor] unaddressed_grace"
+
 func (c *unclaimableWorkCheck) Run(_ *doctor.CheckContext) *doctor.CheckResult {
 	res := &doctor.CheckResult{Name: c.Name(), Severity: doctor.SeverityAdvisory}
 	if c.newStore == nil || strings.TrimSpace(c.cityPath) == "" {
 		res.Status = doctor.StatusWarning
 		res.Message = "unclaimable work unknown: no city bead store configured"
+		return res
+	}
+	grace, err := unclaimableWorkGrace(c.cfg)
+	if err != nil {
+		res.Status = doctor.StatusWarning
+		res.Message = fmt.Sprintf("unclaimable work unknown: %v", err)
 		return res
 	}
 	stores := c.activeStores()
@@ -174,32 +234,99 @@ func (c *unclaimableWorkCheck) Run(_ *doctor.CheckContext) *doctor.CheckResult {
 	scope := newUnclaimableWorkScope(c.cfg)
 
 	var details, ids []string
+	withheld := 0
 	for _, candidate := range claimable {
-		if reason := scope.strandedReason(candidate.bead); reason != "" {
-			detail := fmt.Sprintf("%s %s (%s)", candidate.bead.ID, strings.TrimSpace(candidate.bead.Title), reason)
-			id := candidate.bead.ID
-			if !candidate.store.isCity {
-				detail = fmt.Sprintf("%s: %s", candidate.store.label, detail)
-				id = candidate.store.label + "/" + id
-			}
-			details = append(details, detail)
-			ids = append(ids, id)
+		reason := scope.strandedReason(candidate.bead)
+		if reason == "" {
+			continue
 		}
+		if unclaimableWorkWithinGrace(candidate.bead, reason, grace, c.now) {
+			withheld++
+			continue
+		}
+		detail := fmt.Sprintf("%s %s (%s)", candidate.bead.ID, strings.TrimSpace(candidate.bead.Title), reason)
+		id := candidate.bead.ID
+		if !candidate.store.isCity {
+			detail = fmt.Sprintf("%s: %s", candidate.store.label, detail)
+			id = candidate.store.label + "/" + id
+		}
+		details = append(details, detail)
+		ids = append(ids, id)
 	}
 	sort.Strings(details)
 	sort.Strings(ids)
 
 	if len(details) == 0 {
 		res.Status = doctor.StatusOK
+		if withheld > 0 {
+			res.Message = fmt.Sprintf("%d of %d claimable bead(s) %s are addressed; %d withheld as younger than the %s %s",
+				len(claimable)-withheld, len(claimable), unclaimableWorkStoreScope(stores), withheld, grace, unclaimableWorkGraceConfigKey)
+			return res
+		}
 		res.Message = fmt.Sprintf("every one of %d claimable bead(s) %s is addressed", len(claimable), unclaimableWorkStoreScope(stores))
 		return res
 	}
 	res.Status = doctor.StatusError
 	res.Message = fmt.Sprintf("%d of %d claimable bead(s) %s reach no pool door: %s",
 		len(details), len(claimable), unclaimableWorkStoreScope(stores), summarizeUnclaimableIDs(ids))
+	if withheld > 0 {
+		res.Message += fmt.Sprintf("; %d more withheld as younger than the %s %s",
+			withheld, grace, unclaimableWorkGraceConfigKey)
+	}
 	res.Details = details
 	res.FixHint = unclaimableWorkFixHint
 	return res
+}
+
+// unclaimableWorkGrace reads the operator's declared window. An unparseable
+// value is an error rather than a fallback in either direction: falling back to
+// zero reports every young bead and looks exactly like a working check, so the
+// operator never learns their window is not in effect, and falling back to some
+// default withholds on a length nobody chose.
+func unclaimableWorkGrace(cfg *config.City) (time.Duration, error) {
+	if cfg == nil {
+		return 0, nil
+	}
+	raw := strings.TrimSpace(cfg.Doctor.UnaddressedGrace)
+	if raw == "" {
+		return 0, nil
+	}
+	grace, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s is %q, which is not a Go duration: write it as %q or remove the key",
+			unclaimableWorkGraceConfigKey, raw, "5m")
+	}
+	if grace < 0 {
+		return 0, fmt.Errorf("%s is %q, which is negative: write a positive duration or remove the key",
+			unclaimableWorkGraceConfigKey, raw)
+	}
+	return grace, nil
+}
+
+// unclaimableWorkWithinGrace reports whether b is young enough that its missing
+// address may still be on its way.
+//
+// A zero CreatedAt counts as OLD, and the subtraction alone gets that right: a
+// bead whose store did not report a creation time dates from year 1, and
+// time.Sub SATURATES at the maximum Duration rather than overflowing, so its
+// age exceeds every window an operator could write. An explicit IsZero clause
+// was written here first and deleted -- a mutation sweep reported it SURVIVED,
+// because no flip of it changes any answer, and an inert clause in a refusal is
+// what makes the next sweep's output noise. The CONTRACT survives in
+// TestUnclaimableWorkGraceCountsAnUndatedBeadAsOld, which is where it belongs:
+// calling an unmeasurable age "just created" would withhold every finding from
+// a store that stopped populating the column, and the check would go quiet and
+// read as healthy. That is the one failure mode a detector must not have, so
+// reporting is the recoverable error.
+//
+// The zero-window refusal below is NOT redundant in the same way, and its own
+// test says why -- a negative age, the store's clock ahead of the host's, is
+// below every window including the unset one.
+func unclaimableWorkWithinGrace(b beads.Bead, reason string, grace time.Duration, now func() time.Time) bool {
+	if grace <= 0 || reason != unclaimableWorkNoAddressReason {
+		return false
+	}
+	return now().Sub(b.CreatedAt) < grace
 }
 
 // activeStores returns the city store plus registered, non-suspended rig
@@ -317,7 +444,7 @@ func (s unclaimableWorkScope) strandedReason(b beads.Bead) string {
 
 	route := strings.TrimSpace(routedToOrLegacyWorkflowTarget(b))
 	if route == "" {
-		return "no assignee and no gc.routed_to"
+		return unclaimableWorkNoAddressReason
 	}
 	if controllerDemandRouteTarget(s.cfg, b, s.targets) != "" {
 		return ""

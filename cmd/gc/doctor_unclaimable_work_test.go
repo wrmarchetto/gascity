@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
@@ -507,4 +508,247 @@ func TestUnclaimableWorkIsNotSwampedByInboundChatTranscripts(t *testing.T) {
 		{ID: "W-1", Title: "forgotten route", Type: "task", Status: "open"},
 	}, nil)
 	assertUnclaimable(t, got, "W-1")
+}
+
+// --- [doctor] unaddressed_grace ---
+
+// graceCfg is a city whose operator has declared that an address can arrive
+// asynchronously within grace. The pool agent is poolAgentCfg's so the
+// admission tiers under test are the same ones every other test here uses.
+func graceCfg(grace string) *config.City {
+	cfg := poolAgentCfg(4)
+	cfg.Doctor.UnaddressedGrace = grace
+	return cfg
+}
+
+// unclaimableResultAt runs the check against a fixed wall clock, which is what
+// makes an age assertion observable at all: a test that let the check read the
+// real clock would be asserting on a window it cannot place a bead inside.
+func unclaimableResultAt(cfg *config.City, now time.Time, population []beads.Bead) *doctor.CheckResult {
+	store := beads.NewMemStoreFrom(0, population, nil)
+	check := newUnclaimableWorkCheck(cfg, "/city", func(string) (beads.Store, error) { return store, nil })
+	check.now = func() time.Time { return now }
+	return check.Run(&doctor.CheckContext{})
+}
+
+func unclaimableDetailIDs(res *doctor.CheckResult) []string {
+	var ids []string
+	for _, d := range res.Details {
+		ids = append(ids, strings.Fields(d)[0])
+	}
+	return ids
+}
+
+// TestUnclaimableWorkGraceWithholdsOnlyBeadsInsideTheDeclaredWindow pins the
+// boundary of the operator's declaration in both directions from one
+// population, because a grace asserted only on the young bead passes equally
+// for a grace that suppresses everything.
+//
+// The window is the whole point: this check's predicate is a permanence claim
+// ("nothing will EVER spawn a session to claim"), and a point sample cannot
+// distinguish unaddressed-forever from unaddressed-for-four-seconds. A city
+// whose routing arrives from a cooldown order -- this one stamps gc.routed_to
+// from a label every 2m -- produces the second shape on every mint.
+func TestUnclaimableWorkGraceWithholdsOnlyBeadsInsideTheDeclaredWindow(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(graceCfg("5m"), now, []beads.Bead{
+		{
+			ID: "W-young", Title: "minted a minute ago", Type: "task", Status: "open",
+			CreatedAt: now.Add(-1 * time.Minute),
+		},
+		{
+			ID: "W-old", Title: "unaddressed for an hour", Type: "task", Status: "open",
+			CreatedAt: now.Add(-1 * time.Hour),
+		},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-old" {
+		t.Fatalf("reported %v, want only W-old", got)
+	}
+}
+
+// TestUnclaimableWorkGraceEndsAtTheDeclaredLengthExactly pins the boundary in
+// the reporting direction. An operator reads "5m" as "report it after five
+// minutes", so a bead that has reached exactly that age is outside the window,
+// not on its edge. Nothing else here places a bead on the boundary, so without
+// this row the comparison could be widened by one tick unnoticed.
+func TestUnclaimableWorkGraceEndsAtTheDeclaredLengthExactly(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(graceCfg("5m"), now, []beads.Bead{
+		{
+			ID: "W-exact", Title: "exactly the window old", Type: "task", Status: "open",
+			CreatedAt: now.Add(-5 * time.Minute),
+		},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-exact" {
+		t.Fatalf("reported %v, want W-exact: the window ends AT the declared length", got)
+	}
+}
+
+// TestUnclaimableWorkUndeclaredGraceWithholdsNothingUnderClockSkew pins the one
+// case where the zero window is not the arithmetic's own answer. A bead created
+// in the future -- the bead store's clock ahead of the host's, which is two
+// processes and possibly two machines -- has a NEGATIVE age, and every negative
+// age is below every window including the unset one. Without the explicit
+// zero-window refusal a skewed clock would withhold findings from a city that
+// declared no grace at all, which is the silent direction.
+func TestUnclaimableWorkUndeclaredGraceWithholdsNothingUnderClockSkew(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(poolAgentCfg(4), now, []beads.Bead{
+		{
+			ID: "W-skewed", Title: "store clock ahead of the host", Type: "task", Status: "open",
+			CreatedAt: now.Add(1 * time.Minute),
+		},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-skewed" {
+		t.Fatalf("reported %v, want W-skewed: an unset window must withhold nothing at any clock offset", got)
+	}
+}
+
+// TestUnclaimableWorkGraceCountsAnUndatedBeadAsOld pins the direction the
+// unknown answer falls in. A bead whose store did not report a creation time
+// has no measurable age, and treating that as "just created" would withhold
+// every finding from any store that stopped populating the column -- the check
+// would go quiet and read as healthy. Reporting it is the recoverable error.
+func TestUnclaimableWorkGraceCountsAnUndatedBeadAsOld(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(graceCfg("5m"), now, []beads.Bead{
+		{ID: "W-undated", Title: "no creation time", Type: "task", Status: "open"},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-undated" {
+		t.Fatalf("reported %v, want W-undated: an unmeasurable age must not withhold", got)
+	}
+}
+
+// TestUnclaimableWorkGraceNeverWithholdsAMisroutedBead pins the exclusion that
+// keeps the window as narrow as the race it covers. A bead already carrying
+// gc.routed_to is not waiting on an address -- it HAS one, naming nobody -- so
+// no later write is coming to make it claimable and there is nothing to wait
+// for. Withholding it would hide a misspelled route for the whole window.
+func TestUnclaimableWorkGraceNeverWithholdsAMisroutedBead(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(graceCfg("5m"), now, []beads.Bead{
+		{
+			ID: "W-misrouted", Title: "routed at a typo", Type: "task", Status: "open",
+			CreatedAt: now.Add(-1 * time.Second),
+			Metadata:  map[string]string{beadmeta.RoutedToMetadataKey: "toolsimth"},
+		},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-misrouted" {
+		t.Fatalf("reported %v, want W-misrouted: grace covers the unrouted race only", got)
+	}
+}
+
+// TestUnclaimableWorkGraceIsOffWhenUndeclared pins that gc ships no window.
+// Which asynchronous router a city runs, and how long its cooldown is, is
+// city-local knowledge gc cannot derive; an invented default would hide real
+// findings in every city that has no such router. Same design as [doctor]
+// external_assignees, which also ships empty.
+func TestUnclaimableWorkGraceIsOffWhenUndeclared(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	res := unclaimableResultAt(poolAgentCfg(4), now, []beads.Bead{
+		{
+			ID: "W-1", Title: "minted a second ago", Type: "task", Status: "open",
+			CreatedAt: now.Add(-1 * time.Second),
+		},
+	})
+
+	if got := unclaimableDetailIDs(res); strings.Join(got, ",") != "W-1" {
+		t.Fatalf("reported %v, want W-1: an undeclared grace must withhold nothing", got)
+	}
+}
+
+// TestUnclaimableWorkStatesWhatTheGraceWithheld pins that a withheld bead is
+// still visible as a number on BOTH result paths. A suppression an operator
+// cannot see turns a misconfigured window into a check that reads clean, which
+// is the failure mode that gets a detector trusted when it is silent. The OK
+// path matters more than the error path: its old sentence claimed every
+// claimable bead was addressed, which a withheld bead makes false.
+func TestUnclaimableWorkStatesWhatTheGraceWithheld(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	young := beads.Bead{
+		ID: "W-young", Title: "minted a minute ago", Type: "task", Status: "open",
+		CreatedAt: now.Add(-1 * time.Minute),
+	}
+	old := beads.Bead{
+		ID: "W-old", Title: "unaddressed for an hour", Type: "task", Status: "open",
+		CreatedAt: now.Add(-1 * time.Hour),
+	}
+
+	okRes := unclaimableResultAt(graceCfg("5m"), now, []beads.Bead{young})
+	if okRes.Status != doctor.StatusOK {
+		t.Fatalf("Status = %v, want StatusOK", okRes.Status)
+	}
+	for _, want := range []string{"1", "unaddressed_grace"} {
+		if !strings.Contains(okRes.Message, want) {
+			t.Errorf("OK Message %q does not name %q", okRes.Message, want)
+		}
+	}
+	if strings.Contains(okRes.Message, "every one of") {
+		t.Errorf("OK Message %q still claims every bead is addressed while one is withheld", okRes.Message)
+	}
+
+	errRes := unclaimableResultAt(graceCfg("5m"), now, []beads.Bead{young, old})
+	if errRes.Status != doctor.StatusError {
+		t.Fatalf("Status = %v, want StatusError", errRes.Status)
+	}
+	if !strings.Contains(errRes.Message, "unaddressed_grace") {
+		t.Errorf("error Message %q does not state the withheld count", errRes.Message)
+	}
+}
+
+// TestUnclaimableWorkRefusesToAnswerOnAnUnparseableGrace pins that a typo in
+// the declaration is loud. Falling back to zero would report every young bead
+// and look exactly like a working check, so the operator would never learn the
+// window they wrote is not in effect -- and the reverse fallback, some default
+// window, would silently withhold on a value nobody chose.
+//
+// Deliberately NOT a config-load validation error: that would make a typo in an
+// optional doctor key refuse every gc command in the city, and this key's whole
+// blast radius is one advisory check.
+func TestUnclaimableWorkRefusesToAnswerOnAnUnparseableGrace(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+	// "-5m" is the row that would otherwise pass unnoticed: it PARSES, so only
+	// the sign check refuses it, and without this row that check could be
+	// deleted with the suite green. A negative window withholds nothing, which
+	// is indistinguishable from the key being absent -- the operator who wrote
+	// it would never learn it does nothing.
+	for _, tc := range []struct{ name, grace string }{
+		{"not a duration", "5 minutes"},
+		{"negative duration", "-5m"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := unclaimableResultAt(graceCfg(tc.grace), now, []beads.Bead{
+				{ID: "W-1", Title: "unrouted", Type: "task", Status: "open", CreatedAt: now.Add(-1 * time.Hour)},
+			})
+
+			if res.Status != doctor.StatusWarning {
+				t.Fatalf("Status = %v, want StatusWarning; message %q", res.Status, res.Message)
+			}
+			for _, want := range []string{"unaddressed_grace", `"` + tc.grace + `"`} {
+				if !strings.Contains(res.Message, want) {
+					t.Errorf("Message %q does not name %q", res.Message, want)
+				}
+			}
+		})
+	}
+}
+
+// TestUnclaimableWorkUsesTheWallClockWhenUndirected pins that the production
+// constructor installs a real clock. The seam above is a test affordance, and a
+// nil one would panic on the first graced run rather than in any test here.
+func TestUnclaimableWorkUsesTheWallClockWhenUndirected(t *testing.T) {
+	check := newUnclaimableWorkCheck(graceCfg("5m"), "/city", func(string) (beads.Store, error) {
+		return beads.NewMemStore(), nil
+	})
+	if check.now == nil {
+		t.Fatal("now is nil: the graced path would panic in production and in no test")
+	}
+	if elapsed := time.Since(check.now()); elapsed < 0 || elapsed > time.Minute {
+		t.Fatalf("now() is %v from the wall clock, want the wall clock", elapsed)
+	}
 }
