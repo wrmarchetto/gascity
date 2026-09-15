@@ -29,7 +29,13 @@ type idleTracker interface {
 	// configured timeout. Queries sp.GetLastActivity(). template is the
 	// agent's qualified template name and is used as a fallback lookup
 	// when the session name is not registered directly (pool sessions).
-	checkIdle(sessionName, template string, sp runtime.Provider, now time.Time) bool
+	//
+	// poke is the session's DURABLE poke record (session.Info.DurablePoke).
+	// It is a parameter rather than something the tracker reads off sp
+	// because the provider's own poke map belongs to whichever process sent
+	// the keystrokes, and that is never this one -- see internal/runtime/
+	// poke.go. Pass a zero Poke to mean "no keystroke delivery on record".
+	checkIdle(sessionName, template string, sp runtime.Provider, now time.Time, poke runtime.Poke) bool
 
 	// setTimeout configures the idle timeout for a single session name.
 	// Used for sessions whose runtime names are deterministic at startup
@@ -98,7 +104,7 @@ func (m *memoryIdleTracker) exemptTemplateFallbackForSession(sessionName string)
 	m.templateFallbackExemptions[sessionName] = true
 }
 
-func (m *memoryIdleTracker) checkIdle(sessionName, template string, sp runtime.Provider, now time.Time) bool {
+func (m *memoryIdleTracker) checkIdle(sessionName, template string, sp runtime.Provider, now time.Time, poke runtime.Poke) bool {
 	m.mu.Lock()
 	timeout, ok := m.timeouts[sessionName]
 	exempt := m.templateFallbackExemptions[sessionName]
@@ -111,6 +117,14 @@ func (m *memoryIdleTracker) checkIdle(sessionName, template string, sp runtime.P
 	}
 	lastActivity, err := workerSessionTargetLastActivityWithConfig("", nil, sp, nil, sessionName)
 	if err != nil || lastActivity.IsZero() {
+		return false
+	}
+	// Discount gc's own keystroke echo. The provider already did this for a
+	// poke IT sent, and that discount is idempotent here: a poke the provider
+	// resolved returns its prior, which sits outside the echo window, so this
+	// call leaves it alone. An incomplete poke discounts nothing.
+	lastActivity = runtime.DiscountPokeActivity(lastActivity, poke, now)
+	if lastActivity.IsZero() {
 		return false
 	}
 	return now.Sub(lastActivity) > timeout

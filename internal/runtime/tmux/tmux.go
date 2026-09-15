@@ -322,14 +322,19 @@ type pokeInfo struct {
 	prior time.Time // genuine GetSessionActivity immediately before the poke
 }
 
+// runtimePoke converts to the cross-process form the shared discount
+// functions and the durable session-bead record both speak.
+func (pk pokeInfo) runtimePoke() runtime.Poke {
+	return runtime.Poke{At: pk.at, Prior: pk.prior}
+}
+
 const (
-	// pokeEcho is the window within which raw tmux activity is treated as the
-	// poke's own keystroke echo rather than agent output.
-	pokeEcho = 3 * time.Second
-	// pokeGrace is how long a just-poked agent still counts as active, so a
-	// responsive agent about to reply is not flipped to idle. After it elapses
-	// with no agent output, the poke is discounted.
-	pokeGrace = 15 * time.Second
+	// pokeEcho and pokeGrace are the shared runtime constants under local
+	// names: the discount decision is made in two processes (the sender here,
+	// the controller reading a durable poke off the session bead), so the
+	// windows must be one definition. See internal/runtime/poke.go.
+	pokeEcho  = runtime.PokeEcho
+	pokeGrace = runtime.PokeGrace
 )
 
 type hiddenAttachClient struct {
@@ -2867,6 +2872,25 @@ func (t *Tmux) recordPokeAt(session string, prior, at time.Time) {
 	t.pokeMu.Unlock()
 }
 
+// LastPoke returns the most recent poke THIS process recorded for session.
+// It is the sender's read-back: the CLI process that just delivered a nudge
+// asks what beginPoke actually captured, and stamps that pair on the session
+// bead so the controller can apply the same discount (ci-49vlf3).
+//
+// Deliberately NOT a fallback: when no poke is on record the caller must
+// record nothing. A synthesized poke for a delivery that never sent keystrokes
+// (ACP, subprocess) would discount genuine activity and suppress idle
+// detection outright.
+func (t *Tmux) LastPoke(session string) (runtime.Poke, bool) {
+	t.pokeMu.Lock()
+	pk, ok := t.pokes[session]
+	t.pokeMu.Unlock()
+	if !ok {
+		return runtime.Poke{}, false
+	}
+	return pk.runtimePoke(), true
+}
+
 // beginPoke snapshots the genuine pre-nudge activity for session (via pokePrior,
 // which also carries a still-unanswered earlier poke's baseline forward) and
 // returns a commit closure. Callers invoke commit only after the nudge's final
@@ -2899,40 +2923,17 @@ func (t *Tmux) pokePrior(session string) time.Time {
 	return pokePriorBaseline(raw, pk, ok)
 }
 
-// discountPokeActivity resolves the genuine activity time from the raw tmux
-// window activity (wa), the last recorded gc poke (pk) and the current time.
-//
-// If wa is only the poke's own keystroke echo (within pokeEcho of the poke) AND
-// the grace window has elapsed with no later agent output, it returns the
-// activity seen before the poke — revealing that the agent never actually
-// responded. Otherwise wa stands (a real post-poke turn, or a still-in-grace
-// recent poke). Pure function for testability.
+// discountPokeActivity adapts this package's pokeInfo to the shared
+// runtime.DiscountPokeActivity. The decision itself is NOT local: the
+// controller applies the same discount to a poke it reads off the session
+// bead, so a second copy here would drift.
 func discountPokeActivity(wa time.Time, pk pokeInfo, now time.Time) time.Time {
-	if pk.at.IsZero() || pk.prior.IsZero() {
-		return wa
-	}
-	echoOnly := wa.Sub(pk.at).Abs() <= pokeEcho
-	graceElapsed := now.Sub(pk.at) >= pokeGrace
-	if echoOnly && graceElapsed {
-		return pk.prior
-	}
-	return wa
+	return runtime.DiscountPokeActivity(wa, pk.runtimePoke(), now)
 }
 
-// pokePriorBaseline selects the genuine activity to record as a new poke's
-// prior. When an earlier poke is still on record and the current raw window
-// activity is only that poke's own echo (raw within pokeEcho of the earlier
-// poke, i.e. no genuine agent output since), the last genuine activity is the
-// earlier poke's prior, so it is carried forward. This stops chained unanswered
-// nudges inside pokeGrace from recording gc's own earlier nudge echo as the new
-// baseline — which discountPokeActivity would otherwise later surface as
-// last_active, masking a stalled agent. Otherwise the freshly observed raw
-// activity is genuine and becomes the new prior. Pure function for testability.
+// pokePriorBaseline adapts pokeInfo to the shared runtime.PokePriorBaseline.
 func pokePriorBaseline(raw time.Time, pk pokeInfo, hasPoke bool) time.Time {
-	if hasPoke && !pk.at.IsZero() && !pk.prior.IsZero() && raw.Sub(pk.at).Abs() <= pokeEcho {
-		return pk.prior
-	}
-	return raw
+	return runtime.PokePriorBaseline(raw, pk.runtimePoke(), hasPoke)
 }
 
 func latestActivityTimestamp(out string) (int64, error) {

@@ -237,6 +237,34 @@ var infoKeyCodec = []infoKeySpec{
 			}
 		}
 	}},
+
+	// Durable poke pair (see MetadataLastPokeAt). Same RFC3339 reset-first
+	// shape as last_nudge_delivered_at: an unparsable value leaves the field
+	// zero, which makes the poke incomplete and declines the discount, so a
+	// corrupt record fails open rather than idle-killing a live session.
+	{MetadataLastPokeAt, func(i *Info, v string) {
+		i.LastPokeAt = parseRFC3339Metadata(v)
+	}},
+	{MetadataLastPokePriorActivity, func(i *Info, v string) {
+		i.LastPokePriorActivity = parseRFC3339Metadata(v)
+	}},
+}
+
+// parseRFC3339Metadata returns the parsed time, or the zero time for an empty,
+// whitespace, or unparsable value. Trimming matches the last_nudge_delivered_at
+// setter above; the zero return is the documented "no record" signal, never an
+// error, because a metadata value the controller cannot read must not be able
+// to fail a reconciliation tick.
+func parseRFC3339Metadata(v string) time.Time {
+	raw := strings.TrimSpace(v)
+	if raw == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 // infoKeyIndex maps each metadata key to its codec spec for O(1) ApplyPatch

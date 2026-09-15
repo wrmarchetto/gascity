@@ -40,6 +40,7 @@ var (
 	_ runtime.ImmediateNudgeProvider        = (*Provider)(nil)
 	_ runtime.InterruptBoundaryWaitProvider = (*Provider)(nil)
 	_ runtime.InterruptedTurnResetProvider  = (*Provider)(nil)
+	_ runtime.PokeReporter                  = (*Provider)(nil)
 	_ runtime.ProcessTableScanner           = (*Provider)(nil)
 	_ runtime.ServerLifecycleProvider       = (*Provider)(nil)
 )
@@ -654,6 +655,13 @@ func (p *Provider) ListRunning(prefix string) ([]string, error) {
 // session. Delegates to [Tmux.GetSessionActivity].
 func (p *Provider) GetLastActivity(name string) (time.Time, error) {
 	return p.tm.GetSessionActivity(name)
+}
+
+// LastPoke returns the send-keys poke this process last recorded for name.
+// The sender reads it back to stamp a durable copy on the session bead; see
+// [Tmux.LastPoke].
+func (p *Provider) LastPoke(name string) (runtime.Poke, bool) {
+	return p.tm.LastPoke(name)
 }
 
 // ClearScrollback clears the scrollback history of the named session.

@@ -1637,6 +1637,7 @@ func deliverSlingNudge(target nudgeTarget, sp runtime.Provider, store beads.Stor
 	if running {
 		handle, err := workerHandleForNudgeTarget(target, sessStore, sp)
 		if err == nil {
+			deliveryStart := time.Now()
 			result, nudgeErr := handle.Nudge(context.Background(), worker.NudgeRequest{
 				Text:     msg,
 				Delivery: worker.NudgeDeliveryWaitIdle,
@@ -1649,7 +1650,8 @@ func deliverSlingNudge(target nudgeTarget, sp runtime.Provider, store beads.Stor
 				if store != nil {
 					sessFront = cliSessionFrontDoor(store, target.cfg, target.cityPath)
 				}
-				stampLastNudgeDeliveredAt(sessFront, target.sessionID, time.Now())
+				stampNudgeDelivery(sessFront, target.sessionID, time.Now(),
+					deliveredKeystrokePoke(sp, target.sessionName, deliveryStart))
 				fmt.Fprintf(stdout, "Nudged %s\n", target.agent.QualifiedName()) //nolint:errcheck // best-effort
 				return
 			}

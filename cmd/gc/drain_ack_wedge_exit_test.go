@@ -69,7 +69,7 @@ func drainAckWedgeEnv(t *testing.T) (*reconcilerTestEnv, beads.Bead) {
 
 func drainAckWedgeTick(env *reconcilerTestEnv, session beads.Bead, it idleTracker, tr assignedWorkDeferTracker) (*sessionReconcilerTraceCycle, *events.Fake) {
 	rec := events.NewFake()
-	trace := idleTimeoutBackstopTrace("witness")
+	trace := idleTimeoutBackstopTrace()
 	poolDesired := make(map[string]int)
 	for _, tp := range env.desiredState {
 		if tp.TemplateName != "" {

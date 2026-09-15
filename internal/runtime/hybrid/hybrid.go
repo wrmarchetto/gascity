@@ -107,6 +107,16 @@ func (p *Provider) WaitForIdle(ctx context.Context, name string, timeout time.Du
 	return runtime.ErrInteractionUnsupported
 }
 
+// LastPoke delegates to the routed backend when it records send-keys pokes.
+// A backend that delivers out of band (ACP) reports none, and the caller must
+// keep it that way -- see runtime.PokeReporter.
+func (p *Provider) LastPoke(name string) (runtime.Poke, bool) {
+	if pr, ok := p.route(name).(runtime.PokeReporter); ok {
+		return pr.LastPoke(name)
+	}
+	return runtime.Poke{}, false
+}
+
 // NudgeNow delegates to the routed backend when it supports immediate
 // injection without an internal wait-idle step.
 func (p *Provider) NudgeNow(name string, content []runtime.ContentBlock) error {
