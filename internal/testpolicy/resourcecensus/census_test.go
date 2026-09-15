@@ -1966,9 +1966,14 @@ func TestBootstrapPolicyOwnsHTTPTestServerDebt(t *testing.T) {
 func TestBootstrapPolicyOwnsListenerHelperDebt(t *testing.T) {
 	t.Parallel()
 
+	// The figures are typed here a third time on purpose -- census.go owns the
+	// policy, test/test-resources.toml must match it, and these literals are
+	// what stops the pair moving together in one silent edit. Raising a budget
+	// therefore means touching all three, and 58 -> 59 / 38 -> 39 is
+	// ci-6mp9hs's controller socket, argued for in the census.go row.
 	audit := findRow(t, bootstrapPolicy.AuditBaseline, ScopeAll, ResourceListenerHelper)
-	if audit.BaselineCalls != 58 || audit.BaselineFiles != 23 || audit.ReportedCalls != 58 || audit.ReportedFiles != 23 {
-		t.Fatalf("all-source listener-helper baseline/reported = %d/%d, %d/%d; want 58/23, 58/23", audit.BaselineCalls, audit.BaselineFiles, audit.ReportedCalls, audit.ReportedFiles)
+	if audit.BaselineCalls != 59 || audit.BaselineFiles != 23 || audit.ReportedCalls != 59 || audit.ReportedFiles != 23 {
+		t.Fatalf("all-source listener-helper baseline/reported = %d/%d, %d/%d; want 59/23, 59/23", audit.BaselineCalls, audit.BaselineFiles, audit.ReportedCalls, audit.ReportedFiles)
 	}
 	if audit.OwnerBead != "ga-80po0c.2.2.3" || audit.MigrationTarget != "P0.4c-listener-helper" {
 		t.Fatalf("all-source listener-helper owner = %q/%q, want ga-80po0c.2.2.3/P0.4c-listener-helper", audit.OwnerBead, audit.MigrationTarget)
@@ -1976,8 +1981,8 @@ func TestBootstrapPolicyOwnsListenerHelperDebt(t *testing.T) {
 
 	for _, rows := range [][]Baseline{bootstrapPolicy.Debt, bootstrapPolicy.SmallDebt} {
 		row := findRow(t, rows, ScopeUntagged, ResourceListenerHelper)
-		if row.BaselineCalls != 38 || row.BaselineFiles != 13 || row.ReportedCalls != 38 || row.ReportedFiles != 13 {
-			t.Fatalf("listener-helper baseline/reported = %d/%d, %d/%d; want 38/13, 38/13", row.BaselineCalls, row.BaselineFiles, row.ReportedCalls, row.ReportedFiles)
+		if row.BaselineCalls != 39 || row.BaselineFiles != 13 || row.ReportedCalls != 39 || row.ReportedFiles != 13 {
+			t.Fatalf("listener-helper baseline/reported = %d/%d, %d/%d; want 39/13, 39/13", row.BaselineCalls, row.BaselineFiles, row.ReportedCalls, row.ReportedFiles)
 		}
 		if row.OwnerBead != "ga-80po0c.2.2.3" || row.MigrationTarget != "P0.4c-listener-helper" {
 			t.Fatalf("listener-helper owner = %q/%q, want ga-80po0c.2.2.3/P0.4c-listener-helper", row.OwnerBead, row.MigrationTarget)

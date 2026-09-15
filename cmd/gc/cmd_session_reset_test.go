@@ -94,7 +94,7 @@ func TestCmdSessionReset_ClearsCircuitBreaker(t *testing.T) {
 	defer os.Remove(controllerSocketPath(cityDir)) //nolint:errcheck
 
 	var stdout, stderr bytes.Buffer
-	if code := cmdSessionReset([]string{identity}, &stdout, &stderr); code != 0 {
+	if code := cmdSessionReset([]string{identity}, &stdout, &stderr, sessionResetOptions{}); code != 0 {
 		t.Fatalf("cmdSessionReset = %d, want 0; stderr=%s", code, stderr.String())
 	}
 
@@ -167,7 +167,7 @@ func TestCmdSessionReset_ProviderConstructionFailureReturnsError(t *testing.T) {
 	t.Cleanup(func() { buildSessionProviderByName = oldBuild })
 
 	var stdout, stderr bytes.Buffer
-	if code := cmdSessionReset([]string{"sky"}, &stdout, &stderr); code != 1 {
+	if code := cmdSessionReset([]string{"sky"}, &stdout, &stderr, sessionResetOptions{}); code != 1 {
 		t.Fatalf("cmdSessionReset = %d, want 1; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if got := stdout.String(); got != "" {
@@ -662,7 +662,7 @@ func TestCmdSessionReset_RequestsFreshRestartWithController(t *testing.T) {
 	}()
 
 	var stdout, stderr bytes.Buffer
-	if code := cmdSessionReset([]string{"sky"}, &stdout, &stderr); code != 0 {
+	if code := cmdSessionReset([]string{"sky"}, &stdout, &stderr, sessionResetOptions{}); code != 0 {
 		t.Fatalf("cmdSessionReset(controller) = %d, want 0; stderr=%s", code, stderr.String())
 	}
 
@@ -792,7 +792,7 @@ func TestCmdSessionReset_ControllerClearFailureDoesNotQueueRestart(t *testing.T)
 	}()
 
 	var stdout, stderr bytes.Buffer
-	if code := cmdSessionReset([]string{"session-a"}, &stdout, &stderr); code != 1 {
+	if code := cmdSessionReset([]string{"session-a"}, &stdout, &stderr, sessionResetOptions{}); code != 1 {
 		t.Fatalf("cmdSessionReset = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), `clearing session circuit breaker for "session-a": clear failed`) {
@@ -904,5 +904,285 @@ template = "session-a"
 `)
 	if err := os.WriteFile(filepath.Join(dir, "city.toml"), data, 0o644); err != nil {
 		t.Fatalf("WriteFile(city.toml): %v", err)
+	}
+}
+
+// --- gc session reset against an ATTACHED session (ci-6mp9hs) ---
+//
+// THE INCIDENT. On 2026-09-15 a session was reset while an operator was
+// attached to it on /dev/pts/8, mid-conversation, and the conversation was
+// gone. `gc session reset` had no attachment check of any kind, while the
+// config-drift restart path in cmd/gc/session_reconciler.go checks attachment
+// FIRST and defers, its comment giving the reason: "a single transient
+// IsAttached false negative would destroy conversation context irreversibly."
+// Two paths, the same consequence, opposite treatment of the same risk.
+//
+// THE DECISION THESE TESTS PIN, recorded here because no spec settles it and
+// this rig has no PM to ask (assets/scripts/ask-pm.py refused: city has no
+// docs/roadmap.md): reset REFUSES an attached session and offers --force. The
+// two populations the incident distinguishes are an operator who typed the
+// reset and meant it, and an agent or order resetting a session someone else
+// is attached to; nothing observable tells them apart, but --force does. The
+// shape matches the precedent already in this tree (--force on gc convoy
+// land, gc sling, gc stop) and in bd close's refusal of human-assigned beads.
+//
+// WHAT IS DELIBERATELY NOT PINNED: that a false NEGATIVE from the attachment
+// probe is caught. It is not. An unobserved attachment still resets, exactly
+// as it does on the drift path, and narrowing that is a separate decision
+// about the probe rather than about this command.
+
+// resetAttachmentFixture is one city holding one awake named session, with a
+// Fake provider whose attachment state the caller sets.
+//
+// The provider is INJECTED rather than selected with GC_SESSION=fake: the test
+// needs the same *Fake the command will observe through, so it can set
+// attachment on it and read back which names it was asked about. A fake
+// reached only by environment would be a different instance.
+type resetAttachmentFixture struct {
+	cityDir  string
+	store    beads.Store
+	beadID   string
+	name     string
+	identity string
+	fake     *runtime.Fake
+}
+
+func newResetAttachmentFixture(t *testing.T, slug string) *resetAttachmentFixture {
+	t.Helper()
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_SESSION", "fake")
+
+	cityDir := shortSocketTempDir(t, "gc-reset-attached-"+slug+"-")
+	t.Setenv("GC_CITY", cityDir)
+	writeGenericNamedSessionCityTOML(t, cityDir)
+	if err := os.MkdirAll(filepath.Join(cityDir, ".gc"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.gc): %v", err)
+	}
+
+	store, err := openCityStoreAt(cityDir)
+	if err != nil {
+		t.Fatalf("openCityStoreAt: %v", err)
+	}
+	const sessionName = "s-gc-reset-attached"
+	const namedIdentity = "session-a"
+	bead, err := store.Create(beads.Bead{
+		Title:  "manual session",
+		Type:   session.BeadType,
+		Labels: []string{session.LabelSession, "template:worker"},
+		Metadata: map[string]string{
+			// The identity is the one writeGenericNamedSessionCityTOML
+			// configures: a bead carrying the named-session markers resolves
+			// through the config, so an alias with no [[named_session]] entry
+			// fails resolution before the guard under test is ever reached --
+			// and a refusal test would then pass on the wrong refusal.
+			"alias":                      namedIdentity,
+			"template":                   "session-a",
+			"session_name":               sessionName,
+			"state":                      "awake",
+			namedSessionMetadataKey:      "true",
+			namedSessionIdentityMetadata: namedIdentity,
+			"restart_requested":          "",
+			"continuation_reset_pending": "",
+		},
+	})
+	if err != nil {
+		t.Fatalf("store.Create(session bead): %v", err)
+	}
+
+	fake := runtime.NewFake()
+	// The runtime has to be RUNNING before attachment means anything:
+	// Manager.ObserveRuntimeForInfo reads IsAttached only for a live session,
+	// because a terminal cannot be attached to a runtime that is not there.
+	// A fixture that set attachment without starting the session would report
+	// detached and every refusal case here would go green on the wrong path.
+	if err := fake.Start(context.Background(), sessionName, runtime.Config{}); err != nil {
+		t.Fatalf("fake.Start(%q): %v", sessionName, err)
+	}
+	oldBuild := buildSessionProviderByName
+	buildSessionProviderByName = func(*config.City, string, config.SessionConfig, string, string) (runtime.Provider, error) {
+		return fake, nil
+	}
+	t.Cleanup(func() { buildSessionProviderByName = oldBuild })
+
+	lis, err := startControllerSocket(
+		cityDir,
+		controllerHostingStandalone,
+		func() {},
+		nil,
+		nil,
+		make(chan reloadRequest),
+		make(chan convergenceRequest, 1),
+		make(chan struct{}, 1),
+		make(chan struct{}, 1),
+	)
+	if err != nil {
+		t.Fatalf("startControllerSocket: %v", err)
+	}
+	t.Cleanup(func() {
+		lis.Close()                              //nolint:errcheck
+		os.Remove(controllerSocketPath(cityDir)) //nolint:errcheck
+	})
+
+	return &resetAttachmentFixture{
+		cityDir:  cityDir,
+		store:    store,
+		beadID:   bead.ID,
+		name:     sessionName,
+		identity: namedIdentity,
+		fake:     fake,
+	}
+}
+
+// resetRequested reports whether the session bead carries the markers
+// Manager.RequestFreshRestart writes. Reading the markers rather than
+// counting provider calls is deliberate: the markers are what the reconciler
+// acts on, so their absence is the only evidence that nothing was destroyed.
+func (f *resetAttachmentFixture) resetRequested(t *testing.T) bool {
+	t.Helper()
+	reloaded, err := openCityStoreAt(f.cityDir)
+	if err != nil {
+		t.Fatalf("openCityStoreAt(reload): %v", err)
+	}
+	got, err := reloaded.Get(f.beadID)
+	if err != nil {
+		t.Fatalf("store.Get(session bead): %v", err)
+	}
+	return got.Metadata["restart_requested"] == "true" ||
+		got.Metadata["continuation_reset_pending"] == "true"
+}
+
+// TestSessionResetRefusesWhileAnOperatorIsAttached: an attached session is not
+// reset, and nothing about it is mutated on the way to the refusal.
+//
+// Constructed against the session bead's own markers rather than the command's
+// exit status alone, because an exit status says only that the command
+// declined to report success -- a reset that had already written
+// restart_requested and then failed on something later would satisfy an
+// exit-status assertion while the operator's context was already forfeit.
+func TestSessionResetRefusesWhileAnOperatorIsAttached(t *testing.T) {
+	f := newResetAttachmentFixture(t, "refuse")
+	f.fake.SetAttached(f.name, true)
+
+	var stdout, stderr bytes.Buffer
+	code := cmdSessionReset([]string{f.identity}, &stdout, &stderr, sessionResetOptions{})
+	if code == 0 {
+		t.Fatalf("cmdSessionReset(attached) = 0, want nonzero; stdout=%s", stdout.String())
+	}
+	if f.resetRequested(t) {
+		t.Fatal("attached session carries a fresh-restart marker: the refusal did not prevent the reset")
+	}
+	if msg := stderr.String(); !strings.Contains(msg, "--force") {
+		t.Fatalf("refusal = %q, want it to name --force -- an operator who meant the reset must be told how to proceed", msg)
+	}
+}
+
+// TestSessionResetWithForceProceedsWhileAttached: --force is the escape, and
+// it works.
+//
+// Without this case a fix that refuses unconditionally passes the refusal
+// test above and removes the command's whole purpose.
+func TestSessionResetWithForceProceedsWhileAttached(t *testing.T) {
+	f := newResetAttachmentFixture(t, "force")
+	f.fake.SetAttached(f.name, true)
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdSessionReset([]string{f.identity}, &stdout, &stderr, sessionResetOptions{Force: true}); code != 0 {
+		t.Fatalf("cmdSessionReset(attached, --force) = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if !f.resetRequested(t) {
+		t.Fatal("--force did not request a fresh restart: the escape hatch does not reach the reset")
+	}
+}
+
+// TestSessionResetStillResetsADetachedSession: the ordinary path is unchanged.
+//
+// The pair with the refusal test is what makes either mean anything. A guard
+// that always refuses and a guard that never refuses each satisfy exactly one
+// of them.
+func TestSessionResetStillResetsADetachedSession(t *testing.T) {
+	f := newResetAttachmentFixture(t, "detached")
+	f.fake.SetAttached(f.name, false)
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdSessionReset([]string{f.identity}, &stdout, &stderr, sessionResetOptions{}); code != 0 {
+		t.Fatalf("cmdSessionReset(detached) = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if !f.resetRequested(t) {
+		t.Fatal("detached session was not reset: the guard is refusing sessions nobody is attached to")
+	}
+}
+
+// TestSessionResetRefusalLeavesTheCircuitBreakerTripped: a refused reset has
+// no side effects at all.
+//
+// This is not a redundant restatement of the refusal test. The command clears
+// a tripped named-session respawn breaker BEFORE it asks for the restart, so a
+// guard placed after that clear would refuse the reset and still have
+// re-armed respawn for a session the operator is sitting in -- a mutation the
+// operator never asked for and cannot see. The breaker is the only observable
+// side effect on the path, so it is the one that pins the ordering.
+func TestSessionResetRefusalLeavesTheCircuitBreakerTripped(t *testing.T) {
+	f := newResetAttachmentFixture(t, "breaker")
+	f.fake.SetAttached(f.name, true)
+
+	cb := newSessionCircuitBreaker(sessionCircuitBreakerConfig{
+		Window:      30 * time.Minute,
+		MaxRestarts: 3,
+	})
+	restore := setSessionCircuitBreakerForTest(cb)
+	defer restore()
+	now := time.Date(2026, 9, 15, 5, 9, 0, 0, time.UTC)
+	for i := 0; i < 4; i++ {
+		cb.RecordRestart(f.identity, now.Add(time.Duration(i)*time.Second))
+	}
+	if !cb.IsOpen(f.identity, now.Add(time.Minute)) {
+		t.Fatal("precondition: expected the breaker OPEN after 4 restarts")
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdSessionReset([]string{f.identity}, &stdout, &stderr, sessionResetOptions{}); code == 0 {
+		t.Fatalf("cmdSessionReset(attached) = 0, want nonzero; stdout=%s", stdout.String())
+	}
+	if !cb.IsOpen(f.identity, now.Add(time.Minute)) {
+		t.Fatal("refused reset cleared the respawn circuit breaker: the guard runs after a mutation it should precede")
+	}
+}
+
+// TestSessionResetRefusesWhenAttachmentCannotBeObserved: an unreadable probe
+// refuses rather than proceeding.
+//
+// Driven through the pure verdict rather than the command, because the only
+// way to make the live probe error is to delete the session bead between
+// resolution and observation -- a real race, but one that cannot be staged
+// from outside the command without weakening something on the path to reach
+// it. Splitting the judgment out is what makes the branch reachable at all.
+//
+// The direction is the whole point: "I could not tell" must read as attached.
+// The opposite default is the one that destroyed a conversation.
+func TestSessionResetRefusesWhenAttachmentCannotBeObserved(t *testing.T) {
+	cases := []struct {
+		name       string
+		attached   bool
+		observeErr error
+		force      bool
+		wantRefuse bool
+	}{
+		{name: "attached", attached: true, wantRefuse: true},
+		{name: "detached", attached: false, wantRefuse: false},
+		{name: "unobservable", observeErr: errors.New("session bead vanished"), wantRefuse: true},
+		{name: "attached with force", attached: true, force: true, wantRefuse: false},
+		{name: "unobservable with force", observeErr: errors.New("session bead vanished"), force: true, wantRefuse: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			verdict := sessionResetAttachmentVerdict(tc.attached, tc.observeErr, tc.force)
+			if verdict.Refuse != tc.wantRefuse {
+				t.Fatalf("sessionResetAttachmentVerdict(%v, %v, force=%v).Refuse = %v, want %v",
+					tc.attached, tc.observeErr, tc.force, verdict.Refuse, tc.wantRefuse)
+			}
+			if verdict.Refuse && strings.TrimSpace(verdict.Reason) == "" {
+				t.Fatal("a refusal with no reason tells the operator nothing about which condition stopped it")
+			}
+		})
 	}
 }

@@ -271,11 +271,21 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-11-09",
 		},
 		{
-			Scope:           ScopeAll,
-			Resource:        ResourceListenerHelper,
-			BaselineCalls:   58,
+			Scope:    ScopeAll,
+			Resource: ResourceListenerHelper,
+			// 58 -> 59 (ci-6mp9hs): gc session reset gained a refusal for a
+			// session an operator is attached to, and the fixture proving it
+			// stands up a controller socket. The command pings and pokes the
+			// controller before it reaches the guard, so there is no way to
+			// drive the branch end to end without one -- and the end-to-end
+			// half is the part that matters: the verdict is already pure and
+			// unit-tested, while only a live run can show the guard sits
+			// BEFORE the circuit-breaker clear it must precede. One call
+			// site, in cmd/gc/cmd_session_reset_test.go beside the command's
+			// existing reset tests, so the file total does not move.
+			BaselineCalls:   59,
 			BaselineFiles:   23,
-			ReportedCalls:   58,
+			ReportedCalls:   59,
 			ReportedFiles:   23,
 			OwnerBead:       "ga-80po0c.2.2.3",
 			Invariant:       "all-source listener-helper call/file totals cannot drift without an explicit checked policy update",
@@ -391,11 +401,12 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-11-09",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceListenerHelper,
-			BaselineCalls:   38,
+			Scope:    ScopeUntagged,
+			Resource: ResourceListenerHelper,
+			// 38 -> 39 (ci-6mp9hs): see the all-scope listener-helper row.
+			BaselineCalls:   39,
 			BaselineFiles:   13,
-			ReportedCalls:   38,
+			ReportedCalls:   39,
 			ReportedFiles:   13,
 			OwnerBead:       "ga-80po0c.2.2.3",
 			Invariant:       "untagged listener-helper call/file totals cannot grow; reductions must lower this baseline",
@@ -819,11 +830,12 @@ var bootstrapPolicy = Ledger{
 			Expires:         "2026-11-09",
 		},
 		{
-			Scope:           ScopeUntagged,
-			Resource:        ResourceListenerHelper,
-			BaselineCalls:   38,
+			Scope:    ScopeUntagged,
+			Resource: ResourceListenerHelper,
+			// 38 -> 39 (ci-6mp9hs): see the all-scope listener-helper row.
+			BaselineCalls:   39,
 			BaselineFiles:   13,
-			ReportedCalls:   38,
+			ReportedCalls:   39,
 			ReportedFiles:   13,
 			OwnerBead:       "ga-80po0c.2.2.3",
 			Invariant:       "untagged Small listener-helper call/file totals cannot grow; reductions must lower this baseline",
