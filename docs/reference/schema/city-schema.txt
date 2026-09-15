@@ -1468,6 +1468,10 @@
           "type": "array",
           "description": "ExternalAssignees lists assignee names that are deliberately not\nsession identities -- an operator, a rota, a downstream team. The\nunclaimable-assignee check treats work parked on one of these as\nintended rather than stranded.\n\ngc ships no default list, and that absence is the design. Which\nnames mean \"a person, not an agent\" is city-local vocabulary: a\nbuilt-in \"human\" would be a role name in Go, and would still miss\nevery city that spells it \"operator\" or \"ops-rota\". Leaving the\nlist empty makes those beads visible, which is the failure mode\nthe check exists for; the operator silences them by naming them."
         },
+        "unaddressed_grace": {
+          "type": "string",
+          "description": "UnaddressedGrace is how long a bead may carry neither an assignee nor a\ngc.routed_to before the unclaimable-work check reports it. It exists\nbecause that check makes a permanence claim -- \"nothing will ever spawn\na session to claim this\" -- from a single instantaneous sample, and a\ncity whose routing arrives asynchronously produces the unaddressed shape\non every mint. Go duration string (\"5m\"); unparseable makes the check\nreport StatusWarning rather than fall back to a window nobody chose.\n\ngc ships no default and that absence is the design, the same as\nExternalAssignees above. WHICH asynchronous router a city runs, and how\nlong it takes, is city-local: a cooldown order that stamps routes from\nlabels, a dispatcher resolving a run target at cook. An invented default\nwould withhold real findings from every city that runs none of them, and\nno measurement here could justify its length. Leaving it unset reports\nevery unaddressed bead immediately, which is the behavior the check was\nwritten with.\n\nIt narrows to the unrouted race ALONE. A bead already carrying a\ngc.routed_to that names no active agent is not waiting on a write, so\nthis never withholds one -- see strandedReason in\ncmd/gc/doctor_unclaimable_work.go."
+        },
         "check": {
           "items": {
             "$ref": "#/$defs/LocalDoctorCheck"

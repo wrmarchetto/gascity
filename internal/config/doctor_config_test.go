@@ -235,3 +235,37 @@ func TestParseHumanSize(t *testing.T) {
 		})
 	}
 }
+
+// TestParseDoctorUnaddressedGrace pins that the key parses at all, and that it
+// is absent by default. The zero value is load-bearing rather than incidental:
+// the unclaimable-work check reads an empty string as "withhold nothing", so a
+// city that never writes the key keeps the reporting behavior the check was
+// written with. The string is NOT parsed as a duration here -- that is the
+// check's to do, so a typo warns one advisory check rather than refusing every
+// gc command in the city.
+func TestParseDoctorUnaddressedGrace(t *testing.T) {
+	declared, err := Parse([]byte(`
+[workspace]
+name = "test-city"
+
+[doctor]
+unaddressed_grace = "5m"
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := declared.Doctor.UnaddressedGrace; got != "5m" {
+		t.Errorf("UnaddressedGrace = %q, want %q", got, "5m")
+	}
+
+	undeclared, err := Parse([]byte(`
+[workspace]
+name = "test-city"
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got := undeclared.Doctor.UnaddressedGrace; got != "" {
+		t.Errorf("UnaddressedGrace = %q with no [doctor] table, want empty", got)
+	}
+}
