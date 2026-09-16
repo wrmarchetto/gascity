@@ -1824,6 +1824,190 @@ func TestOrderDispatchBudgetRotatesAcrossAlwaysDueOrders(t *testing.T) {
 	}
 }
 
+// Every order on a commensurate ring must be delivered at close to its
+// nominal rate. An aggregate ceiling that clears aggregate demand does not
+// establish that, and on this ring it is true while three orders lose an
+// eighth of their cycles.
+//
+// WHAT THE OTHER TWO BUDGET CASES CANNOT SEE, which is the whole reason this
+// one exists. TestOrderDispatchCeilingClearsTheCityCooldownDemand drives ONE
+// tick of 24 identical always-due orders and compares a mean against a mean,
+// so it cannot represent per-tick bunching or any individual order's rate.
+// TestOrderDispatchBudgetRotatesAcrossAlwaysDueOrders uses five orders that
+// are ALL always-due, which is the one case where the rotation is genuinely
+// fair -- every order is a candidate on every tick, so nextDispatchStart
+// sweeps. The live ring is neither: a few always-due orders sitting among
+// forty-odd rarely-due ones, where the start pointer pins and a FIXED tail is
+// the cut region.
+//
+// THE RING IS THE LIVE ONE'S SHAPE, not an invention. 48 slots with the
+// always-due trio at indices 0, 7 and 10 -- dolt-health, beads-health and
+// gate-sweep, read off `gc order list --json` which prints the dispatcher's
+// own m.aa verbatim (ci-y8hiev). The filler intervals sum to 6.088
+// dispatches/tick against the city's measured 6.34 (12.683/min across 43
+// enabled cooldown orders, ci-cuppi8), so aggregate demand is comfortably
+// under the budget in both regimes below and nothing here is short of
+// capacity. The shortfall is distributional.
+//
+// IT REPRODUCES THE LIVE DEFICIT, which is what licenses reading its result.
+// Simulated over 720 ticks (6h, the live measurement window), the trio
+// delivers 88.3-88.5% of nominal at a cap of 8 while every other order lands
+// at 98.3-100%; the live city measured 90.0-91.1% for the same three against
+// 98.7-100.1% for the other forty. At a cap of 12 the trio moves to 96.2%.
+//
+// THE FLOOR SITS BETWEEN THOSE TWO REGIMES, at 92%, not at either edge: 3.5
+// points clear of the starved regime and 4.2 clear of the served one. It is
+// NOT a claim that 96.2% is correct -- a residual of a few percent survives
+// the budget entirely and is the open question ci-y8hiev exists to isolate.
+// The upper guard below is what keeps that from being forgotten.
+//
+// THE WALK CLOCK IS HELD STILL, deliberately (step and write both zero, so
+// every order evaluates at the tick anchor and its tracking bead is stamped
+// there). The ring-walk cooldown charge is a second real mechanism that drops
+// dispatches, and TestCooldownDeadlineIsNotChargedTheRingWalkAheadOfIt owns
+// it; leaving it live here would let this case pass or fail for the other
+// reason. The budget is the only mechanism that can drop a dispatch below.
+//
+// SEEN TO FAIL, 2026-09-16, with defaultMaxOrderDispatchesPerTick reverted to
+// 8: the three always-due orders reported 637 of 720 at 88.5%, 88.5% and
+// 88.3%, and no other order in the ring was flagged.
+func TestOrderDispatchBudgetDeliversEveryOrderOnACommensurateRing(t *testing.T) {
+	// The grid the dispatcher actually runs, not a literal: checkCooldown
+	// sizes its dispatch-latency allowance from patrolInterval(), so a test
+	// grid that drifted from it would measure a schedule nothing serves.
+	tick := (&config.DaemonConfig{}).PatrolIntervalDuration()
+	// 6h at a 30s grid -- the window the live per-order rates were measured
+	// over. A shorter window reads lower in BOTH regimes, because the first
+	// tick fires every order as never-run and the ring takes time to settle
+	// into its pinned walk; at 360 ticks the same two regimes read 85.3% and
+	// 95.6%, which the floor below would place wrongly.
+	const ticks = 720
+
+	// Interval as a multiple of the patrol tick, and how many orders carry it.
+	// Summed as 1/multiple: 3.088 from the filler plus 3.0 from the trio.
+	filler := []struct{ multiple, count int }{
+		{4, 6},   // 2m
+		{10, 8},  // 5m
+		{20, 10}, // 10m
+		{40, 8},  // 20m
+		{120, 8}, // 1h
+		{240, 5}, // 2h
+	}
+	// The always-due trio's ring positions, from the live ring. Position is
+	// load-bearing: the cut region is a contiguous tail of the walk, so an
+	// order's index relative to where the start pointer pins decides whether
+	// it is starved.
+	alwaysDue := map[int]bool{0: true, 7: true, 10: true}
+
+	multiples := make([]int, 0, 48)
+	fi, fn := 0, 0
+	for i := 0; len(multiples) < 48; i++ {
+		if alwaysDue[i] {
+			multiples = append(multiples, 1)
+			continue
+		}
+		for fn == filler[fi].count {
+			fi, fn = fi+1, 0
+		}
+		multiples = append(multiples, filler[fi].multiple)
+		fn++
+	}
+
+	clock := &ringWalkClock{}
+	store := beads.NewMemStore()
+	store.Clock = clock.stamp
+
+	demandPerTick := 0.0
+	var aa []orders.Order
+	for i, mult := range multiples {
+		demandPerTick += 1 / float64(mult)
+		aa = append(aa, orders.Order{
+			Name:    fmt.Sprintf("commensurate-%02d", i),
+			Trigger: "cooldown",
+			// Formatted from the same Duration the nominal count is derived
+			// from, so an interval dropped through a wrong unit fails here
+			// instead of agreeing with itself.
+			Interval:   (time.Duration(mult) * tick).String(),
+			Exec:       "true",
+			NoWorkGate: true,
+		})
+	}
+
+	ad := buildOrderDispatcherFromListExec(aa, store, nil, func(context.Context, string, string, []string) ([]byte, error) {
+		return []byte("ok\n"), nil
+	}, nil)
+	if ad == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+	m := ad.(*memoryOrderDispatcher)
+	// The production budget, in force and asserted rather than set. A case
+	// that set its own cap would stay green over the constant being lowered,
+	// which is the regression it exists to catch.
+	if m.maxDispatchesPerTick != defaultMaxOrderDispatchesPerTick {
+		t.Fatalf("dispatcher built with maxDispatchesPerTick %d, want the "+
+			"production default %d -- this case measures that default",
+			m.maxDispatchesPerTick, defaultMaxOrderDispatchesPerTick)
+	}
+	if demandPerTick >= float64(m.maxDispatchesPerTick) {
+		t.Fatalf("ring demands %.3f dispatches/tick against a budget of %d, so "+
+			"it is short of AGGREGATE capacity and any shortfall below would be "+
+			"unattributable: this case measures distribution, not capacity",
+			demandPerTick, m.maxDispatchesPerTick)
+	}
+	m.nowFn = clock.now
+
+	dir := t.TempDir()
+	start := time.Date(2026, 9, 16, 4, 0, 0, 0, time.UTC)
+	for i := 0; i < ticks; i++ {
+		at := start.Add(time.Duration(i) * tick)
+		clock.startTick(at)
+		ad.dispatch(context.Background(), dir, at)
+		ad.drain(context.Background())
+	}
+
+	// Between the two measured regimes. See the floor paragraph above before
+	// moving it.
+	const deliveredFloor = 0.92
+	worst := 1.0
+	for i, mult := range multiples {
+		name := fmt.Sprintf("commensurate-%02d", i)
+		got := 0
+		for _, b := range trackingBeads(t, store, "order-run:"+name) {
+			if strings.HasPrefix(b.Title, "order:") {
+				got++
+			}
+		}
+		// ceil: the first tick fires every order as never-run, so an order on
+		// an 8-tick interval runs at ticks 0, 8, ... and not at tick 8 first.
+		want := (ticks + mult - 1) / mult
+		ratio := float64(got) / float64(want)
+		if ratio < worst {
+			worst = ratio
+		}
+		if ratio < deliveredFloor {
+			t.Errorf("%s (%v on a %v grid) delivered %d of %d over %d ticks, "+
+				"%.1f%% -- under the %.0f%% floor. The ring demands %.3f "+
+				"dispatches/tick against a per-tick budget of %d, so this is "+
+				"not a capacity shortfall: this order is losing cycles to the "+
+				"tail of a walk whose start has stopped rotating, and the cut "+
+				"region is fixed rather than shared",
+				name, time.Duration(mult)*tick, tick, got, want, ticks,
+				100*ratio, 100*deliveredFloor, demandPerTick, m.maxDispatchesPerTick)
+		}
+	}
+
+	// The floor's own expiry. A residual of a few percent survives the budget
+	// and has no established cause (ci-y8hiev); if it is ever fixed, every
+	// order delivers nominal and this floor silently stops meaning anything.
+	// Failing here is the only thing that says so -- the prose above cannot.
+	if worst >= 1.0 {
+		t.Errorf("every order delivered its full nominal count: the residual "+
+			"shortfall this floor was sized around is gone, so replace the "+
+			"%.0f%% floor with equality against ticks*tick/interval",
+			100*deliveredFloor)
+	}
+}
+
 func countOrderTrackingRuns(t *testing.T, store beads.Store) int {
 	t.Helper()
 	all, err := store.ListByLabel(labelOrderTracking, 0, beads.IncludeClosed, beads.WithBothTiers)

@@ -114,16 +114,51 @@ const (
 	// capacity depend on event traffic that is uncorrelated with the schedule
 	// it has to serve. The city demanded 12.23 dispatches/min on 2026-09-08 --
 	// 37 enabled cooldown orders, summed as 1/interval from
-	// `gc order list --json`. 8 x 2 = 16.00/min clears it on patrol alone,
+	// `gc order list --json`. 8 x 2 = 16.00/min cleared it on patrol alone,
 	// 1.31x. The former 4 gave a patrol floor of 8.00/min, under demand, and
 	// the pile-up at exactly 8 above is what a saturated budget looks like:
 	// the cap, not the host, was the binding constraint (bead gs-33z).
 	//
+	// AGGREGATE CAPACITY IS NOT WHAT SIZES IT ANY MORE, and 8 -> 12 is why.
+	// Aggregate supply was never short: 12.03/min delivered against 12.683/min
+	// demanded, a stable 95%, median over 332 sliding 60m windows to
+	// 2026-09-16. But the whole 5% deficit is THREE orders -- dolt-health
+	// 91.1%, beads-health 90.5%, gate-sweep 90.0%, against 98.7-100.1% for the
+	// other forty (ci-cuppi8). A commensurate schedule bunches, so what the
+	// budget has to meet is the PEAK of a tick, not the mean of a minute, and
+	// the cut lands on a fixed tail rather than being shared: spendDispatchBudget
+	// below assigns nextDispatchStart on every dispatch and not only when the
+	// budget binds, so an always-due order settles at the end of the walk and
+	// stays there. The live cluster-size histogram is the signature -- 4:60
+	// 5:102 6:147 7:124 8:242 9:10 over 6h, a spike at exactly the cap with a
+	// cliff after it.
+	//
+	// 12 IS AN EXPERIMENT AND ITS READING WAS DECIDED IN ADVANCE (ci-y8hiev).
+	// 19-24% of the lost trio cycles fall on ticks where the budget provably
+	// did not bind -- 00:51:16Z gate-sweep missed while both siblings AHEAD of
+	// it in the walk dispatched, which no contiguous tail cut can produce -- so
+	// truncation is established as a real term and NOT as the whole cause.
+	// After the operator's next rebuild and restart: the trio at 97-98% with
+	// the spike at 8 gone and no new spike at 12 means truncation was the main
+	// term and the ~0.12/min residual is the isolated remaining question; the
+	// trio still at 90-92% with the spike gone kills the hypothesis. Either way
+	// the budget-independent miss count gets measured for the first time.
+	//
+	// THE RING-WALK START WAS DELIBERATELY LEFT PINNED. Unpinning it at the
+	// same time moves two variables and makes the result unattributable, and it
+	// is also what holds the three 30s orders' walk offset steady: an offset
+	// that swings tick to tick is a swing the cooldown slack -- min(tick/2,
+	// interval/6), which is 5s at 30s, the smallest allowance in the schedule --
+	// cannot absorb. That trades a measured 0.378/min loss for an unmeasured one.
+	//
 	// THAT MARGIN EXPIRES WHEN THE ORDER SCHEDULE GROWS. It is margin
-	// against one schedule, not headroom in general, and past ~16/min this
+	// against one schedule, not headroom in general, and past ~24/min this
 	// number is wrong again. Nothing here notices; the city's
 	// doctor/order-capacity check does, because it recomputes demand from
-	// the controller's own resolution of every pack layer on every run.
+	// the controller's own resolution of every pack layer on every run. That
+	// check reads aggregate supply against aggregate demand, so by the
+	// paragraph above it is GREEN over exactly the starvation that moved this
+	// number -- its own output line says so.
 	//
 	// A CONFIG FIELD WAS REJECTED. Plumbing this through OrdersConfig buys a
 	// knob nobody has asked for a second value of, and an operator who
@@ -132,8 +167,10 @@ const (
 	//
 	// Verified by TestOrderDispatchCeilingClearsTheCityCooldownDemand, which
 	// drives a real tick rather than reading this constant back, and which
-	// asserts against the patrol floor for the reason above.
-	defaultMaxOrderDispatchesPerTick = 8
+	// asserts against the patrol floor for the reason above; and by
+	// TestOrderDispatchBudgetDeliversEveryOrderOnACommensurateRing, which is
+	// the per-order half the ceiling case structurally cannot represent.
+	defaultMaxOrderDispatchesPerTick = 12
 	orderTrackingSweepCloseBudget    = 4
 
 	// orderTrackingRetentionWatchdogInterval is the minimum time between
@@ -3710,9 +3747,17 @@ type ringWalkOrderCost struct {
 // The LAST order observed has no successor to difference against, so its cost
 // is unknown here and the order is reported as lastUnmeasured rather than
 // omitted -- a missing row must never read as a cheap order. Measuring it
-// needs exactly the extra clock read rejected at the call site. The blind spot
-// rotates with nextDispatchStart whenever the per-tick budget binds, so across
-// ticks every ring position does get measured.
+// needs exactly the extra clock read rejected at the call site.
+//
+// THE BLIND SPOT DOES NOT ROTATE, and an earlier reading of this comment
+// claiming that across ticks every ring position gets measured is measurably
+// wrong. nextDispatchStart pins rather than sweeping on a ring that mixes
+// always-due with rarely-due orders, so the walk ends on the same orders every
+// tick: over 720 diagnostic lines to 2026-09-16, lastUnmeasured was gate-sweep
+// 266, beads-health 161 and dolt-health 103 -- 74% of the lines on three names
+// (ci-y8hiev). Those three are exactly the orders whose delivery deficit is
+// under investigation, so this breakdown is permanently blind to their cost.
+// Read a quiet row here as unmeasured, never as cheap.
 type ringWalkCosts struct {
 	costs      []ringWalkOrderCost
 	prevName   string
