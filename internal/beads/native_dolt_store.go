@@ -2075,13 +2075,20 @@ func nativeIssueFilterFromListQuery(query ListQuery) beadslib.IssueFilter {
 		ephemeral := false
 		filter.Ephemeral = &ephemeral
 	}
+	// Status selects by VALUE, "open" included. The obvious alternative is to
+	// translate "open" into ExcludeStatus=[closed, in_progress] -- the inverse
+	// of mapBdStatus's two named cases, which reads as the natural mirror of
+	// the decode collapse -- and that is what this did. It returned every bead
+	// stored blocked, deferred, pinned, hooked or in a custom status, each
+	// decoding to Bead.Status "open" so the caller could not tell. bd will not
+	// serve a blocked bead to anyone, and the controller's drain-ack close
+	// gate counted one as work for six days (ci-iillrh). The other two
+	// backends already select by value -- BdStore passes --status=open to bd,
+	// DoltliteReadStore emits `i.status = ?` -- so an exclude-list here was
+	// also a backend disagreement with nothing pinning it.
 	if query.Status != "" {
-		if query.Status == "open" {
-			filter.ExcludeStatus = []beadslib.Status{beadslib.StatusClosed, beadslib.StatusInProgress}
-		} else {
-			status := beadslib.Status(query.Status)
-			filter.Status = &status
-		}
+		status := beadslib.Status(query.Status)
+		filter.Status = &status
 	} else if !query.IncludeClosed {
 		filter.ExcludeStatus = []beadslib.Status{beadslib.StatusClosed}
 	}

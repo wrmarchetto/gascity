@@ -1337,6 +1337,20 @@ func collectAssignedWorkBeadsWithStores(
 			// appendOpenRoutedWorkUnique never markReadyAssigned (see the
 			// skipReadyAssignees note below), and releaseOrphanedPoolAssignments'
 			// own live re-read (liveWorkAssignmentStillReleasable) skips it.
+			//
+			// NOT true of NativeDoltStore, and the difference is a real change
+			// in what the reaper sees. That store is opened unwrapped, so
+			// HandlesFor hands back a logical reader that only clears Live and
+			// both tiers reach the same filter — which since ci-iillrh selects
+			// the STORED status. So on the backend the city runs, a blocked
+			// routed bead no longer reaches the reaper at all, where it
+			// previously reached it AND passed the live re-read, because that
+			// re-read is itself a Status:"open" query. Its stale assignee now
+			// waits until something sets the bead back to open. `blocked` is
+			// not derived from dependencies in the pinned beads library — it is
+			// written by an explicit update or an external issue sync — so
+			// nothing here restores it on a timer, and a routed bead parked
+			// blocked keeps a dead assignee until an operator clears it.
 			var barePool []beads.Bead
 			if openRouted, err := listBothTiersForControllerDemand(source.store, beads.ListQuery{Status: "open"}); err == nil {
 				appendOpenRoutedWorkUnique(&result, &resultStores, &resultStoreRefs, openRouted, seen, source.store, source.ref)
@@ -2178,10 +2192,12 @@ func listBothTiersForControllerDemand(store beads.Store, query beads.ListQuery) 
 // latency on the demand path (see readyDemandCache): this pays one live
 // backing-store read rather than over-counting blocked work as demand.
 //
-// Known gap: NativeDoltStore maps Status:"open" to
-// ExcludeStatus=[closed,in_progress] (see nativeIssueFilterFromListQuery), so it
-// still returns raw blocked/deferred rows regardless of Live — this gate is
-// inert on that backend, tracked separately.
+// NativeDoltStore used to be a hole here: it translated Status:"open" to
+// ExcludeStatus=[closed,in_progress] and so returned raw blocked/deferred rows
+// regardless of Live, leaving this gate inert on the backend the city actually
+// runs. Closed by ci-iillrh -- every backend now selects the status by value.
+// The Live read is still what this function is for on the OTHER backends, and
+// on native it is a no-op rather than a second filter.
 func listOpenForControllerDemandLive(store beads.Store) ([]beads.Bead, error) {
 	return beads.HandlesFor(store).Live.List(beads.ListQuery{Status: "open", AllowScan: true})
 }

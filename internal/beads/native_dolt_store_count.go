@@ -71,9 +71,6 @@ func (s *NativeDoltStore) Count(ctx context.Context, query ListQuery, excludeTyp
 //     predicate; List's callers apply it post-hydration.
 //   - non-default tiers: nativeIssueFilterFromListQuery defers the wisp
 //     tier filter to ApplyListQuery, so the backend result is a superset.
-//   - Status "open": translated to an exclude-list (closed, in_progress)
-//     while Matches requires status == "open" exactly, so beads in any
-//     other non-excluded status would be overcounted.
 //   - Assignees / ParentIDs / SeekAfter / UpdatedBefore: not translated
 //     into the filter at all; List narrows them Go-side.
 //   - CreatedAfter: translated, but DELIBERATELY widened by a second so the
@@ -86,6 +83,16 @@ func (s *NativeDoltStore) Count(ctx context.Context, query ListQuery, excludeTyp
 //     over-conservative gate the DoltLite Counter applies.
 //   - Limit: the Counter contract is List cardinality, including List's
 //     post-sort limit cap.
+//
+// Status is NOT on that list and was: "open" used to translate to an
+// exclude-list (closed, in_progress) while Matches compares the collapsed
+// status for equality, so any other non-excluded status was overcounted.
+// nativeIssueFilterFromListQuery now selects every status by value, which
+// makes "open" structurally identical to the in_progress and closed shapes
+// this gate has always accepted -- keeping the refusal would have left a
+// special case with no cause. Re-adding one needs a List-cardinality
+// disagreement to point at; TestNativeDoltStoreCountStatusOpenMatchesListCardinality
+// is what would go red.
 //
 // TierBoth is supported alongside TierIssues: it is the one tier with no
 // narrowing anywhere — no SQL ephemeral predicate (nativeIssueFilterFromListQuery
@@ -100,7 +107,6 @@ func (s *NativeDoltStore) Count(ctx context.Context, query ListQuery, excludeTyp
 func nativeDoltCountSupported(query ListQuery, excludeTypes []string) bool {
 	return len(excludeTypes) == 0 &&
 		(query.TierMode == TierIssues || query.TierMode == TierBoth) &&
-		query.Status != "open" &&
 		len(query.Assignees) == 0 &&
 		len(query.ParentIDs) == 0 &&
 		query.SeekAfter == nil &&
