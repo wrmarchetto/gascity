@@ -839,3 +839,49 @@ func TestCheckTriggerCronBadTZFailsClosed(t *testing.T) {
 		t.Errorf("due=%v reason=%q, want fail-closed with a bad-tz reason", res.Due, res.Reason)
 	}
 }
+
+// TestCooldownResultCarriesTheSlackItApplied pins the slack on the result
+// rather than leaving the dispatcher to recompute it.
+//
+// The dispatcher logs the residual for sub-tick orders (ci-oycdq6), and the
+// slack is the one term in that arithmetic it cannot see: defaultCooldownSlack
+// is unexported and takes the tick and the parsed interval, so a call site
+// wanting the figure would have to re-derive it from the divisor. A second
+// derivation is a second copy, and a copy that disagreed with the decision
+// would print a diagnostic describing a deadline the trigger never used --
+// which is worse than printing nothing, because it reads as measured.
+//
+// Asserted on BOTH branches. A field set only where the order is not due
+// looks correct from the residual log and silently reports zero slack for
+// every due order, which is the branch the delivery arithmetic reads.
+func TestCooldownResultCarriesTheSlackItApplied(t *testing.T) {
+	a := Order{Name: "trio-member", Trigger: "cooldown", Interval: "30s"}
+	now := time.Date(2026, 9, 18, 5, 0, 0, 0, time.UTC)
+
+	// 30s tick halves to 15s; interval/6 is 5s and is the smaller bound, so
+	// the applied slack is 5s and the deadline is 25s of elapsed. Both
+	// figures are written out rather than computed from
+	// cooldownSlackIntervalDivisor: a test that reads the same constant the
+	// implementation reads cannot notice the constant being dropped.
+	const wantSlack = 5 * time.Second
+
+	notDue := checkCooldown(a, now, func(string) (time.Time, error) {
+		return now.Add(-20 * time.Second), nil
+	}, 30*time.Second)
+	if notDue.Due {
+		t.Fatalf("20s elapsed against a 25s deadline should not be due: %q", notDue.Reason)
+	}
+	if notDue.Slack != wantSlack {
+		t.Errorf("not-due Slack = %s, want %s", notDue.Slack, wantSlack)
+	}
+
+	due := checkCooldown(a, now, func(string) (time.Time, error) {
+		return now.Add(-26 * time.Second), nil
+	}, 30*time.Second)
+	if !due.Due {
+		t.Fatalf("26s elapsed against a 25s deadline should be due: %q", due.Reason)
+	}
+	if due.Slack != wantSlack {
+		t.Errorf("due Slack = %s, want %s", due.Slack, wantSlack)
+	}
+}

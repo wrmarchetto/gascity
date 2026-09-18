@@ -24,6 +24,15 @@ type TriggerResult struct {
 	Reason string
 	// LastRun is the last execution time (zero if never run).
 	LastRun time.Time
+	// Slack is the dispatch-latency allowance checkCooldown actually
+	// subtracted from the interval, or zero for every other trigger. It is
+	// reported rather than left to the caller because defaultCooldownSlack is
+	// unexported and takes the parsed interval: a call site wanting the figure
+	// would re-derive it from the divisor, and a second derivation that
+	// disagreed with the decision would describe a deadline the trigger never
+	// used. cmd/gc/order_dispatch.go's sub-tick residual diagnostic is the
+	// consumer (ci-oycdq6).
+	Slack time.Duration
 }
 
 // LastRunFunc returns the last run time for a named order.
@@ -218,6 +227,7 @@ func checkCooldown(a Order, now time.Time, lastRunFn LastRunFunc, tick time.Dura
 			Due:     true,
 			Reason:  fmt.Sprintf("elapsed %s >= interval %s less %s tick slack", elapsed.Round(time.Second), interval, slack),
 			LastRun: last,
+			Slack:   slack,
 		}
 	}
 
@@ -226,6 +236,7 @@ func checkCooldown(a Order, now time.Time, lastRunFn LastRunFunc, tick time.Dura
 		Due:     false,
 		Reason:  fmt.Sprintf("cooldown: %s remaining", remaining.Round(time.Second)),
 		LastRun: last,
+		Slack:   slack,
 	}
 }
 
