@@ -586,13 +586,24 @@ esac
 // rather than merely that something blocks:
 //
 //   - in_progress on any identity: held by both, and always was.
-//   - open + a session-affinity pin: held by both. preassignHookContinuationGroup
-//     hands a session its siblings at status open with gc.continuation_group set,
-//     so this is the shape the contradiction survived on.
+//   - open + a session-affinity pin naming THIS session: held by both.
+//     preassignHookContinuationGroup hands a session its siblings at status open
+//     with gc.continuation_group set and its own gc.session_id stamped on, so
+//     this is the shape the contradiction survived on.
+//   - the same pin naming nobody, or naming a predecessor in this slot: held by
+//     NEITHER. Those are a routing requirement graphroute wrote, not a claim,
+//     and holding a turn open for one wedged the bench-engineer slot for six
+//     days (ci-d1huhf). Both rows are here because a fix keyed on the presence
+//     of gc.session_id rather than on WHOSE it is passes the first and fails the
+//     second, and on a singleton pool the alias outlives its occupant.
 //   - open + no pin, matched through the pool alias: queue work, held by
 //     NEITHER. Counting it here would move ci-fx4duc's wedge from the refusal to
 //     this gate -- the turn could never end instead of the slot never releasing --
 //     which is why the unpinned row is a control and not an omission.
+//   - a pin naming the SLOT (GC_ALIAS) rather than an occupant: held by
+//     NEITHER, which is why stopGateSessionInstanceIdentities omits GC_ALIAS.
+//     An alias identifies no instance, so admitting it would let any bead
+//     stamped with the slot address hold every session that ever fills it.
 //   - the same unpinned open bead on a NON-ephemeral session: held. A named
 //     holder's alias is its permanent identity with no queue behind it, so the
 //     slot-address exclusion must not reach it. Without this row the origin scope
@@ -616,10 +627,25 @@ func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
 			row:    `[{"id":"ci-held","status":"in_progress","assignee":"pool-1"}]`,
 			want:   true,
 		},
-		"open pinned to a continuation group": {
+		"open pinned to a continuation group this session holds": {
 			status: "open",
-			row:    `[{"id":"ci-sib","status":"open","assignee":"pool-1","metadata":{"gc.continuation_group":"g1","gc.root_bead_id":"ci-root"}}]`,
+			row:    `[{"id":"ci-sib","status":"open","assignee":"pool-1","metadata":{"gc.continuation_group":"g1","gc.root_bead_id":"ci-root","gc.session_id":"ci-me"}}]`,
 			want:   true,
+		},
+		"open pinned to a continuation group no session ever took": {
+			status: "open",
+			row:    `[{"id":"ci-stranded","status":"open","assignee":"pool-1","metadata":{"gc.continuation_group":"g1","gc.root_bead_id":"ci-root","gc.session_affinity":"require"}}]`,
+			want:   false,
+		},
+		"open pinned to a continuation group a predecessor in this slot held": {
+			status: "open",
+			row:    `[{"id":"ci-inherited","status":"open","assignee":"pool-1","metadata":{"gc.continuation_group":"g1","gc.root_bead_id":"ci-root","gc.session_id":"ci-predecessor"}}]`,
+			want:   false,
+		},
+		"open pinned by a back-reference naming the slot itself": {
+			status: "open",
+			row:    `[{"id":"ci-slotnamed","status":"open","assignee":"pool-1","metadata":{"gc.continuation_group":"g1","gc.root_bead_id":"ci-root","gc.session_id":"pool-1"}}]`,
+			want:   false,
 		},
 		"open unpinned queue work on the pool alias": {
 			status: "open",
@@ -629,7 +655,12 @@ func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			stopGateContinuationSiblingBd(t)
-			t.Setenv("GC_SESSION_ID", "")
+			// The instance identity is set on every row, not only the ones
+			// that name it: the pinned rows are decided by whether the bead's
+			// back-reference MATCHES it, and a blank GC_SESSION_ID would make
+			// them all fall the same way for the wrong reason. The fake bd
+			// answers [] for it, so the rows still arrive through GC_ALIAS.
+			t.Setenv("GC_SESSION_ID", "ci-me")
 			t.Setenv("GC_SESSION_NAME", "")
 			t.Setenv("GC_ALIAS", "pool-1")
 			origin := tc.origin

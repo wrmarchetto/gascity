@@ -58,7 +58,7 @@ import (
 // address. That coincidence is what makes the address question decidable at all
 // -- with a `-N` suffix the route and the alias are different strings and no
 // fixture could tell which one the gate read.
-func heldRouteDrainAckOutcome(t *testing.T, work beads.Bead) string {
+func heldRouteDrainAckOutcome(t *testing.T, workFor func(sessionID string) beads.Bead) string {
 	t.Helper()
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
@@ -70,9 +70,7 @@ func heldRouteDrainAckOutcome(t *testing.T, work beads.Bead) string {
 		"pool_managed":   "true",
 		"session_origin": "ephemeral",
 	})
-	if _, err := env.store.Create(work); err != nil {
-		t.Fatalf("Create(work): %v", err)
-	}
+	env.createWorkBead(workFor(session.ID))
 
 	dops := newFakeDrainOps()
 	if err := dops.setDrainAck("worker"); err != nil {
@@ -121,14 +119,16 @@ func heldRouteDrainAckOutcome(t *testing.T, work beads.Bead) string {
 // assignee and the fixture has none. Any fix built on the reported mechanism
 // would have been aimed at a code path that does not exist.
 func TestReconcileSessionBeads_AgentDrainAckWithHeldRoutedWorkReleasesSlot(t *testing.T) {
-	reason := heldRouteDrainAckOutcome(t, beads.Bead{
-		Title:  "parked escalation routed at the pool",
-		Type:   "task",
-		Status: "open",
-		Labels: []string{beadmeta.HoldExternalLabel},
-		Metadata: map[string]string{
-			beadmeta.RoutedToMetadataKey: "worker",
-		},
+	reason := heldRouteDrainAckOutcome(t, func(string) beads.Bead {
+		return beads.Bead{
+			Title:  "parked escalation routed at the pool",
+			Type:   "task",
+			Status: "open",
+			Labels: []string{beadmeta.HoldExternalLabel},
+			Metadata: map[string]string{
+				beadmeta.RoutedToMetadataKey: "worker",
+			},
+		}
 	})
 	if reason == sessionpkg.DrainAckAssignedWorkReason {
 		t.Fatalf("state_reason = %q: a held bead that addresses the pool only by gc.routed_to refused the ack, which would mean the close gate reads routes as assignments", reason)
@@ -142,23 +142,32 @@ func TestReconcileSessionBeads_AgentDrainAckWithHeldRoutedWorkReleasesSlot(t *te
 // the control, and without it the case above is satisfiable by a gate that
 // stopped refusing anything at all.
 //
-// It also pins the hold-transparency contract from the other side. The bead is
-// pinned to this session (gc.session_affinity), so isUnpinnedQueuedWorkBead
-// does not excuse it, and it carries hold:external -- so a change that taught
-// this assignee-scoped gate to filter on beadmeta.DispatchHoldLabels turns this
-// red. That is the intended alarm, not collateral: work assigned to a session
-// is the session's to release, and a hold on it is a reason to release it
-// deliberately rather than to walk away from it.
+// The bead is HELD BY this session, not merely required to run on one: it
+// carries the gc.session_id back-reference the claim path stamps, which is what
+// the pin means once a session has taken the work (ci-d1huhf). Dropping that
+// key from this fixture turns it into the stranded-pin case in
+// drain_ack_affinity_pin_test.go, and the pair is what makes the difference
+// legible.
+//
+// It also pins the hold-transparency contract from the other side. The bead
+// carries hold:external -- so a change that taught this assignee-scoped gate to
+// filter on beadmeta.DispatchHoldLabels turns this red. That is the intended
+// alarm, not collateral: work assigned to a session is the session's to
+// release, and a hold on it is a reason to release it deliberately rather than
+// to walk away from it.
 func TestReconcileSessionBeads_AgentDrainAckWithHeldAliasPinnedWorkStaysActive(t *testing.T) {
-	reason := heldRouteDrainAckOutcome(t, beads.Bead{
-		Title:    "held work assigned to the slot alias and pinned to this session",
-		Type:     "task",
-		Status:   "open",
-		Assignee: "worker",
-		Labels:   []string{beadmeta.HoldExternalLabel},
-		Metadata: map[string]string{
-			beadmeta.SessionAffinityMetadataKey: "require",
-		},
+	reason := heldRouteDrainAckOutcome(t, func(sessionID string) beads.Bead {
+		return beads.Bead{
+			Title:    "held work assigned to the slot alias and held by this session",
+			Type:     "task",
+			Status:   "open",
+			Assignee: "worker",
+			Labels:   []string{beadmeta.HoldExternalLabel},
+			Metadata: map[string]string{
+				beadmeta.SessionAffinityMetadataKey: "require",
+				beadmeta.SessionIDMetadataKey:       sessionID,
+			},
+		}
 	})
 	if reason != sessionpkg.DrainAckAssignedWorkReason {
 		t.Fatalf("state_reason = %q, want %q: held work pinned to this session must still refuse the acknowledgement", reason, sessionpkg.DrainAckAssignedWorkReason)
