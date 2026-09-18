@@ -8,7 +8,6 @@ import (
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
-	"github.com/gastownhall/gascity/internal/clock"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/runtime"
 )
@@ -83,6 +82,26 @@ func assignedWorkRowFor(t *testing.T, stderr, beadID string) string {
 // the shape under test, not a convenience.
 func runDemandDiagnosticTick(t *testing.T, work beads.Bead) (string, string) {
 	t.Helper()
+	return runDemandDiagnosticTickWithBeacon(t, demandDiagnosticNow, work)
+}
+
+// runDemandDiagnosticTickWithBeacon is the same tick with the beacon chosen by
+// the caller, which only the two-clock case below needs.
+//
+// The beacon is NOT a test clock and no fixture here is dated against it. It
+// is a wall-clock stamp captured once when the controller builds its
+// desired-state closure and reused for every later tick, so that rendered
+// startup prompts stay stable for a controller lifetime (agent_build_params.go
+// carries `now` beside `beaconTime` and says exactly that). Both verdicts on
+// an assignedWorkBeads row are read against the reconciliation clock instead,
+// so every case here dates its fixture relative to demandDiagnosticNow.
+//
+// It USED to be spelled `clock.Fake{Time: ...}`, which read as a
+// controlled-time harness and was not one -- nothing under test consumed it as
+// a clock, it only yielded a literal passed as beaconTime. That appearance is
+// most of how the two-clock split survived review (ci-2slvrk).
+func runDemandDiagnosticTickWithBeacon(t *testing.T, beaconTime time.Time, work beads.Bead) (string, string) {
+	t.Helper()
 	store := beads.NewMemStore()
 	if work.Metadata == nil {
 		work.Metadata = map[string]string{}
@@ -92,9 +111,8 @@ func runDemandDiagnosticTick(t *testing.T, work beads.Bead) (string, string) {
 	if err != nil {
 		t.Fatalf("Create work bead: %v", err)
 	}
-	clk := &clock.Fake{Time: demandDiagnosticNow}
 	var stderr bytes.Buffer
-	buildDesiredState("test-city", t.TempDir(), clk.Now().UTC(), demandDiagnosticCity(), runtime.NewFake(), store, &stderr)
+	buildDesiredState("test-city", t.TempDir(), beaconTime, demandDiagnosticCity(), runtime.NewFake(), store, &stderr)
 	return created.ID, stderr.String()
 }
 
@@ -206,6 +224,89 @@ func TestDemandDiagnosticRowOmitsAnExpiredDeferral(t *testing.T) {
 	row := assignedWorkRowFor(t, stderr, id)
 	if strings.Contains(row, "defer") {
 		t.Errorf("assignedWorkBeads row = %q, reports a deferral that expired before the tick", row)
+	}
+}
+
+// TestDemandDiagnosticRowReadsOneClockForBothVerdicts pins that the two
+// verdicts on a row cannot contradict each other, which is a different
+// property from either verdict being right.
+//
+// THE DEFECT IT WAS WRITTEN FOR (ci-2slvrk). `defer=` was evaluated against
+// beaconTime and `ready=` against the store's own clock. beaconTime is a
+// wall-clock stamp captured ONCE when the controller builds its desired-state
+// closure and reused for every tick thereafter (cmd_supervisor.go
+// supervisorBuildAgentsFn, cmd_start.go), deliberately, so rendered startup
+// prompts stay stable for a controller lifetime. It is therefore not "now",
+// and the row lied for every bead whose deferral expired after the controller
+// started -- a window whose width is the controller's uptime. Measured in the
+// live log on 2026-09-18: 145 rows reading `ready=true` together with a
+// `defer=` naming a reason the same row denies.
+//
+// The error is one-sided, which is why only this direction is driven: the
+// store's clock is always at or after beaconTime, so `defer=` could be
+// over-reported and never omitted while live.
+//
+// WHY THIS CANNOT BE MADE GREEN BY MOVING A FIXTURE DATE, unlike the arms
+// below it. Both instants here are derived from time.Now(), and the window
+// the defect lives in is defined by the RELATION between the two clocks
+// rather than by any literal. A fixture written as an absolute instant drifts
+// out of that window as the calendar moves -- which is exactly how the split
+// stayed hidden: the arm that eventually caught it did so by going red on a
+// date, and the obvious repair of moving the date forward would have restored
+// the silence for another year.
+func TestDemandDiagnosticRowReadsOneClockForBothVerdicts(t *testing.T) {
+	now := time.Now().UTC()
+	// A controller that came up a day ago. Nothing here is faked: this is the
+	// value production passes on every tick after the first day of uptime.
+	beaconTime := now.Add(-24 * time.Hour)
+	// Strictly between the two clocks -- already elapsed against the store's
+	// clock, still in the future against a beacon that old.
+	expiredSinceBoot := now.Add(-time.Hour)
+
+	id, stderr := runDemandDiagnosticTickWithBeacon(t, beaconTime, beads.Bead{
+		Title:      "work whose deferral expired while the controller was up",
+		Type:       "task",
+		Status:     "open",
+		Assignee:   "worker",
+		DeferUntil: &expiredSinceBoot,
+	})
+	row := assignedWorkRowFor(t, stderr, id)
+
+	// Asserted as a pair rather than on `defer=` alone. Dropping the field
+	// entirely would satisfy a one-sided check while destroying the reason
+	// the row exists to carry, so the readiness half is what makes this a
+	// consistency assertion instead of an absence one.
+	if !strings.Contains(row, "ready=true") {
+		t.Errorf("assignedWorkBeads row = %q, want ready=true: the deferral elapsed an hour ago and the store counts the bead ready", row)
+	}
+	if strings.Contains(row, " defer=") {
+		t.Errorf("assignedWorkBeads row = %q, reports a deferral the same row says is not suppressing demand; the deferral verdict is reading beaconTime (%s) rather than the reconciliation clock", row, beaconTime.Format(time.RFC3339))
+	}
+}
+
+// TestDemandDiagnosticRowStillReportsADeferralLiveUnderBothClocks is the twin
+// of the case above, and its absence would leave that one satisfiable by
+// never printing `defer=` at all. Here the deferral is in the future against
+// the reconciliation clock AND against the stale beacon, so both clocks agree
+// the bead is deferred and the row must say so.
+func TestDemandDiagnosticRowStillReportsADeferralLiveUnderBothClocks(t *testing.T) {
+	now := time.Now().UTC()
+	beaconTime := now.Add(-24 * time.Hour)
+	live := now.Add(time.Hour)
+
+	id, stderr := runDemandDiagnosticTickWithBeacon(t, beaconTime, beads.Bead{
+		Title:      "work still deferred under either clock",
+		Type:       "task",
+		Status:     "open",
+		Assignee:   "worker",
+		DeferUntil: &live,
+	})
+	row := assignedWorkRowFor(t, stderr, id)
+	if !strings.Contains(row, " defer=") {
+		t.Errorf("assignedWorkBeads row = %q, omits a deferral that has not elapsed under either clock", row)
+	}
+	if !strings.Contains(row, "ready=false") {
+		t.Errorf("assignedWorkBeads row = %q, want ready=false: the deferral is live", row)
 	}
 }
 
