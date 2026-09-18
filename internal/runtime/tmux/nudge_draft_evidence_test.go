@@ -48,11 +48,22 @@ func TestDraftInInputBoxSeparatesADraftFromItsOwnEcho(t *testing.T) {
 // match is history -- and on a busy session the transcript holds every previous
 // nudge, all of them identical to this one.
 func TestDraftInInputBoxReadsTheLastPromptLine(t *testing.T) {
-	pane := []string{fixtureDraftInBox, "───", fixtureQueuedBox}
+	// The last line is the EMPTY box, not the queued placeholder. It used to
+	// be the placeholder, and that made this case depend on the placeholder
+	// meaning "submitted" -- so it went red when ci-fo6au4 corrected the
+	// placeholder to mean "queued, not delivered", which is the right outcome
+	// for an assertion that was riding on a neighboring bug. The invariant
+	// here is last-line precedence and nothing else, so it is stated against a
+	// state whose meaning is not the subject of this change.
+	pane := []string{fixtureDraftInBox, "───", fixtureEmptyBox}
 	if draftInInputBox(pane, nudgeDraft) {
 		t.Error("an earlier prompt line outranked the real input box")
 	}
-	if got, ok := claudeInputBoxContent(pane); !ok || got != "Press up to edit queued messages" {
+	// The extractor's own answer is unchanged and still asserted: reading the
+	// placeholder OUT of the pane is correct, and only what the confirm loop
+	// concludes from it moved.
+	queued := []string{fixtureDraftInBox, "───", fixtureQueuedBox}
+	if got, ok := claudeInputBoxContent(queued); !ok || got != "Press up to edit queued messages" {
 		t.Errorf("input box = %q ok=%v, want the queued placeholder", got, ok)
 	}
 }
@@ -158,5 +169,35 @@ func TestDraftEvidencePrefixIsExactlyWhatThePaneRenders(t *testing.T) {
 	}
 	if claudeInputPromptPrefix == "❯ " {
 		t.Error("prefix uses an ordinary space; the input box renders U+00A0")
+	}
+}
+
+// TestTheQueuedPlaceholderIsNotEvidenceOfDelivery pins the third composer
+// state, which this file used to collapse into "submitted".
+//
+// Claude Code has THREE input-box states, not two: empty (submitted and
+// drained), holding the draft (never submitted), and holding
+// "Press up to edit queued messages" (the TUI accepted the text into a queue
+// behind a run that was already underway). The third is not delivery. The
+// agent has not seen the message, and the queue is not guaranteed to drain --
+// measured 2026-09-18T05:13-05:16Z on ci-fo6au4, three toolsmith sessions sat
+// at IDLE prompts showing that placeholder, holding pool slots, with three
+// ready P1s in the queue, until an operator pressed the interface's own
+// "send now" binding in each pane.
+//
+// draftInInputBox answers "is this message still undelivered", so the
+// placeholder must read as TRUE. The comment above claudeInputPromptPrefix
+// labeled that same line "submitted, queued", and that label is what licensed
+// the confirm loop to treat a queued message as a delivered one.
+func TestTheQueuedPlaceholderIsNotEvidenceOfDelivery(t *testing.T) {
+	pane := []string{fixtureTranscriptEcho, "───", fixtureQueuedBox}
+	if !draftInInputBox(pane, nudgeDraft) {
+		t.Error("the queued placeholder read as a delivered message: the TUI has taken the text into a queue the agent has not seen, and that queue was measured sitting undrained at an idle prompt (ci-fo6au4)")
+	}
+	// The empty box is the state that DOES mean delivered, and it has to keep
+	// meaning that -- a change that made every non-draft composer read as
+	// undelivered would never confirm anything.
+	if draftInInputBox([]string{fixtureTranscriptEcho, "───", fixtureEmptyBox}, nudgeDraft) {
+		t.Error("an empty input box read as still holding the draft: that is the drained state and the only one that confirms")
 	}
 }

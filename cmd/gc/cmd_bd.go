@@ -954,6 +954,36 @@ func doBdReleaseIfCurrent(cityPath string, cfg *config.City, target execStoreTar
 	// A voluntary release returns routed work to the pool that owns it. Clearing
 	// the assignee while preserving gc.routed_to leaves the bead visible to
 	// controller demand but unreachable by the pool's claim query.
+	//
+	// A bead carrying NO gc.routed_to is the other half, and it was missed
+	// here until ci-9me69b. Its assignee is its only address: the pool-alias
+	// demand tier matches on it (bdReadyPoolAliasDemandShell), so clearing it
+	// with nothing in its place leaves the bead open, unassigned and unrouted
+	// -- matching no tier of poolDemandCountShell, which is the predicate that
+	// decides whether a session is ever minted. Nothing then wakes the agent
+	// for it again. Measured twice on 2026-09-18 on astoria-sel4/lab.pm, both
+	// times a pm-question bead that ask-pm.py had addressed by assignee alone,
+	// and both times an asker blocked behind it indefinitely.
+	//
+	// So a release with no route to preserve MAKES one from the address it is
+	// clearing. Both demand tiers take the same $target string, which is what
+	// makes the substitution sound: an assignee that raised demand through the
+	// alias tier raises it through the routed tier unchanged.
+	//
+	// The address is stamped VERBATIM and is deliberately not resolved through
+	// config to the releasing agent's pool demand target. An assignee that is
+	// a pool SLOT ("toolsmith-1") rather than a pool route is not a demand
+	// target, so such a bead is no better off than before -- but no worse
+	// either, and the shape has not been observed: a pool bead reaches a slot
+	// through gc.routed_to, which takes the reassign branch above. Adding the
+	// slot-to-pool resolution would need an agent lookup this function does
+	// not otherwise do, for a case nobody has reported.
+	//
+	// Nor does this silence doctor's unclaimable-work check. That check
+	// reports an unaddressed bead AND a gc.routed_to naming no active agent
+	// (cmd/gc/doctor_unclaimable_work.go), so a route stamped from a name no
+	// agent answers to moves a finding between arms of one check instead of
+	// out of it.
 	recoveryAssignee := ""
 	item, getErr := store.Get(id)
 	if getErr != nil && !errors.Is(getErr, beads.ErrNotFound) {
@@ -969,6 +999,13 @@ func doBdReleaseIfCurrent(cityPath string, cfg *config.City, target execStoreTar
 		recoveryAssignee = strings.TrimSpace(item.Metadata[beadmeta.RoutedToMetadataKey])
 	}
 
+	// The route to stamp after an unrouted release, empty when the bead
+	// already carries one. It is the caller's expected assignee rather than a
+	// re-read of the bead, and that is what makes it safe: the CAS is
+	// conditioned on the same value, so a swap that SUCCEEDED is itself the
+	// proof the bead was addressed there at the moment it was cleared.
+	rescueRoute := ""
+
 	var released bool
 	if recoveryAssignee != "" {
 		reassigner, ok := store.(beads.ConditionalAssignmentReassigner)
@@ -978,6 +1015,7 @@ func doBdReleaseIfCurrent(cityPath string, cfg *config.City, target execStoreTar
 		}
 		released, err = reassigner.ReassignIfCurrent(id, expectedAssignee, recoveryAssignee)
 	} else {
+		rescueRoute = strings.TrimSpace(expectedAssignee)
 		released, err = releaser.ReleaseIfCurrent(id, expectedAssignee)
 	}
 	if err != nil {
@@ -990,6 +1028,26 @@ func doBdReleaseIfCurrent(cityPath string, cfg *config.City, target execStoreTar
 		return 1
 	}
 	if released {
+		// AFTER the swap and only on success, for the reason
+		// workrelease.FromEndedSession records at its own second write: on a
+		// refusal this is not benign. The CAS refusing means a different
+		// session holds the bead, and stamping a route onto work someone else
+		// is running addresses it to two places at once.
+		//
+		// The gap between the two writes leaves the bead momentarily
+		// unaddressed. That is bounded by one write and self-corrects on the
+		// next demand tick; the defect being fixed is unbounded, so the
+		// atomic alternative -- a store verb that swapped assignee and
+		// metadata together -- was not worth adding a sixth store contract
+		// for.
+		if rescueRoute != "" {
+			if err := store.Update(id, beads.UpdateOpts{Metadata: map[string]string{beadmeta.RoutedToMetadataKey: rescueRoute}}); err != nil {
+				fmt.Fprintf(stderr, "gc bd release-if-current: %s was released but could not be routed to %q: %v\n", id, rescueRoute, err) //nolint:errcheck // best-effort stderr
+				fmt.Fprintln(stderr, "  it is now unassigned AND unrouted, so nothing will spawn a session for it")                        //nolint:errcheck // best-effort stderr
+				fmt.Fprintf(stderr, "  remedy: gc bd update %s --set-metadata %s=%s\n", id, beadmeta.RoutedToMetadataKey, rescueRoute)     //nolint:errcheck // best-effort stderr
+				return 1
+			}
+		}
 		fmt.Fprintln(stdout, "released") //nolint:errcheck // best-effort stdout
 		return 0
 	}
