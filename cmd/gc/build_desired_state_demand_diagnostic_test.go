@@ -92,11 +92,48 @@ func runDemandDiagnosticTick(t *testing.T, work beads.Bead) (string, string) {
 	if err != nil {
 		t.Fatalf("Create work bead: %v", err)
 	}
-	clk := &clock.Fake{Time: time.Date(2026, 9, 14, 13, 22, 0, 0, time.UTC)}
+	clk := &clock.Fake{Time: demandDiagnosticNow}
 	var stderr bytes.Buffer
 	buildDesiredState("test-city", t.TempDir(), clk.Now().UTC(), demandDiagnosticCity(), runtime.NewFake(), store, &stderr)
 	return created.ID, stderr.String()
 }
+
+// demandDiagnosticNow is the ONE instant this suite is written against: the
+// tick's injected beaconTime and the base every deferral fixture is offset
+// from.
+//
+// Pinning the tick to real now rather than to a chosen date is the fix, and
+// the reason is that the row is formatted from TWO clocks. `ready=` comes from
+// the store's own readiness computation, which reads the real clock; `defer=`
+// comes from beads.IsDeferred against the injected beaconTime
+// (assigned_work_scope.go). In production those are the same instant. A fake
+// tick clock separates them, and a fixture landing between the two makes the
+// row report `ready=true defer=<future>` -- a row contradicting itself, which
+// is the exact class of falsehood this suite was written to remove.
+//
+// That gap is what expired here. The fixtures were absolute dates chosen to
+// sit just after the fake 2026-09-14 tick clock, which made them future for
+// `defer=` and, at the time of writing, future for `ready=` too. Real time
+// passed 2026-09-16T10:19:01Z and only the second half changed, so the suite
+// began asserting the opposite of its own comment and took `go test ./cmd/gc/`
+// and the unit-cmd-gc-1-of-6 push-gate shard red for everyone (ci-f4dx5h).
+// Nothing announced it: an assertion whose correctness expires on a calendar
+// date has no step that notices the date arriving.
+//
+// Read once into a var rather than called per fixture so every arm in a run
+// shares one base, and a suite that straddles midnight cannot put two arms on
+// opposite sides of it.
+var demandDiagnosticNow = time.Now().UTC()
+
+// deferralFixtureOffset is a DAY rather than a moment, which the
+// expired-deferral arm's own comment already required: an hour would let clock
+// skew or a slow tick put a fixture on the wrong side, and a skewed pass looks
+// exactly like a real one.
+const deferralFixtureOffset = 24 * time.Hour
+
+func liveDeferral() time.Time { return demandDiagnosticNow.Add(deferralFixtureOffset) }
+
+func lapsedDeferral() time.Time { return demandDiagnosticNow.Add(-deferralFixtureOffset) }
 
 // TestDemandDiagnosticRowReportsHoldLabelsThatSuppressDemand pins the half of
 // the misdiagnosis that a hold label caused. A hold label is what the pool's
@@ -133,7 +170,7 @@ func TestDemandDiagnosticRowReportsHoldLabelsThatSuppressDemand(t *testing.T) {
 // future relative to the tick clock, which is what makes the bead genuinely
 // deferred rather than an expired deferral that should resurface.
 func TestDemandDiagnosticRowReportsDeferralTheStatusFieldLost(t *testing.T) {
-	deferUntil := time.Date(2026, 9, 16, 10, 19, 1, 0, time.UTC)
+	deferUntil := liveDeferral()
 	id, stderr := runDemandDiagnosticTick(t, beads.Bead{
 		Title:      "deferred work",
 		Type:       "task",
@@ -158,7 +195,7 @@ func TestDemandDiagnosticRowReportsDeferralTheStatusFieldLost(t *testing.T) {
 // The fixture's defer_until is BEFORE the tick clock, and the two differ by a
 // day rather than by a moment so the arm cannot pass on clock skew.
 func TestDemandDiagnosticRowOmitsAnExpiredDeferral(t *testing.T) {
-	expired := time.Date(2026, 9, 13, 10, 19, 1, 0, time.UTC)
+	expired := lapsedDeferral()
 	id, stderr := runDemandDiagnosticTick(t, beads.Bead{
 		Title:      "work whose deferral has lapsed",
 		Type:       "task",
@@ -182,7 +219,7 @@ func TestDemandDiagnosticRowOmitsAnExpiredDeferral(t *testing.T) {
 // row that hardcodes either verdict fails one of them. A single-arm version of
 // this test passes over a diagnostic that prints a constant.
 func TestDemandDiagnosticRowReportsWhetherTheBeadIsRaisingDemand(t *testing.T) {
-	deferUntil := time.Date(2026, 9, 16, 10, 19, 1, 0, time.UTC)
+	deferUntil := liveDeferral()
 	cases := []struct {
 		name      string
 		bead      beads.Bead
