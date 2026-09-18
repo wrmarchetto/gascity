@@ -116,13 +116,19 @@ done
 jq "[ .[] $sel ]" <"$FAKE_BD_ROWS"
 `
 
-// poolDemandFor runs the agent's production pool demand query over every bead
-// currently in store and returns the count it reports.
+// stageDemandProbe writes the stand-in bd and the store's current rows into a
+// fresh directory and returns it, ready to be put on PATH.
 //
 // The rows are read back from the store rather than staged by the test, so a
 // release that writes the wrong field cannot be papered over by a fixture that
 // writes the right one.
-func poolDemandFor(t *testing.T, agent config.Agent, store beads.Store) string {
+//
+// It deliberately spawns nothing. The subprocess stays lexically inside the
+// test that owns it, which is what the resource census requires of a declared
+// Medium subprocess owner (internal/testpolicy/resourcecensus/census.go): a
+// helper holding the exec would leave the call attributed to a function no
+// ledger row can name.
+func stageDemandProbe(t *testing.T, store beads.Store) string {
 	t.Helper()
 
 	all, err := store.List(beads.ListQuery{AllowScan: true})
@@ -135,27 +141,13 @@ func poolDemandFor(t *testing.T, agent config.Agent, store beads.Store) string {
 	}
 
 	dir := t.TempDir()
-	rowsPath := filepath.Join(dir, "rows.json")
-	if err := os.WriteFile(rowsPath, rows, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "rows.json"), rows, 0o644); err != nil {
 		t.Fatalf("write demand rows: %v", err)
 	}
-	bdPath := filepath.Join(dir, "bd")
-	if err := os.WriteFile(bdPath, []byte(fakeBdForDemand), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "bd"), []byte(fakeBdForDemand), 0o755); err != nil {
 		t.Fatalf("write fake bd: %v", err)
 	}
-
-	cmd := exec.Command("sh", "-c", agent.EffectivePoolDemandQuery())
-	cmd.Env = []string{
-		"PATH=" + dir + ":" + os.Getenv("PATH"),
-		"FAKE_BD_ROWS=" + rowsPath,
-	}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("pool demand query: %v; stderr=%s", err, stderr.String())
-	}
-	return strings.TrimSpace(string(out))
+	return dir
 }
 
 // questionBeadFixture builds the store state ask-pm.py leaves behind: a
@@ -197,7 +189,29 @@ func questionBeadFixture(t *testing.T) (string, beads.Store, execStoreTarget, be
 func TestReleaseIfCurrentKeepsUnroutedWorkVisibleToPoolDemand(t *testing.T) {
 	cityDir, store, target, created := questionBeadFixture(t)
 
-	if got := poolDemandFor(t, questionAgent, store); got == "0" {
+	// Declared Medium subprocess owner (ci-9me69b). The sh child is here
+	// rather than in a helper because the demand predicate IS a shell
+	// pipeline over bd: a Go-side re-derivation of it would agree with
+	// itself whichever field the release wrote, which is the defect under
+	// test.
+	poolDemand := func() string {
+		t.Helper()
+		dir := stageDemandProbe(t, store)
+		cmd := exec.Command("sh", "-c", questionAgent.EffectivePoolDemandQuery())
+		cmd.Env = []string{
+			"PATH=" + dir + ":" + os.Getenv("PATH"),
+			"FAKE_BD_ROWS=" + filepath.Join(dir, "rows.json"),
+		}
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("pool demand query: %v; stderr=%s", err, stderr.String())
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	if got := poolDemand(); got == "0" {
 		t.Fatalf("control: an open question addressed to %q raised no demand (%q); the probe cannot report demand at all, so the released case below proves nothing", questionAgent.QualifiedName(), got)
 	}
 
@@ -213,7 +227,7 @@ func TestReleaseIfCurrentKeepsUnroutedWorkVisibleToPoolDemand(t *testing.T) {
 		t.Fatalf("release output = %q, want released", line)
 	}
 
-	if got := poolDemandFor(t, questionAgent, store); got == "0" {
+	if got := poolDemand(); got == "0" {
 		t.Fatalf("released question raised no demand for %q: nothing will ever wake the agent for it, and every asker blocked on it waits forever", questionAgent.QualifiedName())
 	}
 }
