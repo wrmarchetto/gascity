@@ -92,11 +92,34 @@ func runDemandDiagnosticTick(t *testing.T, work beads.Bead) (string, string) {
 	if err != nil {
 		t.Fatalf("Create work bead: %v", err)
 	}
-	clk := &clock.Fake{Time: time.Date(2026, 9, 14, 13, 22, 0, 0, time.UTC)}
+	clk := &clock.Fake{Time: demandDiagnosticTickNow()}
 	var stderr bytes.Buffer
 	buildDesiredState("test-city", t.TempDir(), clk.Now().UTC(), demandDiagnosticCity(), runtime.NewFake(), store, &stderr)
 	return created.ID, stderr.String()
 }
+
+// demandDiagnosticTickNow is the instant every fixture in this suite is
+// measured against, and it is the WALL clock rather than a fixed date on
+// purpose.
+//
+// The row's two deferral-sensitive fields do not read the same clock. `defer=`
+// is rendered from the `now` passed into buildDesiredState, which the tick
+// harness injects; `ready=` comes from the store's own Ready query, and
+// MemStore.Ready calls time.Now() with no way to inject anything. A fixture
+// dated against the injected clock alone therefore pins only half the row, and
+// the half it does not pin expires: this suite's future-deferral arm was
+// written with a literal 2026-09-16 and went red on 2026-09-16 while every
+// step that could have noticed declared the file untouched.
+//
+// Offsets are whole days so neither arm can flip on the sub-millisecond skew
+// between this call and the store's own.
+func demandDiagnosticTickNow() time.Time {
+	return time.Now().UTC()
+}
+
+// demandDiagnosticDeferralMargin is how far a fixture's defer_until sits from
+// the tick. Large enough that no plausible test-run duration crosses it.
+const demandDiagnosticDeferralMargin = 48 * time.Hour
 
 // TestDemandDiagnosticRowReportsHoldLabelsThatSuppressDemand pins the half of
 // the misdiagnosis that a hold label caused. A hold label is what the pool's
@@ -133,7 +156,7 @@ func TestDemandDiagnosticRowReportsHoldLabelsThatSuppressDemand(t *testing.T) {
 // future relative to the tick clock, which is what makes the bead genuinely
 // deferred rather than an expired deferral that should resurface.
 func TestDemandDiagnosticRowReportsDeferralTheStatusFieldLost(t *testing.T) {
-	deferUntil := time.Date(2026, 9, 16, 10, 19, 1, 0, time.UTC)
+	deferUntil := demandDiagnosticTickNow().Add(demandDiagnosticDeferralMargin)
 	id, stderr := runDemandDiagnosticTick(t, beads.Bead{
 		Title:      "deferred work",
 		Type:       "task",
@@ -155,10 +178,10 @@ func TestDemandDiagnosticRowReportsDeferralTheStatusFieldLost(t *testing.T) {
 // reason for a bead that is in fact raising demand, which is the same class of
 // falsehood this suite was written to remove.
 //
-// The fixture's defer_until is BEFORE the tick clock, and the two differ by a
-// day rather than by a moment so the arm cannot pass on clock skew.
+// The fixture's defer_until is BEFORE the tick by demandDiagnosticDeferralMargin,
+// a margin rather than a moment so the arm cannot pass on clock skew.
 func TestDemandDiagnosticRowOmitsAnExpiredDeferral(t *testing.T) {
-	expired := time.Date(2026, 9, 13, 10, 19, 1, 0, time.UTC)
+	expired := demandDiagnosticTickNow().Add(-demandDiagnosticDeferralMargin)
 	id, stderr := runDemandDiagnosticTick(t, beads.Bead{
 		Title:      "work whose deferral has lapsed",
 		Type:       "task",
@@ -182,7 +205,7 @@ func TestDemandDiagnosticRowOmitsAnExpiredDeferral(t *testing.T) {
 // row that hardcodes either verdict fails one of them. A single-arm version of
 // this test passes over a diagnostic that prints a constant.
 func TestDemandDiagnosticRowReportsWhetherTheBeadIsRaisingDemand(t *testing.T) {
-	deferUntil := time.Date(2026, 9, 16, 10, 19, 1, 0, time.UTC)
+	deferUntil := demandDiagnosticTickNow().Add(demandDiagnosticDeferralMargin)
 	cases := []struct {
 		name      string
 		bead      beads.Bead
