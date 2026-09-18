@@ -224,8 +224,12 @@ var bootstrapPolicy = Ledger{
 			// the Makefile text would miss it; -n executes nothing, which is
 			// the only reason a test can afford to name a target whose real
 			// run is an npm build.
-			BaselineCalls:   628,
-			BaselineFiles:   185,
+			// +1 call / 1 file (ci-9me69b): the release-preserves-demand
+			// proof. It is a DECLARED Medium owner, which clears the Small
+			// debt ratchet, and this all-source audit row takes it anyway --
+			// tagged calls receive no Medium exemption here.
+			BaselineCalls:   629,
+			BaselineFiles:   186,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -312,8 +316,13 @@ var bootstrapPolicy = Ledger{
 			// +2 calls / 1 file (gs-1soi): the dashboard-bundle shape
 			// guard, recorded on the all-source audit row above and counted
 			// again here.
-			BaselineCalls:   429,
-			BaselineFiles:   127,
+			// +1 call / 1 file (ci-9me69b): the release-preserves-demand
+			// proof, recorded on the all-source audit row above and counted
+			// again here. The spawn is the demand predicate ITSELF -- a shell
+			// pipeline over bd -- so it cannot be replaced by a Go re-derivation
+			// without the test losing the only thing it proves.
+			BaselineCalls:   430,
+			BaselineFiles:   128,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -581,6 +590,17 @@ var bootstrapPolicy = Ledger{
 			OwnerBead:       "ga-80po0c.2.1",
 			Invariant:       "the controller-token withholding proof is a checked Medium subprocess owner",
 			ResourceOwner:   "the one /bin/sh subprocess is confined to TestPassthroughEnvWithholdsControllerTokenFromChildProcess, which exists to read a credential back out of a real child process: the session env is an overlay, so only a real child can prove GC_CONTROLLER_TOKEN is absent rather than merely missing from a map",
+			MigrationTarget: "P0.4b",
+			Expires:         "2026-11-09",
+		},
+		{
+			PackageDir:      "cmd/gc",
+			PackageName:     "main",
+			Owner:           "TestReleaseIfCurrentKeepsUnroutedWorkVisibleToPoolDemand",
+			Resources:       []Resource{ResourceSubprocess},
+			OwnerBead:       "ci-9me69b",
+			Invariant:       "the release-preserves-demand proof is a checked Medium subprocess owner",
+			ResourceOwner:   "the one sh subprocess is confined to TestReleaseIfCurrentKeepsUnroutedWorkVisibleToPoolDemand, which runs config.Agent's OWN EffectivePoolDemandQuery: that predicate is a shell pipeline over bd, so only executing it can show a released bead is visible to the probe that decides whether a session is minted -- a Go-side re-derivation of the same predicate would agree with itself no matter which field the release wrote, which is the defect it exists to catch",
 			MigrationTarget: "P0.4b",
 			Expires:         "2026-11-09",
 		},

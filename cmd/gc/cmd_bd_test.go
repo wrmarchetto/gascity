@@ -3650,6 +3650,7 @@ prefix = "fe"
 	}
 	fakeBin := t.TempDir()
 	sqlLog := filepath.Join(fakeBin, "sql.log")
+	updateLog := filepath.Join(fakeBin, "update.log")
 	fakeBD := "#!/bin/sh\n" +
 		"if [ \"$1\" = \"show\" ] && [ \"$2\" = \"--json\" ] && [ \"$3\" = \"fe-abc\" ]; then\n" +
 		"  printf '[{\"id\":\"fe-abc\",\"title\":\"work\",\"status\":\"in_progress\",\"assignee\":\"worker-1\"}]\\n'\n" +
@@ -3658,6 +3659,10 @@ prefix = "fe"
 		"if [ \"$1\" = \"sql\" ] && [ \"$2\" = \"--json\" ]; then\n" +
 		"  printf '%s\\n' \"$3\" > " + strconv.Quote(sqlLog) + "\n" +
 		"  printf '{\"rows_affected\":1,\"schema_version\":1}\\n'\n" +
+		"  exit 0\n" +
+		"fi\n" +
+		"if [ \"$1\" = \"update\" ]; then\n" +
+		"  printf ' %s' \"$@\" >> " + strconv.Quote(updateLog) + "\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"printf 'unexpected bd args:' >&2\n" +
@@ -3695,6 +3700,19 @@ prefix = "fe"
 	wantQuery := "UPDATE issues SET status = 'open', assignee = '', updated_at = CURRENT_TIMESTAMP WHERE id = 'fe-abc' AND status = 'in_progress' AND assignee = 'worker-1'"
 	if strings.TrimSpace(string(query)) != wantQuery {
 		t.Fatalf("SQL query = %q, want %q", strings.TrimSpace(string(query)), wantQuery)
+	}
+	// The bead carried no gc.routed_to, so the release owes it the address it
+	// just cleared -- otherwise it comes to rest matching no demand tier
+	// (ci-9me69b). Asserted through the BdStore path specifically: the swap
+	// above is raw SQL and the route stamp is a bd subprocess, so the two
+	// halves of one release travel different transports here and a fix proven
+	// only against the file store would say nothing about this one.
+	update, err := os.ReadFile(updateLog)
+	if err != nil {
+		t.Fatalf("read update log: %v", err)
+	}
+	if !strings.Contains(string(update), beadmeta.RoutedToMetadataKey+"=worker-1") {
+		t.Fatalf("release did not route the bead back: bd update args = %q", strings.TrimSpace(string(update)))
 	}
 }
 
