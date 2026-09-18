@@ -1,0 +1,108 @@
+# Proves the ci-d1huhf affinity-pin guards are enforced rather than decorative.
+# Each mutation flips one guard to its accepting counterpart and names the test
+# that must go red: the pre-fix predicate that read any pin as a holder, the
+# presence-not-identity shortcut, the slot-alias exclusion on both gates, and
+# the claim-side stamp that gives the gates something to read.
+#
+# UNSWEPT, deliberately: the `len(holders) == 0` early return in
+# beadNamesSessionHolder. Its accepting counterpart is the same map lookup on
+# an empty map, so the flip changes no verdict and could never be attributed.
+
+[sweep]
+name = "ci-d1huhf: a session-affinity pin holds a drain only while it names a live session"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-run", "TestReconcileSessionBeads_AgentDrainAck|TestStopGateSeesPinnedOpenContinuationWork|TestHookClaimStamps",
+  "-count=1",
+]
+timeout_s = 900
+
+# --- the holder check itself: the pre-fix predicate ---
+
+[[mutation]]
+id = "pin-alone-is-a-holder"
+path = "cmd/gc/session_reconciler.go"
+find = '''			return !beadNamesSessionHolder(item, holders)'''
+replace = '''			return false'''
+expect_output = [
+  "AgentDrainAckWithAffinityPinNamingNoSessionReleasesSlot",
+  "AgentDrainAckWithAffinityPinNamingAPredecessorReleasesSlot",
+]
+
+# --- presence of a back-reference is not the same as whose it is ---
+
+[[mutation]]
+id = "any-back-reference-corroborates"
+path = "cmd/gc/session_reconciler.go"
+find = '''		if value := strings.TrimSpace(item.Metadata[key]); value != "" {
+			if _, ok := holders[value]; ok {
+				return true
+			}
+		}'''
+replace = '''		if value := strings.TrimSpace(item.Metadata[key]); value != "" {
+			return true
+		}'''
+expect_output = ["AgentDrainAckWithAffinityPinNamingAPredecessorReleasesSlot"]
+
+# --- the slot alias is not an instance identity, on either gate ---
+
+[[mutation]]
+id = "reconciler-admits-the-slot-alias"
+path = "cmd/gc/session_reconciler.go"
+find = '''		if _, isAlias := queueAliases[identifier]; isAlias {
+			continue
+		}'''
+replace = '''		if false {
+			continue
+		}'''
+expect_output = ["AgentDrainAckWithAffinityPinNamingTheSlotReleasesSlot"]
+
+[[mutation]]
+id = "stop-gate-admits-the-slot-alias"
+path = "cmd/gc/cmd_hook_stop.go"
+find = '''	for _, value := range []string{os.Getenv("GC_SESSION_ID"), os.Getenv("GC_SESSION_NAME")} {'''
+replace = '''	for _, value := range []string{os.Getenv("GC_SESSION_ID"), os.Getenv("GC_SESSION_NAME"), os.Getenv("GC_ALIAS")} {'''
+expect_output = ["TestStopGateSeesPinnedOpenContinuationWork"]
+
+# --- the Stop gate must read the same holders the refusal does ---
+
+[[mutation]]
+id = "stop-gate-loses-its-holders"
+path = "cmd/gc/cmd_hook_stop.go"
+find = '''	holders := stopGateSessionInstanceIdentities()'''
+replace = '''	holders := map[string]struct{}{}'''
+expect_output = ["open_pinned_to_a_continuation_group_this_session_holds"]
+
+# --- the corroborating stamp, and its compare-and-skip ---
+
+[[mutation]]
+id = "siblings-are-handed-over-unstamped"
+path = "cmd/gc/cmd_hook_claim.go"
+find = '''		if err := stampHookContinuationHolder(ctx, sibling, opts, ops, dir); err != nil {
+			return assigned, fmt.Errorf("stamping the holder on %s: %w", sibling.ID, err)
+		}'''
+replace = '''		_ = sibling'''
+expect_output = ["TestHookClaimStampsTheHolderOnPreassignedSiblings"]
+
+[[mutation]]
+id = "stamp-rewrites-on-every-tick"
+path = "cmd/gc/cmd_hook_claim.go"
+find = '''	if strings.TrimSpace(sibling.Metadata[beadmeta.SessionIDMetadataKey]) != sessionID {
+		patch[beadmeta.SessionIDMetadataKey] = sessionID
+	}'''
+replace = '''	patch[beadmeta.SessionIDMetadataKey] = sessionID'''
+expect_output = ["TestHookClaimStampsTheHolderOnlyWhenItChanges"]
+
+[[mutation]]
+id = "stamp-fires-without-a-session"
+path = "cmd/gc/cmd_hook_claim.go"
+find = '''	if sessionID == "" || ops.StampWorkMeta == nil {
+		return nil
+	}'''
+replace = '''	if ops.StampWorkMeta == nil {
+		return nil
+	}'''
+expect_output = ["TestHookClaimStampsNoHolderWithoutASession"]

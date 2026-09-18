@@ -149,9 +149,23 @@ func TestHookClaimStampsTheHolderOnlyWhenItChanges(t *testing.T) {
 // hand-run `gc hook --claim` has no instance to name, and stamping the empty
 // string would name the slot -- reinstating for every later occupant exactly
 // the inheritance the stamp exists to break.
+//
+// The already-stamped sibling is the case that makes this test worth having,
+// and it was not obvious: with an UNSTAMPED sibling the compare-and-skip
+// answers identically whether the no-session guard is there or not, so the
+// first version of this test passed with the guard deleted (mutation sweep
+// 2026-09-18, row stamp-fires-without-a-session, SURVIVED). What the guard
+// actually decides is whether an empty GC_SESSION_ID ERASES a stamp already on
+// the bead -- a hand-run claim would otherwise strip the running session's
+// back-reference off its own sibling and release its work out from under it.
 func TestHookClaimStampsNoHolderWithoutASession(t *testing.T) {
-	patch := continuationHolderStampPatch(t, nil, nil)
-	if patch != nil {
+	if patch := continuationHolderStampPatch(t, nil, nil); patch != nil {
 		t.Fatalf("stamped %#v with no GC_SESSION_ID set", patch)
+	}
+	patch := continuationHolderStampPatch(t, nil, map[string]string{
+		beadmeta.SessionIDMetadataKey: "ci-someone-else",
+	})
+	if patch != nil {
+		t.Fatalf("stamped %#v over an existing back-reference with no GC_SESSION_ID set: a hand-run claim must not erase the holder a live session recorded", patch)
 	}
 }
