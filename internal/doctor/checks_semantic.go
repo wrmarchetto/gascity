@@ -146,16 +146,105 @@ func (c *DurationRangeCheck) Fix(_ *CheckContext) error { return nil }
 
 // --- Event log size check ---
 
-// EventLogSizeCheck warns when .gc/events.jsonl exceeds a size threshold.
-// The event log grows unbounded; large files slow down reads and waste disk.
+const (
+	// eventLogUnrotatedMaxSize bounds an events.jsonl that NOTHING will
+	// shrink. It applies ONLY when size-triggered rotation is off, where
+	// growth really is unbounded and any bound is a judgment call rather
+	// than a derivation.
+	//
+	// This was the threshold for every city, rotating or not, until
+	// 2026-09-18. That is the defect ci-q0qbg0 records: it sits at 39% of
+	// the 256 MiB rotation trigger, so a healthy city was red for the last
+	// ~61% of every cycle and the check stopped discriminating.
+	eventLogUnrotatedMaxSize int64 = 100 * 1024 * 1024
+
+	// eventLogOvershootNumer / eventLogOvershootDenom place the warning
+	// threshold at 1.5x the rotation trigger -- between the two regimes
+	// rather than at the healthy one's floor.
+	//
+	// A healthy cycle overshoots its trigger by at most one size-check
+	// window (FileRecorder's rotationCheckRecords, 1024 records by
+	// default -- under 1 MB at the ~500 B/record this city measures).
+	// Measured overshoots on the two closed cycles here were 4,046 B and
+	// 14,829 B. Half the trigger is therefore orders of magnitude above
+	// anything rotation can produce, while still catching a stuck
+	// recorder within days: at this city's ~22 MB/day it trips ~6 days
+	// after rotation should have fired.
+	//
+	// Integer halving rather than a float factor so the threshold is
+	// exactly reproducible from the trigger in a message and in a test.
+	eventLogOvershootNumer int64 = 3
+	eventLogOvershootDenom int64 = 2
+)
+
+// EventLogSizeCheck warns when .gc/events.jsonl has grown past the point
+// that the recorder's own rotation can explain.
+//
+// The threshold is DERIVED from the rotation trigger, never set beside it.
+// The two are one instrument: rotation decides where a healthy cycle peaks,
+// and this check only has a fault to report when the log is somewhere
+// rotation could not have left it. Set independently they drift into the
+// ci-q0qbg0 shape, where the check warns through most of every healthy
+// cycle and readers learn to skip it.
+//
+// Rejected: raising the flat constant to sit above the current reading.
+// That is one sample from one city -- it silences this cycle, says nothing
+// about the next, and re-acquires the same defect on any city whose
+// [events.rotation] max_size_bytes differs.
+//
+// Also rejected: giving rotation a second, smaller trigger so the 100 MB
+// constant became honest. That changes what the city keeps in one file and
+// would need every replay and dashboard consumer of the archive seq windows
+// re-checked first; this check being noisy is not a reason to move history
+// around.
+//
+// TestEventLogSizeCheckSeparatesTheMeasuredPopulations pins the two regimes
+// against sizes measured on this host, and is the test to run after any
+// change to the constants above.
 type EventLogSizeCheck struct {
-	// MaxSize is the warning threshold in bytes. Defaults to 100 MB.
+	// MaxSize is the warning threshold in bytes -- the size at which
+	// rotation overshoot has stopped being a plausible explanation.
 	MaxSize int64
+	// RotateAt is the recorder's configured rotation trigger, or 0 when
+	// size-triggered rotation is disabled. It is what MaxSize was derived
+	// from and it is named in every message, so a reader sees the
+	// overshoot rather than only the absolute size. Do NOT set it
+	// independently of MaxSize; use NewEventLogSizeCheckForConfig.
+	RotateAt int64
 }
 
-// NewEventLogSizeCheck creates a check for event log size.
+// NewEventLogSizeCheck creates a check for the default rotation settings.
 func NewEventLogSizeCheck() *EventLogSizeCheck {
-	return &EventLogSizeCheck{MaxSize: 100 * 1024 * 1024} // 100 MB
+	return NewEventLogSizeCheckForConfig(nil)
+}
+
+// NewEventLogSizeCheckForConfig derives the warning threshold from the
+// city's [events.rotation] settings.
+//
+// A nil cfg -- an unreadable or unparseable city.toml -- takes the same
+// defaults FileRecorder itself takes, because those are what the running
+// recorder applied. Falling back to the flat unrotated bound instead would
+// make a broken city.toml produce a warning about rotation on a city whose
+// rotation is working.
+func NewEventLogSizeCheckForConfig(cfg *config.City) *EventLogSizeCheck {
+	rot := config.EventsRotationConfig{}
+	if cfg != nil {
+		rot = cfg.Events.Rotation
+	}
+	if !rot.EnabledOrDefault() {
+		return &EventLogSizeCheck{MaxSize: eventLogUnrotatedMaxSize}
+	}
+	trigger := rot.MaxSizeBytesOrDefault()
+	// A non-positive max_size_bytes disables size-triggered rotation in
+	// FileRecorder regardless of enabled=true (recorder.go: maxSize <= 0),
+	// so the log is unrotated whatever the config reads like.
+	if trigger <= 0 {
+		return &EventLogSizeCheck{MaxSize: eventLogUnrotatedMaxSize}
+	}
+	return &EventLogSizeCheck{
+		MaxSize:  trigger / eventLogOvershootDenom * eventLogOvershootNumer,
+		RotateAt: trigger,
+	}
 }
 
 // Name returns the check identifier.
@@ -176,14 +265,31 @@ func (c *EventLogSizeCheck) Run(ctx *CheckContext) *CheckResult {
 	size := fi.Size()
 	if size <= c.MaxSize {
 		r.Status = StatusOK
-		r.Message = fmt.Sprintf("events.jsonl size: %s", humanSize(size))
+		if c.RotateAt > 0 {
+			r.Message = fmt.Sprintf("events.jsonl size: %s (rotates at %s)",
+				humanSize(size), humanSize(c.RotateAt))
+		} else {
+			r.Message = fmt.Sprintf("events.jsonl size: %s", humanSize(size))
+		}
 		return r
 	}
 
 	r.Status = StatusWarning
-	r.Message = fmt.Sprintf("events.jsonl is %s (exceeds %s threshold)",
+	// Neither branch advises truncating the log. The archives beside it are
+	// the only copy of a local-only city's history, and the previous hint
+	// ("consider truncating or archiving") read as sanction for deleting
+	// it.
+	if c.RotateAt > 0 {
+		r.Message = fmt.Sprintf(
+			"events.jsonl is %s, past the %s that rotation overshoot can explain (trigger is %s) -- size-triggered rotation is not firing",
+			humanSize(size), humanSize(c.MaxSize), humanSize(c.RotateAt))
+		r.FixHint = "run 'gc events rotate --wait'; if the log does not shrink, the recorder is not applying [events.rotation] -- check 'gc supervisor status'"
+		return r
+	}
+	r.Message = fmt.Sprintf(
+		"events.jsonl is %s (exceeds %s threshold) and rotation is disabled, so nothing will shrink it",
 		humanSize(size), humanSize(c.MaxSize))
-	r.FixHint = "consider truncating or archiving .gc/events.jsonl"
+	r.FixHint = "set [events.rotation] enabled = true in city.toml, then run 'gc events rotate --wait'"
 	return r
 }
 
