@@ -110,3 +110,15 @@ func (t *Tmux) paneShowsOverlay(target string) (bool, error) {
 	}
 	return paneShowsEnterOverlay(lines), nil
 }
+
+// errSubmitQueuedBehindRun ends the confirm loop because the pane was ALREADY
+// busy when the submit key was sent, so this message joined a run that was
+// underway rather than starting one.
+//
+// It travels as an error rather than a third return value for the same reason
+// errSubmitOverlayPresent does: the keys reached tmux, so this is not a send
+// failure, and NudgeSession maps it onto the unconfirmed path. The distinction
+// it carries is the one the caller could not previously make -- a nudge that
+// woke an agent and a nudge that landed in a composer and sat there were the
+// same reported success (ci-fo6au4).
+var errSubmitQueuedBehindRun = errors.New("submit not confirmed: the pane was already busy, so the message queued behind the running turn")
