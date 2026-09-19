@@ -1,6 +1,7 @@
 package dolt_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -4554,6 +4555,122 @@ exit 0
 	return logPath
 }
 
+// backupSyncFailedExitCode is the status mol-dog-backup.sh reserves for "the
+// sweep ran and at least one database did not reach its backup remote". It is
+// deliberately NOT the 1 the preflight paths use: a 1 there means nothing was
+// attempted at all (flock missing, Dolt below the managed floor) and the
+// remedy is to fix the host, while this status means coverage is incomplete
+// for a database the diagnostic names.
+const backupSyncFailedExitCode = 3
+
+// dogScriptExitCode returns the process exit status behind err, or 0 when the
+// script succeeded. A non-ExitError -- a start failure, a missing interpreter
+// -- is fatal rather than mapped to some number, because a test that turns it
+// into a status cannot tell "the script refused" from "the script never ran".
+func dogScriptExitCode(t *testing.T, err error) int {
+	t.Helper()
+	if err == nil {
+		return 0
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("script did not run to a process exit status: %v", err)
+	}
+	return exitErr.ExitCode()
+}
+
+// TestBackupScriptFailsTheOrderWhenADatabaseFailsToSync pins the invariant the
+// escalation mail could not carry on its own: a tick where a database did not
+// reach its backup remote must leave the order RED.
+//
+// The same fixture is driven both ways, failing sync and succeeding sync, in
+// one test. An exit status asserted only on the failing side is satisfied by a
+// script that returns it unconditionally, and "the escalation is correct" was
+// already true throughout the outage this pins -- only the exit status was
+// wrong, so the succeeding half is the half that can catch an over-broad fix.
+//
+// Measured before the fix (ci-liz6kl, from ci-ux4wo7): hq's hq-backup
+// destination committed no recovery point for 27.5 days while 97 escalation
+// message beads accumulated, and no order ever went red, because dolt_escalate
+// is followed by a fall-through to exit 0.
+func TestBackupScriptFailsTheOrderWhenADatabaseFailsToSync(t *testing.T) {
+	newCity := func(t *testing.T) (cityPath, dataDir string) {
+		t.Helper()
+		cityPath = t.TempDir()
+		dataDir = filepath.Join(cityPath, "dolt-data")
+		if err := os.MkdirAll(filepath.Join(dataDir, "prod", ".dolt"), 0o755); err != nil {
+			t.Fatalf("mkdir db: %v", err)
+		}
+		return cityPath, dataDir
+	}
+
+	t.Run("sync failure exits nonzero", func(t *testing.T) {
+		cityPath, dataDir := newCity(t)
+		binDir := t.TempDir()
+		_ = writeDogFakeGC(t, binDir)
+		_ = writeBackupFakeDolt(t, binDir, "2.1.0", 1, "prod")
+
+		out, err := runDogScriptCommand(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+		if got := dogScriptExitCode(t, err); got != backupSyncFailedExitCode {
+			t.Fatalf("exit code = %d, want %d when a database fails to sync:\n%s", got, backupSyncFailedExitCode, out)
+		}
+		// The status alone is not actionable. The dispatcher stores this
+		// output on the tracking bead through SetExecFailureOutput only on a
+		// nonzero exit, so it is the one durable record of WHICH database is
+		// uncovered and what to run to reproduce it.
+		for _, want := range []string{
+			"prod(sync failed: simulated backup sync failure)",
+			"NOT backed up",
+			"dolt backup sync prod-backup",
+		} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("failure diagnostic missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("full coverage exits zero", func(t *testing.T) {
+		cityPath, dataDir := newCity(t)
+		binDir := t.TempDir()
+		_ = writeDogFakeGC(t, binDir)
+		_ = writeBackupFakeDolt(t, binDir, "2.1.0", 0, "prod")
+
+		out, err := runDogScriptCommand(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+		if got := dogScriptExitCode(t, err); got != 0 {
+			t.Fatalf("exit code = %d, want 0 when every database synced:\n%s", got, out)
+		}
+		if !strings.Contains(out, "synced: 1/1") {
+			t.Fatalf("unexpected backup summary:\n%s", out)
+		}
+	})
+}
+
+// TestBackupOrderKeepsSyncFailureOutOfIncompleteExitCodes pins an ABSENCE:
+// mol-dog-backup.toml must never declare the sync-failure status as an
+// incomplete exit.
+//
+// declaredIncompleteExit in cmd/gc/order_dispatch.go routes a declared status
+// to RunOutcomeExecIncomplete, which fires order.completed and is exempt from
+// the consecutive-failure streak. Declaring this one would rebuild exactly the
+// silence the nonzero exit exists to break -- the order would go on reporting
+// completed every tick while a database sat unbacked. The same reasoning and
+// the same choice are recorded at the sibling exit in
+// assets/scripts/bd-backup-sync.sh in the city repo.
+func TestBackupOrderKeepsSyncFailureOutOfIncompleteExitCodes(t *testing.T) {
+	root := repoRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "orders", "mol-dog-backup.toml"))
+	if err != nil {
+		t.Fatalf("read backup order: %v", err)
+	}
+	order, err := orders.Parse(data)
+	if err != nil {
+		t.Fatalf("parse backup order: %v", err)
+	}
+	if order.IsIncompleteExit(backupSyncFailedExitCode) {
+		t.Fatalf("mol-dog-backup.toml declares exit %d incomplete; a failed sync must count as a failure", backupSyncFailedExitCode)
+	}
+}
+
 func writeBSDLikeGrep(t *testing.T, binDir string) {
 	t.Helper()
 	realGrep, err := exec.LookPath("grep")
@@ -4819,7 +4936,10 @@ func TestBackupScriptCountsFailedDatabasesByDatabase(t *testing.T) {
 	gcLogPath := writeDogFakeGC(t, binDir)
 	_ = writeBackupFakeDolt(t, binDir, "2.1.0", 1)
 
-	out := runDogScript(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+	out, err := runDogScriptCommand(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+	if got := dogScriptExitCode(t, err); got != backupSyncFailedExitCode {
+		t.Fatalf("exit code = %d, want %d with a database failing to sync:\n%s", got, backupSyncFailedExitCode, out)
+	}
 	if !strings.Contains(out, "synced: 0/1") {
 		t.Fatalf("unexpected backup summary:\n%s", out)
 	}
@@ -4845,7 +4965,10 @@ func TestBackupScriptEscalationIncludesSyncFailureOutput(t *testing.T) {
 	gcLogPath := writeDogFakeGC(t, binDir)
 	_ = writeBackupFakeDolt(t, binDir, "2.1.0", 1)
 
-	runDogScript(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+	out, err := runDogScriptCommand(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+	if got := dogScriptExitCode(t, err); got != backupSyncFailedExitCode {
+		t.Fatalf("exit code = %d, want %d with a database failing to sync:\n%s", got, backupSyncFailedExitCode, out)
+	}
 
 	gcLog, err := os.ReadFile(gcLogPath)
 	if err != nil {
@@ -4952,7 +5075,10 @@ func TestBackupScriptCountsFailedRemoteAutoConfiguration(t *testing.T) {
 	gcLogPath := writeDogFakeGC(t, binDir)
 	doltLogPath := writeAutoConfigureFakeDolt(t, binDir, 1)
 
-	out := runDogScript(t, "mol-dog-backup.sh", binDir, cityPath, dataDir)
+	out, err := runDogScriptCommand(t, "mol-dog-backup.sh", binDir, cityPath, dataDir)
+	if got := dogScriptExitCode(t, err); got != backupSyncFailedExitCode {
+		t.Fatalf("exit code = %d, want %d with a database left unconfigured:\n%s", got, backupSyncFailedExitCode, out)
+	}
 	if !strings.Contains(out, "synced: 1/2") {
 		t.Fatalf("unexpected backup summary:\n%s", out)
 	}

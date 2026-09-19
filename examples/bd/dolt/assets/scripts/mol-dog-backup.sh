@@ -5,7 +5,46 @@
 # dolt backup sync per DB, rsync backup artifacts to offsite path. No LLM judgment needed.
 #
 # Runs as an exec order (no LLM, no agent, no wisp).
+#
+# Exit status is the order's only durable verdict, so it is part of the
+# contract:
+#
+#   0  every database reached its backup remote, or there were none to sync,
+#      or another run already holds the lock
+#   1  the sweep did not start -- flock missing, or Dolt below the managed
+#      floor. Nothing was attempted; the remedy is on the host
+#   3  the sweep ran and at least one database did NOT reach its backup
+#      remote. Named in the stderr diagnostic
+#
+# Exit 3 exists because escalation mail is not a verdict. This script used to
+# call dolt_escalate for a failed database and then fall through to exit 0,
+# and the dispatcher records a zero-exit exec run as completed with no output
+# retained -- so a tick that backed up nothing was byte-identical to a clean
+# one in the tracking bead. Measured (ci-liz6kl, from ci-ux4wo7): hq's
+# hq-backup destination committed no recovery point for 27.5 days while 97
+# escalation message beads accumulated, 96 of them auto-closed, and no order
+# ever went red. A nonzero exit routes the text below through
+# SetExecFailureOutput in cmd/gc/order_dispatch.go, where it becomes durable
+# on the tracking bead. The sibling assets/scripts/bd-backup-sync.sh in the
+# city repo made the same trade for the same reason.
+#
+# 3 rather than reusing 1: a host that refused to run the sweep and a sweep
+# that ran with incomplete coverage need different remedies, and collapsing
+# them hides one behind the other.
+#
+# The status is deliberately NOT declared in orders/mol-dog-backup.toml's
+# incomplete_exit_codes. Incomplete fires order.completed and is exempt from
+# the consecutive-failure streak, which would rebuild the exact silence this
+# exit exists to break. Pinned by
+# TestBackupOrderKeepsSyncFailureOutOfIncompleteExitCodes.
+#
+# A failed offsite rsync stays non-fatal and is reported in the summary only.
+# It copies artifacts that already exist locally, so it costs a second copy,
+# not a recovery point.
 set -euo pipefail
+
+# Reserved for "the sweep ran and coverage is incomplete". See the header.
+BACKUP_SYNC_FAILED_EXIT=3
 
 PACK_DIR="${GC_PACK_DIR:-$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 . "$PACK_DIR/assets/scripts/runtime.sh"
@@ -63,14 +102,21 @@ EOF
     [ "$cur_patch" -ge "$min_patch" ]
 }
 
+# append_failed_db records one uncovered database twice: once as prose for the
+# escalation body, and once as a bare name. The bare list is what the stderr
+# diagnostic turns into a per-database reproduce command -- parsing the name
+# back out of the prose would break the first time a detail string contained a
+# parenthesis.
 append_failed_db() {
-    db_failure="$1"
+    db_failure_name="$1"
+    db_failure_detail="$2"
     FAILED=$((FAILED + 1))
     if [ -n "$FAILED_DBS" ]; then
-        FAILED_DBS="$FAILED_DBS, $db_failure"
+        FAILED_DBS="$FAILED_DBS, $db_failure_name($db_failure_detail)"
     else
-        FAILED_DBS="$db_failure"
+        FAILED_DBS="$db_failure_name($db_failure_detail)"
     fi
+    FAILED_DB_NAMES="$FAILED_DB_NAMES $db_failure_name"
 }
 
 acquire_backup_lock() {
@@ -90,6 +136,13 @@ acquire_backup_lock() {
 
     mkdir -p "$(dirname "$BACKUP_LOCK_FILE")"
     exec 9>"$BACKUP_LOCK_FILE"
+    # Exit 0, unlike the sibling bd-backup-sync.sh, which fails on the same
+    # contention. The two orders need opposite behavior on one shared lock:
+    # this one is the long holder and yields almost at once, so a skip here
+    # means the other order is mid-sweep, not that backups are stalled. The
+    # wait is 5s against a measured 122-130s hold, so a skipped tick is the
+    # designed outcome and failing it would alert on every drift into
+    # alignment.
     if ! flock -w "$BACKUP_LOCK_WAIT_SECONDS" 9; then
         SUMMARY="backup — skipped: already running"
         dolt_notify_done "$SUMMARY"
@@ -165,15 +218,16 @@ TOTAL=$(printf '%s\n' "$DATABASES" | awk 'NF {count++} END {print count + 0}')
 SYNCED=0
 FAILED=0
 FAILED_DBS=""
+FAILED_DB_NAMES=""
 
 for db in $DATABASES; do
     if ! ensure_backup_remote "$db"; then
-        append_failed_db "$db(backup add failed)"
+        append_failed_db "$db" "backup add failed"
         continue
     fi
     db_dir="$DOLT_DATA_DIR/$db"
     if [ ! -d "$db_dir/.dolt" ]; then
-        append_failed_db "$db(not found)"
+        append_failed_db "$db" "not found"
         continue
     fi
     sync_error=""
@@ -184,7 +238,7 @@ for db in $DATABASES; do
         if [ -z "$sync_error" ]; then
             sync_error="no error output"
         fi
-        append_failed_db "$db(sync failed: $sync_error)"
+        append_failed_db "$db" "sync failed: $sync_error"
     fi
 done
 
@@ -217,3 +271,16 @@ fi
 SUMMARY="backup — synced: $SYNCED/$TOTAL, offsite: $OFFSITE_STATUS"
 dolt_notify_done "$SUMMARY"
 echo "backup: $SUMMARY"
+
+# The done-notification and the summary are emitted above this refusal, not
+# below it, so a failing tick still closes out the maintenance target it
+# opened. Only the verdict changes.
+if [ "$FAILED_COUNT" -gt 0 ]; then
+    echo "mol-dog-backup: $FAILED_COUNT/$TOTAL databases were NOT backed up this tick." \
+         "Failed databases:$FAILED_DBS" >&2
+    for failed_db in $FAILED_DB_NAMES; do
+        echo "mol-dog-backup: reproduce $failed_db with:" \
+             "cd $DOLT_DATA_DIR/$failed_db && dolt backup sync ${failed_db}-backup" >&2
+    done
+    exit "$BACKUP_SYNC_FAILED_EXIT"
+fi
