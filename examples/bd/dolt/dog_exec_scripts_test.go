@@ -4975,6 +4975,66 @@ func TestBackupScriptCountsFailedRemoteAutoConfiguration(t *testing.T) {
 	}
 }
 
+// TestBackupScriptExcludesDatabasesOutsideTheDeclaredList pins the ONE
+// exclusion mechanism mol-dog-backup.sh has: GC_BACKUP_DATABASES replaces
+// auto-discovery, and a database left out of it must be reached by nothing --
+// not synced, and not auto-configured a backup remote either.
+//
+// Every other use of GC_BACKUP_DATABASES in this file is setup convenience,
+// where the named database is the only one on disk. The exclusion contract
+// itself was asserted nowhere, so the branch could have been reduced to a
+// no-op with the whole suite green -- and a city is now relying on it to keep
+// a failing destination out of a six-hour sweep (ci-1hfenu), where the symptom
+// of it silently not working is 9.45GB/day of unreachable chunks.
+//
+// The auto-configure half is the part worth naming. Excluding a database from
+// the SYNC is the obvious reading; `ensure_backup_remote` runs first and would
+// create a remote and its artifact directory before any sync is attempted, so
+// an exclusion that only skipped the sync would still write to disk under a
+// path the operator asked nothing to touch.
+func TestBackupScriptExcludesDatabasesOutsideTheDeclaredList(t *testing.T) {
+	cityPath := t.TempDir()
+	dataDir := filepath.Join(cityPath, "dolt-data")
+	for _, db := range []string{"prod", "archive"} {
+		if err := os.MkdirAll(filepath.Join(dataDir, db, ".dolt"), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", db, err)
+		}
+	}
+	binDir := t.TempDir()
+	_ = writeDogFakeGC(t, binDir)
+	// archive holds no archive-backup remote, so it is exactly the database
+	// auto-configuration exists to catch. Declaring only prod is what has to
+	// keep it out.
+	doltLogPath := writeAutoConfigureFakeDolt(t, binDir, 0)
+
+	out := runDogScript(t, "mol-dog-backup.sh", binDir, cityPath, dataDir, "GC_BACKUP_DATABASES=prod")
+
+	// The declared database is asserted to have been swept, not just the
+	// excluded one to have been skipped. A script that swept nothing at all
+	// satisfies every negative below.
+	if !strings.Contains(out, "synced: 1/1") {
+		t.Fatalf("unexpected backup summary:\n%s", out)
+	}
+	doltLog, err := os.ReadFile(doltLogPath)
+	if err != nil {
+		t.Fatalf("read dolt log: %v", err)
+	}
+	if !strings.Contains(string(doltLog), "backup sync prod-backup") {
+		t.Fatalf("the declared database must still be synced:\n%s", doltLog)
+	}
+	for _, unwanted := range []string{"backup add archive-backup", "backup sync archive-backup"} {
+		if strings.Contains(string(doltLog), unwanted) {
+			t.Fatalf("an undeclared database must not be reached by %q:\n%s", unwanted, doltLog)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(cityPath, ".dolt-backup", "archive")); !os.IsNotExist(err) {
+		t.Fatalf("an undeclared database must not get an artifact directory: err=%v", err)
+	}
+	if strings.Contains(out, "archive") {
+		t.Fatalf("an undeclared database must not appear in the report:\n%s", out)
+	}
+}
+
 // doctorBackupStaleEnv sets the doctor's backup-staleness horizon for these
 // fixtures.
 //
