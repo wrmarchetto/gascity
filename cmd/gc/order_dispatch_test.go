@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -10805,5 +10806,160 @@ func TestCooldownDeadlineIsNotChargedTheRingWalkAheadOfIt(t *testing.T) {
 					tick, got, ticks, ticks, time.Duration(fillers)*tc.step, write)
 			}
 		})
+	}
+}
+
+// residualLogMarker is the substring the three residual cases below key on.
+// Declared once so a rename of the diagnostic cannot leave two of them
+// asserting on a string the dispatcher no longer prints while the third still
+// passes.
+const residualLogMarker = "not due on a sub-tick interval"
+
+// dispatchTwiceForResidual runs one successful dispatch to establish the
+// cooldown clock, then a second at firstNow+gap, and returns the stderr of
+// the SECOND tick alone plus the tracking bead's CreatedAt.
+//
+// The first tick's output is discarded deliberately: it carries the ordinary
+// dispatch logging, and a case asserting over both cannot tell a residual
+// line from a line the first tick wrote.
+func dispatchTwiceForResidual(t *testing.T, interval string, gap time.Duration) (string, time.Time, time.Time) {
+	t.Helper()
+	cityDir := t.TempDir()
+	store := beads.NewMemStore()
+	stderr := &bytes.Buffer{}
+	m := &memoryOrderDispatcher{
+		aa: []orders.Order{{
+			Name:     "trio-member",
+			Trigger:  "cooldown",
+			Interval: interval,
+			Exec:     "true",
+		}},
+		storeFn: func(execStoreTarget) (beads.Store, error) { return store, nil },
+		execRun: func(context.Context, string, string, []string) ([]byte, error) {
+			return nil, nil
+		},
+		rec:    events.Discard,
+		stderr: stderr,
+		cfg:    &config.City{},
+	}
+
+	firstNow := time.Now()
+	m.dispatch(context.Background(), cityDir, firstNow)
+	m.drain(context.Background())
+
+	tracking := trackingBeads(t, store, "order-run:trio-member")
+	if len(tracking) != 1 {
+		t.Fatalf("tracking beads after the first tick = %d, want 1", len(tracking))
+	}
+
+	stderr.Reset()
+	evalNow := firstNow.Add(gap)
+	m.dispatch(context.Background(), cityDir, evalNow)
+	m.drain(context.Background())
+	return stderr.String(), tracking[0].CreatedAt, evalNow
+}
+
+// TestOrderDispatchLogsTheResidualForSubTickOrders pins the instrument
+// ci-oycdq6 asked for. With the per-tick cap raised past binding (d51eed1ff),
+// the three 30s orders still deliver ~93% of nominal, and the not-due path
+// discarded result.Reason -- so the residual was a number with no observable
+// cause. The diagnostic has to carry every term of the comparison the trigger
+// actually made, because the gap between them is the whole question: a line
+// naming only the order would say no more than the delivery arithmetic
+// already does.
+//
+// The expected elapsed is derived from the tracking bead's own CreatedAt read
+// back out of the store, not from the gap this case passed in. The bead's
+// CreatedAt is the cooldown clock and it lands after the run's gates, so it
+// is NOT firstNow, and a case asserting the gap would be asserting a value
+// the dispatcher never compared against.
+func TestOrderDispatchLogsTheResidualForSubTickOrders(t *testing.T) {
+	out, createdAt, evalNow := dispatchTwiceForResidual(t, "30s", 5*time.Second)
+
+	if !strings.Contains(out, residualLogMarker) {
+		t.Fatalf("second tick stderr missing the residual diagnostic:\n%s", out)
+	}
+	for _, want := range []string{
+		"trio-member",
+		"last_run=" + createdAt.Format(time.RFC3339Nano),
+		"interval=30s",
+		// 30s tick halves to 15s, interval/6 is 5s and is the smaller bound.
+		// Written out rather than derived from the divisor the implementation
+		// reads: this is the term the dispatcher cannot see for itself and
+		// the whole reason TriggerResult carries it.
+		"slack=5s",
+		"patrol=30s",
+		"cooldown:",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("residual diagnostic missing %q:\n%s", want, out)
+		}
+	}
+
+	// eval_now and elapsed are asserted as a RELATION, not as literals. The
+	// dispatcher evaluates at now plus the ring-walk elapsed it just measured
+	// (order_dispatch.go's sinceTickStart), so the instant is a few
+	// microseconds past the one this case passed in and is unpredictable from
+	// here. Pinning the arithmetic instead is the stronger assertion anyway:
+	// what must hold is that the printed elapsed is the printed eval_now less
+	// the printed last_run, because an elapsed derived from anything else --
+	// the tick's own now, a second clock read -- describes a comparison the
+	// trigger did not make, and would agree with these literals while doing
+	// so.
+	fields := regexp.MustCompile(`eval_now=(\S+) last_run=(\S+) elapsed=(\S+) `).FindStringSubmatch(out)
+	if fields == nil {
+		t.Fatalf("residual diagnostic does not carry eval_now/last_run/elapsed:\n%s", out)
+	}
+	loggedEval, err := time.Parse(time.RFC3339Nano, fields[1])
+	if err != nil {
+		t.Fatalf("parsing logged eval_now %q: %v", fields[1], err)
+	}
+	loggedLast, err := time.Parse(time.RFC3339Nano, fields[2])
+	if err != nil {
+		t.Fatalf("parsing logged last_run %q: %v", fields[2], err)
+	}
+	loggedElapsed, err := time.ParseDuration(fields[3])
+	if err != nil {
+		t.Fatalf("parsing logged elapsed %q: %v", fields[3], err)
+	}
+	if got := loggedEval.Sub(loggedLast); got != loggedElapsed {
+		t.Errorf("logged elapsed = %s, but eval_now less last_run = %s", loggedElapsed, got)
+	}
+	if loggedEval.Before(evalNow) {
+		t.Errorf("logged eval_now %s precedes the tick instant %s", loggedEval, evalNow)
+	}
+	// The ring-walk correction is small; a line reporting an instant a second
+	// past the tick would mean the diagnostic is reading a different clock
+	// than the trigger, which is the one way these relations can all hold and
+	// still be wrong.
+	if loggedEval.Sub(evalNow) > time.Second {
+		t.Errorf("logged eval_now %s is %s past the tick instant, want under 1s",
+			loggedEval, loggedEval.Sub(evalNow))
+	}
+}
+
+// TestOrderDispatchLeavesLongIntervalResidualsUnlogged pins the gate, which is
+// the half that keeps this instrument usable. Every cooldown order is not due
+// on almost every tick -- the city runs 37 of them -- so an ungated line
+// would write tens of thousands of entries a day and bury the three rows it
+// exists to show. An order whose interval exceeds the patrol interval has a
+// legitimate reason to be not due and needs no explanation.
+func TestOrderDispatchLeavesLongIntervalResidualsUnlogged(t *testing.T) {
+	out, _, _ := dispatchTwiceForResidual(t, "1h", 5*time.Second)
+
+	if strings.Contains(out, residualLogMarker) {
+		t.Fatalf("a 1h order against a 30s patrol logged a residual:\n%s", out)
+	}
+}
+
+// TestOrderDispatchLogsNoResidualWhenTheOrderIsDue keeps the diagnostic on the
+// branch it describes. A line printed when the order fired would make the log
+// a per-tick trace of every sub-tick order rather than a record of the misses,
+// and the residual count read off it would be the tick count.
+func TestOrderDispatchLogsNoResidualWhenTheOrderIsDue(t *testing.T) {
+	out, _, _ := dispatchTwiceForResidual(t, "30s", 40*time.Second)
+
+	if strings.Contains(out, residualLogMarker) {
+		t.Fatalf("a due order logged a residual:\n%s", out)
 	}
 }

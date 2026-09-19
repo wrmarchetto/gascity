@@ -886,8 +886,18 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 			if a.Trigger == "condition" && strings.Contains(result.Reason, orders.ConditionCheckTimedOutMarker) {
 				logDispatchError(m.stderr, "gc: order dispatch: %s %s — raise check_timeout if the check needs a slow store read", a.ScopedName(), result.Reason)
 			}
+			m.logCooldownResidual(a, evalNow, result)
 			continue
 		}
+		// NO RESIDUAL DIAGNOSTIC ON THE REFRESH PATH BELOW, and the absence is
+		// deliberate rather than an oversight. A cached last-run that the store
+		// then contradicts is its own shape of miss and a plausible contributor
+		// to the ~7% residual (ci-oycdq6), but the diagnostic there would need a
+		// case driving the cache and the store apart to be worth trusting, and
+		// an untested instrument that under-counts reads as a measured zero.
+		// So the log below covers the primary comparison only: if a six-hour
+		// window's logged misses fall short of the delivery arithmetic's, this
+		// is the next place to look.
 		if lastRunFromCache && orderTriggerUsesLastRun(a) {
 			refreshedLastRun, err := baseLastRunFn(a.ScopedName())
 			if err != nil {
@@ -1334,6 +1344,71 @@ func (m *memoryOrderDispatcher) wallNow() time.Time {
 		return m.nowFn()
 	}
 	return time.Now()
+}
+
+// logCooldownResidual explains ONE not-due cooldown decision, for orders whose
+// interval is at most the patrol interval.
+//
+// WHY THIS EXISTS. With the per-tick dispatch cap raised past binding
+// (d51eed1ff), the city's three 30s orders still delivered ~93% of nominal
+// over a 359.9-minute window while every unconstrained order delivered
+// 100-106%. The not-due path discarded result.Reason, so the residual was a
+// number with no observable cause (ci-oycdq6, from ci-umip0g's acceptance
+// measurement).
+//
+// WHY IT IS GATED ON THE PATROL INTERVAL rather than logged for every not-due
+// order. A cooldown order is not due on almost every tick -- that is the
+// normal state, and this city runs 37 of them -- so an ungated line writes
+// tens of thousands of entries a day and buries the three rows worth reading.
+// An order whose interval exceeds the tick has a legitimate reason to be not
+// due; one at or below the tick should fire every tick and a miss is the
+// defect.
+//
+// Every term of the trigger's own comparison is printed, because the residual
+// is the gap between them and a line naming only the order would say no more
+// than the delivery arithmetic already does. `elapsed` is recomputed here
+// rather than carried on the result: it is the same subtraction over the same
+// two values the trigger used, both of them in hand, so there is nothing that
+// can drift. `slack` is NOT recomputable that way -- defaultCooldownSlack is
+// unexported and the divisor is its own -- so TriggerResult reports it.
+//
+// eval_now is RFC3339Nano and that is load-bearing. last_run comes from the
+// tracking bead's created_at, which the bead store holds at SECOND
+// granularity (internal/beads/bdstore.go:827, and `bd show --json` confirms
+// it), so `gc order history` cannot order two dispatches inside one tick and
+// no gc-side change can give it the precision to. This log is therefore the
+// ordering source for a window read against that history, not a companion to
+// it.
+//
+// Routed through logDispatchError because it is the dispatcher's only log
+// seam -- the name is not a claim that a residual is an error. The
+// condition-check timeout diagnostic on this same path shares it.
+func (m *memoryOrderDispatcher) logCooldownResidual(a orders.Order, evalNow time.Time, result orders.TriggerResult) {
+	// A zero LastRun means never run, which is DUE and cannot reach here; the
+	// guard is for the bad-interval and query-error results, which are not-due
+	// with no comparison to report.
+	if a.Trigger != "cooldown" || result.LastRun.IsZero() {
+		return
+	}
+	interval, err := time.ParseDuration(a.Interval)
+	if err != nil || interval <= 0 {
+		return
+	}
+	patrol := m.patrolInterval()
+	if patrol <= 0 || interval > patrol {
+		return
+	}
+	logDispatchError(m.stderr,
+		"gc: order dispatch: %s not due on a sub-tick interval: eval_now=%s last_run=%s elapsed=%s interval=%s slack=%s patrol=%s -- %s",
+		a.ScopedName(),
+		evalNow.Format(time.RFC3339Nano),
+		result.LastRun.Format(time.RFC3339Nano),
+		evalNow.Sub(result.LastRun),
+		interval,
+		result.Slack,
+		patrol,
+		result.Reason,
+	)
 }
 
 func (m *memoryOrderDispatcher) patrolInterval() time.Duration {
