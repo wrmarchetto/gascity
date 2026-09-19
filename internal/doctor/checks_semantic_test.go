@@ -307,6 +307,157 @@ func TestEventLogSizeCheck_ExactlyAtThreshold(t *testing.T) {
 	}
 }
 
+// The four tests below pin the threshold DERIVATION, which is the whole
+// subject of ci-q0qbg0. A flat constant below the rotation trigger warns
+// for most of every healthy cycle by construction, and a check that is
+// almost always warning stops discriminating.
+
+// eventLogSizeCheckFixture writes an events.jsonl of exactly n bytes and
+// returns the city path. Sparse via Truncate so a 384 MB case costs no
+// disk and no wall clock -- the check only ever calls os.Stat.
+func eventLogSizeCheckFixture(t *testing.T, n int64) string {
+	t.Helper()
+	dir := t.TempDir()
+	gcDir := filepath.Join(dir, ".gc")
+	if err := os.MkdirAll(gcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(gcDir, "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(n); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// A log sitting AT the rotation trigger is a healthy cycle at its peak, not
+// a fault, so the check must be quiet there. This is the case the 100 MB
+// constant got wrong: it was 39% of the trigger, so every cycle spent its
+// last 61% warning.
+//
+// The fixture size is read from the same config accessor the check reads
+// rather than written as a literal, because the invariant under test is the
+// RELATION between the two thresholds -- a literal would keep passing if the
+// derivation were replaced by a coincidentally-similar constant. The
+// separate measured-populations test below carries the literals.
+func TestEventLogSizeCheckIsQuietAtAHealthyCyclePeak(t *testing.T) {
+	trigger := config.EventsRotationConfig{}.MaxSizeBytesOrDefault()
+	c := NewEventLogSizeCheckForConfig(nil)
+
+	for _, n := range []int64{trigger, trigger + 15_000} {
+		r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, n)})
+		if r.Status != StatusOK {
+			t.Errorf("size %d: status = %d, want OK (a cycle peaks at the trigger plus one check window); msg = %s",
+				n, r.Status, r.Message)
+		}
+	}
+}
+
+// Past the overshoot bound, rotation is not firing -- that is the fault the
+// check exists to name. The warning must say so and must NOT advise
+// truncation: this city's archives are its only copy of its own history
+// (jsonl-archive runs local-only), so "truncate the log" is advice that
+// destroys data.
+func TestEventLogSizeCheckWarnsWhenRotationIsNotFiring(t *testing.T) {
+	trigger := config.EventsRotationConfig{}.MaxSizeBytesOrDefault()
+	c := NewEventLogSizeCheckForConfig(nil)
+
+	r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, trigger*2)})
+	if r.Status != StatusWarning {
+		t.Fatalf("status = %d, want Warning at twice the rotation trigger; msg = %s", r.Status, r.Message)
+	}
+	if !strings.Contains(r.FixHint, "gc events rotate") {
+		t.Errorf("FixHint = %q, want the exact remedy command 'gc events rotate'", r.FixHint)
+	}
+	if strings.Contains(strings.ToLower(r.FixHint+r.Message), "truncat") {
+		t.Errorf("FixHint/Message advises truncation, which destroys the only copy of this city's history: %q / %q",
+			r.FixHint, r.Message)
+	}
+}
+
+// The threshold must track a city's CONFIGURED trigger, not the default. A
+// city that rotates at 8 MB is healthy at 9 MB and faulty at 90 MB; a check
+// hardcoded to the 256 MiB default would be silent through both.
+func TestEventLogSizeCheckTracksAConfiguredRotationTrigger(t *testing.T) {
+	trigger := int64(8 * 1024 * 1024)
+	cfg := &config.City{Events: config.EventsConfig{
+		Rotation: config.EventsRotationConfig{MaxSizeBytes: &trigger},
+	}}
+	c := NewEventLogSizeCheckForConfig(cfg)
+
+	if r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, trigger+1024)}); r.Status != StatusOK {
+		t.Errorf("just past an 8 MB trigger: status = %d, want OK; msg = %s", r.Status, r.Message)
+	}
+	if r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, trigger*10)}); r.Status != StatusWarning {
+		t.Errorf("ten times an 8 MB trigger: status = %d, want Warning; msg = %s", r.Status, r.Message)
+	}
+}
+
+// With size-triggered rotation OFF the log really does grow without bound,
+// and there is no trigger to derive a threshold from. The check falls back
+// to the flat bound and the warning must say rotation is disabled -- the
+// remedy is config, not a force-rotate that will be undone by the next
+// cycle.
+func TestEventLogSizeCheckFallsBackToAFlatBoundWhenRotationIsDisabled(t *testing.T) {
+	off := false
+	cfg := &config.City{Events: config.EventsConfig{
+		Rotation: config.EventsRotationConfig{Enabled: &off},
+	}}
+	c := NewEventLogSizeCheckForConfig(cfg)
+
+	r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, eventLogUnrotatedMaxSize+1)})
+	if r.Status != StatusWarning {
+		t.Fatalf("status = %d, want Warning one byte over the flat bound; msg = %s", r.Status, r.Message)
+	}
+	if !strings.Contains(r.Message, "rotation is disabled") {
+		t.Errorf("Message = %q, want it to name rotation being disabled as the cause", r.Message)
+	}
+	if r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, eventLogUnrotatedMaxSize)}); r.Status != StatusOK {
+		t.Errorf("at the flat bound: status = %d, want OK; msg = %s", r.Status, r.Message)
+	}
+}
+
+// The two regimes, pinned to bytes measured on this city on 2026-09-18
+// rather than re-derived from the code. Both closed cycles peaked within
+// 15 KB of the trigger:
+//
+//	archive-20260823T130209Z-seq-1-470843.gz        raw 268,439,502 B
+//	archive-20260907T052338Z-seq-470844-963017.gz   raw 268,450,285 B
+//
+// If the headroom factor is ever tightened to where ordinary overshoot
+// trips it, or loosened past a genuinely runaway log, this test goes red.
+// It holds literals ON PURPOSE -- deriving them from the same accessor the
+// implementation reads would let the whole derivation be dropped silently.
+func TestEventLogSizeCheckSeparatesTheMeasuredPopulations(t *testing.T) {
+	c := NewEventLogSizeCheckForConfig(nil)
+
+	healthy := []int64{104_857_601, 245_755_271, 268_439_502, 268_450_285}
+	for _, n := range healthy {
+		if r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, n)}); r.Status != StatusOK {
+			t.Errorf("measured healthy size %d: status = %d, want OK; msg = %s", n, r.Status, r.Message)
+		}
+	}
+	// 448 MiB: a cycle that has run ~9 days past its trigger at this
+	// city's measured ~22 MB/day. Rotation cannot explain it.
+	if r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, 469_762_048)}); r.Status != StatusWarning {
+		t.Errorf("runaway 448 MB: status = %d, want Warning; msg = %s", r.Status, r.Message)
+	}
+	// The bound itself is 384 MiB and is inclusive-OK, matching every
+	// other size check here. Pinned as a literal so a change to the
+	// headroom constants cannot move it unnoticed.
+	if r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, 402_653_184)}); r.Status != StatusOK {
+		t.Errorf("at the 384 MB bound: status = %d, want OK; msg = %s", r.Status, r.Message)
+	}
+	if r := c.Run(&CheckContext{CityPath: eventLogSizeCheckFixture(t, 402_653_185)}); r.Status != StatusWarning {
+		t.Errorf("one byte over the 384 MB bound: status = %d, want Warning; msg = %s", r.Status, r.Message)
+	}
+}
+
 // --- ConfigSemanticsCheck ---
 
 func TestConfigSemanticsCheck_Clean(t *testing.T) {

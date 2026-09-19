@@ -201,6 +201,9 @@ var (
 	// runtime.ErrNudgeSubmitUnconfirmed. It preserves source compatibility for
 	// callers that classify the provider's delivered-but-unobserved outcome.
 	ErrNudgeSubmitUnconfirmed = runtime.ErrNudgeSubmitUnconfirmed
+	// ErrNudgeQueuedPendingDrain is the tmux spelling of
+	// runtime.ErrNudgeQueuedPendingDrain, aliased for the same reason.
+	ErrNudgeQueuedPendingDrain = runtime.ErrNudgeQueuedPendingDrain
 	// ErrServerDegraded indicates the tmux server bound to SocketName is
 	// reachable on the filesystem but unresponsive. Creating a new session
 	// in this state would let tmux's own (very short) liveness probe time
@@ -1998,6 +2001,34 @@ func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bo
 		draftSeen = true
 	}
 
+	// Was the pane ALREADY busy before the first submit key? This is the exact
+	// mirror of draftSeen above, and its absence was the defect on ci-fo6au4:
+	// the draft's later ABSENCE only means "submitted" if it was there to begin
+	// with, and the busy indicator's later PRESENCE only means "submitted" if it
+	// was absent to begin with. This function's own docstring says it confirms
+	// by observing the agent TRANSITION to busy; reading the state instead let a
+	// run that was already underway satisfy the witness on the first poll.
+	//
+	// What that cost, measured 2026-09-18T05:13-05:16Z: all three toolsmith
+	// sessions sat parked at their prompts holding pool slots, each composer
+	// containing gc's own backstop text verbatim, with three ready P1s in the
+	// queue -- while every nudge reported success. A caller could not tell a
+	// wake from a no-op, which is the part that made it expensive.
+	//
+	// WHAT THOSE SESSIONS WERE NOT, established by ci-tihynr on 2026-09-18 and
+	// recorded here because the first reading of them was wrong: they were not
+	// merely busy. A message queued behind a running turn DRAINS at turn end
+	// unaided -- 23.6s from enqueue to drain, twice, two sessions, two
+	// instruments, no key pressed by anyone. What strands is a pane blocked on
+	// a MODAL DIALOG, which swallows the composer and offers no turn end to
+	// drain at. The abstention below is still right for both, because neither
+	// is a transition this function witnessed. Which one it is gets settled by
+	// the provider's own queue ledger, in classifyNudgeSubmitErr.
+	busyBefore := false
+	if wasBusy, err := busy(); err == nil && wasBusy {
+		busyBefore = true
+	}
+
 	// Observation failures are COUNTED, not swallowed. Both sources read the
 	// pane through capture-pane, and an error from it used to be discarded by
 	// `err == nil && isBusy` -- making "the pane says idle" and "the pane could
@@ -2026,8 +2057,14 @@ func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bo
 	// submitted folds the two independent sources. Order matters only for
 	// cost: busy is the cheaper, older and better-understood signal.
 	submitted := func() bool {
-		if isBusy, ok := look(busy); ok && isBusy {
-			return true
+		// The busy source ABSTAINS when the pane was already busy: it cannot
+		// witness a transition it missed. The draft source below then decides
+		// alone, which is the same shape as draftSeen's abstention and is what
+		// keeps a queue that drains during the poll window observable.
+		if !busyBefore {
+			if isBusy, ok := look(busy); ok && isBusy {
+				return true
+			}
 		}
 		if !draftSeen {
 			return false
@@ -2060,6 +2097,17 @@ func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bo
 			if isOverlay, err := overlay(); err == nil && isOverlay {
 				return false, errSubmitOverlayPresent
 			}
+			// A second submit key into a turn that is STILL running does not
+			// deliver this message -- it queues another copy behind the same
+			// run, so the budget is spent making the parked composer worse.
+			// Only a pane that was busy at entry and is busy still: one that
+			// has since gone idle is the ordinary lost-Enter case the re-send
+			// budget exists for, and keeps it.
+			if busyBefore {
+				if stillBusy, err := busy(); err == nil && stillBusy {
+					return false, errSubmitQueuedBehindRun
+				}
+			}
 			sleep(submitReEnterBackoff)
 		}
 		if err := sendSubmit(); err != nil {
@@ -2083,6 +2131,75 @@ func submitEnterAndConfirm(sendSubmit func() error, wake func(), busy func() (bo
 		return false, fmt.Errorf("submit delivered but the pane could never be observed: %w", observeErr)
 	}
 	return false, lastErr
+}
+
+// classifyNudgeSubmitErr maps a submitEnterAndConfirm failure onto the caller
+// contract. It returns whether the keys REACHED TMUX -- which is what makes a
+// nudge "delivered" regardless of whether it submitted -- whether delivery was
+// CONFIRMED, and the error to surface.
+//
+// queue is the provider's own queue-ledger verdict for this message (see
+// observeNudgeLedger) and is read ONLY on the queued-behind-run exit. The
+// other two exits ignore it: an overlay is a different fault with a different
+// remedy, and a genuine tmux failure must stay hard however the ledger reads.
+//
+// Extracted so every branch can be driven without a live tmux server. Inline
+// they were unreachable from any unit test, and the queued sentinel's branch
+// is the one whose absence would silently route a non-failure onto the
+// hard-error path: a caller told the SEND failed takes the ack/retry split the
+// wrong way, and that split was corrected once already (ci-uihrrv).
+//
+// Each sentinel NAMES itself rather than arriving as a bare "unconfirmed",
+// because "unconfirmed" alone sends a reader hunting a wedged agent when the
+// pane is merely showing a menu, or is merely busy.
+//
+// WHAT THE QUEUED BRANCH USED TO SAY, and why it was wrong in both directions
+// at once. It reported "may never be submitted" for every busy pane, inferred
+// from the pane being busy and nothing else. ci-tihynr measured the opposite:
+// a message queued behind a running turn DRAINS at turn end unaided, 23.6s
+// from enqueue to drain, observed twice on two sessions with two instruments
+// and no key pressed by anyone. So the alarm fired on the case that always
+// completes -- and the case that genuinely strands, a pane blocked on a MODAL
+// DIALOG, was left with nothing to distinguish it, because a dialog swallows
+// the composer and there is no turn end to drain at. The ledger separates
+// them without teaching gc to recognize a dialog: a stranded message was never
+// taken into the queue, so its record is absent.
+func classifyNudgeSubmitErr(err error, session string, queue sessionlog.NudgeQueueState) (reachedTmux, confirmed bool, mapped error) {
+	switch {
+	case errors.Is(err, errSubmitOverlayPresent):
+		return true, false, fmt.Errorf("%w: session %q: an overlay is consuming Enter, so the submit was not re-sent", ErrNudgeSubmitUnconfirmed, session)
+	case errors.Is(err, errSubmitQueuedBehindRun):
+		switch queue {
+		case sessionlog.NudgeQueueDelivered:
+			return true, true, nil
+		case sessionlog.NudgeQueueEnqueued:
+			return true, false, fmt.Errorf("%w: session %q: observed in the queue, so no re-send is needed", ErrNudgeQueuedPendingDrain, session)
+		default:
+			return true, false, fmt.Errorf("%w: session %q: the pane was already busy and its transcript holds no record of this message reaching the provider queue, so it may be stranded behind a modal dialog. Read the pane before re-sending", ErrNudgeSubmitUnconfirmed, session)
+		}
+	default:
+		return false, false, fmt.Errorf("failed to send submit sequence: %w", err)
+	}
+}
+
+// classifyUnconfirmedSubmit decides what a submit the PANE could not confirm
+// is reported as, once the provider's own transcript has had its say.
+//
+// Returns nil when the transcript records the agent receiving this exact
+// message after the paste, and the unconfirmed error otherwise. It is a
+// separate decision from classifyNudgeSubmitErr because the input is
+// different in kind: there the confirm loop ended on a named sentinel, here
+// it simply ran out of budget with every source abstaining.
+//
+// ONLY NudgeQueueDelivered overturns the doubt. A message still sitting in
+// the queue has not reached the agent, and an empty ledger is the same
+// silence a stranded nudge produces -- upgrading either would rebuild, on a
+// second source, the false success the first one was removed for.
+func classifyUnconfirmedSubmit(session string, queue sessionlog.NudgeQueueState) error {
+	if queue == sessionlog.NudgeQueueDelivered {
+		return nil
+	}
+	return fmt.Errorf("%w: session %q", ErrNudgeSubmitUnconfirmed, session)
 }
 
 // paneBusy reports whether the target pane shows an active processing indicator
@@ -2303,6 +2420,14 @@ func (t *Tmux) NudgeSession(session, message string) error {
 	// below remains for the submit Enter.
 	t.WakePaneIfDetached(session)
 
+	// Opened BEFORE the first keystroke, so a queue-ledger verdict can tell
+	// this nudge from an identical earlier one. The claim backstop re-sends
+	// byte-identical text up to three times, and content alone cannot date a
+	// record. Reading attempt 1's delivery would confirm a message that is at
+	// this moment stranded in a composer. A second of slack absorbs clock skew
+	// between this process and the provider's own timestamps.
+	ledgerSince := time.Now().Add(-time.Second)
+
 	// 1. Send text in literal mode with retry on transient errors
 	if err := t.sendKeysLiteralWithRetry(target, message, t.cfg.NudgeReadyTimeout); err != nil {
 		return err
@@ -2342,20 +2467,43 @@ func (t *Tmux) NudgeSession(session, message string) error {
 		overlay := func() (bool, error) { return t.paneShowsOverlay(target) }
 		confirmed, err := submitEnterAndConfirm(sendSubmit, wake, func() (bool, error) { return t.paneBusy(target) }, drafted, overlay, time.Sleep)
 		if err != nil {
-			// An overlay is not a delivery failure: the keys reached tmux and
-			// the draft is sitting in a composer the TUI has covered. It joins
-			// the unconfirmed path below rather than the hard-error path, so
-			// the callers keep the ack/retry split ci-uihrrv corrected, and it
-			// NAMES itself -- "unconfirmed" alone sends a reader hunting a
-			// wedged agent when the pane is merely showing a menu.
-			if errors.Is(err, errSubmitOverlayPresent) {
-				delivered = true
-				return fmt.Errorf("%w: session %q: an overlay is consuming Enter, so the submit was not re-sent", ErrNudgeSubmitUnconfirmed, session)
+			// The ledger is consulted only where it can answer -- the pane
+			// was already busy, so the message went into the provider's own
+			// queue rather than into a turn. Reading it on every exit would
+			// spend a file scan on paths it has nothing to say about, and the
+			// overlay exit in particular is a state where the text never left
+			// the composer.
+			queue := sessionlog.NudgeQueueUnrecorded
+			if errors.Is(err, errSubmitQueuedBehindRun) {
+				queue = t.observeNudgeLedger(session, message, ledgerSince)
 			}
-			return fmt.Errorf("failed to send submit sequence: %w", err)
+			reachedTmux, ledgerConfirmed, mapped := classifyNudgeSubmitErr(err, session, queue)
+			if reachedTmux {
+				delivered = true
+			}
+			if ledgerConfirmed {
+				return nil
+			}
+			return mapped
 		}
 		delivered = true
 		if !confirmed {
+			// The pane could not witness this submit, so give the transcript
+			// the last word before reporting a doubt. This is the exit the
+			// ga-bwm lost-Enter case and the short-turn case
+			// indistinguishability (ci-mdfcgs) both land on, and in both the
+			// message may well have gone in -- the pane simply repainted
+			// faster than the poll, or not at all. A user record carrying
+			// this exact text, stamped after the paste, settles it.
+			//
+			// Only the CONFIRMING direction is taken here. An empty ledger
+			// leaves the report exactly as it was, because a transcript that
+			// could not be resolved and a nudge that never landed produce the
+			// same silence.
+			if err := classifyUnconfirmedSubmit(session, t.observeNudgeLedger(session, message, ledgerSince)); err == nil {
+				return nil
+			}
+
 			// Do NOT collapse this to nil: a caller that treats nil as "clean
 			// delivery" loses the distinction entirely, and the two callers
 			// need it for opposite reasons.
@@ -3821,7 +3969,7 @@ var claudeBusySpinnerRe = regexp.MustCompile(`\([0-9]+[ms][^)]*[·•]`)
 //	"  \u276f You are holding a pool slot with queued work ..."   transcript echo
 //	"\u276f\u00a0You are holding a pool slot with queued work ..." unsent draft
 //	"\u276f\u00a0"                                                empty input
-//	"\u276f\u00a0Press up to edit queued messages"                submitted, queued
+//	"\u276f\u00a0Press up to edit queued messages"                QUEUED, not delivered
 //
 // Matching the glyph alone would therefore read a message that HAS submitted as
 // one still sitting in the input box -- the exact inversion this evidence
@@ -3858,7 +4006,49 @@ func draftInInputBox(lines []string, draft string) bool {
 	if !found {
 		return false
 	}
+	// The queued placeholder is NOT delivery, and reading it as delivery was
+	// half of ci-fo6au4. The input box has three states, not two: empty
+	// (submitted and drained), holding the draft (never submitted), and
+	// holding this placeholder (the TUI took the text into a queue behind a
+	// run that was already underway). Only the first is evidence the agent
+	// saw anything. The comment above claudeInputPromptPrefix used to label
+	// this line "submitted, queued", and that label is what licensed the
+	// confirm loop to count it.
+	//
+	// Measured 2026-09-18T05:13-05:16Z: three toolsmith sessions sat at IDLE
+	// prompts showing this placeholder, holding pool slots, with three ready
+	// P1s in the queue, and what moved them was an operator pressing the
+	// interface's own "send now" binding in each pane.
+	//
+	// DO NOT READ THAT AS "THE QUEUE NEVER DRAINS", which is what an earlier
+	// version of this comment said. ci-tihynr measured a queued message
+	// draining at turn end unaided, so those three panes were blocked on
+	// something with no turn end -- a modal dialog -- rather than merely
+	// holding a queue. The placeholder alone cannot tell the two apart, which
+	// is exactly why this reading stays pessimistic and the verdict is taken
+	// from the transcript instead (see observeQueuedNudge).
+	//
+	// It errs toward "still undelivered", which is the safe direction here:
+	// the cost is an unconfirmed report, and the cost of the other direction
+	// is a parked pool nobody is told about. A placeholder raised by somebody
+	// ELSE's queued message reads the same, and that is accepted for the same
+	// reason.
+	if composerShowsQueuedPlaceholder(content) {
+		return true
+	}
 	return strings.HasPrefix(content, head)
+}
+
+// claudeQueuedPlaceholder is the input-box text Claude Code renders while it
+// holds one or more messages queued behind a running turn. Quoted from the
+// checked-in capture in nudge_draft_evidence_test.go's fixtureQueuedBox; do
+// not add a variant that has not been seen in a real pane.
+const claudeQueuedPlaceholder = "Press up to edit queued messages"
+
+// composerShowsQueuedPlaceholder reports whether input-box content is the
+// queued-message placeholder rather than a draft or an empty box.
+func composerShowsQueuedPlaceholder(content string) bool {
+	return strings.Contains(content, claudeQueuedPlaceholder)
 }
 
 // The fingerprint bounds. draftHeadMinRunes is the shortest leading run this

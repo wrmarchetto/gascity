@@ -734,7 +734,34 @@ func buildDesiredStateWithSessionBeads(
 					storeRef = assignedWorkStoreRefs[i]
 				}
 				ready := readyAssigned[storeScopedBeadKey{StoreRef: storeRef, ID: wb.ID}]
-				fmt.Fprintf(stderr, "  %s\n", formatAssignedWorkBeadRow(wb, ready, beaconTime)) //nolint:errcheck
+				// bp.now() and NOT beaconTime, which is the defect this line
+				// carried from 254537e33 until ci-2slvrk. beaconTime is a
+				// wall-clock stamp captured once when the controller builds
+				// its desired-state closure and reused for every later tick,
+				// deliberately, so rendered startup prompts stay stable for a
+				// controller lifetime (supervisorBuildAgentsFn). It was the
+				// only time value in scope here and was taken for "now".
+				//
+				// The cost: `ready` comes from the store's Ready(), which
+				// reads a live clock, so the two halves of one row answered to
+				// clocks that drifted apart by the controller's uptime. Every
+				// bead whose deferral elapsed after the controller started
+				// printed `defer=<instant>` beside `ready=true` -- a named
+				// reason for a bead the same row says is raising demand, which
+				// is the exact falsehood this row was added to remove.
+				// Measured in the live supervisor log 2026-09-18: 145 such
+				// rows. Pinned by
+				// TestDemandDiagnosticRowReadsOneClockForBothVerdicts.
+				//
+				// This narrows the window rather than closing it. The store
+				// read its own time.Now() back in the collection pass above,
+				// so a deferral elapsing between that read and this print
+				// still renders one inconsistent row. That residue is
+				// microseconds wide against a defect that was the controller's
+				// uptime wide, and it fails in the same harmless direction.
+				// Closing it entirely would need the store to report the
+				// instant it judged against, which no Store interface exposes.
+				fmt.Fprintf(stderr, "  %s\n", formatAssignedWorkBeadRow(wb, ready, bp.now())) //nolint:errcheck
 			}
 		} else {
 			fmt.Fprintf(stderr, "assignedWorkBeads: 0 beads (rigStores=%d)\n", len(rigStores)) //nolint:errcheck

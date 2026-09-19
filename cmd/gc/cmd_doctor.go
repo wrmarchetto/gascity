@@ -380,7 +380,11 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	register(doctor.NewDoltConfigCheckForConfig(cityPath, opts.SkipManagedDoltCheck, cfg, cfgErr))
 	register(doctor.NewScopedDoltVersionCheckForConfig(cityPath, opts.SkipManagedDoltCheck, cfg, cfgErr))
 	register(&doctor.EventsLogCheck{})
-	register(doctor.NewEventLogSizeCheck())
+	// The size threshold is derived from this city's own [events.rotation]
+	// trigger, so the check has to see cfg. A nil cfg (unparseable
+	// city.toml) takes the recorder's defaults -- see
+	// NewEventLogSizeCheckForConfig.
+	register(doctor.NewEventLogSizeCheckForConfig(cfg))
 	// bd auto-backup growth canary. bd's auto-backup pipeline (upstream of
 	// gascity, gastownhall/beads#2993) writes to .beads/backup/ on every bd
 	// invocation without retention. This check warns before the directory
