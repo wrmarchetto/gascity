@@ -282,46 +282,6 @@ func TestNativeDoltStoreMapsUpstreamStatusesToGasCityContract(t *testing.T) {
 	}
 }
 
-func TestNativeDoltStoreListStatusOpenMatchesOpenNormalizedUpstreamStatuses(t *testing.T) {
-	issues := []*beadslib.Issue{
-		{ID: "gc-open", Title: "open", Status: beadslib.StatusOpen, IssueType: beadslib.TypeTask, Priority: 2},
-		{ID: "gc-blocked", Title: "blocked", Status: beadslib.StatusBlocked, IssueType: beadslib.TypeTask, Priority: 2},
-		{ID: "gc-deferred", Title: "deferred", Status: beadslib.StatusDeferred, IssueType: beadslib.TypeTask, Priority: 2},
-		{ID: "gc-pinned", Title: "pinned", Status: beadslib.Status("pinned"), IssueType: beadslib.TypeTask, Priority: 2},
-		{ID: "gc-hooked", Title: "hooked", Status: beadslib.Status("hooked"), IssueType: beadslib.TypeTask, Priority: 2},
-		{ID: "gc-review", Title: "review", Status: beadslib.Status("review"), IssueType: beadslib.TypeTask, Priority: 2},
-		{ID: "gc-active", Title: "active", Status: beadslib.StatusInProgress, IssueType: beadslib.TypeTask, Priority: 2},
-		{ID: "gc-closed", Title: "closed", Status: beadslib.StatusClosed, IssueType: beadslib.TypeTask, Priority: 2},
-	}
-	storage := &nativeDoltStorageSpy{
-		searchIssues: func(_ context.Context, _ string, filter beadslib.IssueFilter) ([]*beadslib.Issue, error) {
-			return filterNativeIssuesForTest(issues, filter), nil
-		},
-	}
-	store := newNativeDoltStoreForTest(storage)
-
-	got, err := store.List(ListQuery{AllowScan: true, Status: "open", TierMode: TierBoth})
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
-
-	wantIDs := map[string]bool{
-		"gc-open": true, "gc-blocked": true, "gc-deferred": true,
-		"gc-pinned": true, "gc-hooked": true, "gc-review": true,
-	}
-	if len(got) != len(wantIDs) {
-		t.Fatalf("List(Status: open) len = %d, want %d; got %+v", len(got), len(wantIDs), got)
-	}
-	for _, bead := range got {
-		if !wantIDs[bead.ID] {
-			t.Fatalf("List(Status: open) returned unexpected bead %q from %+v", bead.ID, got)
-		}
-		if bead.Status != "open" {
-			t.Fatalf("List(Status: open) bead %q status = %q, want normalized open", bead.ID, bead.Status)
-		}
-	}
-}
-
 // TestNativeDoltStoreListStatusOpenExcludesClosedBeadsFromUpstreamDrift guards
 // against Dolt status-index drift (gcy-1on) where SearchIssues returns a bead
 // with status="closed" even though the ExcludeStatus filter asked to exclude it.

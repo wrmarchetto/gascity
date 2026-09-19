@@ -91,8 +91,10 @@ func restoreCarriedWorkRoutes(store beads.Store) (int, error) {
 	// blocked bead decodes with Status "open" and is indistinguishable from
 	// ready work in every beads.Bead this function can read. A cached List
 	// filters with ListQuery.Matches against that collapsed status and so hands
-	// back blocked beads; only the backing store filters on the raw status, by
-	// passing --status=open to bd. Live bypasses the CachingStore to get there.
+	// back blocked beads; only the backing store filters on the raw status --
+	// BdStore by passing --status=open to bd, DoltliteReadStore and (since
+	// ci-iillrh) NativeDoltStore by selecting it in the query. Live bypasses
+	// the CachingStore to get there.
 	// Without it a blocked root that carries gc.run_target is re-stamped on
 	// every patrol tick — the blocked-routed-reaper's recurring offenders. The
 	// workflow-root spawn path selects on gc.routed_to without re-checking

@@ -139,6 +139,13 @@ func TestNativeDoltStoreCountBothTiersSupported(t *testing.T) {
 // TestNativeDoltStoreCountUnsupportedShapes asserts Count reports
 // ErrCountUnsupported for every shape List narrows Go-side, so callers fall
 // back to the hydrating path instead of receiving a superset count.
+//
+// Status "open" is deliberately ABSENT and used to be here: it was refused
+// while it translated to an exclude-list. It now selects by value like every
+// other status, so the count is exact and
+// TestNativeDoltStoreCountStatusOpenMatchesListCardinality pins it. Adding it
+// back here needs a real List-cardinality disagreement, not the memory of
+// this one.
 func TestNativeDoltStoreCountUnsupportedShapes(t *testing.T) {
 	cases := []struct {
 		name         string
@@ -146,7 +153,6 @@ func TestNativeDoltStoreCountUnsupportedShapes(t *testing.T) {
 		excludeTypes []string
 	}{
 		{name: "excludeTypes", query: ListQuery{AllowScan: true, IncludeClosed: true}, excludeTypes: []string{"message"}},
-		{name: "status open exclude-list translation", query: ListQuery{Status: "open", AllowScan: true}},
 		{name: "wisps tier filtered Go-side", query: ListQuery{AllowScan: true, TierMode: TierWisps}},
 		{name: "metadata re-filtered Go-side", query: ListQuery{AllowScan: true, Metadata: map[string]string{"gc.rig": "fc"}}},
 		{name: "assignees not translated", query: ListQuery{AllowScan: true, Assignees: []string{"a", "b"}}},
