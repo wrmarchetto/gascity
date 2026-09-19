@@ -49,6 +49,26 @@ var ErrSessionNotFound = errors.New("session not found")
 // the error preserves the missing observation for diagnostics.
 var ErrNudgeSubmitUnconfirmed = errors.New("nudge submit delivered but not confirmed")
 
+// ErrNudgeQueuedPendingDrain narrows ErrNudgeSubmitUnconfirmed to the one
+// unconfirmed outcome that has been measured to complete on its own: the
+// provider took the message into its OWN queue behind a turn that was already
+// running, and drains it when that turn ends.
+//
+// It wraps ErrNudgeSubmitUnconfirmed rather than standing beside it so every
+// caller that already handles the unconfirmed path keeps handling this one --
+// the distinction is a narrowing for callers that want it, never a branch
+// they must learn.
+//
+// WHAT IT IS NOT. It is asserted only when a provider has OBSERVED the
+// message in its queue, never inferred from the pane being busy. The
+// inference is what made the previous reading wrong in both directions at
+// once: gc reported "may never be submitted" for the case that always
+// drains, and had nothing left to say about the case that genuinely strands
+// (a pane blocked on a modal dialog never takes the text into a queue at
+// all). Measured on ci-tihynr, 2026-09-18: two sessions, two instruments,
+// enqueue to drain in 23.6s with no key pressed by anyone.
+var ErrNudgeQueuedPendingDrain = fmt.Errorf("%w: the provider holds the message in its own queue behind a running turn", ErrNudgeSubmitUnconfirmed)
+
 // ErrIdleTimeout reports that a session was live and reachable but did not
 // reach an idle prompt before the caller's timeout expired -- the session is
 // mid-turn, not broken and not unsupported.

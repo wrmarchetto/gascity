@@ -15,10 +15,9 @@ import (
 // nudge arrived satisfied the witness on the first poll after the first send.
 // The message had not been submitted at all -- a provider whose composer
 // accepts input during a run QUEUES it behind the turn, which is what the
-// footer hint "Press up to edit queued messages" is reporting -- and the turn
-// ending does not submit the queue. The session then sits at its prompt
-// holding a pool slot with the nudge text in its composer, while the nudge is
-// reported delivered.
+// footer hint "Press up to edit queued messages" is reporting. Whether that
+// queue then drains is a separate question this loop cannot see, and reading
+// the busy state as a submit answered it without asking.
 //
 // MEASURED 2026-09-18T05:13-05:16Z (ci-fo6au4): all three toolsmith sessions
 // parked in exactly that state with three ready P1s in the queue, each pane
@@ -26,6 +25,16 @@ import (
 // --delivery immediate` printed "Nudged <agent>" and the panes were unchanged
 // 20s later. What moved them was an operator pressing the interface's own
 // "send now" binding in each pane -- not a mechanism this city can rely on.
+//
+// CORRECTED BY ci-tihynr, 2026-09-18, and the correction does not weaken
+// these cases. This file used to answer that separate question with "the turn
+// ending does not submit the queue", inferred from those three panes, and it
+// is false: a queued message drains at turn end unaided. Those panes were
+// blocked on a modal dialog, which has no turn end.
+// Abstaining on pre-existing busy is still right for both, because neither is
+// a transition this loop observed -- what changed is that the caller now
+// settles which one it is from the provider's queue ledger rather than
+// assuming the worse.
 //
 // THE FILE ALREADY CONTAINED THE CORRECT REASONING FOR THE OTHER SOURCE. The
 // draft signal is guarded by draftSeen: "Its later ABSENCE only means

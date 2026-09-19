@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -225,7 +226,9 @@ func runNudgeBackstop(
 				}
 				continue
 			}
-			if err := sp.Nudge(sessName, runtime.TextContent(content)); err != nil {
+			err := sp.Nudge(sessName, runtime.TextContent(content))
+			switch classifyBackstopDelivery(err) {
+			case backstopDeliveryFailed:
 				// Carries the trigger bead and the attempt counter because
 				// this is the last line before permanent silence: at the cap
 				// exhausted() is a no-op, so nothing reports this slot again.
@@ -238,9 +241,57 @@ func runNudgeBackstop(
 				// carry the pair; only this branch dropped them.
 				fmt.Fprintf(stdout, "%s: %s failed for %s: %v (attempt %d/%d)\n", //nolint:errcheck // best-effort
 					label, sessName, target.ID, err, attempts+1, idleClaimNudgeMaxAttempts)
-				continue
+			case backstopDeliveryQueued:
+				fmt.Fprintf(stdout, "%s: nudged %s for %s -- queued behind a running turn and observed in the provider queue, which drains at turn end (attempt %d/%d)\n", //nolint:errcheck // best-effort
+					label, sessName, target.ID, attempts+1, idleClaimNudgeMaxAttempts)
+			default: // backstopDeliveryDelivered
+				fmt.Fprintf(stdout, "%s: nudged %s for %s (attempt %d/%d)\n", label, sessName, target.ID, attempts+1, idleClaimNudgeMaxAttempts) //nolint:errcheck // best-effort
 			}
-			fmt.Fprintf(stdout, "%s: nudged %s for %s (attempt %d/%d)\n", label, sessName, target.ID, attempts+1, idleClaimNudgeMaxAttempts) //nolint:errcheck // best-effort
 		}
+	}
+}
+
+// backstopDelivery is how one nudge delivery attempt is reported.
+type backstopDelivery int
+
+const (
+	// backstopDeliveryDelivered means the provider confirmed the agent took
+	// the message.
+	backstopDeliveryDelivered backstopDelivery = iota
+	// backstopDeliveryQueued means the provider OBSERVED the message in its
+	// own message queue behind a turn that was already running.
+	backstopDeliveryQueued
+	// backstopDeliveryFailed is everything else, including an unconfirmed
+	// submit with no positive evidence behind it.
+	backstopDeliveryFailed
+)
+
+// classifyBackstopDelivery decides how a nudge delivery result is reported.
+//
+// The queued case is split out because it was being reported as a FAILURE,
+// and it is not one. ci-tihynr measured a message queued behind a running
+// turn draining at turn end unaided -- 23.6s, twice, on two sessions, with no
+// key pressed by anyone -- so the line an operator read as "the backstop
+// could not reach this session" described a delivery in progress. The wrong
+// label is expensive here specifically: this backstop's whole purpose is to
+// tell an operator which pool slots are wedged, and a false entry in that
+// list is indistinguishable from a true one.
+//
+// It does NOT widen to the bare unconfirmed case. ErrNudgeQueuedPendingDrain
+// is asserted only where the provider read its own queue ledger and found the
+// message. A plain ErrNudgeSubmitUnconfirmed carries no such observation and
+// keeps the failure label, because the state it most often describes now is a
+// pane stranded behind a modal dialog, where nothing will drain.
+//
+// The attempt is reserved before delivery either way, so this changes what an
+// operator is told and not how many times a slot is nudged.
+func classifyBackstopDelivery(err error) backstopDelivery {
+	switch {
+	case err == nil:
+		return backstopDeliveryDelivered
+	case errors.Is(err, runtime.ErrNudgeQueuedPendingDrain):
+		return backstopDeliveryQueued
+	default:
+		return backstopDeliveryFailed
 	}
 }

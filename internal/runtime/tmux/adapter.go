@@ -535,7 +535,16 @@ func (p *Provider) Nudge(name string, content []runtime.ContentBlock) error {
 	if idleTimeout := p.tm.cfg.NudgeIdleTimeout; idleTimeout > 0 {
 		// Best-effort wait — if it fails (session gone, timeout), proceed
 		// with the nudge anyway. The message may arrive during active work,
-		// but Claude's cooperative queue will handle it at the next turn.
+		// and Claude's cooperative queue then drains it at the end of the
+		// running turn: measured on ci-tihynr, 23.6s from enqueue to drain,
+		// on two sessions with no key pressed by anyone. That figure is a
+		// LOWER bound -- the drain lands at a tool-result boundary, so a turn
+		// with a long gap between tool calls is slower.
+		//
+		// The clause this replaces asserted the same outcome with nothing
+		// behind it, and it was read as covering the case it does not: a pane
+		// blocked on a modal dialog has no turn end to drain at. NudgeSession
+		// distinguishes those from the provider's own queue ledger.
 		if err := p.tm.WaitForIdle(context.Background(), name, idleTimeout); err != nil {
 			// Not idle within the window. A mid-session Codex/GPT model-switch
 			// modal ("approaching rate limits — switch model?") blocks input and

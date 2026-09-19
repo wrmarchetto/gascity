@@ -121,4 +121,12 @@ func (t *Tmux) paneShowsOverlay(target string) (bool, error) {
 // it carries is the one the caller could not previously make -- a nudge that
 // woke an agent and a nudge that landed in a composer and sat there were the
 // same reported success (ci-fo6au4).
+//
+// IT IS NOT A VERDICT, and treating it as one was ci-br3r2x. This sentinel
+// says only that the pane was busy, and a busy pane covers two outcomes that
+// could not be more different: the provider's queue drains at turn end
+// (measured, 23.6s), while a pane blocked on a modal dialog never drains at
+// all. NudgeSession settles which by reading the provider's own queue ledger
+// before it classifies, so nothing downstream should infer an outcome from
+// this error alone.
 var errSubmitQueuedBehindRun = errors.New("submit not confirmed: the pane was already busy, so the message queued behind the running turn")
