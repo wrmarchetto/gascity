@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/gastownhall/gascity/internal/sessionlog"
 )
 
 // classifyNudgeSubmitErr decides two things a caller cannot recover later:
@@ -29,7 +31,10 @@ func TestClassifyNudgeSubmitErrKeepsSentinelsOnTheUnconfirmedPath(t *testing.T) 
 		{"queued behind a running turn", errSubmitQueuedBehindRun, "already busy"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reached, mapped := classifyNudgeSubmitErr(tc.err, "sess-1")
+			reached, confirmed, mapped := classifyNudgeSubmitErr(tc.err, "sess-1", sessionlog.NudgeQueueUnrecorded)
+			if confirmed {
+				t.Error("confirmed = true with an empty queue ledger: nothing observed this message reaching the agent")
+			}
 			if !reached {
 				t.Error("reachedTmux = false: the keys did reach tmux, so the nudge is delivered-but-unconfirmed, not a send failure")
 			}
@@ -54,7 +59,10 @@ func TestClassifyNudgeSubmitErrKeepsSentinelsOnTheUnconfirmedPath(t *testing.T) 
 // then skips is the one that would have delivered the message.
 func TestClassifyNudgeSubmitErrKeepsARealSendFailureHard(t *testing.T) {
 	sendErr := fmt.Errorf("tmux: no server running")
-	reached, mapped := classifyNudgeSubmitErr(sendErr, "sess-1")
+	reached, confirmed, mapped := classifyNudgeSubmitErr(sendErr, "sess-1", sessionlog.NudgeQueueUnrecorded)
+	if confirmed {
+		t.Error("confirmed = true for a genuine send failure")
+	}
 	if reached {
 		t.Error("reachedTmux = true for a genuine send failure: nothing reached tmux, so this must not be reported delivered")
 	}
