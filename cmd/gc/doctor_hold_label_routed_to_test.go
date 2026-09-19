@@ -11,42 +11,70 @@ import (
 	"github.com/gastownhall/gascity/internal/doctor"
 )
 
-// TestHoldLabelRoutedToCheck covers ga-fm2vgd.1: a bead carrying a
-// hold:<value> label but whose gc.routed_to metadata is missing or does not
-// match <value> has silently drifted from its intended route. The check must
-// flag such beads across both city and rig stores, --fix must backfill
-// gc.routed_to from the label value, hold:external must never be flagged,
-// and beads with no hold:* label must be left untouched.
-func TestHoldLabelRoutedToCheck(t *testing.T) {
+// TestHoldLabelRoutedToCheckFlagsOnlyAnAbsentRoute pins what this check
+// asserts after ci-gu5rld: a held bead with NO gc.routed_to raises demand on
+// nobody and goes nowhere when the hold clears, which is the finding. A held
+// bead that HAS a route is clean whatever its hold says, because the two name
+// different actors by design -- gc.routed_to is who WORKS it and the hold is
+// who must MOVE it.
+//
+// It used to assert route == hold value and backfill the difference. That
+// premise was settled false empirically: setting gc.routed_to to a hold value
+// tripped city:route-pool-absent within ninety seconds, because "external" is
+// not a pool and a route must name an agent the city can mint (ci-gu5rld).
+//
+// hold:external is now INCLUDED and its exclusion was the worst of the old
+// behavior. It was skipped on the grounds that it names no agent, which is
+// true of the hold and says nothing about the route -- so the one shape that
+// is guaranteed to have no worker waiting for it was the one shape never
+// reported.
+func TestHoldLabelRoutedToCheckFlagsOnlyAnAbsentRoute(t *testing.T) {
 	cityDir := t.TempDir()
 	rigDir := t.TempDir()
 	cfg := &config.City{Rigs: []config.Rig{{Name: "repo", Path: rigDir}}}
 
 	cityStore := beads.NewMemStoreFrom(0, []beads.Bead{
-		// Mismatch: hold:mayor label, no gc.routed_to at all.
+		// The finding: held, and addressed to nobody.
 		{ID: "H-1", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:mayor"}},
-		// Mismatch: hold:mayor label, gc.routed_to set to something else.
+		// THE REGRESSION THIS CASE EXISTS TO PREVENT. Held by the mayor,
+		// worked by a reviewer. The old check called this drift and --fix
+		// overwrote "reviewer" with "mayor", destroying the only record of
+		// who resumes the bead -- silently, because "mayor" is a real pool
+		// and no other check could object.
 		{
 			ID: "H-2", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:mayor"},
 			Metadata: map[string]string{"gc.routed_to": "reviewer"},
 		},
-		// Healthy: hold:mayor label, gc.routed_to already matches — must be left alone.
+		// Held and routed at the same actor. Clean, and indistinguishable
+		// from a bead the mayor genuinely works -- which is why equality
+		// cannot be the predicate in either direction.
 		{
 			ID: "H-3", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:mayor"},
 			Metadata: map[string]string{"gc.routed_to": "mayor"},
 		},
-		// Excluded by definition: hold:external names a human/out-of-system
-		// dependency, never a routing gap, regardless of gc.routed_to state.
+		// hold:external with no route: the most invisible shape there is, and
+		// the one the old exclusion let through.
 		{ID: "H-4", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:external"}},
-		// No hold:* label at all — must be ignored even with empty gc.routed_to.
+		// hold:external WITH a route is fine. External names the gate, the
+		// route names who resumes once it lifts.
+		{
+			ID: "H-5", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:external"},
+			Metadata: map[string]string{"gc.routed_to": "bench-engineer"},
+		},
+		// No hold label: not this check's subject even with an empty route.
+		// city:ready-assignee and the demand probe own an unrouted bead that
+		// is not held.
 		{ID: "T-1", Title: "work", Type: "task", Status: "open"},
-		// Generic over label value — must not require any special-casing of
-		// "mayor" specifically; an arbitrary hold value must be caught too.
-		{ID: "H-5", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:qa-lead"}},
-		// Mismatch on a non-open bead: the scan must not filter to
-		// Status=="open" only, or in_progress/blocked/deferred hold-labeled
-		// beads silently escape it (ga-fm2vgd.2).
-		{ID: "H-6", Title: "held", Type: "task", Status: "in_progress", Labels: []string{"hold:mayor"}},
+		// Generic over the hold value, so no special-casing of the canonical
+		// two can creep back in.
+		{ID: "H-6", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:qa-lead"}},
+		// A non-open status must still be scanned, or in_progress, blocked
+		// and deferred hold-labeled beads escape silently (ga-fm2vgd.2). An
+		// empty route on a whitespace-only value counts as absent.
+		{
+			ID: "H-7", Title: "held", Type: "task", Status: "in_progress", Labels: []string{"hold:mayor"},
+			Metadata: map[string]string{"gc.routed_to": "   "},
+		},
 	}, nil)
 	rigStore := beads.NewMemStoreFrom(0, []beads.Bead{
 		{ID: "RH-1", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:mayor"}},
@@ -61,93 +89,44 @@ func TestHoldLabelRoutedToCheck(t *testing.T) {
 	}
 
 	check := newHoldLabelRoutedToCheck(cfg, cityDir, factory)
-
 	res := check.Run(&doctor.CheckContext{})
 	if res.Status != doctor.StatusWarning {
 		t.Fatalf("Run status = %v, want warning: %#v", res.Status, res)
 	}
 	details := strings.Join(res.Details, "\n")
-	for _, want := range []string{"H-1", "H-2", "H-5", "H-6", "RH-1"} {
+	for _, want := range []string{"H-1", "H-4", "H-6", "H-7", "RH-1"} {
 		if !strings.Contains(details, want) {
-			t.Fatalf("details missing %q:\n%s", want, details)
+			t.Errorf("details missing %q:\n%s", want, details)
 		}
 	}
-	for _, notWant := range []string{"H-3", "H-4", "T-1"} {
+	for _, notWant := range []string{"H-2", "H-3", "H-5", "T-1"} {
 		if strings.Contains(details, notWant) {
-			t.Fatalf("details should not mention %q:\n%s", notWant, details)
+			t.Errorf("details should not mention %q:\n%s", notWant, details)
 		}
 	}
 
-	if err := check.Fix(&doctor.CheckContext{}); err != nil {
-		t.Fatalf("Fix: %v", err)
+	// THE REMEDY IS THE MOST DANGEROUS PART OF A CHECK, because it is the only
+	// part that tells the reader what to type. The old one said to backfill
+	// from the hold label and a mayor followed it into a store-wide wrong
+	// write. It must now name the worker and must not offer the hold value.
+	if strings.Contains(res.FixHint, "hold:") {
+		t.Errorf("fix hint still points at the hold label: %q", res.FixHint)
 	}
-
-	// Idempotency: a second Run after Fix must report clean.
-	if res2 := check.Run(&doctor.CheckContext{}); res2.Status != doctor.StatusOK {
-		t.Fatalf("post-fix Run status = %v, want OK: %#v", res2.Status, res2)
-	}
-
-	h1, err := cityStore.Get("H-1")
-	if err != nil {
-		t.Fatalf("get H-1: %v", err)
-	}
-	if got := h1.Metadata["gc.routed_to"]; got != "mayor" {
-		t.Errorf("H-1 gc.routed_to = %q, want mayor (backfilled from hold:mayor label)", got)
-	}
-	h2, err := cityStore.Get("H-2")
-	if err != nil {
-		t.Fatalf("get H-2: %v", err)
-	}
-	if got := h2.Metadata["gc.routed_to"]; got != "mayor" {
-		t.Errorf("H-2 gc.routed_to = %q, want mayor (corrected from stale reviewer)", got)
-	}
-	h5, err := cityStore.Get("H-5")
-	if err != nil {
-		t.Fatalf("get H-5: %v", err)
-	}
-	if got := h5.Metadata["gc.routed_to"]; got != "qa-lead" {
-		t.Errorf("H-5 gc.routed_to = %q, want qa-lead (arbitrary hold value, not special-cased)", got)
-	}
-	h6, err := cityStore.Get("H-6")
-	if err != nil {
-		t.Fatalf("get H-6: %v", err)
-	}
-	if got := h6.Metadata["gc.routed_to"]; got != "mayor" {
-		t.Errorf("H-6 gc.routed_to = %q, want mayor (backfilled despite in_progress status)", got)
-	}
-	h4, err := cityStore.Get("H-4")
-	if err != nil {
-		t.Fatalf("get H-4: %v", err)
-	}
-	if got := h4.Metadata["gc.routed_to"]; got != "" {
-		t.Errorf("H-4 (hold:external) gc.routed_to = %q, want untouched empty", got)
-	}
-	t1, err := cityStore.Get("T-1")
-	if err != nil {
-		t.Fatalf("get T-1: %v", err)
-	}
-	if got := t1.Metadata["gc.routed_to"]; got != "" {
-		t.Errorf("T-1 (no hold label) gc.routed_to = %q, want untouched empty", got)
-	}
-	rh1, err := rigStore.Get("RH-1")
-	if err != nil {
-		t.Fatalf("get RH-1: %v", err)
-	}
-	if got := rh1.Metadata["gc.routed_to"]; got != "mayor" {
-		t.Errorf("RH-1 gc.routed_to = %q, want mayor", got)
+	if !strings.Contains(res.FixHint, "gc.routed_to") {
+		t.Errorf("fix hint does not name the key to set: %q", res.FixHint)
 	}
 }
 
-// TestHoldLabelRoutedToCheckCleanStore confirms a store with no mismatches
-// reports OK and CanFix advertises remediation.
-func TestHoldLabelRoutedToCheckCleanStore(t *testing.T) {
+// TestHoldLabelRoutedToCheckAdvertisesNoFix pins the absence of remediation.
+// The correct route is the pool that will work the bead once the hold lifts,
+// which only the caller knows; a --fix can only guess, and the guess it used
+// to make was the hold value. A check that repairs by guessing is worse than
+// one that reports, because the guess lands under `gc doctor --fix` on every
+// bead at once.
+func TestHoldLabelRoutedToCheckAdvertisesNoFix(t *testing.T) {
 	cityDir := t.TempDir()
 	store := beads.NewMemStoreFrom(0, []beads.Bead{
-		{
-			ID: "H-9", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:mayor"},
-			Metadata: map[string]string{"gc.routed_to": "mayor"},
-		},
-		{ID: "H-10", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:external"}},
+		{ID: "H-1", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:mayor"}},
 	}, nil)
 	check := newHoldLabelRoutedToCheck(nil, cityDir, func(path string) (beads.Store, error) {
 		if path != cityDir {
@@ -155,15 +134,57 @@ func TestHoldLabelRoutedToCheckCleanStore(t *testing.T) {
 		}
 		return store, nil
 	})
-	if !check.CanFix() {
-		t.Fatal("CanFix() = false, want true")
+
+	if check.CanFix() {
+		t.Error("CanFix() = true, want false: the worker's route cannot be derived from a hold")
 	}
+	if err := check.Fix(&doctor.CheckContext{}); err != nil {
+		t.Errorf("Fix() = %v, want nil no-op", err)
+	}
+	// The write, not just the advertisement. CanFix() returning false while
+	// Fix still wrote would leave the damage reachable through any caller that
+	// invokes Fix without consulting CanFix.
+	held, err := store.Get("H-1")
+	if err != nil {
+		t.Fatalf("get H-1: %v", err)
+	}
+	if got := held.Metadata["gc.routed_to"]; got != "" {
+		t.Errorf("Fix wrote gc.routed_to = %q; it must write nothing", got)
+	}
+}
+
+// TestHoldLabelRoutedToCheckCleanStore confirms a store where every held bead
+// carries a route reports OK -- including one whose route differs from its
+// hold, which is the normal shape for an externally gated bead rather than an
+// edge case.
+func TestHoldLabelRoutedToCheckCleanStore(t *testing.T) {
+	cityDir := t.TempDir()
+	store := beads.NewMemStoreFrom(0, []beads.Bead{
+		{
+			ID: "H-9", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:mayor"},
+			Metadata: map[string]string{"gc.routed_to": "toolsmith"},
+		},
+		{
+			ID: "H-10", Title: "held", Type: "task", Status: "open", Labels: []string{"hold:external"},
+			Metadata: map[string]string{"gc.routed_to": "bench-engineer"},
+		},
+	}, nil)
+	check := newHoldLabelRoutedToCheck(nil, cityDir, func(path string) (beads.Store, error) {
+		if path != cityDir {
+			return nil, fmt.Errorf("unexpected store path %q", path)
+		}
+		return store, nil
+	})
 	if res := check.Run(&doctor.CheckContext{}); res.Status != doctor.StatusOK {
 		t.Fatalf("Run status = %v, want OK: %#v", res.Status, res)
 	}
 }
 
-func TestHoldLabelRoutedToFixReportsOpenFailures(t *testing.T) {
+// TestHoldLabelRoutedToRunReportsOpenFailures keeps the scope-skip reporting
+// that used to be asserted through Fix. An unreadable rig store must be named
+// rather than read as a rig with nothing held -- a store outage and a clean
+// store are the two readings this check must never confuse.
+func TestHoldLabelRoutedToRunReportsOpenFailures(t *testing.T) {
 	cityDir := t.TempDir()
 	rigDir := t.TempDir()
 	cfg := &config.City{Rigs: []config.Rig{{Name: "repo", Path: rigDir}}}
@@ -177,23 +198,25 @@ func TestHoldLabelRoutedToFixReportsOpenFailures(t *testing.T) {
 		return cityStore, nil
 	})
 
-	err := check.Fix(&doctor.CheckContext{})
-	if err == nil {
-		t.Fatal("Fix error = nil, want skipped scope error")
+	res := check.Run(&doctor.CheckContext{})
+	if res.Status != doctor.StatusWarning {
+		t.Fatalf("Run status = %v, want warning: %#v", res.Status, res)
 	}
-	if got := err.Error(); !strings.Contains(got, "rig repo skipped") || !strings.Contains(got, "permission denied") {
-		t.Fatalf("Fix error = %q, want rig open failure detail", got)
+	details := strings.Join(res.Details, "\n")
+	if !strings.Contains(details, "rig repo skipped") || !strings.Contains(details, "permission denied") {
+		t.Fatalf("details missing the rig open failure:\n%s", details)
 	}
-	h1, getErr := cityStore.Get("H-1")
-	if getErr != nil {
-		t.Fatalf("get H-1: %v", getErr)
-	}
-	if got := h1.Metadata["gc.routed_to"]; got != "mayor" {
-		t.Fatalf("H-1 gc.routed_to = %q, want available repair applied despite skipped rig", got)
+	// The reachable finding is still reported alongside the skip. A skipped
+	// scope that suppressed the scopes that DID read would turn one
+	// unreadable rig into a city-wide blind spot.
+	if !strings.Contains(details, "H-1") {
+		t.Fatalf("details dropped the readable store's finding:\n%s", details)
 	}
 }
 
-func TestHoldLabelRoutedToFixReportsListFailures(t *testing.T) {
+// TestHoldLabelRoutedToRunReportsListFailures covers the same confusion one
+// layer in: the store opens and then refuses the scan.
+func TestHoldLabelRoutedToRunReportsListFailures(t *testing.T) {
 	cityDir := t.TempDir()
 	check := newHoldLabelRoutedToCheck(nil, cityDir, func(path string) (beads.Store, error) {
 		if path != cityDir {
@@ -202,12 +225,13 @@ func TestHoldLabelRoutedToFixReportsListFailures(t *testing.T) {
 		return holdLabelListErrorStore{Store: beads.NewMemStore()}, nil
 	})
 
-	err := check.Fix(&doctor.CheckContext{})
-	if err == nil {
-		t.Fatal("Fix error = nil, want skipped scope error")
+	res := check.Run(&doctor.CheckContext{})
+	if res.Status != doctor.StatusWarning {
+		t.Fatalf("Run status = %v, want warning: %#v", res.Status, res)
 	}
-	if got := err.Error(); !strings.Contains(got, "city skipped") || !strings.Contains(got, "listing failed") {
-		t.Fatalf("Fix error = %q, want list failure detail", got)
+	details := strings.Join(res.Details, "\n")
+	if !strings.Contains(details, "city skipped") || !strings.Contains(details, "listing failed") {
+		t.Fatalf("details missing the list failure:\n%s", details)
 	}
 }
 
