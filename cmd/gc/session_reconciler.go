@@ -4254,6 +4254,7 @@ func sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store bea
 	if store == nil {
 		return false, nil
 	}
+	holders := sessionInstanceIdentities(identifiers, queueAliases)
 	seen := make(map[string]struct{}, len(identifiers))
 	for _, status := range statuses {
 		for _, assignee := range identifiers {
@@ -4266,10 +4267,10 @@ func sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store bea
 			}
 			seen[key] = struct{}{}
 			_, viaQueueAlias := queueAliases[assignee]
-			if has, err := sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierIssues, true, viaQueueAlias, excludeOwnDrainStep); err != nil || has {
+			if has, err := sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierIssues, true, viaQueueAlias, excludeOwnDrainStep, holders); err != nil || has {
 				return has, err
 			}
-			if has, err := sessionHasOpenAssignedWispWorkForCloseGate(store, assignee, status, viaQueueAlias, excludeOwnDrainStep); err != nil || has {
+			if has, err := sessionHasOpenAssignedWispWorkForCloseGate(store, assignee, status, viaQueueAlias, excludeOwnDrainStep, holders); err != nil || has {
 				return has, err
 			}
 		}
@@ -4281,13 +4282,13 @@ func sessionHasAssignedWorkInStoreByIdentifiersForStatusesForCloseGate(store bea
 // but filters through hasNonSessionNonOwnDrainStepWork instead of the shared
 // wa.HasNonSessionWork, so the drain-step exclusion cannot leak into
 // sessionHasOpenAssignedWorkForTier's other caller (the awake-work chain).
-func sessionHasOpenAssignedWorkForTierForCloseGate(store beads.Store, assignee, status string, tierMode beads.TierMode, live, viaQueueAlias, excludeOwnDrainStep bool) (bool, error) {
+func sessionHasOpenAssignedWorkForTierForCloseGate(store beads.Store, assignee, status string, tierMode beads.TierMode, live, viaQueueAlias, excludeOwnDrainStep bool, holders map[string]struct{}) (bool, error) {
 	wa := workAssignmentForStore(beads.WorkStore{Store: store})
 	items, err := wa.OpenAssignedTo(assignee, status, tierMode, live)
 	if err != nil {
 		return false, err
 	}
-	return hasNonSessionNonOwnDrainStepWork(store, items, viaQueueAlias, excludeOwnDrainStep), nil
+	return hasNonSessionNonOwnDrainStepWork(store, items, viaQueueAlias, excludeOwnDrainStep, holders), nil
 }
 
 // sessionHasOpenAssignedWispWorkForCloseGate mirrors sessionHasOpenAssignedWispWork
@@ -4295,8 +4296,8 @@ func sessionHasOpenAssignedWorkForTierForCloseGate(store beads.Store, assignee, 
 // path: that cache is a positive-only accelerator built on the shared
 // wa.HasNonSessionWork filter, and drain-ack is not a hot loop, so the extra
 // live read here is cheap and keeps the exclusion correct rather than stale.
-func sessionHasOpenAssignedWispWorkForCloseGate(store beads.Store, assignee, status string, viaQueueAlias, excludeOwnDrainStep bool) (bool, error) {
-	return sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierWisps, true, viaQueueAlias, excludeOwnDrainStep)
+func sessionHasOpenAssignedWispWorkForCloseGate(store beads.Store, assignee, status string, viaQueueAlias, excludeOwnDrainStep bool, holders map[string]struct{}) (bool, error) {
+	return sessionHasOpenAssignedWorkForTierForCloseGate(store, assignee, status, beads.TierWisps, true, viaQueueAlias, excludeOwnDrainStep, holders)
 }
 
 // hasNonSessionNonOwnDrainStepWork is wa.HasNonSessionWork plus two close-gate
@@ -4307,7 +4308,7 @@ func sessionHasOpenAssignedWispWorkForCloseGate(store beads.Store, assignee, sta
 //
 // The name is left naming two of the three exclusions rather than renamed, to
 // keep this upstream-owned chain a minimal diff; the list here is the contract.
-func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, viaQueueAlias, excludeOwnDrainStep bool) bool {
+func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, viaQueueAlias, excludeOwnDrainStep bool, holders map[string]struct{}) bool {
 	for _, item := range items {
 		if sessionpkg.IsSessionBeadOrRepairable(item) {
 			continue
@@ -4315,7 +4316,7 @@ func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, via
 		if excludeOwnDrainStep && isSessionOwnDrainStepBead(store, item) {
 			continue
 		}
-		if viaQueueAlias && isUnpinnedQueuedWorkBead(item) {
+		if viaQueueAlias && isUnpinnedQueuedWorkBead(item, holders) {
 			continue
 		}
 		return true
@@ -4324,9 +4325,11 @@ func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, via
 }
 
 // isUnpinnedQueuedWorkBead reports whether item is queue work that no session
-// instance holds: open, and carrying none of the metadata keys that pin a bead
-// to a live session. Callers must apply it ONLY to items matched through a pool
-// slot alias -- see poolQueueAliasIdentities for why the identity matters.
+// instance holds: open, and either carrying none of the metadata keys that pin
+// a bead to a live session or carrying a pin that names no session in holders.
+// Callers must apply it ONLY to items matched through a pool slot alias -- see
+// poolQueueAliasIdentities for why the identity matters -- and must pass that
+// session's INSTANCE identities as holders, never its slot alias.
 //
 // This exists because an assignee alone is not an ownership signal on a pool
 // alias. A canonical singleton pool mints no `-N` suffix, so the slot's alias
@@ -4337,6 +4340,26 @@ func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, via
 // alias by draining, and draining is refused precisely because work is
 // addressed to the alias. Six sessions wedged that way on 2026-09-04, each
 // freed only by hand (ci-fx4duc, and ci-00hcfv before it).
+//
+// The holders check is the same defect one layer in, and the pin is where it
+// hid. beadmeta.SessionAffinityMetadataKeys are written at ROUTE time, by
+// graphroute, onto pool steps it deliberately leaves UNBOUND
+// (internal/graphroute/graphroute.go: "stamp continuation group so
+// preassignHookContinuationGroup keeps all steps together"). Read as ownership
+// they say a live session holds the bead; what they actually say is that
+// whichever session takes it must take the rest of the group too. A
+// requirement is not a holder. ci-7tn14g sat on the bench-engineer alias in
+// exactly that state from 2026-09-12, never claimed by anything, and refused
+// 16 drain acknowledgements from six different occupants of the slot
+// (ci-d1huhf).
+//
+// What turns the requirement into a holder is the session back-reference the
+// claim path stamps: gc.session_id, written by stampHookClaimIdentity on the
+// bead a session claims and by preassignHookContinuationGroup on every sibling
+// it is handed at the same moment. Matching it against holders rather than
+// merely requiring it to be present is load-bearing on a singleton pool, where
+// the alias outlives its occupant and a predecessor's stamp would otherwise be
+// inherited forever by every session after it.
 //
 // in_progress work is NEVER excluded: a claim is instance ownership regardless
 // of which identity it was claimed under. Narrowing this guard to in_progress
@@ -4349,22 +4372,87 @@ func hasNonSessionNonOwnDrainStepWork(store beads.Store, items []beads.Bead, via
 // consume that list while staying invisible here; both keys in it have a case
 // in the matrix test below.
 //
-// Verified by three tests, one per way of getting this wrong:
+// Documented absence: a bead whose pin names a session through gc.session_name
+// alone, with no gc.session_id, is NOT treated as held. Both keys are stamped
+// together by the one patch in hookClaimIdentityPatch, and holders carries both
+// forms, so the pair only comes apart on a hand-edited bead -- where excluding
+// it costs a requeue and including it would reinstate the wedge for any bead
+// whose name happens to match a slot.
+//
+// Verified by five tests, one per way of getting this wrong:
 // ...AgentDrainAckWithUnpinnedAliasQueueWorkReleasesSlot (the exclusion fires),
 // ...AgentDrainAckPoolAliasWorkClassification (it does not fire on in-progress
-// or pinned work), and ...AgentDrainAckWithNamedHolderAliasOpenWorkStaysActive
-// (it does not fire off a pool). Every one of the three was written after a
-// mutation of this function survived the suite without it.
-func isUnpinnedQueuedWorkBead(item beads.Bead) bool {
+// or pinned-and-held work), ...AgentDrainAckWithNamedHolderAliasOpenWorkStaysActive
+// (it does not fire off a pool), and the pair in drain_ack_affinity_pin_test.go
+// (it fires on a pin naming nobody and on one naming a predecessor). Every one
+// of the first three was written after a mutation of this function survived the
+// suite without it.
+func isUnpinnedQueuedWorkBead(item beads.Bead, holders map[string]struct{}) bool {
 	if !strings.EqualFold(strings.TrimSpace(item.Status), "open") {
 		return false
 	}
 	for _, key := range beadmeta.SessionAffinityMetadataKeys {
 		if strings.TrimSpace(item.Metadata[key]) != "" {
-			return false
+			return !beadNamesSessionHolder(item, holders)
 		}
 	}
 	return true
+}
+
+// beadNamesSessionHolder reports whether item carries a session back-reference
+// naming one of holders -- the identities that name ONE session instance, never
+// a slot the next occupant inherits.
+//
+// Both spellings of the key are read because both are written: hook claims
+// stamp the snake_case gc.session_id and some bead writers stamp the camelCase
+// gc.sessionId alongside it (internal/beadmeta/keys.go), and
+// internal/runproj/detail_sessionlink.go already resolves the pair this way.
+// An empty holders set makes this false for every bead, which is the correct
+// no-op: a session with no instance identity cannot be named by one.
+func beadNamesSessionHolder(item beads.Bead, holders map[string]struct{}) bool {
+	if len(holders) == 0 {
+		return false
+	}
+	for _, key := range []string{
+		beadmeta.SessionIDMetadataKey,
+		beadmeta.SessionIDCamelMetadataKey,
+		beadmeta.SessionNameMetadataKey,
+		beadmeta.SessionNameCamelMetadataKey,
+	} {
+		if value := strings.TrimSpace(item.Metadata[key]); value != "" {
+			if _, ok := holders[value]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sessionInstanceIdentities returns the identifiers that name this session
+// INSTANCE: everything the close gate queries on, minus the pool slot aliases
+// the next occupant inherits.
+//
+// It is derived from the two sets the caller already holds rather than read
+// from session.Info a second time, so it cannot drift from the identity set the
+// query actually ran on -- adding an identity to
+// sessionAssignmentIdentifiersForConfigInfo without adding it to
+// poolQueueAliasIdentities widens both together, which is the safe direction.
+// For a non-pool session queueAliases is empty, so this returns every
+// identifier; that is inert, because viaQueueAlias is then never true and no
+// caller consults it.
+func sessionInstanceIdentities(identifiers []string, queueAliases map[string]struct{}) map[string]struct{} {
+	instances := make(map[string]struct{}, len(identifiers))
+	for _, identifier := range identifiers {
+		identifier = strings.TrimSpace(identifier)
+		if identifier == "" {
+			continue
+		}
+		if _, isAlias := queueAliases[identifier]; isAlias {
+			continue
+		}
+		instances[identifier] = struct{}{}
+	}
+	return instances
 }
 
 // isSessionOwnDrainStepBead reports whether item is a mol-do-work "drain" step

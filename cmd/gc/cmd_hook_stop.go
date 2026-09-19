@@ -557,8 +557,11 @@ func stopGateHasOnlyParkedClaims(stores []hookStore) bool {
 // stopGateHeldClaims reads every bead this session holds, without the regular
 // work query's dependency readiness filtering. "Holds" is the reconciler's
 // definition, not a looser one: in_progress on any identity, plus OPEN work
-// carrying a session-affinity pin -- the shape preassignHookContinuationGroup
-// creates when it hands a session its continuation siblings.
+// carrying a session-affinity pin that names THIS session -- the shape
+// preassignHookContinuationGroup creates when it hands a session its
+// continuation siblings, back-reference and all. A pin naming nobody is a
+// routing requirement graphroute wrote at route time, and holding the turn open
+// for one wedged a pool slot for six days (ci-d1huhf).
 //
 // The open half is why this exists in its current form. Reading in_progress
 // alone made this gate and the drain-ack refusal disagree on exactly one
@@ -573,6 +576,7 @@ func stopGateHeldClaims(stores []hookStore) ([]beads.Bead, bool) {
 	seen := make(map[string]struct{})
 	held := make([]beads.Bead, 0)
 	queueAlias := stopGateQueueAliasIdentity()
+	holders := stopGateSessionInstanceIdentities()
 	for _, store := range stores {
 		output, err := shellWorkQueryWithEnv(stopGateHeldClaimsQuery, store.dir, store.env)
 		if err != nil {
@@ -591,10 +595,10 @@ func stopGateHeldClaims(stores []hookStore) ([]beads.Bead, bool) {
 			}
 			seen[claim.ID] = struct{}{}
 			// The reconciler's own classifier decides this, not a second copy:
-			// open work parked on the slot alias with no session pin is the
-			// next occupant's queue, and holding the turn open for it would
+			// open work parked on the slot alias that no session has taken is
+			// the next occupant's queue, and holding the turn open for it would
 			// move ci-fx4duc's wedge from the drain-ack refusal to this gate.
-			if queueAlias != "" && strings.TrimSpace(claim.Assignee) == queueAlias && isUnpinnedQueuedWorkBead(claim) {
+			if queueAlias != "" && strings.TrimSpace(claim.Assignee) == queueAlias && isUnpinnedQueuedWorkBead(claim, holders) {
 				continue
 			}
 			held = append(held, claim)
@@ -668,6 +672,33 @@ func stopGateQueueAliasIdentity() string {
 		return ""
 	}
 	return strings.TrimSpace(os.Getenv("GC_ALIAS"))
+}
+
+// stopGateSessionInstanceIdentities returns the identities that name THIS
+// session instance, which isUnpinnedQueuedWorkBead matches a bead's session
+// back-reference against.
+//
+// It is the Stop-gate mirror of sessionInstanceIdentities (session_reconciler.go)
+// and is its exact complement: GC_ALIAS is the one identity deliberately
+// ABSENT, because an alias addresses the slot rather than the occupant, and
+// admitting it here would let a predecessor's stamp hold today's session -- the
+// inheritance ci-d1huhf is about. The reconciler derives the same set by
+// subtracting poolQueueAliasIdentities from the query identifiers; this side
+// has no such set to subtract from, so it names the two instance identities the
+// held-claims query already lists.
+//
+// Unscoped by session origin, unlike stopGateQueueAliasIdentity: these two
+// variables name one instance for a named holder exactly as they do for a pool
+// session, and the exclusion they feed is already inert off a pool because
+// stopGateQueueAliasIdentity returns "" there.
+func stopGateSessionInstanceIdentities() map[string]struct{} {
+	identities := make(map[string]struct{}, 2)
+	for _, value := range []string{os.Getenv("GC_SESSION_ID"), os.Getenv("GC_SESSION_NAME")} {
+		if value = strings.TrimSpace(value); value != "" {
+			identities[value] = struct{}{}
+		}
+	}
+	return identities
 }
 
 func stopGateClaimIsParkedOnOpenAssignedQuestion(claim beads.Bead, store hookStore) bool {

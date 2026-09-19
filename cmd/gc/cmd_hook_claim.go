@@ -761,9 +761,53 @@ func preassignHookContinuationGroup(bead beads.Bead, opts hookClaimOptions, ops 
 		if err := ops.AssignContinuation(ctx, dir, opts.Env, sibling.ID, opts.Assignee); err != nil {
 			return assigned, fmt.Errorf("assigning %s: %w", sibling.ID, err)
 		}
+		if err := stampHookContinuationHolder(ctx, sibling, opts, ops, dir); err != nil {
+			return assigned, fmt.Errorf("stamping the holder on %s: %w", sibling.ID, err)
+		}
 		assigned = append(assigned, sibling.ID)
 	}
 	return assigned, nil
+}
+
+// stampHookContinuationHolder records THIS session on a continuation sibling
+// the claim just handed it, with the same gc.session_id / gc.session_name pair
+// stampHookClaimIdentity writes on the bead actually claimed.
+//
+// Without it the sibling carries an affinity pin and nothing else, which is
+// indistinguishable from a pool step graphroute routed and nobody ever took --
+// and the close gate and the Stop gate both have to tell those apart, because
+// counting the second as held work wedged a pool slot for six days (ci-d1huhf,
+// isUnpinnedQueuedWorkBead). The assignee cannot carry that distinction: on a
+// canonical singleton pool it is the slot alias, which the next occupant
+// inherits.
+//
+// It is the assignment's completion, not a best-effort extra, so a write error
+// fails the preassign rather than being logged past: a sibling assigned but not
+// stamped would be released by the very gates this stamp exists to satisfy, and
+// the caller already leaves continuation_assigned empty rather than partial on
+// an error for the matching reason.
+//
+// Documented absence: nothing is stamped when GC_SESSION_ID is unset -- a
+// hand-run `gc hook --claim` outside a session has no instance to name, and a
+// stamp of the empty string would name the slot instead. Siblings preassigned
+// that way stay queue work, which is what they are.
+func stampHookContinuationHolder(ctx context.Context, sibling beads.Bead, opts hookClaimOptions, ops hookClaimOps, dir string) error {
+	sessionID := hookClaimSessionID(opts.Env)
+	if sessionID == "" || ops.StampWorkMeta == nil {
+		return nil
+	}
+	patch := map[string]string{}
+	if strings.TrimSpace(sibling.Metadata[beadmeta.SessionIDMetadataKey]) != sessionID {
+		patch[beadmeta.SessionIDMetadataKey] = sessionID
+	}
+	if sessionName := hookClaimSessionName(opts.Env); sessionName != "" &&
+		strings.TrimSpace(sibling.Metadata[beadmeta.SessionNameMetadataKey]) != sessionName {
+		patch[beadmeta.SessionNameMetadataKey] = sessionName
+	}
+	if len(patch) == 0 {
+		return nil
+	}
+	return ops.StampWorkMeta(ctx, dir, opts.Env, sibling.ID, opts.Assignee, patch)
 }
 
 func hookClaimWithBdStore(ctx context.Context, dir string, env []string, beadID, assignee string) (beads.Bead, bool, error) {

@@ -2039,12 +2039,21 @@ func TestReconcileSessionBeads_AgentDrainAckWithNamedHolderAliasOpenWorkStaysAct
 // Both pin keys get a case because beadmeta.SessionAffinityMetadataKeys holds
 // two, and only the continuation group is read by the routing path today --
 // testing that one alone would let the advisory key silently stop pinning.
+//
+// Every pinned case here also carries the gc.session_id back-reference the
+// claim path stamps, because a pin alone stopped meaning "held" in ci-d1huhf:
+// graphroute writes those same keys onto pool steps it leaves unbound, and six
+// days of refused drain acknowledgements came of reading one as a claim. These
+// rows are the corroborated shape; the uncorroborated ones, which must now be
+// RELEASED, are in drain_ack_affinity_pin_test.go. Deleting the session_id from
+// a row here turns it into one of those, which is the check that the two files
+// still disagree about exactly one key.
 func TestReconcileSessionBeads_AgentDrainAckPoolAliasWorkClassification(t *testing.T) {
 	const poolAlias = "worker"
 	cases := []struct {
 		name     string
 		status   string
-		metadata map[string]string
+		metadata func(sessionID string) map[string]string
 	}{
 		{
 			name:   "in-progress claim made under the alias",
@@ -2053,16 +2062,22 @@ func TestReconcileSessionBeads_AgentDrainAckPoolAliasWorkClassification(t *testi
 		{
 			name:   "open work pinned by continuation group",
 			status: "open",
-			metadata: map[string]string{
-				beadmeta.RootBeadIDMetadataKey:        "root-1",
-				beadmeta.ContinuationGroupMetadataKey: "group-1",
+			metadata: func(sessionID string) map[string]string {
+				return map[string]string{
+					beadmeta.RootBeadIDMetadataKey:        "root-1",
+					beadmeta.ContinuationGroupMetadataKey: "group-1",
+					beadmeta.SessionIDMetadataKey:         sessionID,
+				}
 			},
 		},
 		{
 			name:   "open work pinned by session affinity",
 			status: "open",
-			metadata: map[string]string{
-				beadmeta.SessionAffinityMetadataKey: "require",
+			metadata: func(sessionID string) map[string]string {
+				return map[string]string{
+					beadmeta.SessionAffinityMetadataKey: "require",
+					beadmeta.SessionIDMetadataKey:       sessionID,
+				}
 			},
 		},
 	}
@@ -2079,12 +2094,16 @@ func TestReconcileSessionBeads_AgentDrainAckPoolAliasWorkClassification(t *testi
 				"pool_managed":   "true",
 				"session_origin": "ephemeral",
 			})
+			var metadata map[string]string
+			if tc.metadata != nil {
+				metadata = tc.metadata(session.ID)
+			}
 			env.createWorkBead(beads.Bead{
 				Title:    "alias work",
 				Type:     "task",
 				Status:   tc.status,
 				Assignee: poolAlias,
-				Metadata: tc.metadata,
+				Metadata: metadata,
 			})
 
 			dops := newFakeDrainOps()
