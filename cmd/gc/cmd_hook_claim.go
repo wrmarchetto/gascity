@@ -969,9 +969,12 @@ func hookClaimLifecycleCandidate(bead beads.Bead, opts hookClaimOptions) bool {
 // contract.WorkerDirFromMetadata carries the canonical-then-legacy precedence
 // -- spelling the `work_dir` fallback here instead is how the two paths drift.
 //
-// The rejected alternative is stamping AFTER the agent cuts its feature
-// branch. Ordering is not the defect and fixing it changes nothing: dir is
-// the shared root whenever the stamp runs.
+// Ordering is a SECOND defect, not this one, and it is fixed at the close
+// rather than here (stampWorkBranchOnClose, ci-cocmug). The claim runs before
+// the agent cuts its feature branch, so no directory this function could pick
+// makes the claim-time sample name the branch the work ends up on. This
+// function's job is only to resolve the right tree; what that tree is on at
+// claim time is the truth about the claim.
 //
 // Documented absence: there is NO fallback to dir when the session bead names
 // no worktree. Falling back would reinstate the defect for exactly the

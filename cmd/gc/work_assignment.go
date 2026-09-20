@@ -241,14 +241,19 @@ func (w workAssignment) ReleaseWorkBead(item beads.Bead, runTargetFallback, work
 // sitting in the dead slot's worktree, and the salvage had to be done by hand
 // (ci-q3qbo9; measured on gs-eh2 and as-2mhs, 2026-09-07).
 //
-// The earlier account here blamed ORDERING -- one claim per session, before
-// the branch cut -- and that was wrong twice over: the stamp re-runs on every
-// hook tick through the adoption paths, and moving it after the branch cut
-// would have changed nothing while dir stayed the shared root. ci-hdnj73
-// fixed the resolution rather than the ordering, so a claim now resolves the
-// session bead's worker_dir the same way this release path does. This
-// function stays: the release is where a dying session's LAST branch is
-// recorded, after the tick that would otherwise have caught it.
+// An earlier account here blamed ORDERING -- one claim per session, before
+// the branch cut -- and dismissing it was half right. Moving the claim-time
+// stamp changed nothing while dir stayed the shared root, so ci-hdnj73 fixed
+// the resolution; a claim now resolves the session bead's worker_dir the same
+// way this release path does. But ordering was a real second defect hiding
+// behind the first, and the tick re-stamp that was supposed to cover it does
+// not fire for a seat that ticks the hook once per bead: measured at 7 of 7
+// beads carrying the prior bead's branch (ci-cocmug). The close path re-reads
+// HEAD per bead now (stampWorkBranchOnClose).
+//
+// This function stays. It is the writer for the beads that never reach a
+// close at all -- a dying session's LAST branch, recorded when no further
+// tick and no close will come.
 //
 // An EMPTY branch leaves the existing stamp alone rather than clearing it. A
 // pruned worktree, a detached HEAD, or a non-repo work_dir all resolve to ""

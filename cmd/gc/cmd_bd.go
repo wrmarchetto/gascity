@@ -550,6 +550,20 @@ func doBdScoped(cityName, rigName string, bdArgs []string, stdout, stderr io.Wri
 		return 1
 	}
 
+	// Close-time gc.work_branch refresh (ci-cocmug). The claim-time stamp
+	// samples the seat's worktree BEFORE the agent cuts its feature branch,
+	// and a seat reuses one worktree across beads, so every bead but the
+	// first one that worktree serves records its predecessor's branch. Re-read
+	// HEAD here, per bead. It runs AFTER the brief-redirect gate so a close
+	// refused on withdrawn instructions writes nothing, and BEFORE the
+	// work-record gate, which judges commit reachability against this very
+	// field and would otherwise report a violation against the value this
+	// call just corrected.
+	stampWorkBranchOnClose(bdArgs, guardStore, guardBeads, workBranchCloseStampOps{
+		ResolveBranch: hookResolveWorkBranch,
+		SessionID:     os.Getenv("GC_SESSION_ID"),
+	}, stderr)
+
 	// Work-record close gate (ADR-0009): a close routed through the SDK seam
 	// must satisfy the typed work-record contract (gc.work_outcome present;
 	// shipped ⇒ gc.work_commit reachable on gc.work_branch). Warn-only by default;

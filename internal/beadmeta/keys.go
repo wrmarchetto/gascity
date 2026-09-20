@@ -250,9 +250,17 @@ const (
 //   - WorkBranchMetadataKey ("gc.work_branch") — the git branch of the
 //     CLAIMING AGENT'S OWN WORKTREE, resolved from its session bead's
 //     worker_dir; the handle from the bead to work that has not landed yet.
-//     Stamped at claim time alongside WorkDirMetadataKey, re-stamped on every
-//     hook tick (so it follows the agent when it cuts its feature branch),
-//     and re-stamped again when a dying session releases the bead.
+//     Stamped at claim time alongside WorkDirMetadataKey, re-read from that
+//     worktree's HEAD when the bead CLOSES (stampWorkBranchOnClose), and
+//     re-stamped again when a dying session releases the bead.
+//
+//     The close-time read is what makes the value name the branch the work
+//     was done on. A claim happens before the agent cuts its feature branch,
+//     and a seat reuses one worktree across beads, so the claim-time sample
+//     names whatever the PREVIOUS bead left checked out. The adoption paths
+//     do re-stamp on each hook tick, but that is not a correction anyone can
+//     rely on: the ordinary seat ticks the hook once per bead, and all seven
+//     beads measured under ci-cocmug carried exactly one stamp each.
 //
 //     Until ci-hdnj73 both halves of that were false: the branch came from the
 //     bead store's SHARED checkout, so it recorded the operator's working
