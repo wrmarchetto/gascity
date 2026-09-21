@@ -244,13 +244,13 @@ func (c *OrderFiringCurrentCheck) run(ctx *CheckContext) *CheckResult {
 				worst = worseStatus(worst, StatusError)
 				refusals, marker := consecutiveOrderIntegrityQuarantineRefusals(runs)
 				if refusals >= OrderFiringCurrentFailureHistoryLimit {
-					result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive executions refused by integrity quarantine marker %s", orderDisplayName(order), refusals, marker))
+					result.Details = append(result.Details, fmt.Sprintf("%s: the last %d recorded runs were all refused by integrity quarantine marker %s (as far back as this check reads)", orderDisplayName(order), refusals, marker))
 					repeatedQuarantineRefusals = true
 					if firstQuarantine == "" {
 						firstQuarantine = orderHistoryHintTarget(order)
 					}
 				} else {
-					result.Details = append(result.Details, fmt.Sprintf("%s: %d consecutive execution failures", orderDisplayName(order), failures))
+					result.Details = append(result.Details, fmt.Sprintf("%s: the last %d recorded runs all failed (as far back as this check reads -- gc order history shows the rest)", orderDisplayName(order), failures))
 					repeatedFailures = true
 					if firstFailure == "" {
 						firstFailure = orderHistoryHintTarget(order)
@@ -911,6 +911,18 @@ type orderFiringHistoryResult struct {
 // newest edge of a history. A success, cancellation, or unfinished run breaks
 // the sequence: the check reports persistent execution failure, not an order's
 // ordinary individual nonzero exit.
+//
+// The count is a FLOOR on the true run, never its length, and the detail
+// string above says so rather than naming a number. Production hands this
+// exactly OrderFiringCurrentFailureHistoryLimit runs — cmd/gc's
+// doctorOrderFiringCurrentHistoryFunc passes that same constant as the
+// history limit — so the bound and the threshold are one value and a longer
+// run can never be counted. It read "3 consecutive execution failures"
+// against a run of 23 on 2026-09-21 (ci-3xlb5u), and an operator who follows
+// the check's own hint command sees the two disagree. That is the shape
+// ci-bpsifb already cost a day to: a check the operator can catch being
+// wrong gets filed as broken, and the next real finding is discounted with
+// it.
 func consecutiveOrderExecutionFailures(runs []orders.OrderRun) int {
 	failed := 0
 	for _, run := range runs {
