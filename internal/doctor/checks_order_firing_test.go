@@ -92,7 +92,7 @@ func TestOrderFiringCurrent_ConsecutiveExecutionFailuresStayBlocking(t *testing.
 	if result.Message != "scheduled orders have repeated execution failures" {
 		t.Fatalf("message = %q, want repeated execution failure summary", result.Message)
 	}
-	if details := strings.Join(result.Details, "\n"); !strings.Contains(details, "cleanup-cooldown: 3 consecutive execution failures") {
+	if details := strings.Join(result.Details, "\n"); !strings.Contains(details, "cleanup-cooldown: the last 3 recorded runs all failed") {
 		t.Fatalf("details = %v, want consecutive execution failure diagnostic", result.Details)
 	}
 }
@@ -121,7 +121,7 @@ func TestOrderFiringCurrent_ListsFailuresAndSummarizesHealthyOrders(t *testing.T
 
 	result := check.Run(&CheckContext{CityPath: cityPath})
 	details := strings.Join(result.Details, "\n")
-	if !strings.Contains(details, "backup-sync: 3 consecutive execution failures") {
+	if !strings.Contains(details, "backup-sync: the last 3 recorded runs all failed") {
 		t.Fatalf("details = %v, want failed order named", result.Details)
 	}
 	if !strings.Contains(details, "1 scheduled order is current") {
@@ -161,10 +161,10 @@ func TestOrderFiringCurrent_ConsecutiveIntegrityQuarantineRefusalsNameMarker(t *
 		t.Fatalf("message = %q, want quarantine-refusal summary", result.Message)
 	}
 	details := strings.Join(result.Details, "\n")
-	if !strings.Contains(details, "compact: 3 consecutive executions refused by integrity quarantine marker "+marker) {
+	if !strings.Contains(details, "compact: the last 3 recorded runs were all refused by integrity quarantine marker "+marker) {
 		t.Fatalf("details = %v, want marker-specific refusal diagnostic", result.Details)
 	}
-	if strings.Contains(details, "execution failures") {
+	if strings.Contains(details, "all failed") {
 		t.Fatalf("details = %v, must not misclassify the quarantine as an execution failure", result.Details)
 	}
 }
@@ -838,7 +838,7 @@ func TestOrderFiringCurrent_IncompleteRunsAreNotAFailureStreak(t *testing.T) {
 	if result.Status != StatusOK {
 		t.Fatalf("status = %v, want ok; msg = %s; details = %v", result.Status, result.Message, result.Details)
 	}
-	if details := strings.Join(result.Details, "\n"); strings.Contains(details, "execution failures") {
+	if details := strings.Join(result.Details, "\n"); strings.Contains(details, "all failed") {
 		t.Fatalf("details = %v, want no execution-failure diagnostic", result.Details)
 	}
 }
@@ -894,7 +894,7 @@ func TestOrderFiringCurrent_IncompleteRunDoesNotMaskAnOlderFailureStreak(t *test
 	if result.Status != StatusError {
 		t.Fatalf("status = %v, want error; details = %v", result.Status, result.Details)
 	}
-	if details := strings.Join(result.Details, "\n"); !strings.Contains(details, "merge-sweep: 3 consecutive execution failures") {
+	if details := strings.Join(result.Details, "\n"); !strings.Contains(details, "merge-sweep: the last 3 recorded runs all failed") {
 		t.Fatalf("details = %v, want the failure streak reported", result.Details)
 	}
 }
@@ -950,10 +950,10 @@ func TestOrderFiringCurrent_HintNamesTheOrderTheMessageIsAbout(t *testing.T) {
 	// Both halves are asserted. Requiring only the failing name would pass a
 	// hint that listed every non-OK order, which is not a runnable command.
 	if !strings.Contains(result.FixHint, "zzz-failing") {
-		t.Fatalf("hint = %q, want it to name the order that actually failed", result.FixHint)
+		t.Fatalf("fix hint = %q, want it to name the order that actually failed", result.FixHint)
 	}
 	if strings.Contains(result.FixHint, "aaa-overdue") {
-		t.Fatalf("hint = %q, must not name the merely-overdue order", result.FixHint)
+		t.Fatalf("fix hint = %q, must not name the merely-overdue order", result.FixHint)
 	}
 }
 
@@ -999,9 +999,150 @@ func TestOrderFiringCurrent_QuarantineHintNamesTheRefusedOrder(t *testing.T) {
 		t.Fatalf("message = %q, want the quarantine-refusal summary; details = %v", result.Message, result.Details)
 	}
 	if !strings.Contains(result.FixHint, "zzz-refused") {
-		t.Fatalf("hint = %q, want it to name the refused order", result.FixHint)
+		t.Fatalf("fix hint = %q, want it to name the refused order", result.FixHint)
 	}
 	if strings.Contains(result.FixHint, "aaa-overdue") {
-		t.Fatalf("hint = %q, must not name the merely-overdue order", result.FixHint)
+		t.Fatalf("fix hint = %q, must not name the merely-overdue order", result.FixHint)
+	}
+}
+
+// TestOrderFiringCurrent_FailureDetailReportsTheReadNotTheStreak pins that the
+// failure detail describes how far this check LOOKED, never how long the run
+// actually is.
+//
+// The two are not the same number and cannot be. cmd/gc builds the history
+// func with OrderFiringCurrentFailureHistoryLimit as its limit, so the bound
+// on the read and the threshold for reporting are one constant: the count can
+// never exceed the threshold, and every report is therefore a floor. Measured
+// against the live city on 2026-09-21 (ci-3xlb5u), the detail read "3
+// consecutive execution failures" while `gc order history` showed 23 --
+// which is what the check's own hint command tells an operator to run.
+//
+// Constructed in two halves because either alone goes green over the defect.
+// The first pins the wording at the size production always hands it; without
+// the second, a detail that hard-coded the threshold would satisfy it. The
+// second hands the check MORE runs than the threshold and requires the number
+// to move, which is what establishes the number is the read.
+func TestOrderFiringCurrent_FailureDetailReportsTheReadNotTheStreak(t *testing.T) {
+	now := time.Date(2026, 9, 21, 1, 25, 0, 0, time.UTC)
+
+	detailFor := func(t *testing.T, runs int) string {
+		t.Helper()
+		cityPath, cfg := orderFiringTestCity(t)
+		writeOrderFiringTestOrder(t, cityPath, "mram-restore-owed", "cooldown", "1h")
+		writeOrderFiringTestEvents(t, cityPath,
+			events.Event{Type: events.ControllerStarted, Ts: now.Add(-48 * time.Hour)},
+			events.Event{Type: events.OrderFired, Subject: "mram-restore-owed", Ts: now.Add(-40 * time.Minute)},
+		)
+		check := NewOrderFiringCurrentCheck(cfg, cityPath)
+		check.clock = func() time.Time { return now }
+		check.history = func(orders.Order) ([]orders.OrderRun, error) {
+			var history []orders.OrderRun
+			for i := range runs {
+				history = append(history, orders.OrderRun{
+					Outcome:   orders.RunOutcomeExecFailed,
+					CreatedAt: now.Add(-time.Duration(i) * time.Hour),
+				})
+			}
+			return history, nil
+		}
+		result := check.Run(&CheckContext{CityPath: cityPath})
+		if result.Status != StatusError {
+			t.Fatalf("status = %v, want error; msg = %s; details = %v", result.Status, result.Message, result.Details)
+		}
+		return strings.Join(result.Details, "\n")
+	}
+
+	atLimit := detailFor(t, OrderFiringCurrentFailureHistoryLimit)
+	want := fmt.Sprintf("mram-restore-owed: the last %d recorded runs all failed", OrderFiringCurrentFailureHistoryLimit)
+	if !strings.Contains(atLimit, want) {
+		t.Fatalf("details = %q, want a detail containing %q", atLimit, want)
+	}
+	// "consecutive" is a claim about the order's run, not about this read, and
+	// it is the word that made the detail contradict the hint it ships with.
+	if strings.Contains(atLimit, "consecutive") {
+		t.Fatalf("details = %q, want no claim about the streak's true length", atLimit)
+	}
+	if !strings.Contains(atLimit, "gc order history") {
+		t.Fatalf("details = %q, want the detail to name where the full run can be read", atLimit)
+	}
+
+	overLimit := detailFor(t, 23)
+	if !strings.Contains(overLimit, "the last 23 recorded runs all failed") {
+		t.Fatalf("details = %q, want the count to follow the history handed to the check", overLimit)
+	}
+}
+
+// TestOrderFiringCurrent_ABrokenOrderIsSeparableFromAReportingOne is the
+// experiment ci-3xlb5u asked for, expressed where it can be re-run.
+//
+// The defect was not that the check was too loud. It was that its one error
+// named an order that had not failed -- mram-restore-owed exits nonzero on
+// purpose while a restore is outstanding, and that condition had been live
+// for days -- so a genuine break in any of the other 46 orders would have
+// arrived in the same words, behind a standing read of "that is just the
+// MRAM one". A permanently red gate reports nothing.
+//
+// So the assertion is about SEPARABILITY and not about silence: with one
+// order reporting its live condition through a declared incomplete status
+// and another genuinely unable to execute, the check's output must name the
+// second and not the first. Both halves run in one result, because a fix
+// verified by watching the error disappear cannot tell a repaired check from
+// a muted one -- the muted check passes a test that only looks at the
+// declaring order.
+func TestOrderFiringCurrent_ABrokenOrderIsSeparableFromAReportingOne(t *testing.T) {
+	now := time.Date(2026, 9, 21, 1, 25, 0, 0, time.UTC)
+	cityPath, cfg := orderFiringTestCity(t)
+	writeOrderFiringTestOrder(t, cityPath, "mram-restore-owed", "cooldown", "1h")
+	writeOrderFiringTestOrder(t, cityPath, "rig-root-branch", "cooldown", "1h")
+	writeOrderFiringTestEvents(t, cityPath,
+		events.Event{Type: events.ControllerStarted, Ts: now.Add(-48 * time.Hour)},
+		events.Event{Type: events.OrderFired, Subject: "mram-restore-owed", Ts: now.Add(-40 * time.Minute)},
+		events.Event{Type: events.OrderFired, Subject: "rig-root-branch", Ts: now.Add(-40 * time.Minute)},
+	)
+
+	history := func(outcome orders.RunOutcome) []orders.OrderRun {
+		var runs []orders.OrderRun
+		// One past the threshold, so neither order is reported merely for
+		// sitting at a boundary.
+		for i := range OrderFiringCurrentFailureHistoryLimit + 1 {
+			runs = append(runs, orders.OrderRun{
+				Outcome:   outcome,
+				CreatedAt: now.Add(-time.Duration(i) * time.Hour),
+			})
+		}
+		return runs
+	}
+
+	check := NewOrderFiringCurrentCheck(cfg, cityPath)
+	check.clock = func() time.Time { return now }
+	check.history = func(order orders.Order) ([]orders.OrderRun, error) {
+		if order.Name == "mram-restore-owed" {
+			// What the order records once it declares its owed verdict in
+			// incomplete_exit_codes: it ran, and work is outstanding.
+			return history(orders.RunOutcomeExecIncomplete), nil
+		}
+		return history(orders.RunOutcomeExecFailed), nil
+	}
+
+	result := check.Run(&CheckContext{CityPath: cityPath})
+	if result.Status != StatusError {
+		t.Fatalf("status = %v, want error -- an order that cannot execute must still be reported; msg = %s; details = %v", result.Status, result.Message, result.Details)
+	}
+	details := strings.Join(result.Details, "\n")
+	if !strings.Contains(details, "rig-root-branch: the last") {
+		t.Fatalf("details = %q, want the genuinely failing order named", details)
+	}
+	if strings.Contains(details, "mram-restore-owed: the last") {
+		t.Fatalf("details = %q, want the reporting order absent from the failure diagnostic", details)
+	}
+	// The hint is what an operator runs next, and pointing it at the order
+	// that is working is how ci-bpsifb turned a correct check into a check
+	// filed as broken.
+	if !strings.Contains(result.FixHint, "rig-root-branch") {
+		t.Fatalf("fix hint = %q, want it to name the order that cannot execute", result.FixHint)
+	}
+	if strings.Contains(result.FixHint, "mram-restore-owed") {
+		t.Fatalf("fix hint = %q, want it not to send triage at the order that is working", result.FixHint)
 	}
 }
