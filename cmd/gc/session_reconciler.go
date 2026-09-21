@@ -2465,8 +2465,18 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 									fmt.Fprintf(stderr, "session reconciler: clearing invalid drain-ack for %s: %v\n", name, err) //nolint:errcheck
 								}
 							}
+							// Dated as well as named. The refusal is one-shot --
+							// clearDrain above erases the acknowledgement, so this
+							// branch is not re-entered and the reason stands
+							// unchanged however long the session then sits -- which
+							// makes the reason alone unable to say how long.
+							// Stamped unconditionally rather than only on entry: a
+							// session that reaches a second refusal took a turn to
+							// get there, so the later instant is the one a reader
+							// wants.
 							updated, err := sessFront.ApplyPatchInfo(infoByID[id], sessionpkg.MetadataPatch{
-								"state_reason": sessionpkg.DrainAckAssignedWorkReason,
+								"state_reason":                          sessionpkg.DrainAckAssignedWorkReason,
+								sessionpkg.DrainAckRefusedAtMetadataKey: clk.Now().UTC().Format(time.RFC3339),
 							})
 							if err != nil {
 								fmt.Fprintf(stderr, "session reconciler: recording refused drain-ack for %s: %v\n", name, err) //nolint:errcheck

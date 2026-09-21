@@ -322,3 +322,74 @@ func TestClaimLeaseRenewalWarnsWhenPatrolCannotSustainIt(t *testing.T) {
 		t.Errorf("warned at the default patrol cadence: %q", buf.String())
 	}
 }
+
+// --- a holder that has retired itself ---
+
+// drainAckRefusedFixture is the steady tick a refused drain acknowledgement
+// leaves behind: the session is open and alive, its claim is still in_progress
+// and still assigned to it, and the only thing that changed is the state reason
+// the controller wrote when it declined the acknowledgement.
+func drainAckRefusedFixture(t *testing.T) claimLeaseTestFixture {
+	t.Helper()
+	f := newClaimLeaseFixture(t)
+	f.session.Metadata["state_reason"] = sessionpkg.DrainAckAssignedWorkReason
+	if err := f.store.SetMetadata(f.session.ID, "state_reason", sessionpkg.DrainAckAssignedWorkReason); err != nil {
+		t.Fatalf("SetMetadata(state_reason): %v", err)
+	}
+	return f
+}
+
+func TestClaimLeaseRenewalStopsOnceTheHolderHasDrainAcked(t *testing.T) {
+	// The measured defect (ci-amflbh). A session answered drain at 05:36Z and
+	// sat at an idle prompt for the next twelve hours. Its runtime stayed
+	// alive, so claimHolderIsPresent kept saying yes and the controller pushed
+	// the lease forward every two minutes until a human ran `gc bd unclaim
+	// --force`. `gc bd show` read "heartbeat just now" the whole time, which is
+	// the single sentence a lease exists to be able to say truthfully.
+	f := drainAckRefusedFixture(t)
+	r := newClaimLeaseRenewer()
+
+	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, time.Now())
+
+	if len(got) != 0 {
+		t.Fatalf("due = %v, want none -- the holder told the controller it was finished", renewalIDs(got))
+	}
+}
+
+func TestClaimLeaseRenewalStopsForADrainAckedHolderMissingFromTheSnapshot(t *testing.T) {
+	// The snapshot is not the only liveness source: renewal falls back to a
+	// store query for a holder this tick's snapshot missed, and that fallback
+	// is what TestClaimLeaseRenewalRenewsHolderMissingFromTheSessionSnapshot
+	// pins. Reading the refusal out of the snapshot ALONE would leave the
+	// fallback renewing a retired holder's lease forever, and the fallback is
+	// reached on exactly the ticks nobody is watching.
+	f := drainAckRefusedFixture(t)
+	r := newClaimLeaseRenewer()
+
+	got := r.due("", f.cfg, f.store, nil, []beads.Bead{f.work}, nil, time.Now())
+
+	if len(got) != 0 {
+		t.Fatalf("due = %v, want none -- the store says this holder retired", renewalIDs(got))
+	}
+}
+
+func TestClaimLeaseRenewalKeepsRenewingUnderAnyOtherStateReason(t *testing.T) {
+	// The negative control, and the reason the guard is keyed on the refusal
+	// rather than on state_reason being set at all. Every healthy session in
+	// the city carries a state reason -- "session,config", "creation_complete",
+	// "reactivated" -- so a guard that read the key's presence would lapse the
+	// lease of every live holder in the city and hand `bd reclaim` the whole
+	// board.
+	f := newClaimLeaseFixture(t)
+	f.session.Metadata["state_reason"] = "creation_complete"
+	if err := f.store.SetMetadata(f.session.ID, "state_reason", "creation_complete"); err != nil {
+		t.Fatalf("SetMetadata(state_reason): %v", err)
+	}
+	r := newClaimLeaseRenewer()
+
+	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, time.Now())
+
+	if len(got) != 1 || got[0].BeadID != f.work.ID {
+		t.Fatalf("due = %v, want [%s] -- an ordinary state reason is not a retirement", renewalIDs(got), f.work.ID)
+	}
+}
