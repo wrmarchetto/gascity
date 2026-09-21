@@ -52,7 +52,7 @@ func TestIdleTrackerDurablePokeRevealsUnansweredNudge(t *testing.T) {
 	sp.SetActivity("wedged", nudgedAt)
 
 	poke := runtime.Poke{At: nudgedAt, Prior: genuine}
-	if !it.checkIdle("wedged", "", sp, now, poke) {
+	if !it.checkIdle("wedged", "", sp, now, poke).Idle {
 		t.Fatalf("checkIdle = false with a durable poke on record; want true "+
 			"(genuine activity %v is %v old against a %v timeout -- the nudge echo at %v is not a turn)",
 			genuine, now.Sub(genuine), timeout, nudgedAt)
@@ -79,7 +79,7 @@ func TestIdleTrackerDurablePokeSparesResponsiveAgent(t *testing.T) {
 	startFakeSession(t, sp, "responsive")
 	sp.SetActivity("responsive", answeredAt)
 
-	if it.checkIdle("responsive", "", sp, now, runtime.Poke{At: nudgedAt, Prior: genuine}) {
+	if it.checkIdle("responsive", "", sp, now, runtime.Poke{At: nudgedAt, Prior: genuine}).Idle {
 		t.Fatalf("checkIdle = true for an agent that answered at %v (%v ago); want false",
 			answeredAt, now.Sub(answeredAt))
 	}
@@ -104,7 +104,7 @@ func TestIdleTrackerDurablePokeRespectsGraceWindow(t *testing.T) {
 	startFakeSession(t, sp, "just-nudged")
 	sp.SetActivity("just-nudged", nudgedAt)
 
-	if it.checkIdle("just-nudged", "", sp, now, runtime.Poke{At: nudgedAt, Prior: genuine}) {
+	if it.checkIdle("just-nudged", "", sp, now, runtime.Poke{At: nudgedAt, Prior: genuine}).Idle {
 		t.Fatalf("checkIdle = true %v after the nudge; want false until the %v grace window elapses",
 			now.Sub(nudgedAt), runtime.PokeGrace)
 	}
@@ -136,7 +136,7 @@ func TestIdleTrackerIncompletePokeFailsOpen(t *testing.T) {
 		{"prior without at", runtime.Poke{Prior: now.Add(-3 * time.Hour)}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if it.checkIdle("halfwritten", "", sp, now, tc.poke) {
+			if it.checkIdle("halfwritten", "", sp, now, tc.poke).Idle {
 				t.Fatalf("checkIdle = true for %s; want false (an incomplete record must not discount)", tc.name)
 			}
 		})

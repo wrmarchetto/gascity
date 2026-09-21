@@ -79,3 +79,66 @@ func TestTimerTraceCodesTotal(t *testing.T) {
 		t.Fatal("no traced TimerDecision exercised — enumeration is broken")
 	}
 }
+
+// TestTimerStopAutoArmsAndDeferDoesNot pins the auto-arm policy for the two
+// lifecycle-timer ladders: a decision that STOPS a session arms the template
+// at detail, a decision that DEFERS one does not.
+//
+// The decisions are driven through the deciders rather than listed as
+// reason/outcome literals on purpose. A literal list is a second copy of the
+// ladders' vocabulary and rots the moment a rung is added -- the new rung
+// would be absent from both the list and shouldAutoArmForTrace, and the suite
+// would stay green over a decision nobody can see. Enumerating the fact space
+// instead makes a new rung fail here until its side of the policy is chosen.
+//
+// The asymmetry is the whole point and it is a volume argument, not an
+// oversight. An auto-arm arms the WHOLE template at detail for ten minutes,
+// measured at roughly 1-1.5 records per second per template, against a cap of
+// sessionReconcilerTraceMaxAutoArms concurrent arms shared with the failure
+// triggers. A stop happens at most once per session lifetime. An
+// assigned_work defer happens once per tick for the entire time a wedged
+// session sits, so arming on it would hold the cap indefinitely and starve
+// the anomaly arms it shares with.
+func TestTimerStopAutoArmsAndDeferDoesNot(t *testing.T) {
+	blockers := []string{"", "user_hold", "quarantine"}
+	pendings := []sessionpkg.PendingFact{
+		sessionpkg.PendingUnknown, sessionpkg.PendingNo, sessionpkg.PendingYes,
+	}
+	assigned := []sessionpkg.AssignedWorkFact{
+		sessionpkg.AssignedWorkUnknown, sessionpkg.AssignedWorkNone, sessionpkg.AssignedWorkHas,
+	}
+
+	var decisions []sessionpkg.TimerDecision
+	for _, b := range blockers {
+		for _, p := range pendings {
+			for _, a := range assigned {
+				facts := sessionpkg.TimerFacts{Triggered: true, Blocker: b, Pending: p, AssignedWork: a}
+				decisions = append(decisions, sessionpkg.DecideMaxSessionAge(facts))
+				decisions = append(decisions, sessionpkg.DecideIdleTimeout(facts))
+			}
+		}
+	}
+	decisions = append(decisions, sessionpkg.DecideAssignedWorkExhausted())
+
+	stops, defers := 0, 0
+	for _, dec := range decisions {
+		reason, outcome := timerTraceCodes(dec)
+		switch dec.Action {
+		case sessionpkg.TimerActionStop:
+			stops++
+			if !shouldAutoArmForTrace(reason, outcome) {
+				t.Errorf("stop (%s/%s) does not auto-arm: the kill would be recorded only on a hand-armed template", reason, outcome)
+			}
+		case sessionpkg.TimerActionDefer:
+			defers++
+			if shouldAutoArmForTrace(reason, outcome) {
+				t.Errorf("defer (%s/%s) auto-arms: a per-tick decision would hold the auto-arm cap indefinitely", reason, outcome)
+			}
+		}
+	}
+	// Both counts guard against a vacuous pass: a broken enumeration that
+	// produced only gather actions would satisfy every assertion above.
+	if stops == 0 || defers == 0 {
+		t.Fatalf("enumeration produced %d stops and %d defers, want both non-zero", stops, defers)
+	}
+}
