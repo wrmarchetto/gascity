@@ -147,6 +147,7 @@ func (r *claimLeaseRenewer) due(
 ) []claimLeaseRenewal {
 	storeRefAware := len(assignedWorkStoreRefs) == len(assignedWorkBeads) && len(assignedWorkBeads) > 0
 	ownership := newOpenSessionOwnership(cityPath, cfg, openSessionInfos, storeRefAware)
+	drained := newDrainAckedHolders(openSessionInfos)
 
 	var targets []claimLeaseRenewal
 	seen := make(map[string]struct{}, len(assignedWorkBeads))
@@ -172,6 +173,9 @@ func (r *claimLeaseRenewer) due(
 		if !claimHolderIsPresent(ownership, cityStore, assignee, storeRef) {
 			continue
 		}
+		if claimHolderHasDrainAcked(drained, cityStore, assignee) {
+			continue
+		}
 		if last, ok := r.renewedAt[wb.ID]; ok && now.Sub(last) < r.interval {
 			continue
 		}
@@ -184,6 +188,67 @@ func (r *claimLeaseRenewer) due(
 		}
 	}
 	return targets
+}
+
+// drainAckedHolders indexes every identity of every open session whose drain
+// acknowledgement the controller refused.
+type drainAckedHolders map[string]struct{}
+
+// newDrainAckedHolders builds that index from this tick's session snapshot. It
+// mirrors newOpenSessionOwnership's legacy index rather than extending it: the
+// ownership index is shared with the orphan-release path, and a holder that has
+// retired must keep being RECOGNIZED there -- its claim stays assigned, and only
+// the lease under it is allowed to lapse.
+func newDrainAckedHolders(openSessionInfos []sessionpkg.Info) drainAckedHolders {
+	drained := make(drainAckedHolders)
+	for _, info := range openSessionInfos {
+		if info.Closed || strings.TrimSpace(info.StateReason) != sessionpkg.DrainAckAssignedWorkReason {
+			continue
+		}
+		for _, id := range sessionBeadAssigneeIdentitiesInfo(info) {
+			drained[id] = struct{}{}
+		}
+	}
+	return drained
+}
+
+// claimHolderHasDrainAcked reports whether the claim's holder has already told
+// the controller it is finished and been refused for still owning this work.
+//
+// A lease says "I am still working on this". A session in that state is not:
+// `gc runtime drain-ack` is the last call an agent makes, the controller's
+// refusal leaves the session active without telling it anything
+// (session_reconciler.go, the DrainAckAssignedWorkReason patch), and nothing in
+// the tree hands it back its turn. MEASURED (ci-amflbh): one such session held
+// a P1 claim for twelve hours with its lease reading "heartbeat just now"
+// throughout, because every other liveness source the controller reads -- the
+// runtime being alive, the session bead being open, the tmux pane reporting
+// activity -- was answering truthfully about a session that was doing nothing.
+//
+// Rejected: a grace period before renewal stops, so a session that resumed work
+// after the refusal keeps its lease. Nothing resumes it; the only transition out
+// of the state is the idle-timeout backstop's forced STOP
+// (drain_ack_wedge_exit_test.go), so the grace would only postpone the lapse and
+// would need an instant nothing recorded. Rejected the other way: releasing the
+// claim here as well. That is the orphan-release path's decision and it keeps the
+// bead assigned deliberately, so the lease lapsing is the whole change -- after
+// it, `bd reclaim` can hand the work on without a human running `unclaim
+// --force`.
+//
+// Reads the same two sources as claimHolderIsPresent, in the same order, and
+// fails toward RENEWING: an unreadable store yields the zero bead with found=true
+// (liveOpenSessionAssignmentBead), which carries no state reason and so leaves the
+// lease alone. Losing a live holder's lease re-opens the claim theft ci-pzejlf
+// closed; leaving a retired holder's lease standing one more interval does not.
+func claimHolderHasDrainAcked(drained drainAckedHolders, cityStore beads.Store, assignee string) bool {
+	if _, ok := drained[strings.TrimSpace(assignee)]; ok {
+		return true
+	}
+	sb, found := liveOpenSessionAssignmentBead(cityStore, assignee)
+	if !found {
+		return false
+	}
+	return strings.TrimSpace(sb.Metadata["state_reason"]) == sessionpkg.DrainAckAssignedWorkReason
 }
 
 // claimHolderIsPresent reports whether a claim's assignee still names a

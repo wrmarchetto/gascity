@@ -628,12 +628,27 @@ func verifyReleasedPoolAssignment(store beads.Store, id, expectedAssignee string
 }
 
 func liveOpenSessionAssignmentExists(store beads.Store, assignee string) bool {
+	_, found := liveOpenSessionAssignmentBead(store, assignee)
+	return found
+}
+
+// liveOpenSessionAssignmentBead is liveOpenSessionAssignmentExists with the bead
+// it matched on. Split out for the claim-lease renewal guard, which has to read
+// the holder's state_reason and cannot get it from a bool.
+//
+// The zero bead with found=true is a real answer and NOT an oversight: the
+// label-list read below reports "live" when the store fails to answer, so that
+// an unreadable store cannot be mistaken for a dead holder and reopen a live
+// claim. A caller reading fields off the returned bead must therefore treat the
+// zero value as "unknown", not as "the field is empty" -- see
+// claimHolderHasDrainAcked, which keeps renewing in that case.
+func liveOpenSessionAssignmentBead(store beads.Store, assignee string) (beads.Bead, bool) {
 	assignee = strings.TrimSpace(assignee)
 	if store == nil || assignee == "" {
-		return false
+		return beads.Bead{}, false
 	}
-	if liveSessionBeadExistsByIdentity(store, assignee) {
-		return true
+	if sb, ok := liveSessionBeadByIdentity(store, assignee); ok {
+		return sb, true
 	}
 	// NOTE: this call site intentionally keeps a label-only query — not
 	// the Type+Label union from session.ListAllSessionBeads. The
@@ -654,7 +669,7 @@ func liveOpenSessionAssignmentExists(store beads.Store, assignee string) bool {
 	})
 	if err != nil {
 		log.Printf("releaseOrphanedPoolAssignments: live session validation failed for assignee %q: %v", assignee, err)
-		return true
+		return beads.Bead{}, true
 	}
 	for _, sb := range sessions {
 		if sb.Status == "closed" || !isSessionBead(sb) {
@@ -662,14 +677,21 @@ func liveOpenSessionAssignmentExists(store beads.Store, assignee string) bool {
 		}
 		for _, id := range sessionBeadAssigneeIdentities(sb) {
 			if assignee == id {
-				return true
+				return sb, true
 			}
 		}
 	}
-	return false
+	return beads.Bead{}, false
 }
 
 func liveSessionBeadExistsByIdentity(store beads.Store, assignee string) bool {
+	_, found := liveSessionBeadByIdentity(store, assignee)
+	return found
+}
+
+// liveSessionBeadByIdentity is liveSessionBeadExistsByIdentity with the bead it
+// matched on, for callers that need a field off it rather than its existence.
+func liveSessionBeadByIdentity(store beads.Store, assignee string) (beads.Bead, bool) {
 	for _, id := range directSessionBeadIDCandidates(assignee) {
 		sb, err := store.Get(id)
 		if err != nil {
@@ -680,11 +702,11 @@ func liveSessionBeadExistsByIdentity(store beads.Store, assignee string) bool {
 		}
 		for _, candidate := range sessionBeadAssigneeIdentities(sb) {
 			if assignee == candidate {
-				return true
+				return sb, true
 			}
 		}
 	}
-	return false
+	return beads.Bead{}, false
 }
 
 // directSessionBeadIDCandidates returns the bead IDs a work-bead assignee could

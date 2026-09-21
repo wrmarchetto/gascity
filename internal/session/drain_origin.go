@@ -52,6 +52,24 @@ const (
 	// (origin, reason) is the decision record, and a shared enum would let a
 	// future reason be read as coming from the wrong actor.
 	DrainAckReasonMetadataKey = "drain_ack_reason"
+	// DrainAckRefusedAtMetadataKey dates the controller's REFUSAL of an
+	// acknowledgement, in RFC3339. It is written beside
+	// state_reason=DrainAckAssignedWorkReason and, like that reason, nothing
+	// clears it: the refusal is one-shot -- the reconciler erases the provider's
+	// drain-ack marker as it refuses, so the branch is never re-entered -- and
+	// both keys outlive the condition they describe.
+	//
+	// That is why the stamp is not redundant with the reason. The reason says a
+	// retirement was once refused; a session that later recovered still carries
+	// it (measured on ci-1j5m9x, 2026-09-21, working normally with the reason
+	// set). Only this instant lets a reader ask the question that separates the
+	// two: has the held claim moved SINCE the session said it was finished?
+	//
+	// Not derivable from anything else on the bead. updated_at moves on every
+	// reconciler write, and the one event that names the refusal
+	// (SessionDrainAckedWithAssignedWork) is emitted only from the
+	// already-stopped path and lands in a rotating log.
+	DrainAckRefusedAtMetadataKey = "drain_ack_refused_at"
 )
 
 // NormalizeDrainOrigin maps a raw metadata value onto a known origin. An
