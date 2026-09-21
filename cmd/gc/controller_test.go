@@ -671,7 +671,7 @@ func TestBuildIdleTracker_SkipsAlwaysNamedSessionIdleTimeout(t *testing.T) {
 	if !tracker.templateFallbackExemptions["mayor"] {
 		t.Fatalf("templateFallbackExemptions = %v, want mayor exempt", tracker.templateFallbackExemptions)
 	}
-	if tracker.checkIdle("mayor", "mayor", sp, now, runtime.Poke{}) {
+	if tracker.checkIdle("mayor", "mayor", sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("always-named session inherited template idle timeout")
 	}
 }
@@ -1249,7 +1249,7 @@ func TestControllerReloadsNamedSessionModeAndAppliesIdleTimeout(t *testing.T) {
 	if !ok || tracker == nil {
 		t.Fatal("buildIdleTracker(parsedCfg) = nil, want tracker")
 	}
-	if !tracker.checkIdle("mayor", "", sp, time.Now(), runtime.Poke{}) {
+	if !tracker.checkIdle("mayor", "", sp, time.Now(), runtime.Poke{}).Idle {
 		t.Fatalf("fresh idle tracker did not consider mayor idle; activity=%v timeouts=%v", sp.Activity["mayor"], tracker.timeouts)
 	}
 

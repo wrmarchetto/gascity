@@ -300,7 +300,7 @@ func TestBuildIdleTracker_PoolAgentTemplateFallbackMatchesReconcilerTemplate(t *
 	if _, ok := idle.templateTimeouts[template]; !ok {
 		t.Fatalf("idle tracker missing template %q in %v", template, idle.templateTimeouts)
 	}
-	if !idle.checkIdle(sessionName, template, sp, now, runtime.Poke{}) {
+	if !idle.checkIdle(sessionName, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("pool session %q did not idle out via template %q", sessionName, template)
 	}
 }
@@ -342,10 +342,10 @@ func TestBuildIdleTracker_NamedOnDemandPoolRegistersNameAndTemplate(t *testing.T
 	if _, ok := idle.templateTimeouts[template]; !ok {
 		t.Fatalf("idle tracker missing named pool template %q in %v", template, idle.templateTimeouts)
 	}
-	if !idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}) {
+	if !idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("named session %q did not idle out via per-name timeout", namedSession)
 	}
-	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}) {
+	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("pool session %q did not inherit template idle timeout", poolSession)
 	}
 }
@@ -385,10 +385,10 @@ func TestBuildIdleTracker_NamedAlwaysPoolExemptsNamedOnly(t *testing.T) {
 	if _, ok := idle.templateTimeouts[template]; !ok {
 		t.Fatalf("idle tracker missing named pool template %q in %v", template, idle.templateTimeouts)
 	}
-	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}) {
+	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("always named session %q must not inherit template idle timeout", namedSession)
 	}
-	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}) {
+	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("pool session %q did not inherit template idle timeout", poolSession)
 	}
 }
@@ -426,10 +426,10 @@ func TestBuildIdleTracker_AliasAlwaysNamedPoolExemptsAliasOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}) {
+	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("alias always-named session %q must not inherit template idle timeout", namedSession)
 	}
-	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}) {
+	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("pool session %q did not inherit template idle timeout", poolSession)
 	}
 }
@@ -467,10 +467,10 @@ func TestBuildIdleTracker_NamedAlwaysNoExplicitPoolRegistersTemplateFallback(t *
 	if _, ok := idle.templateTimeouts[template]; !ok {
 		t.Fatalf("idle tracker missing template %q in %v", template, idle.templateTimeouts)
 	}
-	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}) {
+	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("always named session %q must not inherit template idle timeout", namedSession)
 	}
-	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}) {
+	if !idle.checkIdle(poolSession, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("pool session %q did not inherit template idle timeout", poolSession)
 	}
 }

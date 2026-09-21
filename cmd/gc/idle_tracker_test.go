@@ -34,12 +34,12 @@ func TestIdleTracker_PerNameTimeoutTriggersOnLastActivity(t *testing.T) {
 	now := time.Now()
 	sp.SetActivity("mayor", now.Add(-10*time.Minute))
 
-	if !it.checkIdle("mayor", "", sp, now, runtime.Poke{}) {
+	if !it.checkIdle("mayor", "", sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("checkIdle(mayor, \"\", sp, now) = false, want true (last activity 10m old, timeout 5m)")
 	}
 
 	sp.SetActivity("mayor", now.Add(-1*time.Minute))
-	if it.checkIdle("mayor", "", sp, now, runtime.Poke{}) {
+	if it.checkIdle("mayor", "", sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("checkIdle returned true for not-yet-idle session")
 	}
 }
@@ -61,7 +61,7 @@ func TestIdleTracker_TemplateFallbackResolvesPoolSession(t *testing.T) {
 	now := time.Now()
 	sp.SetActivity(sessionName, now.Add(-90*time.Minute))
 
-	if !it.checkIdle(sessionName, template, sp, now, runtime.Poke{}) {
+	if !it.checkIdle(sessionName, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("checkIdle did not fire for pool session via template fallback (90m idle vs 1h timeout)")
 	}
 }
@@ -83,7 +83,7 @@ func TestIdleTracker_TemplateFallbackDoesNotApplyWithoutTemplate(t *testing.T) {
 	now := time.Now()
 	sp.SetActivity(sessionName, now.Add(-90*time.Minute))
 
-	if it.checkIdle(sessionName, "", sp, now, runtime.Poke{}) {
+	if it.checkIdle(sessionName, "", sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("checkIdle should not have fired without a template argument")
 	}
 }
@@ -106,7 +106,7 @@ func TestIdleTracker_PerNameTakesPrecedenceOverTemplate(t *testing.T) {
 
 	// 10m idle should trip the per-name 5m timeout regardless of the larger
 	// template fallback.
-	if !it.checkIdle("mayor", "mayor", sp, now, runtime.Poke{}) {
+	if !it.checkIdle("mayor", "mayor", sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("checkIdle did not honor per-name 5m timeout (template fallback masked it?)")
 	}
 }
@@ -128,7 +128,7 @@ func TestIdleTracker_SetTimeoutForTemplateZeroClears(t *testing.T) {
 	now := time.Now()
 	sp.SetActivity(sessionName, now.Add(-2*time.Hour))
 
-	if it.checkIdle(sessionName, template, sp, now, runtime.Poke{}) {
+	if it.checkIdle(sessionName, template, sp, now, runtime.Poke{}).Idle {
 		t.Fatalf("checkIdle fired after template timeout was cleared")
 	}
 }

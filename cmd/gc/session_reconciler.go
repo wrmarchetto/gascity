@@ -3407,8 +3407,18 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 			// keystrokes, and that is the nudge CLI or its per-session poller,
 			// never this one. Reading it off the provider here is what silently
 			// returned false for every nudged session (ci-49vlf3).
+			check := it.checkIdle(name, tp.TemplateName, sp, clk.Now(), infoByID[id].DurablePoke())
+			// A decline is not a "not idle" answer: the ladder below never
+			// runs, so nothing downstream -- not the trace, not the kill, not
+			// the sleep patch -- records that this session's reaper is
+			// inoperative. This line is the only place that fact surfaces
+			// (ci-kjh8vc). The tracker throttles it; see
+			// idleDeclineRepeatInterval.
+			if check.Report {
+				fmt.Fprintf(stderr, "%s\n", idleDeclineMessage(tp.DisplayName(), name, check)) //nolint:errcheck // best-effort stderr
+			}
 			facts := sessionpkg.TimerFacts{
-				Triggered: it.checkIdle(name, tp.TemplateName, sp, clk.Now(), infoByID[id].DurablePoke()),
+				Triggered: check.Idle,
 			}
 			if facts.Triggered {
 				facts.Blocker = lifecycleTimerBlockerInfo(infoByID[id], clk.Now())
