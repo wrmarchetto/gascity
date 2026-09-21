@@ -153,6 +153,10 @@ func ValidateDurations(cfg *City, source string) []string {
 	for _, a := range cfg.Agents {
 		ctx := fmt.Sprintf("agent %q", a.QualifiedName())
 		check(ctx, "idle_timeout", a.IdleTimeout)
+		// An unparseable stall_timeout resolves to 0, which DISABLES the
+		// transcript arm rather than erroring, so without this warning a
+		// typo reads as a configured reaper that never fires.
+		check(ctx, "stall_timeout", a.StallTimeout)
 		checkSleep(ctx, "sleep_after_idle", a.SleepAfterIdle)
 		check(ctx, "drain_timeout", a.DrainTimeout)
 	}

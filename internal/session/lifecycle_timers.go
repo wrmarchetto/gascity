@@ -55,12 +55,35 @@ const (
 	TimerActionStop
 )
 
+// TimerTrigger names which liveness signal fired for a timer that has more
+// than one. It is consulted for the terminal trace vocabulary only; every
+// defer rung treats the sources alike.
+type TimerTrigger int
+
+// Liveness signals behind a TimerActionStop. The zero value is the pane /
+// runtime-activity arm, so a caller that does not set the field -- and every
+// trace record written before the field existed -- keeps the original
+// vocabulary.
+const (
+	// TimerTriggerIdle is the runtime-activity arm: for a terminal provider,
+	// pane output.
+	TimerTriggerIdle TimerTrigger = iota
+	// TimerTriggerStall is the transcript-quiescence arm. It exists because
+	// pane output tracks a TUI's spinner rather than agent liveness, so a
+	// session hung mid-turn never looks idle to the first arm (ci-jvbkio).
+	TimerTriggerStall
+)
+
 // TimerFacts are the inputs for one session's evaluation of one lifecycle
 // timer on one reconciler tick.
 type TimerFacts struct {
 	// Triggered reports whether the timer's tracker fired (threshold elapsed
 	// with a valid anchor). When false no other fact is consulted.
 	Triggered bool
+	// Trigger names which signal set Triggered, for timers with more than
+	// one. Read by DecideIdleTimeout for its stop vocabulary and ignored by
+	// DecideMaxSessionAge, which has a single anchor and nothing to name.
+	Trigger TimerTrigger
 	// Blocker is the active lifecycle timer blocker as reported by the
 	// caller (currently "user_hold" or "quarantine"), or empty when none
 	// applies. Any non-empty value defers the timer.
@@ -154,9 +177,18 @@ func DecideIdleTimeout(f TimerFacts) TimerDecision {
 	case AssignedWorkHas:
 		return deferDecision("assigned_work", "deferred_busy")
 	}
+	// The SleepReason is deliberately the SAME for both arms. A stall kill is
+	// an idle kill to every downstream consumer of sleep_reason -- churn
+	// accounting, continuation reset, IsDeliberateSleepReason -- and a second
+	// reason would silently opt stall kills out of each of those sets. Only
+	// the trace vocabulary distinguishes them.
+	reason := "idle_timeout"
+	if f.Trigger == TimerTriggerStall {
+		reason = "stall_timeout"
+	}
 	return TimerDecision{
 		Action:       TimerActionStop,
-		TraceReason:  "idle_timeout",
+		TraceReason:  reason,
 		TraceOutcome: "stop",
 		SleepReason:  string(SleepReasonIdleTimeout),
 	}

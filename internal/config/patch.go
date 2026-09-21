@@ -65,6 +65,9 @@ type AgentPatch struct {
 	Nudge *string `toml:"nudge,omitempty"`
 	// IdleTimeout overrides the idle timeout. Duration string (e.g., "30s", "5m", "1h").
 	IdleTimeout *string `toml:"idle_timeout,omitempty"`
+	// StallTimeout overrides Agent.StallTimeout (see that field for the
+	// signal it measures and why its default is empty).
+	StallTimeout *string `toml:"stall_timeout,omitempty"`
 	// MaxSessionAge overrides the max session age. Duration string (e.g., "5h").
 	MaxSessionAge *string `toml:"max_session_age,omitempty"`
 	// MaxSessionAgeJitter overrides the max session age jitter. Duration string (e.g., "15m").
@@ -492,6 +495,9 @@ func applyAgentMutation(a *Agent, p *AgentPatch, sleepSource string) {
 	}
 	if p.IdleTimeout != nil {
 		a.IdleTimeout = *p.IdleTimeout
+	}
+	if p.StallTimeout != nil {
+		a.StallTimeout = *p.StallTimeout
 	}
 	if p.MaxSessionAge != nil {
 		a.MaxSessionAge = *p.MaxSessionAge

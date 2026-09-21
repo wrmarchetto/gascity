@@ -636,6 +636,9 @@ func explainAgent(w io.Writer, a *config.Agent, prov *config.Provenance) {
 	if a.IdleTimeout != "" {
 		explainField(w, "idle_timeout", a.IdleTimeout, source)
 	}
+	if a.StallTimeout != "" {
+		explainField(w, "stall_timeout", a.StallTimeout, source)
+	}
 	if a.SleepAfterIdle != "" {
 		explainField(w, "sleep_after_idle", a.SleepAfterIdle, source)
 	}

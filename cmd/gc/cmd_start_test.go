@@ -174,11 +174,11 @@ func TestBuildLifecycleTrackers_CanonicalSingletonUsesCanonicalSessionName(t *te
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if _, ok := idle.timeouts[canonical]; !ok {
-		t.Fatalf("idle tracker missing canonical session %q in %v", canonical, idle.timeouts)
+	if _, ok := idle.idle.bySession[canonical]; !ok {
+		t.Fatalf("idle tracker missing canonical session %q in %v", canonical, idle.idle.bySession)
 	}
-	if _, ok := idle.timeouts[phantom]; ok {
-		t.Fatalf("idle tracker registered phantom singleton instance %q in %v", phantom, idle.timeouts)
+	if _, ok := idle.idle.bySession[phantom]; ok {
+		t.Fatalf("idle tracker registered phantom singleton instance %q in %v", phantom, idle.idle.bySession)
 	}
 
 	maxAge, ok := buildMaxSessionAgeTracker(cfg, "city", runtime.NewFake()).(*memoryMaxSessionAgeTracker)
@@ -217,8 +217,8 @@ func TestBuildLifecycleTrackers_CanonicalSingletonIncludesLiveStaleSuffix(t *tes
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if _, ok := idle.timeouts[stale]; !ok {
-		t.Fatalf("idle tracker missing live stale singleton suffix %q in %v", stale, idle.timeouts)
+	if _, ok := idle.idle.bySession[stale]; !ok {
+		t.Fatalf("idle tracker missing live stale singleton suffix %q in %v", stale, idle.idle.bySession)
 	}
 
 	maxAge, ok := buildMaxSessionAgeTracker(cfg, "city", sp).(*memoryMaxSessionAgeTracker)
@@ -254,11 +254,11 @@ func TestBuildLifecycleTrackers_CanonicalSingletonNamedSessionOverlayOneKey(t *t
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if len(idle.timeouts) != 1 {
-		t.Fatalf("idle tracker registered %d keys, want 1: %v", len(idle.timeouts), idle.timeouts)
+	if len(idle.idle.bySession) != 1 {
+		t.Fatalf("idle tracker registered %d keys, want 1: %v", len(idle.idle.bySession), idle.idle.bySession)
 	}
-	if _, ok := idle.timeouts[canonical]; !ok {
-		t.Fatalf("idle tracker missing canonical session %q in %v", canonical, idle.timeouts)
+	if _, ok := idle.idle.bySession[canonical]; !ok {
+		t.Fatalf("idle tracker missing canonical session %q in %v", canonical, idle.idle.bySession)
 	}
 
 	maxAge, ok := buildMaxSessionAgeTracker(cfg, "city", runtime.NewFake()).(*memoryMaxSessionAgeTracker)
@@ -297,8 +297,8 @@ func TestBuildIdleTracker_PoolAgentTemplateFallbackMatchesReconcilerTemplate(t *
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if _, ok := idle.templateTimeouts[template]; !ok {
-		t.Fatalf("idle tracker missing template %q in %v", template, idle.templateTimeouts)
+	if _, ok := idle.idle.byTemplate[template]; !ok {
+		t.Fatalf("idle tracker missing template %q in %v", template, idle.idle.byTemplate)
 	}
 	if !idle.checkIdle(sessionName, template, sp, now, runtime.Poke{}) {
 		t.Fatalf("pool session %q did not idle out via template %q", sessionName, template)
@@ -336,11 +336,11 @@ func TestBuildIdleTracker_NamedOnDemandPoolRegistersNameAndTemplate(t *testing.T
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if _, ok := idle.timeouts[namedSession]; !ok {
-		t.Fatalf("idle tracker missing named session %q in %v", namedSession, idle.timeouts)
+	if _, ok := idle.idle.bySession[namedSession]; !ok {
+		t.Fatalf("idle tracker missing named session %q in %v", namedSession, idle.idle.bySession)
 	}
-	if _, ok := idle.templateTimeouts[template]; !ok {
-		t.Fatalf("idle tracker missing named pool template %q in %v", template, idle.templateTimeouts)
+	if _, ok := idle.idle.byTemplate[template]; !ok {
+		t.Fatalf("idle tracker missing named pool template %q in %v", template, idle.idle.byTemplate)
 	}
 	if !idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}) {
 		t.Fatalf("named session %q did not idle out via per-name timeout", namedSession)
@@ -382,8 +382,8 @@ func TestBuildIdleTracker_NamedAlwaysPoolExemptsNamedOnly(t *testing.T) {
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if _, ok := idle.templateTimeouts[template]; !ok {
-		t.Fatalf("idle tracker missing named pool template %q in %v", template, idle.templateTimeouts)
+	if _, ok := idle.idle.byTemplate[template]; !ok {
+		t.Fatalf("idle tracker missing named pool template %q in %v", template, idle.idle.byTemplate)
 	}
 	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}) {
 		t.Fatalf("always named session %q must not inherit template idle timeout", namedSession)
@@ -464,8 +464,8 @@ func TestBuildIdleTracker_NamedAlwaysNoExplicitPoolRegistersTemplateFallback(t *
 	if !ok {
 		t.Fatalf("buildIdleTracker returned %T, want *memoryIdleTracker", idle)
 	}
-	if _, ok := idle.templateTimeouts[template]; !ok {
-		t.Fatalf("idle tracker missing template %q in %v", template, idle.templateTimeouts)
+	if _, ok := idle.idle.byTemplate[template]; !ok {
+		t.Fatalf("idle tracker missing template %q in %v", template, idle.idle.byTemplate)
 	}
 	if idle.checkIdle(namedSession, template, sp, now, runtime.Poke{}) {
 		t.Fatalf("always named session %q must not inherit template idle timeout", namedSession)

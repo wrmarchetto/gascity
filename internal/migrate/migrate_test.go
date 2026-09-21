@@ -1140,6 +1140,7 @@ func TestAgentConfigFromAgentCoversPersistedFields(t *testing.T) {
 		ClaimRoutes:            []string{"shared/worker"},
 		SlingQuery:             "bd update {}",
 		IdleTimeout:            "15m",
+		StallTimeout:           "6h",
 		MaxSessionAge:          "5h",
 		MaxSessionAgeJitter:    "15m",
 		SleepAfterIdle:         "30s",

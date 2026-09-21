@@ -990,6 +990,7 @@ type AgentPatch struct {
 	Skills                  *[]string         `json:"Skills"`
 	SkillsAppend            *[]string         `json:"SkillsAppend"`
 	SleepAfterIdle          *string           `json:"SleepAfterIdle"`
+	StallTimeout            *string           `json:"StallTimeout"`
 	StartCommand            *string           `json:"StartCommand"`
 	Suspended               *bool             `json:"Suspended"`
 	TmuxAlias               *string           `json:"TmuxAlias"`

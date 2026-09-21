@@ -28,18 +28,28 @@ import (
 	"github.com/gastownhall/gascity/internal/session/sessiontest"
 )
 
-// fakeIdleTracker is a test double for idleTracker.
+// fakeIdleTracker is a test double for idleTracker. Both arms are scripted
+// per session name or per template, and an unscripted session answers false
+// -- which is the real tracker's answer for an unregistered timeout, not a
+// blanket success. A test that wants the stall arm to fire says so in
+// stalled/stallTemplates.
 type fakeIdleTracker struct {
-	idle       map[string]bool
-	templates  map[string]bool
-	exemptions map[string]bool
+	idle            map[string]bool
+	templates       map[string]bool
+	stalled         map[string]bool
+	stallTemplates  map[string]bool
+	exemptions      map[string]bool
+	lastTranscripts map[string]time.Time // session name → the time the reconciler passed
 }
 
 func newFakeIdleTracker() *fakeIdleTracker {
 	return &fakeIdleTracker{
-		idle:       make(map[string]bool),
-		templates:  make(map[string]bool),
-		exemptions: make(map[string]bool),
+		idle:            make(map[string]bool),
+		templates:       make(map[string]bool),
+		stalled:         make(map[string]bool),
+		stallTemplates:  make(map[string]bool),
+		exemptions:      make(map[string]bool),
+		lastTranscripts: make(map[string]time.Time),
 	}
 }
 
@@ -51,6 +61,29 @@ func (f *fakeIdleTracker) checkIdle(sessionName, template string, _ runtime.Prov
 		return false
 	}
 	return f.templates[template]
+}
+
+func (f *fakeIdleTracker) checkStalled(sessionName, template string, lastTranscript func() time.Time, _ time.Time) bool {
+	if lastTranscript != nil {
+		f.lastTranscripts[sessionName] = lastTranscript()
+	}
+	if f.stalled[sessionName] {
+		return true
+	}
+	if template == "" || f.exemptions[sessionName] {
+		return false
+	}
+	return f.stallTemplates[template]
+}
+
+func (f *fakeIdleTracker) setStallTimeout(sessionName string, _ time.Duration) {
+	f.stalled[sessionName] = true
+}
+
+func (f *fakeIdleTracker) setStallTimeoutForTemplate(template string, _ time.Duration) {
+	if template != "" {
+		f.stallTemplates[template] = true
+	}
 }
 
 func (f *fakeIdleTracker) setTimeout(sessionName string, _ time.Duration) {

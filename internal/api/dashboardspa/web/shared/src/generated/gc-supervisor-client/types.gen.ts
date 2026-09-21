@@ -108,6 +108,7 @@ export type AgentPatch = {
     Skills: Array<string> | null;
     SkillsAppend: Array<string> | null;
     SleepAfterIdle: string | null;
+    StallTimeout: string | null;
     StartCommand: string | null;
     Suspended: boolean | null;
     TmuxAlias: string | null;

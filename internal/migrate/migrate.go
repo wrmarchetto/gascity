@@ -88,6 +88,7 @@ type agentFile struct {
 	ClaimRoutes            []string          `toml:"claim_routes,omitempty"`
 	SlingQuery             string            `toml:"sling_query,omitempty"`
 	IdleTimeout            string            `toml:"idle_timeout,omitempty"`
+	StallTimeout           string            `toml:"stall_timeout,omitempty"`
 	MaxSessionAge          string            `toml:"max_session_age,omitempty"`
 	MaxSessionAgeJitter    string            `toml:"max_session_age_jitter,omitempty"`
 	SleepAfterIdle         string            `toml:"sleep_after_idle,omitempty"`
@@ -945,6 +946,7 @@ func agentConfigFromAgent(agent config.Agent) agentFile {
 		ClaimRoutes:            append([]string(nil), agent.ClaimRoutes...),
 		SlingQuery:             agent.SlingQuery,
 		IdleTimeout:            agent.IdleTimeout,
+		StallTimeout:           agent.StallTimeout,
 		MaxSessionAge:          agent.MaxSessionAge,
 		MaxSessionAgeJitter:    agent.MaxSessionAgeJitter,
 		SleepAfterIdle:         agent.SleepAfterIdle,
@@ -999,6 +1001,7 @@ func isZeroAgentConfig(cfg agentFile) bool {
 		len(cfg.ClaimRoutes) == 0 &&
 		cfg.SlingQuery == "" &&
 		cfg.IdleTimeout == "" &&
+		cfg.StallTimeout == "" &&
 		cfg.MaxSessionAge == "" &&
 		cfg.MaxSessionAgeJitter == "" &&
 		cfg.SleepAfterIdle == "" &&

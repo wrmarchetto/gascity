@@ -18,6 +18,7 @@ func TestTimerTraceCodesTotal(t *testing.T) {
 	namedReasons := map[TraceReasonCode]bool{
 		TraceReasonMaxSessionAge:         true,
 		TraceReasonIdleTimeout:           true,
+		TraceReasonStallTimeout:          true,
 		TraceReasonUserHold:              true,
 		TraceReasonQuarantine:            true,
 		TraceReasonPending:               true,
@@ -40,14 +41,23 @@ func TestTimerTraceCodesTotal(t *testing.T) {
 	assigned := []sessionpkg.AssignedWorkFact{
 		sessionpkg.AssignedWorkUnknown, sessionpkg.AssignedWorkNone, sessionpkg.AssignedWorkHas,
 	}
+	// The trigger source is part of the cross product because it changes the
+	// terminal reason on the idle ladder. Leaving it out is how this test
+	// passed a vocabulary it did not cover: every case set the zero value,
+	// so the new arm's reason was never converted.
+	triggers := []sessionpkg.TimerTrigger{
+		sessionpkg.TimerTriggerIdle, sessionpkg.TimerTriggerStall,
+	}
 
 	var decisions []sessionpkg.TimerDecision
 	for _, b := range blockers {
 		for _, p := range pendings {
 			for _, a := range assigned {
-				facts := sessionpkg.TimerFacts{Triggered: true, Blocker: b, Pending: p, AssignedWork: a}
-				decisions = append(decisions, sessionpkg.DecideMaxSessionAge(facts))
-				decisions = append(decisions, sessionpkg.DecideIdleTimeout(facts))
+				for _, tr := range triggers {
+					facts := sessionpkg.TimerFacts{Triggered: true, Trigger: tr, Blocker: b, Pending: p, AssignedWork: a}
+					decisions = append(decisions, sessionpkg.DecideMaxSessionAge(facts))
+					decisions = append(decisions, sessionpkg.DecideIdleTimeout(facts))
+				}
 			}
 		}
 	}

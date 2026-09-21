@@ -77,6 +77,8 @@ func timerTraceCodes(dec sessionpkg.TimerDecision) (TraceReasonCode, TraceOutcom
 		reason = TraceReasonMaxSessionAge
 	case string(TraceReasonIdleTimeout):
 		reason = TraceReasonIdleTimeout
+	case string(TraceReasonStallTimeout):
+		reason = TraceReasonStallTimeout
 	case string(TraceReasonUserHold):
 		reason = TraceReasonUserHold
 	case string(TraceReasonQuarantine):
@@ -1504,6 +1506,13 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 	// Load provider-health snapshot once per tick (ADR-0013 A1 M3a).
 	// All per-session gate checks in Phase 2 use this snapshot — no I/O per session.
 	phSnap := loadProviderHealthSnapshot(cityPath)
+	// Transcript roots for the idle ladder's stall arm, resolved once per
+	// tick. The merge is pure string work, but it is per-city and not
+	// per-session, and the alternative shape -- resolving inside the
+	// per-session probe -- would re-run it for every session on every tick
+	// for no change in the answer. The probe itself stays lazy; see the
+	// stall arm in the idle-timeout block.
+	transcriptPaths := transcriptSearchPaths(cfg)
 	reconcileOpts := startExecutionOptions{}
 	for _, apply := range startOptions {
 		if apply != nil {
@@ -3409,6 +3418,24 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 			// returned false for every nudged session (ci-49vlf3).
 			facts := sessionpkg.TimerFacts{
 				Triggered: it.checkIdle(name, tp.TemplateName, sp, clk.Now(), infoByID[id].DurablePoke()),
+			}
+			// Second liveness arm. The pane arm above measures runtime
+			// activity, which for a terminal provider is pane output, and a
+			// TUI that renders a spinner for a whole turn keeps that counter
+			// fresh for as long as a turn hangs -- so a session wedged
+			// mid-turn is never idle by it and the ladder below is never
+			// entered at all (ci-jvbkio). The transcript is the channel that
+			// actually goes quiet.
+			//
+			// Evaluated only when the pane arm did NOT fire, for two
+			// reasons: the transcript probe costs a path resolution and a
+			// stat, and when both arms agree the pane arm is the more
+			// specific finding, so it keeps the trace label.
+			if !facts.Triggered && it.checkStalled(name, tp.TemplateName, func() time.Time {
+				return sessionTranscriptActivity(infoByID[id], transcriptPaths)
+			}, clk.Now()) {
+				facts.Triggered = true
+				facts.Trigger = sessionpkg.TimerTriggerStall
 			}
 			if facts.Triggered {
 				facts.Blocker = lifecycleTimerBlockerInfo(infoByID[id], clk.Now())

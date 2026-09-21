@@ -708,6 +708,9 @@ type AgentOverride struct {
 	Nudge *string `toml:"nudge,omitempty"`
 	// IdleTimeout overrides the idle timeout duration string (e.g., "30s", "5m", "1h").
 	IdleTimeout *string `toml:"idle_timeout,omitempty"`
+	// StallTimeout overrides Agent.StallTimeout (see that field for the
+	// signal it measures and why its default is empty).
+	StallTimeout *string `toml:"stall_timeout,omitempty"`
 	// MaxSessionAge overrides the max session age. Duration string (e.g., "5h").
 	// Empty disables preemptive restart.
 	MaxSessionAge *string `toml:"max_session_age,omitempty"`
@@ -3110,6 +3113,11 @@ type AgentDefaults struct {
 	// that transitions it out (ci-07ebae) -- so "off unless each agent opts
 	// in" is the wrong default shape for it.
 	IdleTimeout string `toml:"idle_timeout,omitempty"`
+	// StallTimeout is the default transcript-quiescence timeout for agents
+	// that do not set their own (Agent.StallTimeout). Same reasoning as
+	// IdleTimeout above: per-agent is one [[patches]] entry per agent and an
+	// agent added later inherits no bound at all.
+	StallTimeout string `toml:"stall_timeout,omitempty"`
 	// DefaultSlingFormula is the default formula used for agents that inherit
 	// [agent_defaults]. Explicit agents only receive this value when
 	// agent_defaults.default_sling_formula is set; implicit multi-session
@@ -3155,6 +3163,9 @@ func mergeAgentDefaultsAliasPreferCanonical(dst *AgentDefaults, src AgentDefault
 	}
 	if !meta.IsDefined("agent_defaults", "idle_timeout") {
 		dst.IdleTimeout = src.IdleTimeout
+	}
+	if !meta.IsDefined("agent_defaults", "stall_timeout") {
+		dst.StallTimeout = src.StallTimeout
 	}
 	if !meta.IsDefined("agent_defaults", "default_sling_formula") {
 		dst.DefaultSlingFormula = src.DefaultSlingFormula
@@ -3404,6 +3415,34 @@ type Agent struct {
 	// the controller kills and restarts it. Duration string (e.g., "15m", "1h").
 	// Empty (default) disables idle checking.
 	IdleTimeout string `toml:"idle_timeout,omitempty"`
+	// StallTimeout is the maximum time an agent session's TRANSCRIPT may go
+	// quiescent before the controller treats the session as idle. Duration
+	// string; empty (default) disables the check.
+	//
+	// This is a SECOND liveness signal, not a second threshold on the first
+	// one. IdleTimeout is measured against runtime activity, which for a
+	// terminal provider is pane output -- and a TUI that renders a spinner
+	// for the whole of a turn emits pane output continuously, so a session
+	// hung mid-turn is never idle by that measure for as long as it hangs.
+	// Measured 2026-09-21 over 105s: two mid-turn sessions held
+	// #{window_activity} at 0s age throughout while three genuinely idle
+	// sessions aged the full 105s (ci-jvbkio). No IdleTimeout value reaps a
+	// counter that does not advance.
+	//
+	// The transcript is the channel that actually goes quiet: the hung
+	// session behind ci-jvbkio wrote 816 entries and then nothing for
+	// 12h04m46s. The two signals are OR-ed, so arming this can only make the
+	// controller reap more, never less, and the ordinary idle ladder still
+	// defers on blockers, pending interactions and assigned work.
+	//
+	// Empty by default because the safe value is a property of the fleet,
+	// not of the SDK. Gap distribution over 645,370 consecutive-entry gaps
+	// in this city's unattended transcripts (ci-jvbkio, 2026-09-21): the
+	// longest gap following a tool call the agent was genuinely waiting on
+	// was 4h11m, and the observed hang was 12h05m, so the populations
+	// separate somewhere above four hours HERE. A default picked for one
+	// fleet force-kills live work in another.
+	StallTimeout string `toml:"stall_timeout,omitempty"`
 	// MaxSessionAge is the maximum wall-clock lifetime of a single runtime
 	// session before the controller preemptively restarts it. Duration string
 	// (e.g., "5h"). Empty (default) disables preemptive restarts. The restart
@@ -3700,6 +3739,12 @@ func (a *Agent) IdleTimeoutDuration() time.Duration {
 	return durationOr(a.IdleTimeout, 0)
 }
 
+// StallTimeoutDuration returns the transcript-quiescence timeout as a
+// time.Duration. Returns 0 if empty or unparseable (disabled).
+func (a *Agent) StallTimeoutDuration() time.Duration {
+	return durationOr(a.StallTimeout, 0)
+}
+
 // MaxSessionAgeDuration returns the maximum session age as a time.Duration.
 // Returns 0 if empty or unparseable (disabled: no preemptive restart).
 func (a *Agent) MaxSessionAgeDuration() time.Duration {
@@ -3940,6 +3985,21 @@ func ApplyAgentDefaults(cfg *City) {
 			}
 		}
 	}
+
+	// Stall timeout inherits on the same terms as idle timeout, including the
+	// control-dispatcher exclusion -- a serve loop that sits quiet between
+	// control beads writes no transcript either, so the transcript signal
+	// would reap it for exactly the behavior it is supposed to have.
+	if stallTimeout := cfg.AgentDefaults.StallTimeout; stallTimeout != "" {
+		for i := range cfg.Agents {
+			if cfg.Agents[i].Name == ControlDispatcherAgentName {
+				continue
+			}
+			if cfg.Agents[i].StallTimeout == "" {
+				cfg.Agents[i].StallTimeout = stallTimeout
+			}
+		}
+	}
 }
 
 // DefaultOrderTrackingDeleteAfterClose is the canonical default closed-bead
@@ -4071,6 +4131,12 @@ func mergeAgentDefaults(dst *AgentDefaults, src AgentDefaults, label string, pro
 			prov.Warnings = append(prov.Warnings, fmt.Sprintf("agent_defaults.idle_timeout redefined by %q", label))
 		}
 		dst.IdleTimeout = src.IdleTimeout
+	}
+	if src.StallTimeout != "" {
+		if prov != nil && dst.StallTimeout != "" && dst.StallTimeout != src.StallTimeout {
+			prov.Warnings = append(prov.Warnings, fmt.Sprintf("agent_defaults.stall_timeout redefined by %q", label))
+		}
+		dst.StallTimeout = src.StallTimeout
 	}
 	if src.DefaultSlingFormula != "" {
 		if prov != nil && dst.DefaultSlingFormula != "" && dst.DefaultSlingFormula != src.DefaultSlingFormula {
