@@ -181,6 +181,10 @@
           "type": "string",
           "description": "IdleTimeout is the maximum time an agent session can be inactive before\nthe controller kills and restarts it. Duration string (e.g., \"15m\", \"1h\").\nEmpty (default) disables idle checking."
         },
+        "stall_timeout": {
+          "type": "string",
+          "description": "StallTimeout is the maximum time an agent session's TRANSCRIPT may go\nquiescent before the controller treats the session as idle. Duration\nstring; empty (default) disables the check.\n\nThis is a SECOND liveness signal, not a second threshold on the first\none. IdleTimeout is measured against runtime activity, which for a\nterminal provider is pane output -- and a TUI that renders a spinner\nfor the whole of a turn emits pane output continuously, so a session\nhung mid-turn is never idle by that measure for as long as it hangs.\nMeasured 2026-09-21 over 105s: two mid-turn sessions held\n#{window_activity} at 0s age throughout while three genuinely idle\nsessions aged the full 105s (ci-jvbkio). No IdleTimeout value reaps a\ncounter that does not advance.\n\nThe transcript is the channel that actually goes quiet: the hung\nsession behind ci-jvbkio wrote 816 entries and then nothing for\n12h04m46s. The two signals are OR-ed, so arming this can only make the\ncontroller reap more, never less, and the ordinary idle ladder still\ndefers on blockers, pending interactions and assigned work.\n\nEmpty by default because the safe value is a property of the fleet,\nnot of the SDK. Gap distribution over 645,370 consecutive-entry gaps\nin this city's unattended transcripts (ci-jvbkio, 2026-09-21): the\nlongest gap following a tool call the agent was genuinely waiting on\nwas 4h11m, and the observed hang was 12h05m, so the populations\nseparate somewhere above four hours HERE. A default picked for one\nfleet force-kills live work in another."
+        },
         "max_session_age": {
           "type": "string",
           "description": "MaxSessionAge is the maximum wall-clock lifetime of a single runtime\nsession before the controller preemptively restarts it. Duration string\n(e.g., \"5h\"). Empty (default) disables preemptive restarts. The restart\nis idle-gated: sessions with a pending interaction or an in-progress\nassigned work bead are left alone until they settle.\n\nMotivation: provider SDKs that cache credentials at session start (e.g.,\nClaude Code via Bedrock) can wedge when the underlying token expires if\nthe SDK doesn't re-chain providers. Cycling long-running sessions before\nthe token-expiry window prevents that failure mode without requiring\nupstream provider fixes."
@@ -331,6 +335,10 @@
           "type": "string",
           "description": "IdleTimeout is the default idle timeout for agents that do not set\ntheir own. Duration string (e.g. \"90m\"); empty leaves every agent as\nconfigured. Applied to agents with an empty IdleTimeout by\nApplyAgentDefaults.\n\nThis exists because a per-agent idle_timeout cannot be kept correct in\na city of any size: setting it agent-by-agent means one [[patches]]\nentry per agent, and an agent added later inherits no bound at all.\nThe timeout is the only mechanism that ends a wedged session\nunconditionally -- a drain-ack refused for assigned work leaves a live\nsession believing it retired, with no event, no nudge and nothing else\nthat transitions it out (ci-07ebae) -- so \"off unless each agent opts\nin\" is the wrong default shape for it."
         },
+        "stall_timeout": {
+          "type": "string",
+          "description": "StallTimeout is the default transcript-quiescence timeout for agents\nthat do not set their own (Agent.StallTimeout). Same reasoning as\nIdleTimeout above: per-agent is one [[patches]] entry per agent and an\nagent added later inherits no bound at all."
+        },
         "default_sling_formula": {
           "type": "string",
           "description": "DefaultSlingFormula is the default formula used for agents that inherit\n[agent_defaults]. Explicit agents only receive this value when\nagent_defaults.default_sling_formula is set; implicit multi-session\nconfigs are seeded with \"mol-do-work\" elsewhere when no explicit default is set."
@@ -467,6 +475,10 @@
         "idle_timeout": {
           "type": "string",
           "description": "IdleTimeout overrides the idle timeout. Duration string (e.g., \"30s\", \"5m\", \"1h\")."
+        },
+        "stall_timeout": {
+          "type": "string",
+          "description": "StallTimeout overrides Agent.StallTimeout (see that field for the\nsignal it measures and why its default is empty)."
         },
         "max_session_age": {
           "type": "string",

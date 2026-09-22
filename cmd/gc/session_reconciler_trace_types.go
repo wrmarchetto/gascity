@@ -195,6 +195,11 @@ const (
 	TraceReasonUserHold              TraceReasonCode = "user_hold"
 	TraceReasonQuarantine            TraceReasonCode = "quarantine"
 	TraceReasonAssignedWorkExhausted TraceReasonCode = "assigned_work_exhausted"
+	// TraceReasonStallTimeout is the idle ladder's stop reached through the
+	// transcript-quiescence arm rather than pane activity. It shares the
+	// reconciler.session.idle_timeout trace SITE and the idle sleep reason;
+	// only this code distinguishes the two arms in a recorded decision.
+	TraceReasonStallTimeout TraceReasonCode = "stall_timeout"
 )
 
 type TraceOutcomeCode string

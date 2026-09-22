@@ -477,6 +477,12 @@
               "null"
             ]
           },
+          "StallTimeout": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "StartCommand": {
             "type": [
               "string",
@@ -534,6 +540,7 @@
           "Lifecycle",
           "Nudge",
           "IdleTimeout",
+          "StallTimeout",
           "MaxSessionAge",
           "MaxSessionAgeJitter",
           "AssignedWorkDeferLimit",

@@ -28,22 +28,35 @@ import (
 	"github.com/gastownhall/gascity/internal/session/sessiontest"
 )
 
-// fakeIdleTracker is a test double for idleTracker. declines is scripted
-// separately from idle because a decline is not a verdict: a session present
-// in declines reaches no idle answer at all, whatever idle says about it.
+// fakeIdleTracker is a test double for idleTracker. Both arms are scripted
+// per session name or per template, and an unscripted session answers false
+// -- which is the real tracker's answer for an unregistered timeout, not a
+// blanket success. A test that wants the stall arm to fire says so in
+// stalled/stallTemplates.
+//
+// declines is scripted separately from idle because a decline is not a
+// verdict: a session present in declines reaches no idle answer at all,
+// whatever idle says about it. It scripts the PANE arm only, since that is
+// the only arm that reads a provider.
 type fakeIdleTracker struct {
-	idle       map[string]bool
-	templates  map[string]bool
-	exemptions map[string]bool
-	declines   map[string]idleCheck
+	idle            map[string]bool
+	templates       map[string]bool
+	stalled         map[string]bool
+	stallTemplates  map[string]bool
+	exemptions      map[string]bool
+	declines        map[string]idleCheck
+	lastTranscripts map[string]time.Time // session name → the time the reconciler passed
 }
 
 func newFakeIdleTracker() *fakeIdleTracker {
 	return &fakeIdleTracker{
-		idle:       make(map[string]bool),
-		templates:  make(map[string]bool),
-		exemptions: make(map[string]bool),
-		declines:   make(map[string]idleCheck),
+		idle:            make(map[string]bool),
+		templates:       make(map[string]bool),
+		stalled:         make(map[string]bool),
+		stallTemplates:  make(map[string]bool),
+		exemptions:      make(map[string]bool),
+		declines:        make(map[string]idleCheck),
+		lastTranscripts: make(map[string]time.Time),
 	}
 }
 
@@ -58,6 +71,29 @@ func (f *fakeIdleTracker) checkIdle(sessionName, template string, _ runtime.Prov
 		return idleCheck{}
 	}
 	return idleCheck{Idle: f.templates[template]}
+}
+
+func (f *fakeIdleTracker) checkStalled(sessionName, template string, lastTranscript func() time.Time, _ time.Time) bool {
+	if lastTranscript != nil {
+		f.lastTranscripts[sessionName] = lastTranscript()
+	}
+	if f.stalled[sessionName] {
+		return true
+	}
+	if template == "" || f.exemptions[sessionName] {
+		return false
+	}
+	return f.stallTemplates[template]
+}
+
+func (f *fakeIdleTracker) setStallTimeout(sessionName string, _ time.Duration) {
+	f.stalled[sessionName] = true
+}
+
+func (f *fakeIdleTracker) setStallTimeoutForTemplate(template string, _ time.Duration) {
+	if template != "" {
+		f.stallTemplates[template] = true
+	}
 }
 
 func (f *fakeIdleTracker) setTimeout(sessionName string, _ time.Duration) {

@@ -459,3 +459,25 @@ func TestValidateDurationsBadChatSessionsGracePeriod(t *testing.T) {
 		t.Errorf("warning should mention bad value: %s", warnings[0])
 	}
 }
+
+// TestValidateDurationsBadAgentStallTimeout pins that a malformed
+// stall_timeout is reported. The parse failure is otherwise SILENT and
+// indistinguishable from the disabled default: StallTimeoutDuration returns 0
+// on an unparseable value, buildIdleTracker then registers nothing for the
+// arm, and the operator reads a configured reaper that never fires. A warning
+// is the only thing that separates "8 h" from "off".
+func TestValidateDurationsBadAgentStallTimeout(t *testing.T) {
+	cfg := &City{
+		Agents: []Agent{{Name: "worker", Dir: "local-core", StallTimeout: "8 h"}},
+	}
+	warnings := ValidateDurations(cfg, "city.toml")
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "stall_timeout") {
+		t.Errorf("warning should name the field: %s", warnings[0])
+	}
+	if !strings.Contains(warnings[0], "local-core/worker") {
+		t.Errorf("warning should name the agent: %s", warnings[0])
+	}
+}

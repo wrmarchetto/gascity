@@ -1074,6 +1074,7 @@ export const zAgentPatch = z.object({
     Skills: z.array(z.string()).nullable(),
     SkillsAppend: z.array(z.string()).nullable(),
     SleepAfterIdle: z.string().nullable(),
+    StallTimeout: z.string().nullable(),
     StartCommand: z.string().nullable(),
     Suspended: z.boolean().nullable(),
     TmuxAlias: z.string().nullable(),

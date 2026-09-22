@@ -124,6 +124,12 @@ func (c *DurationRangeCheck) collectRanges() []durationRange {
 			ranges = append(ranges,
 				durationRange{ctx, "idle_timeout", a.IdleTimeout, minTimeout, maxWindow})
 		}
+		// Same 7-day ceiling as idle_timeout: both bound one session's
+		// liveness, just on different channels.
+		if a.StallTimeout != "" {
+			ranges = append(ranges,
+				durationRange{ctx, "stall_timeout", a.StallTimeout, minTimeout, maxWindow})
+		}
 		if a.DrainTimeout != "" {
 			ranges = append(ranges,
 				durationRange{ctx, "drain_timeout", a.DrainTimeout, minTimeout, maxTimeout})

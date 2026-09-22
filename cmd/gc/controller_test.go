@@ -665,8 +665,8 @@ func TestBuildIdleTracker_SkipsAlwaysNamedSessionIdleTimeout(t *testing.T) {
 	if !ok {
 		t.Fatalf("buildIdleTracker(cfg) = %T, want *memoryIdleTracker with named fallback exemption", tracker)
 	}
-	if _, ok := tracker.templateTimeouts["mayor"]; !ok {
-		t.Fatalf("templateTimeouts = %v, want mayor fallback registered", tracker.templateTimeouts)
+	if _, ok := tracker.idle.byTemplate["mayor"]; !ok {
+		t.Fatalf("templateTimeouts = %v, want mayor fallback registered", tracker.idle.byTemplate)
 	}
 	if !tracker.templateFallbackExemptions["mayor"] {
 		t.Fatalf("templateFallbackExemptions = %v, want mayor exempt", tracker.templateFallbackExemptions)
@@ -1250,7 +1250,7 @@ func TestControllerReloadsNamedSessionModeAndAppliesIdleTimeout(t *testing.T) {
 		t.Fatal("buildIdleTracker(parsedCfg) = nil, want tracker")
 	}
 	if !tracker.checkIdle("mayor", "", sp, time.Now(), runtime.Poke{}).Idle {
-		t.Fatalf("fresh idle tracker did not consider mayor idle; activity=%v timeouts=%v", sp.Activity["mayor"], tracker.timeouts)
+		t.Fatalf("fresh idle tracker did not consider mayor idle; activity=%v timeouts=%v", sp.Activity["mayor"], tracker.idle.bySession)
 	}
 
 	bead := waitForNamedMode("on_demand", hangBudget)

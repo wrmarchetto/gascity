@@ -139,7 +139,7 @@ func TestIdleTracker_SetTimeoutForTemplateIgnoresEmptyTemplate(t *testing.T) {
 	it := newIdleTracker()
 	it.setTimeoutForTemplate("", 1*time.Hour)
 
-	if len(it.templateTimeouts) != 0 {
-		t.Fatalf("templateTimeouts = %v, want empty after empty-template config", it.templateTimeouts)
+	if len(it.idle.byTemplate) != 0 {
+		t.Fatalf("templateTimeouts = %v, want empty after empty-template config", it.idle.byTemplate)
 	}
 }

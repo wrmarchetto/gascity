@@ -208,11 +208,18 @@ var startVerboseMode bool
 //     template lookup when the per-name lookup misses, so canonical and
 //     namepool members keep their per-name hit while bead-derived names
 //     pick up the template's timeout.
+//
+// The walk registers BOTH liveness arms off one pass, because they must
+// reach the same session names: idle_timeout measures pane output and
+// stall_timeout measures transcript quiescence, and an agent may configure
+// either alone. Every gate below therefore tests the pair -- an agent armed
+// only for stalls must not be skipped, and a city armed only for stalls must
+// still get a tracker (ci-jvbkio).
 func buildIdleTracker(cfg *config.City, cityName, _ string, sp runtime.Provider) idleTracker {
 	var hasAny bool
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {
-		if a.IdleTimeoutDuration() > 0 {
+		if a.IdleTimeoutDuration() > 0 || a.StallTimeoutDuration() > 0 {
 			hasAny = true
 			break
 		}
@@ -222,9 +229,33 @@ func buildIdleTracker(cfg *config.City, cityName, _ string, sp runtime.Provider)
 	}
 	it := newIdleTracker()
 	var registeredAny bool
+	// register arms whichever timeouts this agent configured for one runtime
+	// session name. A zero duration REGISTERS NOTHING rather than being
+	// passed through: the setters read 0 as "clear this entry", and an agent
+	// armed for only one channel would then erase whatever the other channel
+	// already held for that name. No two agents resolve to the same runtime
+	// session name today, so nothing observable turns on this -- it is here
+	// so that stops being load-bearing.
+	register := func(sessionName string, idle, stall time.Duration) {
+		if idle > 0 {
+			it.setTimeout(sessionName, idle)
+		}
+		if stall > 0 {
+			it.setStallTimeout(sessionName, stall)
+		}
+	}
+	registerTemplate := func(template string, idle, stall time.Duration) {
+		if idle > 0 {
+			it.setTimeoutForTemplate(template, idle)
+		}
+		if stall > 0 {
+			it.setStallTimeoutForTemplate(template, stall)
+		}
+	}
 	for _, a := range cfg.Agents {
 		timeout := a.IdleTimeoutDuration()
-		if timeout <= 0 {
+		stall := a.StallTimeoutDuration()
+		if timeout <= 0 && stall <= 0 {
 			continue
 		}
 		named := config.FindNamedSession(cfg, a.QualifiedName())
@@ -235,7 +266,7 @@ func buildIdleTracker(cfg *config.City, cityName, _ string, sp runtime.Provider)
 			// to idle timeout.
 			namedSessionName := config.NamedSessionRuntimeName(cityName, cfg.Workspace, named.QualifiedName())
 			if !namedAlways {
-				it.setTimeout(namedSessionName, timeout)
+				register(namedSessionName, timeout, stall)
 				registeredAny = true
 			} else {
 				it.exemptTemplateFallbackForSession(namedSessionName)
@@ -258,7 +289,7 @@ func buildIdleTracker(cfg *config.City, cityName, _ string, sp runtime.Provider)
 			sp0 := scaleParamsFor(&a)
 			for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, sp0, &a, cityName, st, sp) {
 				sn := startupSessionName(cityName, qualifiedInstance, st)
-				it.setTimeout(sn, timeout)
+				register(sn, timeout, stall)
 				registeredAny = true
 			}
 			// Per-template fallback so bead-derived runtime names for pool
@@ -268,14 +299,14 @@ func buildIdleTracker(cfg *config.City, cityName, _ string, sp runtime.Provider)
 			// timeout for unnamed pool siblings.
 			if a.SupportsGenericEphemeralSessions() {
 				template := lifecycleTemplateFallbackKey(a)
-				it.setTimeoutForTemplate(template, timeout)
+				registerTemplate(template, timeout, stall)
 				exemptAlwaysNamedTemplateFallbacks(cfg, cityName, template, it.exemptTemplateFallbackForSession)
 				registeredAny = true
 			}
 			continue
 		}
 		sn := startupSessionName(cityName, a.QualifiedName(), st)
-		it.setTimeout(sn, timeout)
+		register(sn, timeout, stall)
 		registeredAny = true
 	}
 	if !registeredAny {

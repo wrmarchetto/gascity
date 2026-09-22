@@ -383,6 +383,7 @@ The normative authoring rules are specified here.
 | `work_query` | string | Work discovery command. |
 | `sling_query` | string | Work routing command template. |
 | `idle_timeout` | string | Go duration string. Empty disables idle checking. |
+| `stall_timeout` | string | Go duration string. Transcript-quiescence timeout, a second liveness signal OR-ed into the same idle ladder: `idle_timeout` measures runtime activity (pane output for a terminal provider), which a continuously-rendering TUI keeps fresh through a hung turn. Empty disables it. |
 | `sleep_after_idle` | string | Go duration string or `off`. |
 | `install_agent_hooks` | array of string | Agent hook installation override. |
 | `hooks_installed` | bool | Declares hooks already installed. |
