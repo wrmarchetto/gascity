@@ -167,6 +167,13 @@ var builtinProviderSpecs = map[string]BuiltinProviderSpec{
 					{Value: "", Label: "Default"},
 					{Value: "fable-5", Label: "Fable 5", FlagArgs: []string{"--model", "claude-fable-5"}, FlagAliases: [][]string{{"-m", "claude-fable-5"}}},
 					{Value: "opus", Label: "Opus", FlagArgs: []string{"--model", "claude-opus-4-8"}, FlagAliases: [][]string{{"-m", "claude-opus-4-8"}}},
+					// Opus 5.5. The id is not derived from the version number: it was
+					// read out of the shipped Claude CLI's baked model catalog
+					// (2.1.280, ~/.local/share/claude/versions/), which carries
+					// id:"claude-opus-5-5" / display_name:"Opus 5.5" and the short
+					// alias mapping "opus-5-5" -> "claude-opus-5-5". A guessed id is
+					// worse than no entry: it launches and every seat fails at start.
+					{Value: "opus-5-5", Label: "Opus 5.5", FlagArgs: []string{"--model", "claude-opus-5-5"}, FlagAliases: [][]string{{"-m", "claude-opus-5-5"}}},
 					{Value: "opus-5", Label: "Opus 5", FlagArgs: []string{"--model", "claude-opus-5"}, FlagAliases: [][]string{{"-m", "claude-opus-5"}}},
 					{Value: "opus-4-7", Label: "Opus 4.7", FlagArgs: []string{"--model", "claude-opus-4-7"}, FlagAliases: [][]string{{"-m", "claude-opus-4-7"}}},
 					{Value: "sonnet", Label: "Sonnet", FlagArgs: []string{"--model", "claude-sonnet-5"}, FlagAliases: [][]string{{"-m", "claude-sonnet-5"}}},
@@ -183,11 +190,13 @@ var builtinProviderSpecs = map[string]BuiltinProviderSpec{
 					// were unwakeable on the resolution side (ra-jbbv0).
 					{Value: "claude-opus-5", Label: "Opus 5 (canonical id)", FlagArgs: []string{"--model", "claude-opus-5"}, FlagAliases: [][]string{{"-m", "claude-opus-5"}}},
 					// The "[1m]" launch suffix is a valid Claude Code model-id form and
-					// operators pin it directly; it is emitted verbatim rather than
-					// normalized down to "claude-opus-5", because silently rewriting an
-					// explicit pin is the same class of surprise these entries exist to
-					// eliminate.
+					// operators pin it directly; every such entry here is emitted
+					// verbatim rather than normalized down to its bare id, because
+					// silently rewriting an explicit pin is the same class of surprise
+					// these entries exist to eliminate.
 					{Value: "claude-opus-5[1m]", Label: "Opus 5 1M (canonical id)", FlagArgs: []string{"--model", "claude-opus-5[1m]"}, FlagAliases: [][]string{{"-m", "claude-opus-5[1m]"}}},
+					{Value: "claude-opus-5-5", Label: "Opus 5.5 (canonical id)", FlagArgs: []string{"--model", "claude-opus-5-5"}, FlagAliases: [][]string{{"-m", "claude-opus-5-5"}}},
+					{Value: "claude-opus-5-5[1m]", Label: "Opus 5.5 1M (canonical id)", FlagArgs: []string{"--model", "claude-opus-5-5[1m]"}, FlagAliases: [][]string{{"-m", "claude-opus-5-5[1m]"}}},
 					{Value: "claude-sonnet-5", Label: "Sonnet 5 (canonical id)", FlagArgs: []string{"--model", "claude-sonnet-5"}, FlagAliases: [][]string{{"-m", "claude-sonnet-5"}}},
 					{Value: "claude-fable-5", Label: "Fable 5 (canonical id)", FlagArgs: []string{"--model", "claude-fable-5"}, FlagAliases: [][]string{{"-m", "claude-fable-5"}}},
 				},
