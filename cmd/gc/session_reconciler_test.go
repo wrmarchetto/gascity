@@ -33,12 +33,18 @@ import (
 // -- which is the real tracker's answer for an unregistered timeout, not a
 // blanket success. A test that wants the stall arm to fire says so in
 // stalled/stallTemplates.
+//
+// declines is scripted separately from idle because a decline is not a
+// verdict: a session present in declines reaches no idle answer at all,
+// whatever idle says about it. It scripts the PANE arm only, since that is
+// the only arm that reads a provider.
 type fakeIdleTracker struct {
 	idle            map[string]bool
 	templates       map[string]bool
 	stalled         map[string]bool
 	stallTemplates  map[string]bool
 	exemptions      map[string]bool
+	declines        map[string]idleCheck
 	lastTranscripts map[string]time.Time // session name → the time the reconciler passed
 }
 
@@ -49,18 +55,22 @@ func newFakeIdleTracker() *fakeIdleTracker {
 		stalled:         make(map[string]bool),
 		stallTemplates:  make(map[string]bool),
 		exemptions:      make(map[string]bool),
+		declines:        make(map[string]idleCheck),
 		lastTranscripts: make(map[string]time.Time),
 	}
 }
 
-func (f *fakeIdleTracker) checkIdle(sessionName, template string, _ runtime.Provider, _ time.Time, _ runtime.Poke) bool {
+func (f *fakeIdleTracker) checkIdle(sessionName, template string, _ runtime.Provider, _ time.Time, _ runtime.Poke) idleCheck {
+	if dec, ok := f.declines[sessionName]; ok {
+		return dec
+	}
 	if f.idle[sessionName] {
-		return true
+		return idleCheck{Idle: true}
 	}
 	if template == "" || f.exemptions[sessionName] {
-		return false
+		return idleCheck{}
 	}
-	return f.templates[template]
+	return idleCheck{Idle: f.templates[template]}
 }
 
 func (f *fakeIdleTracker) checkStalled(sessionName, template string, lastTranscript func() time.Time, _ time.Time) bool {
@@ -9866,6 +9876,46 @@ func TestReconcileSessionBeads_ConfigDriftDrainAckUsesRecentAttachedDeferralForP
 }
 
 // --- idle timeout in bead reconciler tests ---
+
+// TestReconcileSessionBeads_IdleCheckDeclineReachesStderr pins the operator
+// path for an idle check that reaches no verdict. The assertion is on stderr
+// rather than on the tracker because the tracker's own suite already proves it
+// returns Report -- what could regress here is the reconciler consuming that
+// field and printing nothing, which every other idle test passes over in
+// silence. It also pins the session surviving: a decline must not be read as
+// "idle" and reaped.
+func TestReconcileSessionBeads_IdleCheckDeclineReachesStderr(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.addDesired("worker", "worker", true)
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+	if err := env.sp.SetMeta("worker", "GC_SESSION_ID", session.ID); err != nil {
+		t.Fatalf("SetMeta(GC_SESSION_ID): %v", err)
+	}
+
+	it := newFakeIdleTracker()
+	it.declines["worker"] = idleCheck{
+		Decline: idleDeclineNoActivity,
+		Report:  true,
+	}
+
+	reconcileSessionBeads(
+		context.Background(), []beads.Bead{session}, env.desiredState, configuredSessionNames(env.cfg, "", env.store),
+		env.cfg, env.sp, env.store, nil, nil, nil, env.dt, map[string]int{}, false, nil, "",
+		it, env.clk, env.rec, 0, 0, &env.stdout, &env.stderr,
+	)
+
+	got := env.stderr.String()
+	if !strings.Contains(got, string(idleDeclineNoActivity)) {
+		t.Errorf("stderr = %q, want the decline reason %q named", got, idleDeclineNoActivity)
+	}
+	if !strings.Contains(got, "worker") {
+		t.Errorf("stderr = %q, want the declining session named", got)
+	}
+	if !env.sp.IsRunning("worker") {
+		t.Error("session was stopped on a decline; a decline reaches no idle verdict and must not reap")
+	}
+}
 
 func TestReconcileSessionBeads_IdleTimeoutStopsAndStaysAsleep(t *testing.T) {
 	env := newReconcilerTestEnv()

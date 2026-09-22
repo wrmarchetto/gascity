@@ -3416,8 +3416,18 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 			// keystrokes, and that is the nudge CLI or its per-session poller,
 			// never this one. Reading it off the provider here is what silently
 			// returned false for every nudged session (ci-49vlf3).
+			check := it.checkIdle(name, tp.TemplateName, sp, clk.Now(), infoByID[id].DurablePoke())
+			// A decline is not a "not idle" answer: this arm's ladder is
+			// never entered on it, so nothing downstream -- not the trace,
+			// not the kill, not the sleep patch -- records that the pane arm
+			// is inoperative. This line is the only place that fact surfaces
+			// (ci-kjh8vc). The tracker throttles it; see
+			// idleDeclineRepeatInterval.
+			if check.Report {
+				fmt.Fprintf(stderr, "%s\n", idleDeclineMessage(tp.DisplayName(), name, check)) //nolint:errcheck // best-effort stderr
+			}
 			facts := sessionpkg.TimerFacts{
-				Triggered: it.checkIdle(name, tp.TemplateName, sp, clk.Now(), infoByID[id].DurablePoke()),
+				Triggered: check.Idle,
 			}
 			// Second liveness arm. The pane arm above measures runtime
 			// activity, which for a terminal provider is pane output, and a
@@ -3431,6 +3441,14 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 			// reasons: the transcript probe costs a path resolution and a
 			// stat, and when both arms agree the pane arm is the more
 			// specific finding, so it keeps the trace label.
+			//
+			// A pane DECLINE carries Idle=false and so reaches this arm,
+			// deliberately. An unreadable pane is precisely when the
+			// transcript is the only liveness signal left, and the arm can
+			// only ever reap more. Gating this on `check.Decline == ""`
+			// instead is the mutant
+			// TestReconcileSessionBeads_StallArmStillReapsWhenThePaneArmDeclines
+			// was written against.
 			if !facts.Triggered && it.checkStalled(name, tp.TemplateName, func() time.Time {
 				return sessionTranscriptActivity(infoByID[id], transcriptPaths)
 			}, clk.Now()) {

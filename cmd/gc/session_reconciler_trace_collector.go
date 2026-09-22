@@ -860,6 +860,23 @@ func shouldAutoArmForTrace(reason TraceReasonCode, outcome TraceOutcomeCode) boo
 	case TraceOutcomeFailed, TraceOutcomeProviderError, TraceOutcomeDeadlineExceeded:
 		return true
 	}
+	// A lifecycle timer that actually STOPPED a session. Keyed on the
+	// outcome rather than on idle_timeout/max_session_age/
+	// assigned_work_exhausted by name because timerTraceCodes is the only
+	// producer of either code -- so the blast radius is identical, and a
+	// stop rung added to either ladder later arrives armed instead of
+	// invisible.
+	//
+	// The ladders' DEFER outcomes are deliberately absent. An auto-arm arms
+	// the whole template at detail for ten minutes against a cap of
+	// sessionReconcilerTraceMaxAutoArms shared with the anomaly triggers
+	// above; a stop is at most once per session lifetime, while a
+	// deferred_busy recurs every tick for as long as a wedged session sits
+	// and would hold that cap indefinitely.
+	switch outcome {
+	case TraceOutcomeStop, TraceOutcomeStopDeferExhausted:
+		return true
+	}
 	return false
 }
 
