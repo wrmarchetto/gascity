@@ -267,6 +267,22 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	b.WriteString(" keeping the assignee, and name the release trigger in the")
 	b.WriteString(" bead. It stays yours and the thing it waits on can still")
 	b.WriteString(" wake it.\n")
+	// The qualification sits here and not a paragraph later for the same
+	// reason the parked exit precedes close-as-failed: a reader who has been
+	// handed a move acts on it. "Set it blocked" is the wrong move for a bead
+	// something is still executing against, and in a deployment whose
+	// procedures re-check the claim before each step it is an abort -- Gas
+	// City's own bench work refuses every instrument call on a bead that is
+	// not in_progress, so the status change kills a detached soak at its next
+	// power cycle, hours after the turn that made it. The consequence is
+	// invisible at the moment of the write, which is why this is a
+	// qualification on the advice rather than a note somewhere else.
+	b.WriteString("\nOne exception: if something is still RUNNING against the")
+	b.WriteString(" bead -- a detached job, a soak, a background run you")
+	b.WriteString(" started -- leave it in_progress instead. A guard that")
+	b.WriteString(" re-checks the claim before each step reads any other")
+	b.WriteString(" status as permission withdrawn, so setting it blocked can")
+	b.WriteString(" abort the run and lose its result.\n")
 	b.WriteString("\nOnly if the work genuinely cannot be done, close it as")
 	b.WriteString(" failed with a failure class rather than leaving it open. A")
 	b.WriteString(" bead that is merely waiting has not failed. If you need a")
