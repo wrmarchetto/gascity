@@ -759,3 +759,56 @@ func TestStopGateOutstandingReasonNamesTheParkedExit(t *testing.T) {
 			"session that needs it has already been given a wrong answer: %q", body)
 	}
 }
+
+// TestStopGateOutstandingReasonWithholdsTheParkedExitFromRunningWork pins the
+// one qualification the parked exit has to carry: it is wrong while something
+// is still executing against the bead.
+//
+// The defect this closes is the message steering a reader into an abort. A
+// deployment that gates its long-running procedures on the claim -- Gas City's
+// own bench work does, refusing every instrument call on a bead that is not
+// in_progress -- turns "set it blocked" into "kill the detached run", and the
+// reader who follows the advice loses hours of unattended work with no error
+// at the moment they act. The consequence lands at the procedure's NEXT step,
+// which is why prose alone was not enough on the deployment side either: the
+// city carries a pre-write refusal for the same move (city bead ci-orzdu5).
+//
+// Asserted on MEANING and on ORDER, never on wording, for the reason
+// TestStopGateOutstandingReasonNamesTheParkedExit states: an exact-sentence
+// assertion fails on every honest rewording and teaches the next editor to
+// delete it. Order is asserted because this paragraph is only useful to a
+// reader who has not already acted -- placed after close-as-failed it is a
+// correction nobody reaches.
+func TestStopGateOutstandingReasonWithholdsTheParkedExitFromRunningWork(t *testing.T) {
+	reason := stopGateOutstandingReason(stopGateHoldingWork())
+
+	// Body only. "blocked" appears in the header on every refusal, and the
+	// sibling test records the first draft of an assertion here passing against
+	// the very text it was written to reject.
+	_, body, found := strings.Cut(reason, "\n")
+	if !found {
+		t.Fatalf("block reason has no body after its header line: %q", reason)
+	}
+
+	// Fatal, not Errorf: strings.Index answers -1 for an absent substring, so
+	// both order assertions below would fire on the same absence and report it
+	// as a misplacement.
+	if !strings.Contains(body, "in_progress") {
+		t.Fatalf("block reason never names leaving the bead in_progress, so a "+
+			"session holding a bead with a detached run still executing has no "+
+			"move but the one that aborts it: %q", body)
+	}
+	blockedAt := strings.Index(body, "blocked")
+	qualifiedAt := strings.Index(body, "in_progress")
+	if qualifiedAt < blockedAt {
+		t.Errorf("the qualification precedes the parked exit it qualifies, so it "+
+			"reads as advice about some other move: %q", body)
+	}
+	// The reader who has met close-as-failed has an answer and stops reading --
+	// the same argument that puts the parked exit first.
+	if failedAt := strings.Index(body, "close it as failed"); qualifiedAt > failedAt {
+		t.Errorf("the qualification is offered after close-as-failed, so the "+
+			"session running a detached job has already been given a wrong "+
+			"answer: %q", body)
+	}
+}
