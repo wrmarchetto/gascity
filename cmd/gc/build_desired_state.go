@@ -581,11 +581,23 @@ func buildDesiredStateWithSessionBeads(
 					coldWakeTemplates[template] = true
 				}
 			}
+			// Same env the generic pool branch below builds, for the same
+			// reason: reaching this append means the template has a custom
+			// scale_check, and a custom scale_check is precisely the query
+			// that iterates GC_ROUTE_TARGETS. Passing nil here left the probe
+			// on mergeRuntimeEnv(os.Environ(), nil) -- the controller's own
+			// environment -- so it served zero targets and the pool sized 0
+			// against claimable work (ci-43krjf, the ci-vk76d1 shape).
+			env, err := controllerAgentCommandEnv(cityPath, cfg, &cfg.Agents[i])
+			if err != nil {
+				fmt.Fprintf(stderr, "scaleCheck: building env for %s: %v\n", cfg.Agents[i].QualifiedName(), err) //nolint:errcheck
+				continue
+			}
 			var probes []poolStoreProbe
 			if rigName == "" && hasCustomScaleCheck {
-				probes = cityScopedFanOutProbes(cityPath, cfg, &cfg.Agents[i], poolDir, nil, suspendedRigPaths)
+				probes = cityScopedFanOutProbes(cityPath, cfg, &cfg.Agents[i], poolDir, env, suspendedRigPaths)
 			}
-			pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, sp: sp, poolDir: poolDir, newDemand: store != nil, probes: probes})
+			pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, sp: sp, poolDir: poolDir, env: env, newDemand: store != nil, probes: probes})
 			continue
 		}
 
