@@ -286,3 +286,7 @@ Would settle it: gs-3vdb's close reason. The next PM wake on gs-78op
 answers from it under a new numbered entry and edits the roadmap
 accordingly.
 
+Update 2026-09-27 (pm-log #146): the level-confirmation half is answered
+from the record by the liaison's gs-3vdb comment (adversarial-reader-claude
+xhigh intended, city f8d28e40). Only the a/b/c choice is still open, queued
+to Willie as city ci-efnkgw.

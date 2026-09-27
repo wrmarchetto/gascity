@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-3vdb 2026-09-27T05:13:05Z
+last_seen: gs-8fq0 2026-09-27T05:41:46Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5003,3 +5003,32 @@ Every epic:agent-efficiency bead but gs-n3lh and gs-78op is closed.
 pm-open #9 records the question.
 
 Source: PM inference, unconfirmed
+
+## 146. pm-idle gs-8fq0: agent-efficiency stays in-progress, rig waits on gate gs-3vdb (2026-09-27)
+
+The idle sweep fired because gs-78op, the only open epic:agent-efficiency
+bead, is blocked and the sweep counts no blocked bead as queued work. The
+stall is on the operator, not on a worker or a missing epic: gs-78op waits
+on human gate gs-3vdb (criterion 4's a/b/c choice, #145), mirrored to the
+operator queue as city ci-efnkgw, still open and assigned to human.
+
+Ruling: the third disposition -- the rig is waiting on something outside
+it. agent-efficiency stays in-progress (criterion 4 unmet and undecided),
+no epic is promoted (none is `open`, pm-open #8), no DECOMP is sent. The
+reopening bead is gs-78op itself, assigned to this PM: resolving gs-3vdb
+unblocks it and wakes the PM to answer it, so nothing new is filed.
+
+The liaison answered the gate's second half from the record at 05:16Z (a
+comment on gs-3vdb): live levels at city main are mayor opus-5-5 high,
+liaison opus-5-5 high, adversarial-reader-claude opus-5-5 xhigh, rig PMs
+opus-5-5; adversarial-reader xhigh is Willie's own 2026-09-22 ruling (city
+f8d28e40 item 1, then 09c79b9d to opus-5-5). Criterion 3's roadmap text is
+NOT superseded in this entry -- it lands in the same edit as the criterion 4
+ruling, on the gs-78op wake, so the roadmap changes once against one
+resolved gate. pm-open #9 updated with that half-answer.
+
+Drift since last_seen (gs-3vdb 2026-09-27T05:13:05Z): gs-n3lh closed
+05:26Z; gs-78op blocked on gs-3vdb; gs-3vdb labeled liaison:ruled; gs-8fq0
+filed (this summons).
+
+Source: pm-log #145
