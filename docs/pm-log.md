@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-e5bi 2026-09-14T00:40:15Z
+last_seen: gs-3vdb 2026-09-27T05:13:05Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -4951,3 +4951,55 @@ filed (this summons). agent-efficiency's open work is still only the
 deferred canary reading gs-n3lh.
 
 Source: pm-log #131
+
+## 145. gs-78op: criterion 4 after the voided canary is Willie's call -- escalated as gate gs-3vdb, PM recommends narrowing (2026-09-27)
+
+gs-78op (filed by lab.engineer-1 out of the gs-n3lh reading) asks what
+epic:agent-efficiency criterion 4 becomes now that the gs-jbyc window
+(2026-09-13..27) read exit 3. The reading, taken from the
+docs/gs-n3lh-canary-reading branch's Results section rather than the bead's
+summary: four rows declined -- lab.pm, governor, mayor, and the
+lab.engineer-codex control. For three of them the cause is that the seat
+left the level under test mid-window, measured from the model field in
+.gc/usage.jsonl: mayor opus-5 then opus-5-5 with effort xhigh -> high
+(city f8d28e40, ab37e39b, Willie's 2026-09-22 rulings), lab.pm three model
+regimes (f8d28e40, 09c79b9d), governor gone at the liaison re-charter
+(62c340e9). The codex control is parked (1210392b). The three rows whose
+regime held all 14 days -- lab.engineer, bench-engineer, toolsmith control
+-- are each INSIDE their pre-fixed margins (103.50 vs line 110.89, 109.04
+vs 129.29, 69.02 vs 76.07).
+
+Not answered here, escalated. Criterion 4 is Willie's own text (#136), and
+every option rewrites or re-costs it: (a) re-baseline and re-run needs a
+fresh baseline and a 1-2 week freeze on agent-level changes, a constraint on
+the operator's rulings only he can accept; (b) narrowing and (c) dropping
+both change what he confirmed. A PM choosing among them would be a done
+outrunning the criteria. Human gate gs-3vdb blocks gs-78op; gs-78op stays
+open and assigned. Nothing is blocked on gs-78op, so the escalation stalls
+no asker.
+
+Recommendation carried in the gate: (b). The per-agent revert criteria were
+designed as separate bets (gs-n3lh brief), the three held rows were judged
+against margins fixed 2026-09-12 before the window opened, and the moved
+seats' levels were set directly by Willie's rulings -- a re-run would
+measure those rulings rather than the epic's change. The narrowed record
+must name mayor, lab.pm and governor as unmeasured, not passed.
+
+Carried forward whichever way it goes, per the bead: the August a2ca19b
+toolsmith-back-to-max question stays open (a control staying inside does
+not answer it); criterion 3's assignments of record no longer describe the
+fleet, and the gate asks Willie to confirm the live levels before the
+roadmap text is superseded -- adversarial-reader-claude runs opus-5-5 at
+xhigh against a record of fable at high, which may be drift rather than a
+ruling. The measurement gap (usage.jsonl records model but not effort) is
+a work item for the mayor to mint if a re-run is chosen; the PM files no
+work beads.
+
+Drift since last_seen (gs-e5bi 2026-09-14T00:40:15Z): gs-1soi, gs-e5bi,
+gs-33z, gs-8ra, gs-c6f, gs-dzj, gs-hzrg closed; gs-n3lh claimed by
+lab.engineer-1 and its reading committed on docs/gs-n3lh-canary-reading
+(f8ed69273, not yet on main); gs-78op filed; gs-3vdb filed (this entry).
+Every epic:agent-efficiency bead but gs-n3lh and gs-78op is closed.
+pm-open #9 records the question.
+
+Source: PM inference, unconfirmed

@@ -269,3 +269,20 @@ Would settle it: a `gc city pm plan gascity '<epic>'` sitting. pm-open #3's
 standing question (a maintenance epic, or a declared standalone-by-default
 policy for substrate fixes) is one candidate answer that sitting could fold
 in, as #5 noted before it.
+
+## 9. What epic:agent-efficiency criterion 4 becomes after the voided canary (2026-09-27)
+
+The gs-jbyc canary window read exit 3 (pm-log #145): mayor, lab.pm and
+governor left the level under test mid-window on operator rulings and the
+liaison re-charter, and the codex control is parked. Only lab.engineer,
+bench-engineer and the toolsmith control held their regime, and all three
+are inside their margins. gs-78op asks which of (a) re-baseline and re-run
+under a level freeze, (b) narrow the criterion to the held rows, (c) drop
+it. Escalated as human gate gs-3vdb, which blocks gs-78op. PM recommends
+(b). The same gate asks Willie to confirm the fleet's live model+effort
+levels so criterion 3's assignments of record can be superseded.
+
+Would settle it: gs-3vdb's close reason. The next PM wake on gs-78op
+answers from it under a new numbered entry and edits the roadmap
+accordingly.
+
