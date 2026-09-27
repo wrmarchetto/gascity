@@ -5,6 +5,12 @@ hurt, against the baseline in
 [`agent-efficiency-baseline.md`](agent-efficiency-baseline.md). Criterion 4 of
 the epic, commissioned by `gs-jbyc`.
 
+**The window is closed and the reading is taken.** It exited 3 -- no verdict,
+nothing concluded, criterion 4 still open -- because three of the five subject
+seats left the level under test while the window was open. See
+[Results](#results-read-2026-09-27-verdict-no-verdict) before reading anything
+below as a live question.
+
 The criteria themselves are **not in this document**. They are in
 [`agent-efficiency-canary.toml`](agent-efficiency-canary.toml), which
 `scripts/canary-eval.py` reads and enforces. This file is the reasoning: where
@@ -357,6 +363,177 @@ Do not, in any of the three cases, adjust a margin in the TOML to change the
 answer. A threshold with an erased history cannot be told from one that was
 tuned, which is why the planner's own pre-window correction is recorded in
 that file rather than applied silently.
+
+## Results: read 2026-09-27, verdict no-verdict
+
+Both commands above were run verbatim against the committed criteria on
+2026-09-27, minutes after the window closed. `scripts/canary-eval.py` **exited
+3**. By the rule `gs-jbyc` fixed before the window opened, **nothing is
+concluded from this run**: no agent is reverted, no level is kept, and
+`epic:agent-efficiency` criterion 4 stays open. The figures below are recorded
+because a canary whose result lives only in a close reason is a measurement
+nobody can find -- not because any of them supports a conclusion. No margin in
+the TOML was touched.
+
+The evaluator's own output is frozen verbatim beside this file as
+[the run report](agent-efficiency-canary-2026-09-27.json),
+because the window is closed and the 125MB of captures it was computed from
+live in `/tmp` and are gone. It carries every row's figures, including the
+report-only rows this section does not quote. **That file is machine output of
+one run, not a second authority** -- the TOML is the criterion and this
+section is the record. Neither side of the criterion moved after the window
+opened, checked rather than assumed: `agent-efficiency-canary.toml` has
+exactly one commit in its history, `f3d0183f6` at 2026-09-12 22:30, and the
+evaluator and fetcher's last is `bac280539` at 22:33 the same evening. The
+TOML evaluated here is sha256
+`35a39810def3c852d3d19760c2c72cb07f0b3a07c8e272a6605d43075d0c3006`.
+
+### As reported
+
+| Agent type | role | baseline | window | line | state |
+|---|---|---|---|---|---|
+| `lab.engineer` | subject | 92.41 | 103.50 | 110.89 | inside |
+| `lab.pm` | subject | 15.05 | 16.69 | -- | **insufficient** |
+| `bench-engineer` | subject | 99.45 | 109.04 | 129.29 | inside |
+| `governor` | subject | 10.25 | 8.87 | -- | **insufficient** |
+| `mayor` | subject | 4.53% | 10.48% | -- | **insufficient** |
+| `toolsmith` | control | 63.40 | 69.02 | 76.07 | inside |
+| `lab.engineer-codex` | control | 26.88 | 20.47 | -- | **insufficient** |
+| `bench-sitting-astoria` | report-only | 46.67 | -- | -- | no-baseline |
+| `bd.dog` | report-only | -- | -- | -- | no-baseline |
+| `adversarial-reader-claude` | report-only | 25.00 | 37.67 | -- | no-baseline |
+| `toolsmith-codex` | report-only | 78.62 | -- | -- | insufficient |
+| `bench-operator-codex` | report-only | 11.33 | 13.72 | 19.83 | inside |
+
+Metric is invocations per closed bead on every row but `mayor`, which is the
+authored-bead failure rate. The four rows that voided the run, with the
+evaluator's own reason:
+
+- `lab.pm` -- window `min_beads` 97 under floor 303
+- `governor` -- window covered 6 local days, floor 7
+- `mayor` -- window `min_verdicts` 372 under floor 400
+- `lab.engineer-codex` (control) -- window `min_beads` 19 under floor 60
+
+Every baseline figure the evaluator recomputed reproduces the table under
+"Measured: the baseline spread" exactly -- 92.41, 15.05, 99.45, 10.25, 63.40,
+26.88 and 4.53%. That repeats the Provenance section's cross-check between two
+joins over the same data; it does not independently confirm the data.
+
+### The finding: the thing under test left three of the seats mid-window
+
+"Exit 3" says an `insufficient` row wants a longer window. For three of these
+four rows that is false, and the reason is this reading's finding.
+
+Measured from `.gc/usage.jsonl` -- the `model` field on each usage fact,
+bucketed by local day across the window itself, so this is what the fleet ran
+and not what a config file says it should have:
+
+| Agent type | model actually run | days |
+|---|---|---|
+| `mayor` | `opus-5` 13th-22nd, `opus-5-5` 23rd-26th | 14 |
+| `lab.pm` | `fable-5` 13th-21st, `opus-5` 22nd, `opus-5-5` 22nd-26th | 12 |
+| `governor` | `fable-5` 13th-18th, then nothing | 6 |
+| `lab.engineer` | `opus-5` throughout, nothing after the 23rd | 11 |
+| `bench-engineer` | `opus-5` throughout | 14 |
+| `toolsmith` (control) | `opus-5` throughout | 14 |
+| `lab.engineer-codex` (control) | `gpt-5.6-terra`, nothing after the 19th | 6 |
+| `adversarial-reader-claude` | `fable-5` 14th-19th, `opus-5-5` 23rd-26th | 10 |
+
+The city-repo commits behind those moves, all inside the window:
+
+| Local time | Commit | Effect on a canary row |
+|---|---|---|
+| 09-19 00:50 | `62c340e9` | `governor` seat re-chartered as `liaison` |
+| 09-19 04:23 | `1210392b` | codex pools braked; `engineer-codex` parked |
+| 09-22 13:41 | `f8d28e40` | `mayor` xhigh to **high**; `lab.pm` to `opus-5` |
+| 09-22 17:39 | `09c79b9d` | `lab.pm` to `opus-5-5` |
+| 09-22 17:56 | `ab37e39b` | `mayor` to `opus-5-5` |
+
+`f8d28e40` and `ab37e39b` are the operator's two rulings of 2026-09-22, and
+`62c340e9` is the liaison re-charter. None of them is a defect. They mean the
+`mayor` row spent its last four days on a model AND an effort level neither
+side of this comparison describes, the `lab.pm` row ran three model regimes,
+and the `governor` row's subject no longer exists.
+
+Effort is not recorded in `.gc/usage.jsonl` at all, so its dates come from
+the config commits and are bounded, not pinned: the `mayor` effort drop was
+committed at 13:41 and its model change at 17:56, while the measured model
+flip falls between the 22nd and the 23rd -- so `high` reached that seat no
+later than the 23rd and possibly some hours earlier. The live check, run from
+the panes at reading time per the section above rather than from `ps`:
+
+| Session | pid | effort | model |
+|---|---|---|---|
+| `mayor` | 1340600 | `high` | `claude-opus-5-5` |
+| `lab.engineer` | 1619193 | `xhigh` | `claude-opus-5` |
+| `bench-engineer` | 1425081 | `xhigh` | `claude-opus-5` |
+| `adversarial-reader-claude` | 1416441 | `xhigh` | `claude-opus-5-5` |
+| `bd.dog` | 1598862 | `high` | `claude-opus-5` |
+| `liaison` | 3778948 | `high` | `claude-opus-5-5` |
+
+**`toolsmith` was not witnessed from a process.** No toolsmith session was
+running at reading time, so that row's level rests on its model holding across
+all 14 days and its `agent.toml` carrying no model or effort change since
+2026-08-11 -- two lines of evidence, neither of them a live command line.
+
+### What a longer window would and would not reach
+
+- `mayor` -- 372 verdicts over 14 days, about 27 a day, so the floor of 400 is
+  roughly one more day away. Extending does not help: the extra days run the
+  post-ruling regime and deepen the split rather than closing it.
+- `lab.pm` -- 97 beads over 14 days against a baseline of 303 over six. At the
+  window's own rate the floor of 303 is about 44 further days away, and the
+  seat changed model twice on the way there.
+- `governor` -- unreachable. The seat was re-chartered and ran its last
+  invocation 2026-09-18T22:50:04-05:00.
+- `lab.engineer-codex` -- unreachable while `suspended = true`. Its last
+  invocation was 2026-09-19T11:27:11-05:00, and
+  `packs/lab/agents/engineer-codex/agent.toml` records that no reason for the
+  park was given.
+
+So the second control is dark and the first is clean, which is weaker than the
+design intended: "a move confined to the Claude lane cannot hide behind the
+second control" does not hold for this window.
+
+### Confounders, now measured rather than predicted
+
+- The 2026-09-14 outage `gs-n3lh`'s second comment records is visible in the
+  usage log: zero facts in local hours 03, 04, 05 and 06 that day, activity
+  resuming at 07. That brackets the recorded 02:36:01--07:46:41 outage and the
+  07:45 `gc` rebuild that carried `6f695da26`, the pool-slot-release fix, into
+  a window measuring wall-clock.
+- `lab.engineer` stopped producing usage facts after 2026-09-23T10:36:18-05:00
+  and its row still read `inside`. A row can pass its line on 11 of 14 days.
+
+**The `mayor` row's point estimate sits above its own line and is still not a
+result.** Baseline 4.53%, window 10.48%, and the line the TOML fixed before
+the window opened is 4.53% x 2.05 = 9.28%. Had the row reached its floor it
+would have read `crossed`, which for a subject means revert. It did not reach
+its floor -- 372 verdicts against 400 -- so the evaluator never computed a
+line for it and neither does this section as a finding. It is recorded
+because it is the reason to complete the reading rather than abandon it, and
+because a number this close to firing, left out of the writeup, is the one a
+later reader would accuse this run of hiding. Read it against the confounder
+above: the last four of those fourteen days were authored by a seat on a
+different model at a lower effort than the row describes.
+
+### What is NOT concluded
+
+- No agent is reverted and no level is kept. Criterion 4 of
+  `epic:agent-efficiency` is not met by this reading.
+- `a2ca19b`'s open August question about dropping `toolsmith` from max to high
+  is **not** answered. The document says the control row answers it on exit 0;
+  this run exited 3, and a control's figure read out of a voided run is exactly
+  the conclusion the void exists to prevent.
+- No row reported `no-witness`, because the sample-size check runs first. The
+  manual pane check nevertheless found the `mayor` not running the level under
+  test. That is the shape "exit 3" calls a configuration bug, and here it is
+  not one: it is an operator ruling, so the remedy is a new baseline rather
+  than a fix.
+- `docs/roadmap.md`'s criterion-3 assignments of record (pm-log #136 -- mayor
+  `opus-5` xhigh, PM `fable-5` high, governor and
+  `adversarial-reader-claude` fable at high) no longer describe the fleet.
+  Noted here, not corrected: the roadmap is the PM's.
 
 ## Provenance
 
