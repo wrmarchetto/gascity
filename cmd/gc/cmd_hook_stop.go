@@ -227,6 +227,47 @@ func isOpenPMSittingBead(bead beads.Bead) bool {
 	return false
 }
 
+// stopGateParkedShape describes the ONE parking shape this gate honors. The
+// advice text renders itself from these fields and
+// stopGateClaimIsParkedOnOpenAssignedQuestion reads the same values, so the
+// prose cannot name a shape the city does not wake.
+//
+// It exists because the two drifted and the drift was unobservable from
+// either side. The advice used to read "Set it blocked, keeping the assignee,
+// and name the release trigger in the bead. It stays yours and the thing it
+// waits on can still wake it." Every clause after the first is false.
+// `blocked` is a STORED status, not a computed one: no work-query tier serves
+// it (Tier 1 lists `--status in_progress`; Tiers 2-3 go through bd ready,
+// whose open statuses are open and deferred alone -- see
+// nativeDoltOpenReadyStatuses), and a stored status does not flip when a
+// dependency closes. No consumer of a "release trigger" was ever written.
+// Measured on astoria-sel4 as-fp8q, parked that way at 15:47Z on 2026-09-30
+// with the trigger named as-dgrp: as-dgrp closed at 16:16:42Z, as-fp8q stayed
+// blocked, stayed out of bd ready, and was reopened by hand (city ci-qtuugn).
+//
+// THE REJECTED ALTERNATIVE was a sweep that reopens a bead whose recorded
+// trigger has closed. It reconciles data the store already models -- a
+// ready-blocking dependency IS a trigger, and the in_progress tier's own
+// inProgressBlockedByEnrichmentScript already withholds the claim while that
+// dependency is open and serves it the tick after it closes -- so the sweep
+// would be a second, polled copy of a predicate that already runs, and this
+// gate would still be advising a shape it does not itself recognize.
+//
+// THE KEY IS NOT RENAMED despite naming a "question", and that absence is
+// deliberate: live beads carry it, the city's assets/scripts/ask-pm.py writes
+// it, doctor/stranded-parked-work reads it, and the predicate behind it never
+// checked for a question TYPE -- it requires only that the named bead be open
+// and assigned. A rename would need a migration and buy nothing.
+type stopGateParkedShape struct {
+	status      string // bead status a parked claim is LEFT at -- never changed
+	metadataKey string // records the id the claim waits on
+}
+
+var stopGateParkShape = stopGateParkedShape{
+	status:      "in_progress",
+	metadataKey: beadmeta.WaitingOnQuestionMetadataKey,
+}
+
 // stopGateOutstandingReason renders the block text for a session still
 // holding claimed work.
 //
@@ -257,32 +298,38 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	// and a failure class on work that did not fail corrupts every later query
 	// filtering on one.
 	//
-	// This says "waiting on" rather than naming a bead id or a command: the
-	// exact invocation differs per agent for the reason given above, and the
-	// condition is what the reader has to recognize. `blocked` is the state
-	// astoria-zephyr az-dbe and az-qe33 already use for this, and it is what
-	// the mayor used on ci-rup0vw the night az-lmrn was lost.
+	// It names the metadata key and the dependency, not a command line: the
+	// exact bead invocation differs per agent for the reason given above,
+	// while the SHAPE is the same everywhere and is what the city reads. Both
+	// come from stopGateParkShape so this text cannot drift from the predicate
+	// that honors it -- the drift that made the previous wording advise a
+	// permanent park is recorded there.
 	b.WriteString("\nIf it is waiting on something -- an open question, another")
-	b.WriteString(" bead, an operator -- do NOT close it. Set it blocked,")
-	b.WriteString(" keeping the assignee, and name the release trigger in the")
-	b.WriteString(" bead. It stays yours and the thing it waits on can still")
-	b.WriteString(" wake it.\n")
-	// The qualification sits here and not a paragraph later for the same
-	// reason the parked exit precedes close-as-failed: a reader who has been
-	// handed a move acts on it. "Set it blocked" is the wrong move for a bead
-	// something is still executing against, and in a deployment whose
-	// procedures re-check the claim before each step it is an abort -- Gas
-	// City's own bench work refuses every instrument call on a bead that is
-	// not in_progress, so the status change kills a detached soak at its next
-	// power cycle, hours after the turn that made it. The consequence is
-	// invisible at the moment of the write, which is why this is a
-	// qualification on the advice rather than a note somewhere else.
-	b.WriteString("\nOne exception: if something is still RUNNING against the")
-	b.WriteString(" bead -- a detached job, a soak, a background run you")
-	b.WriteString(" started -- leave it in_progress instead. A guard that")
-	b.WriteString(" re-checks the claim before each step reads any other")
-	b.WriteString(" status as permission withdrawn, so setting it blocked can")
-	b.WriteString(" abort the run and lose its result.\n")
+	b.WriteString(" bead, an operator -- do NOT close it, and do NOT set it")
+	b.WriteString(" blocked. No work query serves a blocked bead and its")
+	b.WriteString(" status does not flip when the thing it waits on closes, so")
+	b.WriteString(" that park is permanent.\n")
+	fmt.Fprintf(&b, "\nPark it this way instead and it wakes by itself: leave"+
+		" it %s with its assignee, file what you are waiting on as an open"+
+		" bead assigned to whoever must act, add a blocking dependency from"+
+		" your bead on that one, and record that id in your bead's %s"+
+		" metadata. The dependency is the wake -- your bead is withheld while"+
+		" the blocker is open and served again once it closes.\n",
+		stopGateParkShape.status, stopGateParkShape.metadataKey)
+	// Why the detached-run exception this paragraph used to carry is GONE
+	// rather than merely reworded: it existed because "set it blocked" is an
+	// abort for a bead something is still executing against -- Gas City's own
+	// bench work refuses every instrument call on a bead that is not
+	// in_progress, so the status change killed a detached soak at its next
+	// power cycle, hours after the turn that made it. The shape above changes
+	// no status at all, so that hazard cannot arise from following it. What
+	// survives is the one residue a status check does not cover, and it is
+	// stated rather than dropped.
+	b.WriteString("\nThat park changes no status, so a guard that re-checks")
+	b.WriteString(" the claim before each step still sees permission granted")
+	b.WriteString(" and a detached job you started keeps running. A guard that")
+	b.WriteString(" re-checks READINESS rather than status will see the bead")
+	b.WriteString(" withheld -- do not park one of those mid-run.\n")
 	b.WriteString("\nOnly if the work genuinely cannot be done, close it as")
 	b.WriteString(" failed with a failure class rather than leaving it open. A")
 	b.WriteString(" bead that is merely waiting has not failed. If you need a")
@@ -718,7 +765,7 @@ func stopGateSessionInstanceIdentities() map[string]struct{} {
 }
 
 func stopGateClaimIsParkedOnOpenAssignedQuestion(claim beads.Bead, store hookStore) bool {
-	questionID := strings.TrimSpace(claim.Metadata[beadmeta.WaitingOnQuestionMetadataKey])
+	questionID := strings.TrimSpace(claim.Metadata[stopGateParkShape.metadataKey])
 	if questionID == "" {
 		return false
 	}
