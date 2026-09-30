@@ -713,16 +713,26 @@ func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
 // actionable work.
 //
 // What remains true, and is what this pins: other designed waits DO reach this
-// text, and it offers them no compliant move. The mayor hit it the same night
-// on ci-rup0vw -- open, assigned, no question link -- and resolved it by
+// text, and it has to offer them a move that works. The mayor hit it the same
+// night on ci-rup0vw -- open, assigned, no question link -- and resolved it by
 // setting the bead blocked with the release trigger named in the body, the
-// shape astoria-zephyr az-dbe and az-qe33 already use. That move was correct
-// and the message did not mention it.
+// shape astoria-zephyr az-dbe and az-qe33 already used. This test USED TO PIN
+// that move, and the move was wrong: nothing serves a blocked bead and nothing
+// ever read a release trigger, so it parked work permanently (ci-qtuugn, which
+// re-pointed the advice at stopGateParkShape). The assertions below moved with
+// it.
 //
-// The assertions are on MEANING, not on wording: the text must name the
-// blocked exit, and must not present closing-as-failed without it. A test that
-// pinned the exact sentence would fail on every honest rewording and teach the
-// next editor to delete it.
+// The assertions are on MEANING, not on wording: the text must name the parked
+// exit the gate honors, and must not present closing-as-failed without it. A
+// test that pinned the exact sentence would fail on every honest rewording and
+// teach the next editor to delete it.
+//
+// The ONE literal is the negative, and its limit is stated rather than left to
+// be discovered: "Set it blocked" is the instruction that lost as-fp8q, so its
+// reappearance is refused by name. A PARAPHRASE of it would slip past -- the
+// guard with reach for that is
+// TestStopGateParkShapeStatusIsAStatusTheWorkQueryAsksFor, which refuses any
+// park status the work query never asks bd for.
 func TestStopGateOutstandingReasonNamesTheParkedExit(t *testing.T) {
 	reason := stopGateOutstandingReason(stopGateHoldingWork())
 
@@ -735,9 +745,22 @@ func TestStopGateOutstandingReasonNamesTheParkedExit(t *testing.T) {
 		t.Fatalf("block reason has no body after its header line: %q", reason)
 	}
 
-	if !strings.Contains(body, "blocked") {
+	if !strings.Contains(body, stopGateParkShape.status) {
 		t.Errorf("block reason offers no parked exit, so a session holding "+
 			"work that is waiting on someone else has no compliant move: %q", body)
+	}
+	// The move this test used to require. It reads as a compliant park and is
+	// not one.
+	//
+	// The negated form is deleted before the search rather than excluded from
+	// it: the advice has to be able to WARN about this move, and a bare
+	// absence check on the phrase banned the warning along with the
+	// instruction. Removing "do not set it blocked" first leaves only an
+	// imperative to find.
+	imperative := strings.ReplaceAll(strings.ToLower(body), "do not set it blocked", "")
+	if strings.Contains(imperative, "set it blocked") {
+		t.Errorf("block reason tells the session to set its bead blocked, a "+
+			"park no work query serves and no dependency close leaves: %q", body)
 	}
 	// Naming the STATE without naming the CONDITION it is for leaves the reader
 	// to guess when it applies, and the guess this message has already produced
@@ -754,32 +777,38 @@ func TestStopGateOutstandingReasonNamesTheParkedExit(t *testing.T) {
 	// The ordering is the instruction. A reader who has already met "close it
 	// as failed" has an answer and stops; the parked exit has to come first or
 	// the session that needs it never reaches it.
-	if strings.Index(body, "blocked") > strings.Index(body, "close it as failed") {
+	if strings.Index(body, stopGateParkShape.status) > strings.Index(body, "close it as failed") {
 		t.Errorf("the parked exit is offered after close-as-failed, so the "+
 			"session that needs it has already been given a wrong answer: %q", body)
 	}
 }
 
-// TestStopGateOutstandingReasonWithholdsTheParkedExitFromRunningWork pins the
-// one qualification the parked exit has to carry: it is wrong while something
-// is still executing against the bead.
+// TestStopGateOutstandingReasonQualifiesTheParkedExitForRunningWork pins the
+// one qualification the parked exit still carries: what it does to a detached
+// job the session started.
 //
-// The defect this closes is the message steering a reader into an abort. A
-// deployment that gates its long-running procedures on the claim -- Gas City's
-// own bench work does, refusing every instrument call on a bead that is not
-// in_progress -- turns "set it blocked" into "kill the detached run", and the
-// reader who follows the advice loses hours of unattended work with no error
-// at the moment they act. The consequence lands at the procedure's NEXT step,
-// which is why prose alone was not enough on the deployment side either: the
-// city carries a pre-write refusal for the same move (city bead ci-orzdu5).
+// The defect this closes is the message steering a reader into an abort. While
+// the advice said "set it blocked" that was literal -- a deployment that gates
+// its long-running procedures on the claim, as Gas City's own bench work does
+// by refusing every instrument call on a bead that is not in_progress, turned
+// the advice into "kill the detached run", and the loss landed at the
+// procedure's NEXT step, hours after the turn that caused it. The city carries
+// a pre-write refusal for the same move (ci-orzdu5).
+//
+// The shape this advice now names CHANGES NO STATUS, so that abort cannot
+// follow from it. The qualification is therefore inverted rather than deleted:
+// the text must say the status is untouched, which is what tells a session
+// holding a soak that the park is safe. Silence would not do -- the reader who
+// has been told a park is available and not told what it costs re-derives the
+// old fear and picks close-as-failed instead.
+//
+// The residue a status check does not cover is asserted too: a guard keyed on
+// READINESS, not status, still sees the bead withheld. That is the honest edge
+// of the claim above, and dropping it would overstate the park's safety.
 //
 // Asserted on MEANING and on ORDER, never on wording, for the reason
-// TestStopGateOutstandingReasonNamesTheParkedExit states: an exact-sentence
-// assertion fails on every honest rewording and teaches the next editor to
-// delete it. Order is asserted because this paragraph is only useful to a
-// reader who has not already acted -- placed after close-as-failed it is a
-// correction nobody reaches.
-func TestStopGateOutstandingReasonWithholdsTheParkedExitFromRunningWork(t *testing.T) {
+// TestStopGateOutstandingReasonNamesTheParkedExit states.
+func TestStopGateOutstandingReasonQualifiesTheParkedExitForRunningWork(t *testing.T) {
 	reason := stopGateOutstandingReason(stopGateHoldingWork())
 
 	// Body only. "blocked" appears in the header on every refusal, and the
@@ -791,16 +820,21 @@ func TestStopGateOutstandingReasonWithholdsTheParkedExitFromRunningWork(t *testi
 	}
 
 	// Fatal, not Errorf: strings.Index answers -1 for an absent substring, so
-	// both order assertions below would fire on the same absence and report it
+	// the order assertions below would fire on the same absence and report it
 	// as a misplacement.
-	if !strings.Contains(body, "in_progress") {
-		t.Fatalf("block reason never names leaving the bead in_progress, so a "+
-			"session holding a bead with a detached run still executing has no "+
-			"move but the one that aborts it: %q", body)
+	if !strings.Contains(body, "changes no status") {
+		t.Fatalf("block reason never says the park leaves the claim's status "+
+			"alone, so a session holding a bead with a detached run still "+
+			"executing cannot tell the park from the one that aborts it: %q", body)
 	}
-	blockedAt := strings.Index(body, "blocked")
-	qualifiedAt := strings.Index(body, "in_progress")
-	if qualifiedAt < blockedAt {
+	if !strings.Contains(body, "READINESS") {
+		t.Errorf("block reason claims the park is safe for a running job "+
+			"without naming the guard shape it is NOT safe for: %q", body)
+	}
+
+	parkedAt := strings.Index(body, stopGateParkShape.status)
+	qualifiedAt := strings.Index(body, "changes no status")
+	if qualifiedAt < parkedAt {
 		t.Errorf("the qualification precedes the parked exit it qualifies, so it "+
 			"reads as advice about some other move: %q", body)
 	}
