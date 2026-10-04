@@ -18,6 +18,25 @@
 # rank-a-nil-priority-below-every-declared-one: that reading was IMPLEMENTED and
 # green on an earlier draft of this suite, and only the P3 subtest added
 # afterwards can see it.
+#
+# ABSENT DELIBERATELY: any row mutating the admission comparators. Two such
+# rows lived here -- reverse-the-accept-walk-comparator and
+# reverse-the-usage-comparator -- each flipping one of the two duplicated
+# inline comparisons in applyNestedCaps and acceptedNestedCapUsage. 4c9137b88
+# extracted both into the single poolRequestLess, so from that commit until
+# ci-55d23b both rows anchored on text occurring zero times: the sweep mutated
+# nothing and read the gate's verdict as those guards'. The guard they claimed
+# is now graded in cmd/gc/pool_request_tier_precedence_sweep.toml, and more
+# strictly than a flip of each copy could -- drop-rank-ordering-within-a-tier
+# kills the shared rank comparison, and the two
+# *-stops-using-the-shared-comparator rows prove each call site actually
+# reaches it. Re-adding a flip row here would duplicate that spec, and once the
+# comparator is shared a flip of it cannot separate the two paths at all.
+# TestAcceptedNestedCapUsageRanksLikeApplyNestedCaps left the gate's -run list
+# with them: it was reverse-the-usage-comparator's signature and nothing
+# remaining here can kill it. It is still gated, by the tier spec.
+#
+# Re-measured at a7929a9e9 after that removal: 5/5 died.
 
 [sweep]
 name = "pool request priority rank direction and clamps"
@@ -27,7 +46,7 @@ repo = "../.."
 argv = [
   "go", "test", "./cmd/gc/",
   "-count=1",
-  "-run", "TestPoolCap|TestBeadPriorityRank|TestAcceptedNestedCapUsageRanks|TestComputePoolDesiredStates_ResumePriorityOrder|TestComputePoolDesiredStates_ResumeBeatsNew|TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew|TestBuildDesiredState_MaxOneAgentSkipsCanonicalDuplicateWhenStaleAssignedWorkWinsCap",
+  "-run", "TestPoolCap|TestBeadPriorityRank|TestComputePoolDesiredStates_ResumePriorityOrder|TestComputePoolDesiredStates_ResumeBeatsNew|TestApplyNestedCaps_WakeKnownIdentityRanksBeforeNew|TestBuildDesiredState_MaxOneAgentSkipsCanonicalDuplicateWhenStaleAssignedWorkWinsCap",
 ]
 timeout_s = 900
 
@@ -89,22 +108,3 @@ find = '''	if p < beadPriorityMostUrgent {
 	}'''
 replace = ''''''
 expect_output = ["--- FAIL: TestBeadPriorityRankIsMonotonicInUrgency"]
-
-# The accept walk's comparator, flipped to least-urgent-first.
-[[mutation]]
-id = "reverse-the-accept-walk-comparator"
-path = "cmd/gc/pool_desired_state.go"
-find = '''			return requests[i].BeadPriorityRank > requests[j].BeadPriorityRank'''
-replace = '''			return requests[i].BeadPriorityRank < requests[j].BeadPriorityRank'''
-expect_output = ["--- FAIL: TestPoolCapAdmitsP0OverP4"]
-
-# The SECOND copy of the same comparator. acceptedNestedCapUsage decides how
-# much cap headroom is already spoken for and re-sorts independently, so the
-# two disagreeing is invisible from either one's own tests -- usage reserves
-# the slot for one request while the accept walk hands it to another.
-[[mutation]]
-id = "reverse-the-usage-comparator"
-path = "cmd/gc/pool_desired_state.go"
-find = '''			return sorted[i].BeadPriorityRank > sorted[j].BeadPriorityRank'''
-replace = '''			return sorted[i].BeadPriorityRank < sorted[j].BeadPriorityRank'''
-expect_output = ["--- FAIL: TestAcceptedNestedCapUsageRanksLikeApplyNestedCaps"]
