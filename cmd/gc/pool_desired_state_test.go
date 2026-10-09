@@ -1767,3 +1767,64 @@ func TestCanonicalSingletonAliasHeldTemplates_ExcludesFailedCreateHolder(t *test
 		t.Fatalf("drained holder released its alias and must NOT mark mayor held; got held")
 	}
 }
+
+func TestComputePoolDesiredStates_ParkedClaimKeepsItsSessionDesired(t *testing.T) {
+	// INVARIANT: a pool-managed session whose only claim is parked remains in
+	// the desired set, so the reconciler does not see it as surplus.
+	//
+	// `orphaned` is not a verdict about a bead -- it is the label the
+	// reconciler gives a live session absent from desiredState
+	// (session_reconciler.go:2213). The resume tier here is the only thing
+	// that puts a working pool session INTO that set, so a status it declines
+	// to count silently costs the session its slot one tick later.
+	//
+	// Measured, city ci-xm2c86: an operator-attended bench sitting parked its
+	// own claim to wait on a gate, pool_desired fell 1 -> 0 on the next tick,
+	// and the session was drained with its gate poller still running. The
+	// store history for that bead shows the assignee unchanged throughout and
+	// the status as the only variable, which is the single-variable experiment
+	// this test replays.
+	//
+	// The parked status is spelled as a LITERAL rather than read from the
+	// implementation's own status set. A test that asks the code which
+	// statuses it accepts agrees with it however that set is written, and the
+	// defect here was precisely a status missing from that set.
+	//
+	// NOT asserted, deliberately: that `closed` is declined. Closed work must
+	// NOT hold a slot, and folding it in here would turn a session that
+	// finished its work into one that never drains.
+	cfg := &config.City{
+		Agents: []config.Agent{poolAgent("claude", "rig", intPtr(2), 0)},
+	}
+	work := []beads.Bead{
+		workBead("w1", "rig/claude", "nux", "blocked", 5),
+	}
+	sessions := []beads.Bead{{
+		ID:     "sess-vi6hhp",
+		Status: "open",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name":         "polecat-sess-vi6hhp",
+			"alias":                "nux",
+			"template":             "rig/claude",
+			poolManagedMetadataKey: boolMetadata(true),
+		},
+	}}
+
+	result := ComputePoolDesiredStates(cfg, work, sessionInfosFromBeads(sessions), nil)
+
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
+	}
+	reqs := result[0].Requests
+	if len(reqs) != 1 {
+		t.Fatalf("len(requests) = %d, want 1 resume for a parked claim", len(reqs))
+	}
+	if reqs[0].Tier != "resume" {
+		t.Errorf("tier = %q, want resume", reqs[0].Tier)
+	}
+	if reqs[0].SessionBeadID != "sess-vi6hhp" {
+		t.Errorf("SessionBeadID = %q, want sess-vi6hhp", reqs[0].SessionBeadID)
+	}
+}
