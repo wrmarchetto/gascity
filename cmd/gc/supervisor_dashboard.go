@@ -122,6 +122,20 @@ func writeSupervisorDashboardStartup(stdout io.Writer, mounted, readOnly bool, b
 // would 401 under read-auth). selfRead is the supervisor's in-process loopback
 // transport so those trusted self-reads bypass the read-auth gate.
 func dashboardDeps(resolver api.CityResolver, readOnly bool, bind string, port int, selfRead http.RoundTripper) dashboardbff.Deps {
+	return dashboardDepsWithWarnings(resolver, readOnly, bind, port, selfRead, os.Stderr)
+}
+
+// dashboardDepsWithWarnings is dashboardDeps with the operator-facing warning
+// sink injected. The sink is a parameter rather than a package global or an
+// env switch because the only way to reach the rejection branch is to supply
+// a spec that is present but wrong -- the case a switch could never cover,
+// and the case the diagnosis exists for.
+func dashboardDepsWithWarnings(resolver api.CityResolver, readOnly bool, bind string, port int, selfRead http.RoundTripper, warn io.Writer) dashboardbff.Deps {
+	navLinks, rejected := dashboardbff.ParseNavLinks(os.Getenv("DASHBOARD_NAV_LINKS"))
+	for _, r := range rejected {
+		fmt.Fprintf(warn, "warning: DASHBOARD_NAV_LINKS entry ignored -- %s\n", r) //nolint:errcheck
+	}
+
 	return dashboardbff.Deps{
 		Resolver:           dashboardCityResolver{resolver},
 		ReadOnly:           readOnly,
@@ -138,6 +152,12 @@ func dashboardDeps(resolver api.CityResolver, readOnly bool, bind string, port i
 		// because the reasons are role-shaped and the pin has moved accounts
 		// before; a compiled-in list would go quietly wrong when it moves again.
 		AccountLabels: dashboardbff.ParseAccountLabels(os.Getenv("DASHBOARD_ACCOUNT_LABELS")),
+		// Operator-declared navbar entries for pages the SPA does not route,
+		// e.g. "Summaries=/v0/city/<city>/svc/roadmap/summaries". Env rather
+		// than Go because the target names a deployment's own service, and
+		// rather than city config because the /api plane does not import
+		// internal/config and a nav entry does not earn that dependency.
+		NavLinks: navLinks,
 		// EnabledModules is intentionally left unset: every shipped dashboard view
 		// module is core (always on), and no first-party (gated) module exists yet,
 		// so the config projection emits an empty enabledModules list by design.

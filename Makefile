@@ -310,6 +310,14 @@ LINT_BASE ?= origin/main
 LINT_CHANGED_REF ?= HEAD
 LINT_CHANGED_SCOPE ?= worktree
 LINT_FLAGS ?=
+# Build tags retried when a changed package has no files under the default
+# constraints. A package whose every file is `//go:build integration` -- the
+# dashboard e2e fake supervisor, say -- cannot be `go list`ed untagged, and
+# treating that as a load failure refused the commit for ANY edit to it. The
+# untagged packages are still linted untagged: the retry adds a second lint
+# invocation for the tagged ones rather than widening the first, so a package
+# that builds both ways keeps exactly the coverage it had.
+LINT_CHANGED_TAGS ?= integration
 QUALITY_GATE_GOFLAGS = $$(go env GOFLAGS | sed -E 's/(^|[[:space:]])-mod=[^[:space:]]+//g') -mod=readonly
 CI_STATIC_SELECT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))scripts/ci-static-select
 CI_STATIC_GO ?= go
@@ -352,20 +360,31 @@ lint-changed: $(GOLANGCI_LINT)
 		exit 0; \
 	fi; \
 	dirs="$$(printf '%s\n' "$$files" | sed '/^$$/d' | sort -u | while IFS= read -r file; do dirname "$$file"; done | sort -u)"; \
-	pkgs="$$(for dir in $$dirs; do \
+	pkgs=""; tagged_pkgs=""; \
+	for dir in $$dirs; do \
 		if [ "$$dir" = "." ]; then pkg="."; else pkg="./$$dir"; fi; \
-		if ! go list "$$pkg" >/dev/null; then \
+		if go list "$$pkg" >/dev/null 2>&1; then \
+			pkgs="$$pkgs $$pkg"; \
+		elif go list -tags $(LINT_CHANGED_TAGS) "$$pkg" >/dev/null 2>&1; then \
+			tagged_pkgs="$$tagged_pkgs $$pkg"; \
+		else \
 			echo "lint-changed: unable to load $$pkg" >&2; \
+			go list "$$pkg" >/dev/null; \
 			exit 1; \
 		fi; \
-		printf '%s\n' "$$pkg"; \
-	done)" || exit $$?; \
-	if [ -z "$$pkgs" ]; then \
+	done; \
+	if [ -z "$$pkgs" ] && [ -z "$$tagged_pkgs" ]; then \
 		echo "lint-changed: no lintable Go packages"; \
 		exit 0; \
 	fi; \
-	echo "lint-changed: $$(printf '%s\n' "$$pkgs" | tr '\n' ' ')"; \
-	$(GOLANGCI_LINT) run $(LINT_FLAGS) $$pkgs
+	if [ -n "$$pkgs" ]; then \
+		echo "lint-changed:$$pkgs"; \
+		$(GOLANGCI_LINT) run $(LINT_FLAGS) $$pkgs || exit $$?; \
+	fi; \
+	if [ -n "$$tagged_pkgs" ]; then \
+		echo "lint-changed (-tags $(LINT_CHANGED_TAGS)):$$tagged_pkgs"; \
+		$(GOLANGCI_LINT) run --build-tags $(LINT_CHANGED_TAGS) $(LINT_FLAGS) $$tagged_pkgs || exit $$?; \
+	fi
 
 ## lint-affected: lint packages affected by changed Go build inputs or embedded files
 lint-affected: $(GOLANGCI_LINT)

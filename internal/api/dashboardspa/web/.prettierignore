@@ -2,3 +2,9 @@ backend/openapi/gc-supervisor.openapi.json
 shared/src/generated/
 tmp/
 .claude/worktrees/
+# Playwright run output. Left behind by `make dashboard-e2e-play` and by a
+# bare `npx playwright test`, and prettier resolves its ignore paths from
+# this directory, so frontend/.gitignore does not cover it -- without this
+# line a local e2e run makes the next `make dashboard-ci` fail on a file
+# nobody wrote.
+frontend/test-results/
