@@ -21,6 +21,20 @@ type runtimeConfig struct {
 	DecisionLabel     string   `json:"decisionLabel"`
 	EnabledModules    []string `json:"enabledModules"`
 	DefaultView       *string  `json:"defaultView"`
+	// NavLinks is always an explicit array, never null, for the same reason
+	// enabledModules is: decodeRuntimeConfig validates the field's presence
+	// and shape, so a nil slice would fail the decode of every install that
+	// declares no links -- which is all of them by default.
+	NavLinks []navLinkJSON `json:"navLinks"`
+}
+
+// navLinkJSON is the wire shape of one NavLink. It is a separate type from
+// NavLink so the json tags live on the wire boundary rather than on the
+// parser's domain type, matching how the rest of this file projects rather
+// than re-exports.
+type navLinkJSON struct {
+	Label string `json:"label"`
+	Href  string `json:"href"`
 }
 
 func (p *Plane) registerConfig() {
@@ -54,6 +68,16 @@ func (p *Plane) runtimeConfigFor(name, root string) runtimeConfig {
 		defaultView = &v
 	}
 
+	// Built with an explicit zero length rather than a var declaration: a nil
+	// slice marshals to null, which the frontend decoder refuses.
+	navLinks := make([]navLinkJSON, 0, len(p.deps.NavLinks))
+	for _, l := range p.deps.NavLinks {
+		// A direct conversion, not a field-by-field literal: the two types
+		// are identical but for the json tags, and should they ever diverge
+		// this stops compiling rather than silently projecting a stale shape.
+		navLinks = append(navLinks, navLinkJSON(l))
+	}
+
 	return runtimeConfig{
 		CityName:          name,
 		CityRoot:          root,
@@ -64,5 +88,6 @@ func (p *Plane) runtimeConfigFor(name, root string) runtimeConfig {
 		DecisionLabel:     label,
 		EnabledModules:    mods,
 		DefaultView:       defaultView,
+		NavLinks:          navLinks,
 	}
 }

@@ -93,6 +93,61 @@ describe('api client error handling', () => {
     });
   });
 
+  // navLinks is absent on a backend older than the field, so absence must
+  // decode. A present-but-malformed value must NOT be filtered down to the
+  // valid entries: a dropped link looks exactly like one never declared, and
+  // the backend's startup warning -- the only place that names the cause --
+  // has already been passed by the time the body reaches here.
+  it.each([
+    ['absent', undefined, null],
+    ['empty', [], null],
+    ['well-formed', [{ label: 'Summaries', href: '/svc/roadmap/summaries' }], null],
+    ['not an array', {}, 'config.navLinks must be an array'],
+    ['entry not an object', ['x'], 'config.navLinks entries must be objects'],
+    [
+      'entry missing href',
+      [{ label: 'Summaries' }],
+      'config.navLinks entries must carry string label and href',
+    ],
+    [
+      'one bad entry among good ones',
+      [{ label: 'Good', href: '/ok' }, { label: 'Bad' }],
+      'config.navLinks entries must carry string label and href',
+    ],
+  ])('config navLinks %s', async (_name, navLinks, wantError) => {
+    const body: Record<string, unknown> = {
+      cityName: 'demo-city',
+      cityRoot: '/srv/gc/demo',
+      useFixtures: false,
+      readOnly: false,
+      operatorAlias: 'operator',
+      operatorWireAlias: 'human',
+      decisionLabel: 'needs/operator',
+      enabledModules: null,
+      defaultView: null,
+    };
+    if (navLinks !== undefined) body.navLinks = navLinks;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    );
+
+    if (wantError === null) {
+      await expect(api.config()).resolves.toMatchObject({ cityName: 'demo-city' });
+    } else {
+      await expect(api.config()).rejects.toMatchObject({
+        name: 'ApiResponseDecodeError',
+        message: expect.stringContaining(wantError),
+      });
+    }
+  });
+
   it('decodes a well-formed config body carrying the read-only posture', async () => {
     vi.stubGlobal(
       'fetch',

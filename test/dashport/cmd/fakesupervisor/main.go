@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/api"
+	"github.com/gastownhall/gascity/internal/api/dashboardbff"
 	"github.com/gastownhall/gascity/test/dashport/corpus"
 )
 
@@ -97,7 +98,17 @@ func run() error {
 	}
 	baseURL := "http://" + ln.Addr().String()
 
+	// Read through the production parser, not a literal: the browser layer is
+	// the only place the whole path -- spec text to rendered anchor -- is
+	// exercised end to end, and a harness that built NavLink values directly
+	// would skip the one component that can reject the operator's spelling.
+	navLinks, rejected := dashboardbff.ParseNavLinks(os.Getenv("DASHBOARD_NAV_LINKS"))
+	for _, r := range rejected {
+		log.Printf("fakesupervisor: DASHBOARD_NAV_LINKS entry ignored -- %s", r)
+	}
+
 	handler, stopPlane, err := api.ServeSeededCity(ctx, api.SeededCityDeps{
+		NavLinks:      navLinks,
 		CityName:      fx.CityName,
 		CityPath:      fx.CityPath,
 		Config:        fx.Config,

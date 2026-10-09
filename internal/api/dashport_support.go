@@ -38,6 +38,14 @@ type SeededCityDeps struct {
 	// route.
 	CityName string
 
+	// NavLinks are the operator-declared navbar entries the seeded stack
+	// projects, mirroring what dashboardDeps reads from DASHBOARD_NAV_LINKS in
+	// production. Present so the browser layer can drive a declared link: the
+	// entry is an <a> in a rendered navbar, and whether it is visible and
+	// clickable there is not something a Go or jsdom test can represent. Empty
+	// is the default and leaves the navbar as the view registry builds it.
+	NavLinks []dashboardbff.NavLink
+
 	// CityPath is the city root directory on disk. The host-side run tailers
 	// read the seeded event log from CityPath/.gc/events.jsonl, so a harness
 	// that exercises the run views must write its events there.
@@ -119,6 +127,7 @@ func ServeSeededCity(ctx context.Context, deps SeededCityDeps, baseURL string) (
 	plane := dashboardbff.New(dashboardbff.Deps{
 		Resolver:          singleCityPathResolver{name: state.CityName(), path: state.CityPath()},
 		SupervisorBaseURL: baseURL,
+		NavLinks:          deps.NavLinks,
 	})
 	plane.Start(ctx)
 	mux.WithRunCensusSource(plane).WithAPIPlane(plane.Handler()).WithStaticHandler(spa)

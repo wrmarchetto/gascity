@@ -158,3 +158,15 @@ export const CLIENT_ERROR_ENDPOINT = '/api/client-errors';
  * this is NOT present on any seeded route.
  */
 export const ERROR_BOUNDARY_TEXT = 'Dashboard view failed.';
+
+// --- operator-declared navbar entry ---
+//
+// The spec text the fake supervisor is launched with (playwright.config.ts
+// webServer.env DASHBOARD_NAV_LINKS) and the anchor it must produce. Declared
+// here, in the one file both the config and the spec import, because a
+// duplicated literal would let the two drift into a spec that asserts an entry
+// the server was never told to serve -- which fails as a missing link and
+// reads as a broken feature.
+export const NAV_LINK_LABEL = 'Summaries';
+export const NAV_LINK_HREF = `/v0/city/${CITY_NAME}/svc/roadmap/summaries`;
+export const NAV_LINK_SPEC = `${NAV_LINK_LABEL}=${NAV_LINK_HREF}`;

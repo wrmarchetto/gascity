@@ -82,6 +82,7 @@ func TestWireContractConfig(t *testing.T) {
 	mustBool(t, m, "readOnly")
 	mustArray(t, m, "enabledModules") // explicit [] for core-only, never null
 	mustStringOrNull(t, m, "defaultView")
+	mustArray(t, m, "navLinks") // explicit [] when none declared, never null
 }
 
 func TestWireContractHealth(t *testing.T) {

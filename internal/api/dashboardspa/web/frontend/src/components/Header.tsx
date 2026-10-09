@@ -98,6 +98,19 @@ export function Header() {
     // safe — no .slice() needed (PR-A Phase-4 TS M4).
     return [...EXPLICIT_ROUTES, ...registry].sort((a, b) => a.order - b.order);
   }, [config?.enabledModules]);
+  // Operator-declared entries for pages this SPA does not route. They are
+  // kept OUT of ROUTES, not merged into it with an `order`: a ROUTES entry
+  // becomes a react-router NavLink, which would intercept the click and hand
+  // an unrouted path like /svc/roadmap/summaries to the router's own 404.
+  // These must perform a real navigation, so they render as plain anchors
+  // and always sit after the routes.
+  //
+  // The href is used as the backend handed it over. That is safe only
+  // because ParseNavLinks (internal/api/dashboardbff/navlinks.go) has
+  // already refused anything that is not an absolute same-origin path or an
+  // explicit http(s) URL -- there is no second check here, and removing that
+  // one would make this an href injection on an unauthenticated port.
+  const navLinks = config?.navLinks ?? [];
   const { pathname } = useLocation();
   // "Reading as" is a Mail-only concept — the value persists across views
   // (for AgentDetail's chat filter) but the header indicator only makes
@@ -192,6 +205,21 @@ export function Header() {
                 </li>
               );
             })}
+            {navLinks.map((link) => (
+              <li key={`${link.label}:${link.href}`}>
+                {/* No target="_blank". A nav entry navigating in place is what
+                    every other entry in this bar does, the back button
+                    returns, and an operator who wants a tab has middle-click.
+                    rel is therefore unnecessary -- there is no opener to
+                    sever. */}
+                <a
+                  href={link.href}
+                  className="text-title font-medium text-fg-muted hover:text-fg transition-colors duration-150 ease-out-quart focus-mark"
+                >
+                  {link.label}
+                </a>
+              </li>
+            ))}
           </ul>
         </nav>
 
