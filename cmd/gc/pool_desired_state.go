@@ -252,7 +252,27 @@ func computePoolDesiredStates(
 		// alive.
 		for _, wb := range assignedWorkBeads {
 			routedTo := routedToOrLegacyWorkflowTarget(wb)
-			if wb.Status != "in_progress" && wb.Status != "open" {
+			// `blocked` counts because a session that parks its own claim to
+			// wait -- on an operator, a gate, another bead -- is still working
+			// it, and this tier is the ONLY thing that keeps a live pool
+			// session in desiredState. Without it the session is surplus on
+			// the next tick and the reconciler drains it as `orphaned`,
+			// killing whatever the park was waiting on. Measured, city
+			// ci-xm2c86: an operator-attended bench sitting parked here, lost
+			// its gate poller 61 s later, and the operator's answer landed on
+			// a session that no longer existed.
+			//
+			// `closed` is excluded because finished work must release the
+			// slot. `deferred` is excluded too, and that absence is
+			// deliberate: a date-park asks to be picked up later, so pinning a
+			// slot idle for the whole defer window is the opposite of what it
+			// requests -- and unlike a park, its wake instant is already
+			// recorded, so nothing is lost by draining.
+			//
+			// The dead-slot fallback below stays in_progress-only, so this can
+			// never RESURRECT a session for a parked bead; it keeps a live one
+			// alive and nothing more.
+			if wb.Status != "in_progress" && wb.Status != "open" && wb.Status != "blocked" {
 				continue
 			}
 			assignee := strings.TrimSpace(wb.Assignee)
