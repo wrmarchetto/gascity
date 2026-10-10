@@ -69,6 +69,17 @@ const (
 	// reconciler write, and the one event that names the refusal
 	// (SessionDrainAckedWithAssignedWork) is emitted only from the
 	// already-stopped path and lands in a rotating log.
+	//
+	// What a reader should expect that question's answer to be, on the one
+	// fleet where it has been measured: the claim moves. 46 sessions carried
+	// this key over 2026-09-22..2026-10-10, 2.4 a day, and 40 of them took
+	// another turn and re-acknowledged their own drain unaided, a median 18.7
+	// min after the refusal; all 46 trigger beads reached a terminal state or
+	// a live holder (ci-8ajvxn, and cmd/gc/idle_nudge.go isUnclaimedTrigger
+	// for the condition that bounds it). So the stamp dates a TRANSIENT, not
+	// an incident. A report or health check keyed on its mere presence fires
+	// on healthy sessions, and that sample offers no second regime to site an
+	// age threshold between -- which is why no such check exists here.
 	DrainAckRefusedAtMetadataKey = "drain_ack_refused_at"
 )
 

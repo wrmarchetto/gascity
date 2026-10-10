@@ -527,6 +527,31 @@ func normalizeIdleClaimStoreRef(storeRef string) string {
 // isUnclaimedTrigger reports whether the pool slot's trigger bead is still
 // waiting to be claimed: status open and not already assigned to this slot
 // (a non-empty assignee equal to the session means the claim is mid-flight).
+//
+// The status guard is the one a reader arrives wanting to delete, because
+// this backstop is the only thing in gc that can re-enter a turn on a LIVE
+// session and the session a refused drain acknowledgement leaves behind
+// (state_reason=drain-ack-assigned-work) is exactly that. Proposed twice and
+// rejected twice: ci-07ebae on the nudge being inert against a provider whose
+// nudges do not submit, ci-8ajvxn on frequency. Every session bead in that
+// city's store carrying drain_ack_refused_at over 2026-09-22..2026-10-10 was
+// followed to its exit -- 46 of them, 2.4 a day. Forty took another turn and
+// re-acknowledged their own drain unaided, median 18.7 min after the refusal
+// and 142 min at worst; three were retired by the reconciler, one died with
+// its runtime, two were swept; all 46 trigger beads reached a terminal state
+// or a live holder. Inverting this guard prevents no observed wedge and
+// nudges about two working sessions a day.
+//
+// That is a measurement with a condition on it. The re-entry is the agent's
+// OWN next turn, and it exists because that deployment wires gc hook stop,
+// whose gate blocks one stop per sequence (cmd_hook_stop.go, constraint 2).
+// Unwire the Stop gate, or widen the reconciler's {open, in_progress}
+// drain-ack predicate past what that gate counts, and the 46 become stalls.
+// Re-measure before trusting this paragraph.
+//
+// Each guard is pinned on its own in idle_nudge_claimed_trigger_test.go.
+// idle_nudge_test.go's cases set status and assignee together, so that suite
+// stays green with either guard deleted -- measured, not assumed.
 func isUnclaimedTrigger(w beads.Bead, sessName string) bool {
 	if !strings.EqualFold(strings.TrimSpace(w.Status), "open") {
 		return false // in_progress / closed / blocked → not ours to nudge
