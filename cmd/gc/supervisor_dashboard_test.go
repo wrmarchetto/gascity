@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -193,7 +194,7 @@ func TestAttachDashboardInstallsDashboardBase(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("GC_SUPERVISOR_DASHBOARD", "")
 			mux := newTestSupervisorMuxForDashboard()
-			plane, err := attachDashboard(mux, fakeDashResolver{}, false, tc.bind, 8372)
+			plane, err := attachDashboard(mux, fakeDashResolver{}, false, tc.bind, 8372, "", io.Discard)
 			if err != nil {
 				t.Fatalf("attachDashboard: %v", err)
 			}
@@ -213,7 +214,7 @@ func TestAttachDashboardInstallsDashboardBase(t *testing.T) {
 func TestAttachDashboardDisabledLeavesNoDashboardBase(t *testing.T) {
 	t.Setenv("GC_SUPERVISOR_DASHBOARD", "0")
 	mux := newTestSupervisorMuxForDashboard()
-	plane, err := attachDashboard(mux, fakeDashResolver{}, false, "127.0.0.1", 8372)
+	plane, err := attachDashboard(mux, fakeDashResolver{}, false, "127.0.0.1", 8372, "", io.Discard)
 	if err != nil {
 		t.Fatalf("attachDashboard: %v", err)
 	}

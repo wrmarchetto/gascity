@@ -65,8 +65,15 @@ func dashboardEnabled() bool {
 // the host-side samplers read the supervisor's /v0 API back over loopback, so
 // the plane must know where to reach it. Operator identity is read from env with
 // neutral defaults applied inside the plane (ZERO hardcoded roles).
-func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly bool, bind string, port int) (*dashboardbff.Plane, error) {
+//
+// rootRedirect is [supervisor] root_redirect. It fills the "/" slot in both
+// postures, which is why it is applied here and not beside the other mux
+// options: WithStaticHandler can be called once, so the SPA and the redirect
+// have to be composed before the slot is filled. A refused value is reported
+// on warn and the slot keeps what it would hold without one.
+func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly bool, bind string, port int, rootRedirect string, warn io.Writer) (*dashboardbff.Plane, error) {
 	if !dashboardEnabled() {
+		mountRoot(mux, nil, rootRedirect, warn)
 		return nil, nil
 	}
 	spa, err := dashboardspa.NewStaticHandler()
@@ -74,7 +81,8 @@ func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly
 		return nil, err
 	}
 	plane := dashboardbff.New(dashboardDeps(resolver, readOnly, bind, port, mux.LoopbackTransport()))
-	mux.WithRunCensusSource(plane).WithAPIPlane(plane.Handler()).WithStaticHandler(spa)
+	mux.WithRunCensusSource(plane).WithAPIPlane(plane.Handler())
+	mountRoot(mux, spa, rootRedirect, warn)
 	// Install the listener's link base alongside the SPA so per-city handlers
 	// can mint dashboard deep links (the sling response's dashboard_url).
 	// Standalone controller processes never call attachDashboard, so their
@@ -89,6 +97,29 @@ func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly
 		mux.WithDashboardBase(func() string { return base })
 	}
 	return plane, nil
+}
+
+// mountRoot fills the supervisor's "/" slot with spa (nil when the dashboard
+// is disabled), behind a root redirect when one is configured.
+//
+// A refused root_redirect is a warning and NOT a boot error. The supervisor
+// is one process for every registered city, and failing its start over a
+// redirect would take them all down for a typo in a convenience setting.
+func mountRoot(mux *api.SupervisorMux, spa http.Handler, rootRedirect string, warn io.Writer) {
+	if rootRedirect == "" {
+		mux.WithStaticHandler(spa)
+		return
+	}
+	h, err := api.NewRootRedirectHandler(rootRedirect, spa)
+	if err != nil {
+		fmt.Fprintf(warn, "gc supervisor: warning: [supervisor] root_redirect = %q in %s ignored -- %v. "+ //nolint:errcheck
+			"The bare root keeps its default handler. Set it to an absolute path on this listener, "+
+			"such as \"/v0/city/<city>/svc/<service>/\", then run gc supervisor stop && gc supervisor start\n",
+			rootRedirect, supervisor.ConfigPath(), err)
+		mux.WithStaticHandler(spa)
+		return
+	}
+	mux.WithStaticHandler(h)
 }
 
 // newRunCensusPlane creates the unmounted dashboard plane a standalone
