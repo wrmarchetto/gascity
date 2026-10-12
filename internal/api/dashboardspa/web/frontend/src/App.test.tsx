@@ -24,6 +24,15 @@ vi.mock('./supervisor/client', () => ({
       items: [{ name: 'test-city', path: '/srv/gc/test-city', running: true }],
       total: 1,
     })),
+    // App's RunSummaryProvider subscribes to the city event stream, so the
+    // stand-in has to answer this even though jsdom supplies no EventSource
+    // and the subscription resolves to `closed`. Omitting it used to be
+    // survivable only because useGcEvents probed for EventSource BEFORE
+    // building the URL; that probe now lives in the transport module, past
+    // this call.
+    cityEventStreamUrl: vi.fn(
+      (cityName: string) => `http://127.0.0.1/v0/city/${cityName}/events/stream`,
+    ),
   }),
 }));
 
