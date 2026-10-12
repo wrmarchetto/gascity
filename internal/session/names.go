@@ -45,6 +45,12 @@ const (
 	autoSessionNamePrefix     = "s-"
 )
 
+// HumanIdentity is the reserved identity of the operator: the mail recipient
+// and work assignee that no session can bear. ValidateAlias refuses it, so a
+// session-liveness check that finds no session for it has learned nothing --
+// its absence is permanent, not a sign the holder died.
+const HumanIdentity = "human"
+
 type sessionIdentifierReservationLockEntry struct {
 	mu   sync.Mutex
 	refs int
@@ -138,7 +144,7 @@ func ValidateAlias(alias string) (string, error) {
 	if strings.HasPrefix(alias, autoSessionNamePrefix) {
 		return "", fmt.Errorf("%w: %q uses reserved prefix %q", ErrInvalidSessionAlias, alias, autoSessionNamePrefix)
 	}
-	if alias == "human" {
+	if alias == HumanIdentity {
 		return "", fmt.Errorf("%w: %q is reserved", ErrInvalidSessionAlias, alias)
 	}
 	if sessionIDPattern.MatchString(alias) {
