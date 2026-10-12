@@ -53,21 +53,27 @@ import { expect, test } from './support/fixtures';
 const PAGES = 6;
 
 /**
- * openCityHome opens one more page on the shared context, waits until it has
- * actually opened its event stream, and leaves it open.
+ * openCityHome opens one more page on the shared context, waits until its
+ * event stream is live, and leaves it open.
  *
- * Waiting for the stream is the precondition, not a settle delay. The stream
- * is the LAST request a load issues, so without the wait the next page is
- * opened while the previous ones are still mid-load and holding no stream
- * yet: six pages then contend for nothing and the spec passes against the
- * defect (measured -- it did, in 2.0s). Waiting on the request is sound here
- * because it is establishing the condition under test, not asserting the
- * outcome; the assertions below stay on rendered values.
+ * Waiting is the precondition, not a settle delay. The stream is the LAST
+ * thing a load establishes, so without the wait the next page is opened while
+ * the previous ones are still mid-load and holding nothing yet: six pages
+ * then contend for nothing and the spec passes against the defect (measured
+ * -- it did, in 2.0s).
+ *
+ * It waits on the LIVE FEED lamp reading `connected` rather than on the
+ * `/events/stream` request, although the request is the more direct signal.
+ * The request is a property of the DEFECT -- a fix that shares one stream
+ * across pages makes the per-page request disappear, and a precondition
+ * waiting for it then times out on exactly the build that is correct
+ * (measured: that is how the first revision of this spec reported a working
+ * fix as a failure). The lamp is what the page CONSUMED, and it reads
+ * `connected` under either transport.
  */
 async function openCityHome(page: Page): Promise<void> {
-  const streamOpened = page.waitForRequest((request) => request.url().includes('/events/stream'));
   await page.goto(`${CITY_BASE}/`, { waitUntil: 'domcontentloaded' });
-  await streamOpened;
+  await expect(page.getByText('connected', { exact: true })).toBeVisible();
 }
 
 test.describe('connection budget across open dashboard pages', () => {
