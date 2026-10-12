@@ -2,8 +2,6 @@ import { createHash } from 'node:crypto';
 
 import { defineConfig, devices } from '@playwright/test';
 
-import { NAV_LINK_SPEC } from './e2e/fixtures/expected';
-
 // Layer B of the dashboard e2e (.dashport-plan/04-e2e.md): a Chromium render
 // smoke that drives the REAL built SPA — served by the seeded Go fake supervisor
 // (test/dashport/cmd/fakesupervisor) over the shared testdata/dashport corpus —
@@ -67,12 +65,6 @@ export default defineConfig({
   webServer: {
     command: `${BINARY} -addr 127.0.0.1:${PORT} -data ${CORPUS_DIR}`,
     url: BASE_URL,
-    // The operator-declared navbar entry navbar-navlinks.spec.ts asserts. It
-    // is supplied as the production env var and parsed by the production
-    // parser inside the fake supervisor, so the browser layer exercises the
-    // whole path -- spec text, parse, wire, render -- rather than a value
-    // injected past the parts that can reject it.
-    env: { DASHBOARD_NAV_LINKS: NAV_LINK_SPEC },
     timeout: 30_000,
     // SIGTERM (not the default SIGKILL) so the fakesupervisor's signal handler
     // runs: it drains the plane's run tailers/status samplers and removes its

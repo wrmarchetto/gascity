@@ -1653,7 +1653,7 @@ func runSupervisor(stdout, stderr io.Writer) int {
 	// Host the embedded dashboard SPA + host-side /api plane on the same
 	// listener (same-origin), so the supervisor serves the dashboard for all
 	// registered cities. Disabled with GC_SUPERVISOR_DASHBOARD=0.
-	dashboardPlane, dashErr := attachDashboard(apiMux, registry, readOnly, bind, port)
+	dashboardPlane, dashErr := attachDashboard(apiMux, registry, readOnly, bind, port, strings.TrimSpace(supCfg.Supervisor.RootRedirect), stderr)
 	if dashErr != nil {
 		fmt.Fprintf(stderr, "gc supervisor: dashboard: %v\n", dashErr) //nolint:errcheck
 		return 1

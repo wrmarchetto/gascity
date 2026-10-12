@@ -61,6 +61,16 @@ type Section struct {
 	// repository holds the formula file, so one branch name covers them all.
 	// A per-city pin would need per-city processes.
 	FormulaRef string `toml:"formula_ref,omitempty"`
+	// RootRedirect sends a GET of the bare listener root ("/") to this path
+	// with a 302, so an operator can hand out host:port for a page that lives
+	// deep under /v0/city/{city}/svc/. It fills the same "/" slot as the
+	// embedded SPA: with the SPA enabled only the root moves and every SPA
+	// client route is kept, with GC_SUPERVISOR_DASHBOARD=0 it is the only
+	// thing at "/". Empty (the default) leaves the root to the SPA, or to a
+	// 404 when the SPA is disabled. Must be an absolute path on this
+	// listener, which api.NewRootRedirectHandler enforces. A refused value is
+	// a startup warning, not a boot error.
+	RootRedirect string `toml:"root_redirect,omitempty"`
 	// ReadAuthVerifyKey / ReadAuthRequired require a signed read grant on every
 	// read (GET/HEAD) of an already-registered city (the per-city routes under
 	// /v0/city/{cityName}); supervisor-scope reads (/v0/cities, /health) stay

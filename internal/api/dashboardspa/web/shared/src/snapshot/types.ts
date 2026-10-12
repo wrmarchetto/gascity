@@ -139,30 +139,6 @@ export interface DashboardRuntimeConfig {
    * env points at an unknown or disabled module.
    */
   defaultView: string | null;
-  /**
-   * Operator-declared navbar entries for pages this SPA does not route --
-   * a workspace service, an external tool. Projected from the backend's
-   * `DASHBOARD_NAV_LINKS` env for the same reason `operatorAlias` is read
-   * from `/config` rather than imported as a literal: the target names a
-   * specific deployment's service, and the dashboard is a SHARED tool.
-   *
-   * The backend always emits an explicit array (`[]` when none are
-   * declared). `undefined` remains in the type for the pre-load state and
-   * for a backend older than this field -- the header treats both as none.
-   *
-   * Each `href` has already been refused by the backend unless it is an
-   * absolute same-origin path or an explicit http(s) URL
-   * (internal/api/dashboardbff/navlinks.go). The frontend does NOT re-check
-   * it, so that refusal is the only thing standing between this value and
-   * an href attribute.
-   */
-  navLinks?: readonly DashboardNavLink[];
-}
-
-/** One operator-declared navbar entry. */
-export interface DashboardNavLink {
-  label: string;
-  href: string;
 }
 
 export type DashboardMetric =

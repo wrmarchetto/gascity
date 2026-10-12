@@ -65,8 +65,15 @@ func dashboardEnabled() bool {
 // the host-side samplers read the supervisor's /v0 API back over loopback, so
 // the plane must know where to reach it. Operator identity is read from env with
 // neutral defaults applied inside the plane (ZERO hardcoded roles).
-func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly bool, bind string, port int) (*dashboardbff.Plane, error) {
+//
+// rootRedirect is [supervisor] root_redirect. It fills the "/" slot in both
+// postures, which is why it is applied here and not beside the other mux
+// options: WithStaticHandler can be called once, so the SPA and the redirect
+// have to be composed before the slot is filled. A refused value is reported
+// on warn and the slot keeps what it would hold without one.
+func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly bool, bind string, port int, rootRedirect string, warn io.Writer) (*dashboardbff.Plane, error) {
 	if !dashboardEnabled() {
+		mountRoot(mux, nil, rootRedirect, warn)
 		return nil, nil
 	}
 	spa, err := dashboardspa.NewStaticHandler()
@@ -74,7 +81,8 @@ func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly
 		return nil, err
 	}
 	plane := dashboardbff.New(dashboardDeps(resolver, readOnly, bind, port, mux.LoopbackTransport()))
-	mux.WithRunCensusSource(plane).WithAPIPlane(plane.Handler()).WithStaticHandler(spa)
+	mux.WithRunCensusSource(plane).WithAPIPlane(plane.Handler())
+	mountRoot(mux, spa, rootRedirect, warn)
 	// Install the listener's link base alongside the SPA so per-city handlers
 	// can mint dashboard deep links (the sling response's dashboard_url).
 	// Standalone controller processes never call attachDashboard, so their
@@ -89,6 +97,29 @@ func attachDashboard(mux *api.SupervisorMux, resolver api.CityResolver, readOnly
 		mux.WithDashboardBase(func() string { return base })
 	}
 	return plane, nil
+}
+
+// mountRoot fills the supervisor's "/" slot with spa (nil when the dashboard
+// is disabled), behind a root redirect when one is configured.
+//
+// A refused root_redirect is a warning and NOT a boot error. The supervisor
+// is one process for every registered city, and failing its start over a
+// redirect would take them all down for a typo in a convenience setting.
+func mountRoot(mux *api.SupervisorMux, spa http.Handler, rootRedirect string, warn io.Writer) {
+	if rootRedirect == "" {
+		mux.WithStaticHandler(spa)
+		return
+	}
+	h, err := api.NewRootRedirectHandler(rootRedirect, spa)
+	if err != nil {
+		fmt.Fprintf(warn, "gc supervisor: warning: [supervisor] root_redirect = %q in %s ignored -- %v. "+ //nolint:errcheck
+			"The bare root keeps its default handler. Set it to an absolute path on this listener, "+
+			"such as \"/v0/city/<city>/svc/<service>/\", then run gc supervisor stop && gc supervisor start\n",
+			rootRedirect, supervisor.ConfigPath(), err)
+		mux.WithStaticHandler(spa)
+		return
+	}
+	mux.WithStaticHandler(h)
 }
 
 // newRunCensusPlane creates the unmounted dashboard plane a standalone
@@ -122,20 +153,6 @@ func writeSupervisorDashboardStartup(stdout io.Writer, mounted, readOnly bool, b
 // would 401 under read-auth). selfRead is the supervisor's in-process loopback
 // transport so those trusted self-reads bypass the read-auth gate.
 func dashboardDeps(resolver api.CityResolver, readOnly bool, bind string, port int, selfRead http.RoundTripper) dashboardbff.Deps {
-	return dashboardDepsWithWarnings(resolver, readOnly, bind, port, selfRead, os.Stderr)
-}
-
-// dashboardDepsWithWarnings is dashboardDeps with the operator-facing warning
-// sink injected. The sink is a parameter rather than a package global or an
-// env switch because the only way to reach the rejection branch is to supply
-// a spec that is present but wrong -- the case a switch could never cover,
-// and the case the diagnosis exists for.
-func dashboardDepsWithWarnings(resolver api.CityResolver, readOnly bool, bind string, port int, selfRead http.RoundTripper, warn io.Writer) dashboardbff.Deps {
-	navLinks, rejected := dashboardbff.ParseNavLinks(os.Getenv("DASHBOARD_NAV_LINKS"))
-	for _, r := range rejected {
-		fmt.Fprintf(warn, "warning: DASHBOARD_NAV_LINKS entry ignored -- %s\n", r) //nolint:errcheck
-	}
-
 	return dashboardbff.Deps{
 		Resolver:           dashboardCityResolver{resolver},
 		ReadOnly:           readOnly,
@@ -152,12 +169,6 @@ func dashboardDepsWithWarnings(resolver api.CityResolver, readOnly bool, bind st
 		// because the reasons are role-shaped and the pin has moved accounts
 		// before; a compiled-in list would go quietly wrong when it moves again.
 		AccountLabels: dashboardbff.ParseAccountLabels(os.Getenv("DASHBOARD_ACCOUNT_LABELS")),
-		// Operator-declared navbar entries for pages the SPA does not route,
-		// e.g. "Summaries=/v0/city/<city>/svc/roadmap/summaries". Env rather
-		// than Go because the target names a deployment's own service, and
-		// rather than city config because the /api plane does not import
-		// internal/config and a nav entry does not earn that dependency.
-		NavLinks: navLinks,
 		// EnabledModules is intentionally left unset: every shipped dashboard view
 		// module is core (always on), and no first-party (gated) module exists yet,
 		// so the config projection emits an empty enabledModules list by design.
