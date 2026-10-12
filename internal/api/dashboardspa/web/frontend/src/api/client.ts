@@ -187,30 +187,6 @@ function requireStringArrayOrNullField(
   }
 }
 
-// navLinks is absent on a backend older than the field and present-but-empty
-// on every default install, so absence is accepted and only a PRESENT value
-// is judged. A malformed entry fails the whole decode rather than being
-// filtered out: a silently dropped link is indistinguishable from one the
-// operator never declared, which is the exact confusion the backend's startup
-// warning exists to prevent -- filtering here would reintroduce it one layer
-// down, past the only place that logs.
-function requireNavLinksField(record: JsonRecord, url: string, label: string, field: string): void {
-  const value = record[field];
-  if (value === undefined) return;
-  if (!Array.isArray(value)) {
-    failDecode(url, `${label}.${field} must be an array`);
-  }
-  for (const item of value) {
-    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
-      failDecode(url, `${label}.${field} entries must be objects`);
-    }
-    const entry = item as JsonRecord;
-    if (typeof entry.label !== 'string' || typeof entry.href !== 'string') {
-      failDecode(url, `${label}.${field} entries must carry string label and href`);
-    }
-  }
-}
-
 function objectDecoder<T>(
   label: string,
   validate?: (record: JsonRecord, url: string) => void,
@@ -254,7 +230,6 @@ const decodeRuntimeConfig = objectDecoder<DashboardRuntimeConfig>('config', (rec
   requireStringField(record, url, 'config', 'decisionLabel');
   requireStringArrayOrNullField(record, url, 'config', 'enabledModules');
   requireNullableStringField(record, url, 'config', 'defaultView');
-  requireNavLinksField(record, url, 'config', 'navLinks');
 });
 // The four presence states the /api/account-quota rows carry. Validated as a
 // closed set: an unrecognized state must fail the decode loudly rather than

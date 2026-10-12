@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -252,55 +251,5 @@ func TestWriteSupervisorDashboardStartupOnlyAdvertisesMountedDashboard(t *testin
 	want := "Dashboard:  http://127.0.0.1:8372/  [read-only]\n"
 	if out.String() != want {
 		t.Fatalf("mounted dashboard output = %q, want %q", out.String(), want)
-	}
-}
-
-// The navbar's operator-declared entries arrive from env for the same reason
-// the account labels do: the pages a deployment wants in its navbar name that
-// deployment's own services, and a compiled-in entry would be a specific
-// service name in SDK Go (AGENTS.md). This pins the wiring because the
-// failure is silent in both directions -- an unwired Deps field renders the
-// navbar unchanged, and a dropped rejection renders it unchanged too.
-func TestDashboardDepsWiresNavLinksEnv(t *testing.T) {
-	t.Setenv("DASHBOARD_NAV_LINKS", "Summaries=/svc/roadmap/summaries,Bad=javascript:alert(1)")
-	deps := dashboardDeps(fakeDashResolver{}, false, "127.0.0.1", 8372, nil)
-	if len(deps.NavLinks) != 1 {
-		t.Fatalf("NavLinks = %v, want only the valid entry", deps.NavLinks)
-	}
-	if deps.NavLinks[0].Label != "Summaries" || deps.NavLinks[0].Href != "/svc/roadmap/summaries" {
-		t.Errorf("NavLinks[0] = %+v, want the declared entry", deps.NavLinks[0])
-	}
-}
-
-// Unset is the default and must stay silent: no links, and nothing written to
-// the warning sink. A warning on every start of every supervisor that
-// declares no links would train the operator to ignore the one that matters.
-func TestDashboardDepsNavLinksUnsetIsSilent(t *testing.T) {
-	t.Setenv("DASHBOARD_NAV_LINKS", "")
-	var warn strings.Builder
-	deps := dashboardDepsWithWarnings(fakeDashResolver{}, false, "127.0.0.1", 8372, nil, &warn)
-	if len(deps.NavLinks) != 0 {
-		t.Errorf("NavLinks = %v, want none", deps.NavLinks)
-	}
-	if warn.String() != "" {
-		t.Errorf("warnings = %q, want silence when the var is unset", warn.String())
-	}
-}
-
-// A rejected entry must reach the operator. ParseNavLinks is the only place
-// the spec is judged and supervisor start is the only moment it is read, so a
-// diagnosis dropped here is a diagnosis that exists nowhere: the operator
-// edits the unit, restarts, and finds the navbar unchanged with no cause
-// named anywhere on the machine.
-func TestDashboardDepsNavLinksRejectionIsReported(t *testing.T) {
-	t.Setenv("DASHBOARD_NAV_LINKS", "Bad=javascript:alert(1)")
-	var warn strings.Builder
-	dashboardDepsWithWarnings(fakeDashResolver{}, false, "127.0.0.1", 8372, nil, &warn)
-	got := warn.String()
-	if !strings.Contains(got, "DASHBOARD_NAV_LINKS") {
-		t.Errorf("warning %q must name the variable the operator has to fix", got)
-	}
-	if !strings.Contains(got, "javascript:alert(1)") {
-		t.Errorf("warning %q must quote the rejected entry", got)
 	}
 }

@@ -74,14 +74,6 @@ type Deps struct {
 	DecisionLabel     string
 	EnabledModules    []string
 	DefaultView       string
-	// NavLinks are operator-declared navbar entries pointing at pages the SPA
-	// does not route -- a workspace service, an external tool
-	// (DASHBOARD_NAV_LINKS, parsed by ParseNavLinks). Supplied by the caller
-	// for the same reason AccountLabels is: the pages a deployment wants in
-	// its navbar are deployment data, and a compiled-in entry would put a
-	// specific service name in SDK Go (AGENTS.md). Empty is the default and
-	// leaves the navbar exactly as the view registry builds it.
-	NavLinks []NavLink
 
 	// AccountHomesDir is the per-account Claude home root the account-quota
 	// endpoint reads (DASHBOARD_ACCOUNT_HOMES_DIR). Empty resolves to
