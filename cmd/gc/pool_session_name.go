@@ -183,6 +183,14 @@ func releaseOrphanedPoolAssignments(
 			if assigneeNamesConfiguredPool(cfg, assignee) {
 				continue
 			}
+			// The operator's queue is an address of the same kind, and one no
+			// session can ever bear (session.ValidateAlias reserves it), so the
+			// liveness checks below can only ever say "gone". Releasing it took
+			// operator acts off his queue about 5 s after every assignment,
+			// silently, whenever the bead also carried a route (ci-qq99de).
+			if assignee == session.HumanIdentity {
+				continue
+			}
 			// A replacement session for this slot was PLANNED on this very
 			// tick and then not persisted -- the create budget ran out, the
 			// provider was red, the demand read came back partial, or a
