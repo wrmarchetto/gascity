@@ -51,13 +51,19 @@ const (
 	// re-stamp would silently re-baseline the very edit the close gate
 	// exists to catch. The value is produced and compared by the
 	// brief-redirect close gate in cmd/gc.
-	BriefDigestMetadataKey               = "gc.brief_digest"
-	CancelRequestedMetadataKey           = "gc.cancel_requested"
-	CheckInfraRetryMetadataKey           = "gc.check_infra_retry"
-	CheckModeMetadataKey                 = "gc.check_mode"
-	CheckPathMetadataKey                 = "gc.check_path"
-	CheckTimeoutMetadataKey              = "gc.check_timeout"
-	CityPathMetadataKey                  = "gc.city_path"
+	BriefDigestMetadataKey     = "gc.brief_digest"
+	CancelRequestedMetadataKey = "gc.cancel_requested"
+	CheckInfraRetryMetadataKey = "gc.check_infra_retry"
+	CheckModeMetadataKey       = "gc.check_mode"
+	CheckPathMetadataKey       = "gc.check_path"
+	CheckTimeoutMetadataKey    = "gc.check_timeout"
+	CityPathMetadataKey        = "gc.city_path"
+	// ClaimSessionsMetadataKey accumulates every session that claimed the
+	// bead, as a JSON array of "<session bead>:<provider family>:<session
+	// key>" strings appended at claim time. SessionIDMetadataKey names only
+	// the LAST claimant, so a bead two providers worked would otherwise read
+	// as single-provider work. Written by the hook claim in cmd/gc.
+	ClaimSessionsMetadataKey             = "gc.claim_sessions"
 	ClosedByAttemptMetadataKey           = "gc.closed_by_attempt"
 	ContinuationGroupMetadataKey         = "gc.continuation_group"
 	ControlDispatcherFallbackMetadataKey = "gc.control_dispatcher_fallback"
@@ -370,6 +376,7 @@ var KnownMetadataKeys = []string{
 	CheckPathMetadataKey,
 	CheckTimeoutMetadataKey,
 	CityPathMetadataKey,
+	ClaimSessionsMetadataKey,
 	ClosedByAttemptMetadataKey,
 	ContinuationGroupMetadataKey,
 	ControlEpochMetadataKey,
