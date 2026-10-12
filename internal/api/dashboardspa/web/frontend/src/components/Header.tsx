@@ -70,10 +70,22 @@ export function Header() {
   // The selected option value. Prefer the URL-derived active city, then the
   // backend's reported city, so the switcher never renders blank.
   const selectedCity = activeCity ?? config?.cityName ?? '';
-  // True once the list has loaded and the selected city is a member. While the
-  // list is empty (pre-load or a transient fetch blip) we do NOT flag the city
-  // as unknown — only a loaded list that omits it is a real miss.
-  const activeCityKnown = selectedCity === '' || cityItems.some((c) => c.name === selectedCity);
+  // Has the list ever landed? `cities` is undefined until the first
+  // listCities() resolves, so this is the one signal that separates "not
+  // loaded yet" from "loaded and the city is not in it". The obvious test --
+  // cityItems.length === 0 -- cannot: an empty array is BOTH the pre-load
+  // value (`?? []` above) and a legitimately empty list, so using it reports
+  // the fault during every normal load.
+  const cityListLoaded = cities !== undefined;
+  // True while the list has not loaded, and once it has, only if the selected
+  // city is a member. `(unknown)` means the URL names a city the backend does
+  // not have -- a real, actionable fault -- so it must never double as "still
+  // loading". Measured 2026-10-12 before this guard: a healthy load of the
+  // live dashboard painted `city (unknown)` at 159ms and the real name at
+  // 211ms, and anything delaying /v0/cities made that transient permanent.
+  // Pinned by Header.cityunknown.test.tsx, which holds listCities unresolved.
+  const activeCityKnown =
+    selectedCity === '' || !cityListLoaded || cityItems.some((c) => c.name === selectedCity);
   // Show the switcher whenever there's a choice to make, or when the selected
   // city is unknown — in the latter case the disabled "(unknown)" option keeps
   // the stale city visible instead of an empty select.
