@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { reportClientError } from '../lib/clientErrorReporting';
 import { getActiveCity } from '../api/cityBase';
+import { openCityEventStream, type CityEventStream } from '../events/cityEventStream';
 import { supervisorApi } from '../supervisor/client';
 
 // gascity-dashboard-iew: EventSource against the supervisor's `/v0/...` event
@@ -8,6 +9,13 @@ import { supervisorApi } from '../supervisor/client';
 // API same-origin, so the EventSource URL resolves against `location.origin`
 // with no transport proxy. The dashboard no longer owns or parses city event
 // DTOs.
+//
+// The transport is openCityEventStream, not EventSource directly: every open
+// dashboard page holding its own stream consumed one of the six sockets a
+// browser gives an HTTP/1.1 origin, and six pages starved every later request
+// on the origin (bead ci-s4mwuy). The connect/grace/backoff/degraded policy
+// below is unchanged by that -- openCityEventStream presents the same shape
+// EventSource does (events/cityEventStream.ts).
 
 export type GcEventConnState = 'connecting' | 'open' | 'degraded' | 'closed';
 export type GcEventEnvelope = {
@@ -35,6 +43,10 @@ export interface GcEventRefreshOptions {
 }
 
 const CONNECTING_GRACE_MS = 2_000;
+// EventSource.CLOSED, restated because the stream may be the shared-worker
+// adapter rather than an EventSource, and in jsdom `globalThis.EventSource`
+// is a stub that need not carry the static.
+const EVENT_STREAM_CLOSED = 2;
 const DEFAULT_COALESCE_MS = 2_500;
 
 /**
@@ -75,7 +87,7 @@ export function useGcEventRefresh(
       return;
     }
 
-    let es: EventSource | null = null;
+    let es: CityEventStream | null = null;
     let cancelled = false;
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let connectGraceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -118,11 +130,6 @@ export function useGcEventRefresh(
     };
 
     const connect = () => {
-      const EventSourceCtor = globalThis.EventSource;
-      if (typeof EventSourceCtor !== 'function') {
-        setState('closed');
-        return;
-      }
       const cityName = getActiveCity();
       if (cityName === null) {
         setState('closed');
@@ -130,11 +137,15 @@ export function useGcEventRefresh(
       }
       // The browser sends Last-Event-ID automatically on reconnect; the
       // supervisor event stream accepts that header directly.
-      const source = new EventSourceCtor(supervisorApi().cityEventStreamUrl(cityName));
+      const source = openCityEventStream(supervisorApi().cityEventStreamUrl(cityName));
+      if (source === null) {
+        setState('closed');
+        return;
+      }
       es = source;
       setState('connecting');
       connectGraceTimer = setTimeout(() => {
-        if (cancelled || es !== source || source.readyState === EventSourceCtor.CLOSED) return;
+        if (cancelled || es !== source || source.readyState === EVENT_STREAM_CLOSED) return;
         setState('open');
       }, CONNECTING_GRACE_MS);
       es.onopen = () => {
