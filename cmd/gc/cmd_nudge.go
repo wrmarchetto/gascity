@@ -124,6 +124,13 @@ type nudgeTarget struct {
 	sessionID         string
 	continuationEpoch string
 	sessionName       string
+	// sessionKey is the provider resume key as the target's session bead held
+	// it at resolution, and keyFromHookStdin whether its provider family
+	// delivers that key on hook stdin at all. Both are read for free off the
+	// same Get, so the prompt-boundary drain can skip the key capture without
+	// another store round trip.
+	sessionKey       string
+	keyFromHookStdin bool
 }
 
 type nudgeStatusJSON struct {
@@ -477,6 +484,11 @@ func cmdNudgeAck(ids []string, targetID string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// nudgeDrainPersistSessionKey is the prompt-boundary resume-key capture. It
+// is a package var so a test can count calls: a call on a keyed session is a
+// silent no-op, so only a counter can see the cost gate that withholds it.
+var nudgeDrainPersistSessionKey = persistHookProviderSessionKey
+
 func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat, hookEvent string, stdout, stderr io.Writer) int {
 	hookEvent = normalizeNudgeHookEvent(hookEvent)
 	// A mid-turn drain carries the nudge and NOTHING else. The clock line, the
@@ -501,12 +513,14 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat, hookEvent s
 	var wispExtra string // set after target resolution; captured by defer closure
 	emittedHookContext := false
 	var injectContext string
+	var hookInput []byte
 	if inject && !midTurn {
 		// Read the provider hook input once (UserPromptSubmit JSON on stdin,
 		// pipe-only — see readHookStdin) and build the stable portion of the
 		// shared injection. The varying clock is added only after all context
 		// and nudge payloads at the write sites below.
-		injectContext = contextInjectLine(readHookStdin())
+		hookInput = readHookStdin()
+		injectContext = contextInjectLine(hookInput)
 		defer func() {
 			if !emittedHookContext {
 				line := injectContext + wispExtra + clockInjectLine()
@@ -541,6 +555,21 @@ func cmdNudgeDrainWithFormat(args []string, inject bool, hookFormat, hookEvent s
 	}
 	if inject && !midTurn {
 		wispExtra = wispStepInjectionContent(target.cityPath)
+		// Retry the SessionStart resume-key capture from this payload
+		// (ci-v5dmqg). Gated on the key the target resolution above already
+		// read, because an unconditional capture re-opens the city store on
+		// every prompt of every session: measured +150-300 ms on a ~1.2 s hook.
+		// A provider that never delivers its id on stdin stays keyless for
+		// good, so it is withheld too, or it would pay the store open on every
+		// prompt only to be refused after the read. A target that is not this
+		// process's own session says nothing about this session's key, so it
+		// falls through to the capture, which reads the right bead itself.
+		// Kept off the mid-turn branch because PostToolUse fires once per tool
+		// call.
+		ownSession := target.sessionID == strings.TrimSpace(os.Getenv("GC_SESSION_ID"))
+		if !ownSession || (target.sessionKey == "" && target.keyFromHookStdin) {
+			nudgeDrainPersistSessionKey("gc nudge drain --inject", hookStdinProviderSessionID(hookInput), stderr)
+		}
 	}
 
 	now := time.Now()
@@ -1397,7 +1426,7 @@ func resolveNudgeTargetFromSessionInfo(cityPath string, cfg *config.City, i sess
 	if sessionName == "" {
 		sessionName = sessionNameFromBeadID(i.ID)
 	}
-	return buildNudgeTarget(cityPath, cfg, nudgeTargetFields{
+	target := buildNudgeTarget(cityPath, cfg, nudgeTargetFields{
 		sessionID:         i.ID,
 		sessionName:       sessionName,
 		alias:             strings.TrimSpace(i.Alias),
@@ -1409,6 +1438,9 @@ func resolveNudgeTargetFromSessionInfo(cityPath string, cfg *config.City, i sess
 		provider:          strings.TrimSpace(i.Provider),
 		continuationEpoch: strings.TrimSpace(i.ContinuationEpoch),
 	})
+	target.sessionKey = strings.TrimSpace(i.SessionKey)
+	target.keyFromHookStdin = providerAcceptsHookStdinSessionID(sessionProviderFamily(i))
+	return target
 }
 
 func buildNudgeTarget(cityPath string, cfg *config.City, f nudgeTargetFields) nudgeTarget {

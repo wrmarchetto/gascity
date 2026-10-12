@@ -46,6 +46,17 @@ import (
 // hookStdinInput is the subset of the provider hook JSON we need.
 type hookStdinInput struct {
 	TranscriptPath string `json:"transcript_path"`
+	SessionID      string `json:"session_id"`
+}
+
+// hookStdinProviderSessionID returns the provider's own session id from a hook
+// payload, or "" when the payload is absent or does not parse.
+func hookStdinProviderSessionID(hookInput []byte) string {
+	var in hookStdinInput
+	if err := json.Unmarshal(hookInput, &in); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(in.SessionID)
 }
 
 // transcriptUsage is the usage block shape inside provider transcript entries.

@@ -208,6 +208,7 @@ func TestNudgeTargetFromSessionInfoFullGolden(t *testing.T) {
 			"session_name":       "worker-session",
 			"continuation_epoch": "3",
 			"alias_history":      "old-alias,older-alias",
+			"session_key":        "sk-full",
 		},
 	}
 
@@ -225,6 +226,8 @@ func TestNudgeTargetFromSessionInfoFullGolden(t *testing.T) {
 		sessionID:         "ga-full",
 		continuationEpoch: "3",
 		sessionName:       "worker-session",
+		sessionKey:        "sk-full",
+		keyFromHookStdin:  true,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("full nudgeTarget mismatch:\n got=%#v\nwant=%#v", got, want)

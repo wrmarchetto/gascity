@@ -676,6 +676,19 @@ func readPrimeHookStdin() *primeHookInput {
 }
 
 func persistPrimeHookProviderSessionKey(hookProviderSessionID string, stderr io.Writer) {
+	persistHookProviderSessionKey("gc prime --hook", hookProviderSessionID, stderr)
+}
+
+// persistHookProviderSessionKey records the provider's resume id on the
+// session bead when the bead has none, and is a no-op once one is set.
+//
+// It has TWO callers on purpose. SessionStart (gc prime --hook) is the
+// primary capture, but it runs once per conversation, and a store that is
+// unreachable at that instant drops the capture with nothing left to retry
+// it. The prompt-boundary nudge drain is the retry: every UserPromptSubmit
+// payload carries the same authoritative id, so the next turn heals the key
+// (ci-v5dmqg). caller names the hook in the diagnostics.
+func persistHookProviderSessionKey(caller, hookProviderSessionID string, stderr io.Writer) {
 	gcSessionID := strings.TrimSpace(os.Getenv("GC_SESSION_ID"))
 	providerSessionID := strings.TrimSpace(os.Getenv("GC_PROVIDER_SESSION_ID"))
 	if providerSessionID == "" {
@@ -692,7 +705,7 @@ func persistPrimeHookProviderSessionKey(hookProviderSessionID string, stderr io.
 			return
 		}
 		allArgs := append([]any{requiredProviderID}, args...)
-		fmt.Fprintf(stderr, "gc prime --hook: provider session key not persisted for %s: "+format+"\n", allArgs...) //nolint:errcheck // hook diagnostics are best effort.
+		fmt.Fprintf(stderr, "%s: provider session key not persisted for %s: "+format+"\n", append([]any{caller}, allArgs...)...) //nolint:errcheck // hook diagnostics are best effort.
 	}
 	if gcSessionID == "" {
 		warn("GC_SESSION_ID is empty")
@@ -750,7 +763,7 @@ func persistPrimeHookProviderSessionKey(hookProviderSessionID string, stderr io.
 	}
 	// Runs once per session (the empty-key check above guards re-entry).
 	if stderr != nil {
-		fmt.Fprintf(stderr, "gc prime --hook: persisted resume session_key for %s session %q\n", sessionProviderFamily(info), gcSessionID) //nolint:errcheck // hook diagnostics are best effort.
+		fmt.Fprintf(stderr, "%s: persisted resume session_key for %s session %q\n", caller, sessionProviderFamily(info), gcSessionID) //nolint:errcheck // hook diagnostics are best effort.
 	}
 }
 
