@@ -56,6 +56,24 @@ func noopStampWorkMeta(context.Context, string, []string, string, string, map[st
 // cmd_hook_claim_workerdir_realgit_test.go; the resolver here is a constant.
 const poolClaimWorkerDir = "/tmp/worktrees/pool-1"
 
+// poolClaimSessionsRecord is the gc.claim_sessions value a claim by the
+// session bead in poolClaimOps writes. Spelled out as a literal rather than
+// built with the production encoder, so a change to the recorded shape fails
+// here instead of moving both sides. A fixture modeling a bead stamped
+// BEFORE the tick under test carries it, the way a current bead would.
+const poolClaimSessionsRecord = `["mc-sess1:claude:key-pool-1"]`
+
+// poolClaimSessionBead is the claiming session's own bead: it names the
+// worktree and carries the provider and session key the claimant record
+// is built from.
+func poolClaimSessionBead(id string, workerDir string) beads.Bead {
+	meta := map[string]string{"provider": "claude", "session_key": "key-pool-1"}
+	if workerDir != "" {
+		meta[beadmeta.WorkerDirMetadataKey] = workerDir
+	}
+	return beads.Bead{ID: id, Type: "session", Metadata: meta}
+}
+
 // poolClaimOps builds the seam for a pool slot claiming an unassigned,
 // route-matched candidate: the runner yields it, Claim returns it owned by us,
 // the session bead names poolClaimWorkerDir, the branch resolver returns
@@ -67,9 +85,7 @@ func poolClaimOps(runner string, claimedMeta map[string]string, branch string, s
 			return beads.Bead{ID: id, Status: "in_progress", Assignee: assignee, Metadata: claimedMeta}, true, nil
 		},
 		ReadSessionBead: func(_ context.Context, _ string, _ []string, id, _ string) (beads.Bead, error) {
-			return beads.Bead{ID: id, Type: "session", Metadata: map[string]string{
-				beadmeta.WorkerDirMetadataKey: poolClaimWorkerDir,
-			}}, nil
+			return poolClaimSessionBead(id, poolClaimWorkerDir), nil
 		},
 		ResolveWorkBranch: func(string) string { return branch },
 		StampWorkMeta:     spy.fn,
@@ -123,11 +139,12 @@ func TestDoHookClaimStampsSessionIdentity(t *testing.T) {
 	// is the digest of the empty brief -- derived here rather than written as
 	// a literal, so a change to the digest's framing moves both sides.
 	want := map[string]string{
-		beadmeta.WorkBranchMetadataKey:  "bd-hw-pool",
-		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
-		beadmeta.SessionIDMetadataKey:   "mc-sess1",
-		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
-		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
+		beadmeta.WorkBranchMetadataKey:    "bd-hw-pool",
+		beadmeta.WorkDirMetadataKey:       poolClaimWorkerDir,
+		beadmeta.SessionIDMetadataKey:     "mc-sess1",
+		beadmeta.SessionNameMetadataKey:   "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey:   beadBriefDigest("", ""),
+		beadmeta.ClaimSessionsMetadataKey: poolClaimSessionsRecord,
 	}
 	if !reflect.DeepEqual(spy.patch, want) {
 		t.Fatalf("patch = %v, want %v", spy.patch, want)
@@ -151,7 +168,10 @@ func TestDoHookClaimStampsSessionIdentityOnAdoption(t *testing.T) {
 			t.Error("Claim must not be called on the existing-assignment path")
 			return beads.Bead{}, false, nil
 		},
-		ResolveWorkBranch: func(string) string { return "" }, // no worktree
+		ReadSessionBead: func(_ context.Context, _ string, _ []string, id, _ string) (beads.Bead, error) {
+			return poolClaimSessionBead(id, ""), nil // no worktree
+		},
+		ResolveWorkBranch: func(string) string { return "" },
 		StampWorkMeta:     spy.fn,
 		PublishRunMap:     noopPublishRunMap,
 	}
@@ -161,9 +181,10 @@ func TestDoHookClaimStampsSessionIdentityOnAdoption(t *testing.T) {
 		t.Fatalf("doHookClaim = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	want := map[string]string{
-		beadmeta.SessionIDMetadataKey:   "mc-sess1",
-		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
-		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
+		beadmeta.SessionIDMetadataKey:     "mc-sess1",
+		beadmeta.SessionNameMetadataKey:   "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey:   beadBriefDigest("", ""),
+		beadmeta.ClaimSessionsMetadataKey: poolClaimSessionsRecord,
 	}
 	if spy.calls != 1 || !reflect.DeepEqual(spy.patch, want) {
 		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v}", spy.calls, spy.patch, want)
@@ -191,10 +212,11 @@ func TestDoHookClaimStampsSessionIdentityWithoutWorktree(t *testing.T) {
 		t.Fatalf("doHookClaim = %d, want 0; stderr=%s", code, stderr.String())
 	}
 	want := map[string]string{
-		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
-		beadmeta.SessionIDMetadataKey:   "mc-sess1",
-		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
-		beadmeta.BriefDigestMetadataKey: beadBriefDigest("", ""),
+		beadmeta.WorkDirMetadataKey:       poolClaimWorkerDir,
+		beadmeta.SessionIDMetadataKey:     "mc-sess1",
+		beadmeta.SessionNameMetadataKey:   "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey:   beadBriefDigest("", ""),
+		beadmeta.ClaimSessionsMetadataKey: poolClaimSessionsRecord,
 	}
 	if spy.calls != 1 || !reflect.DeepEqual(spy.patch, want) {
 		t.Fatalf("stamp = {calls:%d patch:%v}, want {1 %v} (session id/name even with no branch)", spy.calls, spy.patch, want)
@@ -212,15 +234,16 @@ func TestDoHookClaimSkipsStampWhenIdentityUnchanged(t *testing.T) {
 	// this test pins applies from the tick after that.
 	digest := beadBriefDigest("", "")
 	current := map[string]string{
-		"gc.routed_to":                  "worker",
-		"gc.work_branch":                "bd-hw-idem",
-		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
-		"gc.session_id":                 "mc-sess1",
-		"gc.session_name":               "gc__role-mc-sess1",
-		beadmeta.BriefDigestMetadataKey: digest,
+		"gc.routed_to":                    "worker",
+		"gc.work_branch":                  "bd-hw-idem",
+		beadmeta.WorkDirMetadataKey:       poolClaimWorkerDir,
+		"gc.session_id":                   "mc-sess1",
+		"gc.session_name":                 "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey:   digest,
+		beadmeta.ClaimSessionsMetadataKey: poolClaimSessionsRecord,
 	}
 	ops := poolClaimOps(
-		fmt.Sprintf(`[{"id":"hw-idem","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-idem","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, poolClaimWorkerDir, digest),
+		fmt.Sprintf(`[{"id":"hw-idem","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-hw-idem","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q,"gc.claim_sessions":%q}}]`, poolClaimWorkerDir, digest, poolClaimSessionsRecord),
 		current,
 		"bd-hw-idem",
 		spy,
@@ -242,15 +265,16 @@ func TestDoHookClaimStampsOnlyChangedIdentityKeys(t *testing.T) {
 	spy := &stampMetaSpy{}
 	digest := beadBriefDigest("", "")
 	current := map[string]string{
-		"gc.routed_to":                  "worker",
-		"gc.work_branch":                "bd-old",
-		beadmeta.WorkDirMetadataKey:     poolClaimWorkerDir,
-		"gc.session_id":                 "mc-sess1",
-		"gc.session_name":               "gc__role-mc-sess1",
-		beadmeta.BriefDigestMetadataKey: digest,
+		"gc.routed_to":                    "worker",
+		"gc.work_branch":                  "bd-old",
+		beadmeta.WorkDirMetadataKey:       poolClaimWorkerDir,
+		"gc.session_id":                   "mc-sess1",
+		"gc.session_name":                 "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey:   digest,
+		beadmeta.ClaimSessionsMetadataKey: poolClaimSessionsRecord,
 	}
 	ops := poolClaimOps(
-		fmt.Sprintf(`[{"id":"hw-partial","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-old","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, poolClaimWorkerDir, digest),
+		fmt.Sprintf(`[{"id":"hw-partial","status":"open","metadata":{"gc.routed_to":"worker","gc.work_branch":"bd-old","gc.work_dir":%q,"gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q,"gc.claim_sessions":%q}}]`, poolClaimWorkerDir, digest, poolClaimSessionsRecord),
 		current,
 		"bd-new",
 		spy,
@@ -386,12 +410,16 @@ func TestDoHookClaimAdoptionReconcilesDurableStartedFact(t *testing.T) {
 	meta := map[string]string{
 		"gc.routed_to": "worker", beadmeta.RootBeadIDMetadataKey: "gcg-run",
 		beadmeta.StepIDMetadataKey: "build", beadmeta.SessionIDMetadataKey: "mc-sess1",
-		beadmeta.SessionNameMetadataKey: "gc__role-mc-sess1",
-		beadmeta.BriefDigestMetadataKey: digest,
+		beadmeta.SessionNameMetadataKey:   "gc__role-mc-sess1",
+		beadmeta.BriefDigestMetadataKey:   digest,
+		beadmeta.ClaimSessionsMetadataKey: poolClaimSessionsRecord,
 	}
 	ops := hookClaimOps{
 		Runner: func(string, string) (string, error) {
-			return fmt.Sprintf(`[{"id":"gcg-attempt","status":"in_progress","assignee":"gc__role-mc-sess1","metadata":{"gc.routed_to":"worker","gc.root_bead_id":"gcg-run","gc.step_id":"build","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q}}]`, digest), nil
+			return fmt.Sprintf(`[{"id":"gcg-attempt","status":"in_progress","assignee":"gc__role-mc-sess1","metadata":{"gc.routed_to":"worker","gc.root_bead_id":"gcg-run","gc.step_id":"build","gc.session_id":"mc-sess1","gc.session_name":"gc__role-mc-sess1","gc.brief_digest":%q,"gc.claim_sessions":%q}}]`, digest, poolClaimSessionsRecord), nil
+		},
+		ReadSessionBead: func(_ context.Context, _ string, _ []string, id, _ string) (beads.Bead, error) {
+			return poolClaimSessionBead(id, ""), nil
 		},
 		ResolveWorkBranch: func(string) string { return "" },
 		StampWorkMeta:     spy.fn,

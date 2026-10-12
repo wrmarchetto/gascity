@@ -901,7 +901,13 @@ func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, bea
 // (the cache-reconcile flood class). Best-effort: a missing repo, detached HEAD,
 // absent session, or write error never blocks the claim.
 func stampHookClaimIdentity(bead beads.Bead, opts hookClaimOptions, ops hookClaimOps, dir string, stderr io.Writer) (beads.Bead, bool) {
-	patch := hookClaimIdentityPatch(bead, opts, ops, hookClaimWorkerDir(opts, ops, dir, stderr))
+	sessionBead := hookClaimSessionBead(opts, ops, dir, stderr)
+	patch := hookClaimIdentityPatch(bead, opts, ops, hookClaimWorkerDir(sessionBead))
+	// Rides the same single write as gc.session_id, which it exists to
+	// outlive: that key is overwritten by every reclaim.
+	if sessions, changed := hookClaimSessionsValue(bead, opts, sessionBead, stderr); changed {
+		patch[beadmeta.ClaimSessionsMetadataKey] = sessions
+	}
 	sessionID := hookClaimSessionID(opts.Env)
 	needsLifecycleIdentity := sessionID != "" && !beadmeta.IsControlKind(strings.TrimSpace(bead.Metadata[beadmeta.KindMetadataKey]))
 	if len(patch) == 0 {
@@ -951,8 +957,8 @@ func hookClaimLifecycleCandidate(bead beads.Bead, opts hookClaimOptions) bool {
 }
 
 // hookClaimWorkerDir returns the worktree the CLAIMING AGENT is actually
-// working in, read from its own session bead's worker_dir. Empty means the
-// worktree is unknown.
+// working in, read from its own session bead's worker_dir (hookClaimSessionBead).
+// Empty means the worktree is unknown.
 //
 // dir is NOT that worktree and never was. It is threaded down from
 // agentCommandDir (cmd/gc/cmd_start.go), whose docstring states the intent:
@@ -981,33 +987,43 @@ func hookClaimLifecycleCandidate(bead beads.Bead, opts hookClaimOptions) bool {
 // sessions this cannot resolve, and a branch name that points at someone
 // else's work is worse than none -- the release path reads the field as a
 // handle to the predecessor's uncommitted work (withReleasedWorkBranch).
+func hookClaimWorkerDir(sessionBead beads.Bead) string {
+	return contract.WorkerDirFromMetadata(sessionBead.Metadata)
+}
+
+// hookClaimSessionBead reads the claiming session's own bead, named by
+// GC_SESSION_ID, once per claim tick. Both the worktree (hookClaimWorkerDir)
+// and the claimant record (hookClaimSessionsValue) come from it. The zero bead
+// means unknown: no session is claiming, the read failed, or the store
+// answered for a different id.
 //
 // Cost: one extra store read per claim tick, on top of the work query's own.
 // It is skipped entirely when no session is claiming.
-func hookClaimWorkerDir(opts hookClaimOptions, ops hookClaimOps, dir string, stderr io.Writer) string {
+func hookClaimSessionBead(opts hookClaimOptions, ops hookClaimOps, dir string, stderr io.Writer) beads.Bead {
 	sessionID := hookClaimSessionID(opts.Env)
 	if sessionID == "" || ops.ReadSessionBead == nil {
-		return ""
+		return beads.Bead{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hookClaimMutationTimeout)
 	defer cancel()
 	sessionBead, err := ops.ReadSessionBead(ctx, dir, opts.Env, sessionID, opts.Assignee)
 	if err != nil {
 		if stderr != nil {
-			fmt.Fprintf(stderr, "gc hook --claim: reading session bead %s to resolve the worker worktree: %v\n", sessionID, err) //nolint:errcheck
+			fmt.Fprintf(stderr, "gc hook --claim: reading session bead %s to resolve the worker worktree and claimant provider: %v\n", sessionID, err) //nolint:errcheck
 		}
-		return ""
+		return beads.Bead{}
 	}
 	// bd resolves an id by prefix, so a `bd show` for a session that vanished
 	// concurrently can answer with a prefix-colliding one. The write path
 	// refuses to touch the session bead at all for that reason
 	// (publishHookClaimRunMap); a read cannot corrupt anything, but an
-	// unchecked one would stamp ANOTHER agent's worktree onto this bead --
-	// exactly the cross-worktree confusion this whole change removes.
+	// unchecked one would stamp ANOTHER agent's worktree, or its provider,
+	// onto this bead -- exactly the cross-session confusion these stamps
+	// exist to remove.
 	if strings.TrimSpace(sessionBead.ID) != sessionID {
-		return ""
+		return beads.Bead{}
 	}
-	return contract.WorkerDirFromMetadata(sessionBead.Metadata)
+	return sessionBead
 }
 
 // hookClaimIdentityPatch builds the compare-and-skipped claim-time metadata patch.
