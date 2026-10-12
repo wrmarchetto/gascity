@@ -1029,7 +1029,7 @@ func buildPreparedStartWithWorkDirResolver(
 	// the probe reports !probeable and we leave their metadata untouched.
 	if sk := strings.TrimSpace(candidate.info.SessionKey); sk != "" && agentCfg.WorkDir != "" {
 		provider := sessionTranscriptProvider(tp.ResolvedProvider, candidate.info)
-		if present, probeable := staleResumeKeyProbe(provider, agentCfg.WorkDir, sk); probeable && !present {
+		if present, probeable := staleResumeKeyProbe(transcriptSearchPaths(cfg), provider, agentCfg.WorkDir, sk); probeable && !present {
 			var sessFront *sessionpkg.Store
 			if store != nil {
 				sessFront = sessionFrontDoor(store)
@@ -1085,7 +1085,7 @@ func buildPreparedStartWithWorkDirResolver(
 		parentStale := false
 		if firstStart && !forceFresh && tp.ResolvedProvider != nil && agentCfg.WorkDir != "" {
 			provider := sessionTranscriptProvider(tp.ResolvedProvider, candidate.info)
-			if present, probeable := staleResumeKeyProbe(provider, agentCfg.WorkDir, parentSID); probeable && !present {
+			if present, probeable := staleResumeKeyProbe(transcriptSearchPaths(cfg), provider, agentCfg.WorkDir, parentSID); probeable && !present {
 				parentStale = true
 			}
 		}
@@ -1922,11 +1922,15 @@ func observeRuntimeProviderLiveness(sp runtime.Provider, name string, processNam
 // so tests can model a present or absent transcript without materializing
 // provider-specific transcript trees. Production delegates to the transcript
 // discovery layer, which knows each provider's on-disk layout and merges each
-// provider's own default roots on top of the supplied claude default, so
-// claude/kimi/pi each probe their real location.
-var staleResumeKeyProbe = func(provider, workDir, sessionKey string) (present, probeable bool) {
-	return workertranscript.HasKeyedTranscript(worker.DefaultSearchPaths(), provider, workDir, sessionKey)
-}
+// provider's own default roots on top of searchPaths.
+//
+// searchPaths must be the city's transcriptSearchPaths, never
+// worker.DefaultSearchPaths alone. A city that gives each session its own
+// CLAUDE_CONFIG_DIR writes no transcript under ~/.claude/projects, so a
+// default-only probe calls every live key stale, and the stale-resume clear
+// in buildPreparedStartWithWorkDirResolver throws away the conversation on
+// the next wake (ci-1ibc32).
+var staleResumeKeyProbe = workertranscript.HasKeyedTranscript
 
 // validateForkLaunch enforces fork-launch invariants before command resolution.
 // It fails loud rather than ever silently degrading a brain-forked (warm) arm to
