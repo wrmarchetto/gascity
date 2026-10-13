@@ -587,7 +587,17 @@ func primeHookHasLiveManagedSession(cityPath string) bool {
 	case sessionpkg.StateActive, sessionpkg.StateAwake, sessionpkg.StateCreating, sessionpkg.StateStartPending:
 		return true
 	default:
-		return false
+		// `gc session attach` starts the runtime while the bead still reads
+		// asleep (or suspended, drained), flipping it only after the provider
+		// is up, so this hook fires inside that window. Attach delivers no
+		// startup prompt of its own, which makes the hook the prompt's only
+		// route (ci-j63574: liaison session f30b8a27 began with none). The
+		// incarnation token, set in the start env from the bead, is what a
+		// process of this session holds and an unmanaged one does not.
+		// Admitting asleep on state alone instead would re-open #4010's
+		// leak to any process that inherited a stale GC_SESSION_ID.
+		envToken := strings.TrimSpace(os.Getenv("GC_INSTANCE_TOKEN"))
+		return envToken != "" && envToken == strings.TrimSpace(info.InstanceToken)
 	}
 }
 
