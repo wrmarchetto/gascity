@@ -5,6 +5,7 @@ package proctable
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 )
@@ -241,5 +242,33 @@ func TestScanWithRootRecordsEnclosingSessionOfNestedRoot(t *testing.T) {
 		if g != w {
 			t.Errorf("%s EnclosingSessionID = %q, want %q", id, g, w)
 		}
+	}
+}
+
+// A process carrying its parent's own session id is inside that session's
+// envelope and is not a root -- otherwise every shell and tool an agent runs
+// would be swept as a runtime of its own. The tmux exception is what lets a
+// pane's first process be a root when the server happens to carry the same
+// id. Pinned here because isRootWithSessionID was restructured to return the
+// enclosing session (ci-ddfq1d) and no other case drove the same-id branch.
+func TestScanWithRootSameSessionChildIsRootOnlyUnderTmux(t *testing.T) {
+	root := t.TempDir()
+	same := map[string]string{"GC_SESSION_ID": "ci-same", "GC_RUNTIME_EPOCH": "1"}
+	buildFakeProcUnder(t, root, 600, 1, "claude", same)
+	buildFakeProcUnder(t, root, 601, 600, "bash", same)
+	tmuxed := map[string]string{"GC_SESSION_ID": "ci-pane", "GC_RUNTIME_EPOCH": "1"}
+	buildFakeProcUnder(t, root, 700, 1, "tmux: server", tmuxed)
+	buildFakeProcUnder(t, root, 701, 700, "claude", tmuxed)
+
+	got, err := scanWithRoot(root, "")
+	if err != nil {
+		t.Fatalf("scanWithRoot error: %v", err)
+	}
+	var pids []int
+	for _, live := range got {
+		pids = append(pids, live.PID)
+	}
+	if want := []int{600, 700, 701}; !slices.Equal(pids, want) {
+		t.Fatalf("scan root pids = %v, want %v (601 shares a non-tmux parent's id)", pids, want)
 	}
 }
