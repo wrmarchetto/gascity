@@ -1257,8 +1257,27 @@ func managedDoltTestParentDone(rawFD string) (<-chan struct{}, func(), error) {
 
 // doltServerEnv returns the environment applied to every managed dolt
 // sql-server we launch.
+// managedDoltSessionIdentityEnvKeys are stripped from the managed Dolt
+// server's spawn env. The server is city infrastructure started by whichever
+// process first finds it down -- often a session's `gc bd` or the control
+// dispatcher -- and it must NOT inherit that session's identity. The proctable
+// scan treats any process carrying GC_SESSION_ID whose parent lacks it as that
+// session's root runtime, so an inherited id makes the orphan sweep and
+// killExistingOrphans SIGTERM the city's bead store on the session's next
+// resume (ci-iqnqzu, dolt.log 2026-10-12 20:56:02).
+// TestManagedDoltServerIsNotAnySessionsRuntime pins it against the real
+// scanner. GC_CITY_PATH stays: it is city scope, not session identity.
+var managedDoltSessionIdentityEnvKeys = []string{
+	"GC_SESSION_ID", "GC_SESSION_NAME", "GC_SESSION_ORIGIN",
+	"GC_RUNTIME_EPOCH", "GC_ALIAS", "GC_AGENT", "GC_TEMPLATE",
+}
+
 func doltServerEnv(cityPath string, parent []string) []string {
-	env := removeEnvKey(parent, "DOLT_DISABLE_EVENT_FLUSH")
+	env := parent
+	for _, key := range managedDoltSessionIdentityEnvKeys {
+		env = removeEnvKey(env, key)
+	}
+	env = removeEnvKey(env, "DOLT_DISABLE_EVENT_FLUSH")
 	if managedDoltDisableEventFlush(cityPath) {
 		// Disable Dolt usage telemetry for managed servers by default. The
 		// `dolt send-metrics` event-flush reporter spawns transient
