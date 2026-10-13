@@ -133,7 +133,7 @@ func TestSpawnBuiltinPromptHookSuppressesAfterDelivery(t *testing.T) {
 			"the suppression this suite reasons about is gone and the spawn-path assertion above needs rereading")
 	}
 	var stdout bytes.Buffer
-	writePrimePromptWithFormat(&stdout, "spawn-city", "bare-agent", "WORKER-PROMPT-BODY", true, "", true, "", nil)
+	writePrimePromptWithFormat(&stdout, io.Discard, "", "spawn-city", "bare-agent", "WORKER-PROMPT-BODY", true, "", true, "", nil)
 	if strings.Contains(stdout.String(), "WORKER-PROMPT-BODY") {
 		t.Fatalf("suppression is not in effect; hook output = %q", stdout.String())
 	}
