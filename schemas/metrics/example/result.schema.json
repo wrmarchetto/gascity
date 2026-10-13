@@ -212,7 +212,9 @@
               "storage-status",
               "nudge-ack",
               "usage",
-              "usage-pair"
+              "usage-pair",
+              "maintenance-hold",
+              "maintenance-release"
             ]
           },
           "event_id": {

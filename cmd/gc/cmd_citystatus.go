@@ -178,6 +178,13 @@ func cmdCityStatus(args []string, jsonOutput bool, stdout, stderr io.Writer) int
 		return 1
 	}
 
+	// Ahead of the store open: under a hold that open is exactly what fails,
+	// and the banner is the explanation. Text mode only, so the JSON shape
+	// that monitoring parses is unchanged.
+	if line := managedDoltMaintenanceHoldStatusLine(cityPath); line != "" && !jsonOutput {
+		fmt.Fprintln(stdout, line) //nolint:errcheck // best-effort stdout
+	}
+
 	storeStderr := stderr
 	if jsonOutput {
 		storeStderr = io.Discard

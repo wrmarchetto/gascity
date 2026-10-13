@@ -25,10 +25,16 @@ func newMaintenanceCmd(stdout, stderr io.Writer) *cobra.Command {
 		Long: `Manage periodic Dolt store maintenance (see docs/adr/0002-dolt-store-maintenance-runbook.md).
 
 The weekly loop runs inside the supervisor process when [maintenance.dolt] enabled=true
-in city.toml. 'status' shows loop state and recent runs; 'dolt-gc' triggers a manual run.`,
+in city.toml. 'status' shows loop state and recent runs; 'dolt-gc' triggers a manual run.
+
+'hold' and 'release' run locally, without the supervisor: 'hold' stops the managed
+Dolt server and keeps every gc path from restarting it for a bounded window, for
+offline work such as 'dolt gc --full'; 'release' ends the window early.`,
 	}
 	cmd.AddCommand(newMaintenanceStatusCmd(stdout, stderr))
 	cmd.AddCommand(newMaintenanceDoltGCCmd(stdout, stderr))
+	cmd.AddCommand(newMaintenanceHoldCmd(stdout, stderr))
+	cmd.AddCommand(newMaintenanceReleaseCmd(stdout, stderr))
 	return cmd
 }
 

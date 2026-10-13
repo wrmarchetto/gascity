@@ -367,6 +367,9 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	// build cache and compiler temporary directories can exhaust / even when the
 	// city lives on another filesystem.
 	register(doctor.NewHostDiskSpaceCheck())
+	// Ungated by backend: a hold file is read by every managed-dolt door
+	// regardless, so a stray one must be visible even where it guards nothing.
+	register(newDoltMaintenanceHoldCheck(cityPath))
 	if cfgErr == nil && doctorWorkspaceHasPostgresScope(cityPath, cfg) {
 		register(doctorchecks.NewPostgresAuthCheck(cityPath, cfg))
 	}

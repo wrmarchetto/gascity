@@ -2525,6 +2525,10 @@ Manage periodic Dolt store maintenance (see docs/adr/0002-dolt-store-maintenance
 The weekly loop runs inside the supervisor process when [maintenance.dolt] enabled=true
 in city.toml. 'status' shows loop state and recent runs; 'dolt-gc' triggers a manual run.
 
+'hold' and 'release' run locally, without the supervisor: 'hold' stops the managed
+Dolt server and keeps every gc path from restarting it for a bounded window, for
+offline work such as 'dolt gc --full'; 'release' ends the window early.
+
 ```
 gc maintenance
 ```
@@ -2532,6 +2536,8 @@ gc maintenance
 | Subcommand | Description |
 |------------|-------------|
 | [gc maintenance dolt-gc](#gc-maintenance-dolt-gc) | Trigger a Dolt store maintenance run |
+| [gc maintenance hold](#gc-maintenance-hold) | Stop the managed Dolt server and keep every gc path from restarting it |
+| [gc maintenance release](#gc-maintenance-release) | Release a managed Dolt maintenance hold and restart the server |
 | [gc maintenance status](#gc-maintenance-status) | Show Dolt store maintenance status |
 
 ## gc maintenance dolt-gc
@@ -2546,6 +2552,37 @@ gc maintenance dolt-gc [flags]
 |------|------|---------|-------------|
 | `--json` | bool |  | emit machine-readable JSON |
 | `--wait` | bool |  | block until the run completes (exit 1 on failure) |
+
+## gc maintenance hold
+
+Take the managed Dolt server offline for a bounded window, for offline
+maintenance such as 'dolt gc --full' on the city database.
+
+The hold is recorded first, then the server is stopped. Until it is released
+or expires, every gc path that would start or recover the server refuses and
+names the hold instead: the controller patrol tick, every gc bd / hook / mail
+env build, and the bd connection-refused retry. Every agent bead command
+therefore FAILS for the length of the window.
+
+--for is required and capped at 4h, so a holder that crashes cannot leave the
+city without beads past the window it asked for.
+
+```
+gc maintenance hold [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--for` | duration | `0s` | how long the hold lasts before it lapses on its own (max 4h) |
+| `--reason` | string |  | why the server is held, shown in every refusal |
+
+## gc maintenance release
+
+Release a managed Dolt maintenance hold and restart the server
+
+```
+gc maintenance release
+```
 
 ## gc maintenance status
 

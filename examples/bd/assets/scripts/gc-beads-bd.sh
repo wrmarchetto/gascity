@@ -2150,11 +2150,36 @@ attempt_journal_corruption_recovery() {
 }
 
 # op_start starts the dolt server if not already running.
+# refuse_if_maintenance_hold exits the script when a managed Dolt maintenance
+# hold is in force (gc maintenance hold). gc refuses ahead of invoking this
+# script, so this guard is for a hand-run start or recover -- above all the
+# shell fallback below, which spawns dolt sql-server with no Go spawner to
+# refuse it, and the journal-corruption recovery, which moves a store aside.
+# The existence test keeps the steady state free of a gc subprocess. Without
+# GC_BIN the expiry cannot be read, so a present file REFUSES: restarting under
+# an offline dolt gc is the case the hold exists to prevent.
+#
+# GC_BIN only, NOT resolve_gc_bin's PATH lookup. gc sets GC_BIN on every
+# provider op it runs, and a bare `gc` on PATH can be another program: on this
+# fleet /usr/bin/gc is Graphviz, which exits 0 on unknown arguments and would
+# read as "no hold".
+refuse_if_maintenance_hold() {
+    local gc_bin hold_file="$LEGACY_GC_DIR/dolt-maintenance-hold.json"
+    [ -e "$hold_file" ] || return 0
+    gc_bin=$(resolve_gc_helper_bin)
+    if [ -n "$gc_bin" ]; then
+        "$gc_bin" dolt-state hold-check --city "$GC_CITY_PATH" </dev/null && return 0
+        exit 1
+    fi
+    die "managed dolt maintenance hold file $hold_file exists and GC_BIN names no gc binary to read its expiry; refusing to start or recover. Release with: gc maintenance release"
+}
+
 op_start() {
     if is_remote; then
         # Remote server — nothing to start locally.
         exit 2
     fi
+    refuse_if_maintenance_hold
 
     local gc_helper_bin
     gc_helper_bin=$(resolve_gc_helper_bin)
@@ -3032,6 +3057,7 @@ op_recover() {
     if is_remote; then
         die "recovery not supported for remote dolt servers"
     fi
+    refuse_if_maintenance_hold
 
     # Skip auto-recovery when dolt has been failing due to disk exhaustion.
     # Restarting dolt does not free disk space, and the recovery cycle

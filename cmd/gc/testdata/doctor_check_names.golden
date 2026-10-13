@@ -75,6 +75,7 @@ session-work-staleness
 dolt-server
 fork-rate
 host-disk-space
+dolt-maintenance-hold
 dolt-noms-size
 dolt-journal-size
 dolt-config
