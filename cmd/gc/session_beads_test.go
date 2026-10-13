@@ -7489,6 +7489,43 @@ func TestSweepProcessTableOrphansReapsRuntimeCarryingRuntimeEnvEpoch(t *testing.
 	}
 }
 
+// A test an agent session runs can hand its child a synthetic GC_SESSION_ID
+// and the rest of os.environ, so the child inherits the session's epoch and
+// city and passes both guards above. The controller reaped six such children
+// of assets/scripts/epic-review-decision.test.py mid-case (ci-ddfq1d). A root
+// nested inside a session whose bead is still open belongs to that session,
+// so the sweep must spare it.
+//
+// The two reaped rows are the controls that keep this from passing on a
+// sweep that spares everything nested: an enclosing session that is closed or
+// absent no longer vouches for the child, which may be a real orphan left by
+// a dead session's process.
+func TestSweepProcessTableOrphansSparesRootNestedInLiveSession(t *testing.T) {
+	const myCity = "/home/willie/projects/city"
+	store := beads.NewMemStoreFrom(0, []beads.Bead{
+		{ID: "ci-agent", Status: "open"},
+		{ID: "ci-gone", Status: "closed"},
+	}, nil)
+	sp := newProcessTableSweepProvider(
+		// The ci-ddfq1d shape: inherited epoch and city, synthetic id absent
+		// from the store, parent a live agent session.
+		runtime.LiveRuntime{SessionID: "ci-sess2791639f35", EnclosingSessionID: "ci-agent", City: myCity, PID: 101, Epoch: 3},
+		// Same shape under a session whose bead is closed: reaped.
+		runtime.LiveRuntime{SessionID: "ci-sess-a", EnclosingSessionID: "ci-gone", City: myCity, PID: 102, Epoch: 3},
+		// Same shape under a session the store has never heard of: reaped.
+		runtime.LiveRuntime{SessionID: "ci-sess-b", EnclosingSessionID: "ci-never", City: myCity, PID: 103, Epoch: 3},
+	)
+
+	var stderr bytes.Buffer
+	got := sweepProcessTableOrphans(sp, nil, store, myCity, &stderr)
+	if ids := terminatedSessionIDs(sp.terminated); ids != "ci-sess-a,ci-sess-b" {
+		t.Fatalf("terminated = %s, want ci-sess-a,ci-sess-b (a root nested in an open session must be spared); stderr=%q", ids, stderr.String())
+	}
+	if got != 2 {
+		t.Fatalf("sweepProcessTableOrphans() = %d, want 2", got)
+	}
+}
+
 // The process-table scan is supervisor-wide, but the sweep runs per city with
 // that city's store. A sibling city's live session (a different GC_CITY_PATH)
 // is absent from this city's store and untracked by this city's provider, so
@@ -7609,6 +7646,24 @@ func TestSweepProcessTableOrphansSkipsOnTransientStoreError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "dolt: connection reset") {
 		t.Fatalf("stderr = %q, want transient error logged", stderr.String())
+	}
+}
+
+// An unreadable enclosing session is uncertainty, not absence: the child's
+// own id is absent from the store, so falling through on a lookup error would
+// reap exactly the ci-ddfq1d shape whenever the store blinks.
+func TestSweepProcessTableOrphansSparesNestedRootOnEnclosingLookupError(t *testing.T) {
+	inner := beads.NewMemStore()
+	store := &flakyGetStore{Store: inner, failID: "ci-agent", failErr: errors.New("dolt: connection reset")}
+	sp := newProcessTableSweepProvider(
+		runtime.LiveRuntime{SessionID: "ci-sess", EnclosingSessionID: "ci-agent", PID: 302, Epoch: 1},
+	)
+	var stderr bytes.Buffer
+	if got := sweepProcessTableOrphans(sp, nil, store, "", &stderr); got != 0 {
+		t.Fatalf("sweepProcessTableOrphans() = %d, want 0 (an unreadable enclosing session must not reap); stderr=%q", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "dolt: connection reset") {
+		t.Fatalf("stderr = %q, want the enclosing lookup error logged", stderr.String())
 	}
 }
 

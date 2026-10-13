@@ -47,7 +47,7 @@ func IsScanRoot(pid int) bool {
 	if sessionID == "" {
 		return false
 	}
-	isRoot, err := isRootWithSessionID(scanRoot, pid, sessionID)
+	isRoot, _, err := isRootWithSessionID(scanRoot, pid, sessionID)
 	return err == nil && isRoot
 }
 
@@ -87,7 +87,7 @@ func scanWithRoot(root, id string) ([]runtime.LiveRuntime, error) {
 		if id != "" && sessionID != id {
 			continue
 		}
-		rootProcess, err := isRootWithSessionID(root, pid, sessionID)
+		rootProcess, enclosing, err := isRootWithSessionID(root, pid, sessionID)
 		if err != nil {
 			scanErr = errors.Join(scanErr, fmt.Errorf("checking root for pid %d: %w", pid, err))
 			continue
@@ -101,10 +101,11 @@ func scanWithRoot(root, id string) ([]runtime.LiveRuntime, error) {
 			city = env["GC_CITY"]
 		}
 		out = append(out, runtime.LiveRuntime{
-			SessionID: sessionID,
-			City:      city,
-			Epoch:     epoch,
-			PID:       pid,
+			SessionID:          sessionID,
+			City:               city,
+			Epoch:              epoch,
+			EnclosingSessionID: enclosing,
+			PID:                pid,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -152,27 +153,40 @@ func parseEnvironFile(path string) (map[string]string, error) {
 	return env, nil
 }
 
-func isRootWithSessionID(root string, pid int, sessionID string) (bool, error) {
+// isRootWithSessionID reports whether pid is a scan root for sessionID.
+// Returns (root, enclosing, err), where enclosing is the parent's
+// GC_SESSION_ID when the root sits inside another session's process tree --
+// see runtime.LiveRuntime.EnclosingSessionID.
+//
+// A tmux parent never encloses: the server's environment is whichever
+// process first started it, so its GC_SESSION_ID names nothing the root
+// belongs to.
+func isRootWithSessionID(root string, pid int, sessionID string) (bool, string, error) {
 	ppid, ok, err := readParentPID(filepath.Join(root, strconv.Itoa(pid), "stat"))
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	if !ok {
 		// stat vanished between environ read and here; process died in the race
 		// window — skip rather than misreport it as a root.
-		return false, nil
+		return false, "", nil
 	}
 	if ppid <= 1 {
-		return true, nil
+		return true, "", nil
 	}
 	parentEnv, err := parseEnvironFile(filepath.Join(root, strconv.Itoa(ppid), "environ"))
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	if parentEnv["GC_SESSION_ID"] == sessionID && isInfrastructureParent(root, ppid) {
-		return true, nil
+	parentID := parentEnv["GC_SESSION_ID"]
+	infrastructure := isInfrastructureParent(root, ppid)
+	if parentID == sessionID {
+		return infrastructure, "", nil
 	}
-	return parentEnv["GC_SESSION_ID"] != sessionID, nil
+	if parentID == "" || infrastructure {
+		return true, "", nil
+	}
+	return true, parentID, nil
 }
 
 func isInfrastructureParent(root string, pid int) bool {

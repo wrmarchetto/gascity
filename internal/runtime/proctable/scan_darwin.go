@@ -35,8 +35,15 @@ func ScanBySessionID(id string) ([]runtime.LiveRuntime, error) {
 		if id != "" && sessionID != id {
 			continue
 		}
-		if parent, ok := records[record.ppid]; ok && parent.env["GC_SESSION_ID"] == sessionID && !isInfrastructureCommand(parent.command) {
+		parent, hasParent := records[record.ppid]
+		if hasParent && parent.env["GC_SESSION_ID"] == sessionID && !isInfrastructureCommand(parent.command) {
 			continue
+		}
+		// The linux scan's enclosing-session rule, for the same reason: see
+		// runtime.LiveRuntime.EnclosingSessionID (ci-ddfq1d).
+		enclosing := ""
+		if hasParent && !isInfrastructureCommand(parent.command) {
+			enclosing = parent.env["GC_SESSION_ID"]
 		}
 		epoch, _ := strconv.Atoi(record.env["GC_RUNTIME_EPOCH"])
 		city := record.env["GC_CITY_PATH"]
@@ -44,10 +51,11 @@ func ScanBySessionID(id string) ([]runtime.LiveRuntime, error) {
 			city = record.env["GC_CITY"]
 		}
 		out = append(out, runtime.LiveRuntime{
-			SessionID: sessionID,
-			City:      city,
-			Epoch:     epoch,
-			PID:       record.pid,
+			SessionID:          sessionID,
+			City:               city,
+			Epoch:              epoch,
+			EnclosingSessionID: enclosing,
+			PID:                record.pid,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
