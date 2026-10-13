@@ -171,3 +171,75 @@ func TestScanWithRootMissingEnvironSkipped(t *testing.T) {
 		t.Fatalf("got %d entries, want 0", len(got))
 	}
 }
+
+// buildFakeProcUnder builds a /proc-shaped fixture entry for pid whose parent
+// is ppid and whose comm is comm, so a test can lay out a real process tree
+// rather than a forest of init children.
+func buildFakeProcUnder(t *testing.T, root string, pid, ppid int, comm string, env map[string]string) {
+	t.Helper()
+	buildFakeProc(t, root, pid, env)
+	dir := filepath.Join(root, strconv.Itoa(pid))
+	stat := strconv.Itoa(pid) + " (" + comm + ") S " + strconv.Itoa(ppid) + " 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+	if err := os.WriteFile(filepath.Join(dir, "stat"), []byte(stat), 0o644); err != nil {
+		t.Fatalf("write stat: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "comm"), []byte(comm+"\n"), 0o644); err != nil {
+		t.Fatalf("write comm: %v", err)
+	}
+}
+
+// A test child an agent session spawns with an overridden GC_SESSION_ID is a
+// scan root -- its id differs from its parent's -- and it inherits the
+// session's GC_RUNTIME_EPOCH and GC_CITY_PATH, so nothing else in the record
+// tells it from a gc-started runtime (ci-ddfq1d). EnclosingSessionID is that
+// distinction: the parent's session id, recorded only when the parent is a
+// session process rather than tmux infrastructure or a process carrying no
+// id. Both negative arms are the shapes every gc-started root has, so a scan
+// that recorded the parent's id unconditionally fails here too.
+func TestScanWithRootRecordsEnclosingSessionOfNestedRoot(t *testing.T) {
+	root := t.TempDir()
+	const city = "/city"
+	agent := map[string]string{"GC_SESSION_ID": "ci-agent", "GC_RUNTIME_EPOCH": "3", "GC_CITY_PATH": city}
+	// An agent session's process, and a test child under it that overrides
+	// only GC_SESSION_ID and inherits the rest.
+	buildFakeProcUnder(t, root, 300, 1, "bash", agent)
+	buildFakeProcUnder(t, root, 301, 300, "python3",
+		map[string]string{"GC_SESSION_ID": "ci-sess", "GC_RUNTIME_EPOCH": "3", "GC_CITY_PATH": city})
+	// A tmux-started runtime: the server carries some other session's id.
+	buildFakeProcUnder(t, root, 400, 1, "tmux: server", map[string]string{"GC_SESSION_ID": "ci-first"})
+	buildFakeProcUnder(t, root, 401, 400, "claude",
+		map[string]string{"GC_SESSION_ID": "ci-tmuxed", "GC_RUNTIME_EPOCH": "1", "GC_CITY_PATH": city})
+	// A subprocess-provider runtime: its parent, the controller, has no id.
+	buildFakeProcUnder(t, root, 500, 1, "gc", map[string]string{"GC_CITY_PATH": city})
+	buildFakeProcUnder(t, root, 501, 500, "sh",
+		map[string]string{"GC_SESSION_ID": "ci-sub", "GC_RUNTIME_EPOCH": "1", "GC_CITY_PATH": city})
+
+	got, err := scanWithRoot(root, "")
+	if err != nil {
+		t.Fatalf("scanWithRoot error: %v", err)
+	}
+	enclosing := map[string]string{}
+	for _, live := range got {
+		enclosing[live.SessionID] = live.EnclosingSessionID
+	}
+	want := map[string]string{
+		"ci-agent":  "",
+		"ci-sess":   "ci-agent",
+		"ci-first":  "",
+		"ci-tmuxed": "",
+		"ci-sub":    "",
+	}
+	if len(enclosing) != len(want) {
+		t.Fatalf("scan roots = %v, want exactly %v", enclosing, want)
+	}
+	for id, w := range want {
+		g, ok := enclosing[id]
+		if !ok {
+			t.Errorf("%s is not a scan root, want one", id)
+			continue
+		}
+		if g != w {
+			t.Errorf("%s EnclosingSessionID = %q, want %q", id, g, w)
+		}
+	}
+}

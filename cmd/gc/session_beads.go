@@ -2849,6 +2849,28 @@ func sweepProcessTableOrphans(
 		if live.Epoch <= 0 {
 			continue
 		}
+		// The epoch proves only that the root runs under SOME gc session, not
+		// that gc started it: every process an agent session spawns inherits
+		// that session's epoch and city, so a test child handed a synthetic
+		// GC_SESSION_ID passes both guards above (ci-ddfq1d: six children of
+		// one suite SIGTERMed mid-case). A root whose parent is a process of a
+		// still-open session belongs to that session and is spared.
+		//
+		// The enclosing bead is CHECKED rather than any nesting spared
+		// outright, so an id leaked into a long-lived parent's environment
+		// from a session since closed vouches for nothing. When the enclosing
+		// session's own root is reaped, this child is reparented to init,
+		// loses its enclosing id, and the next tick judges it on its own.
+		if enclosing := strings.TrimSpace(live.EnclosingSessionID); enclosing != "" {
+			parent, err := store.Get(enclosing)
+			switch {
+			case err == nil && parent.Status != "closed":
+				continue
+			case err != nil && !errors.Is(err, beads.ErrNotFound):
+				fmt.Fprintf(stderr, "session reconciler: looking up enclosing session bead %s of process-table orphan pid=%d: %v\n", enclosing, live.PID, err) //nolint:errcheck
+				continue
+			}
+		}
 		bead, err := store.Get(live.SessionID)
 		switch {
 		case err == nil && bead.Status != "closed":

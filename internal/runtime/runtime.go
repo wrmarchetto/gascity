@@ -401,6 +401,14 @@ type LiveRuntime struct {
 	// Epoch is the GC_RUNTIME_EPOCH from the process environment, if readable.
 	// Zero if the variable is absent or unparseable.
 	Epoch int
+	// EnclosingSessionID is the GC_SESSION_ID of this root's parent process
+	// when the parent carries a different one and is not tmux infrastructure:
+	// the root was spawned from inside another session's process tree, as a
+	// test child with a synthetic id is (ci-ddfq1d). Empty for every runtime
+	// gc starts, whose parent is the tmux server, the controller, or init.
+	// Such a child inherits the enclosing session's GC_RUNTIME_EPOCH and
+	// GC_CITY_PATH, so Epoch and City cannot tell it from a gc-started root.
+	EnclosingSessionID string
 	// PID is the OS process ID for local providers, or a provider-specific
 	// process identifier for remote infrastructure.
 	PID int
