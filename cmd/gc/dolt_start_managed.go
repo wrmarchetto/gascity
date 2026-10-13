@@ -148,6 +148,13 @@ func startManagedDoltProcess(cityPath, host, port, user, logLevel string, timeou
 
 //nolint:unparam // archiveLevel is an explicit override hook; current callers use config/env fallback.
 func startManagedDoltProcessWithOptions(cityPath, host, port, user, logLevel string, archiveLevel int, timeout time.Duration, publish bool) (managedDoltStartReport, error) {
+	// The script's start op and recover-managed both reach here while
+	// holding the lifecycle lock, which is what lets `gc maintenance hold`
+	// serialize against an in-flight start: it writes the hold, then takes
+	// that lock, so any spawn after the lock sees the hold here.
+	if err := managedDoltMaintenanceHoldRefusal(cityPath); err != nil {
+		return managedDoltStartReport{}, err
+	}
 	layout, err := resolveManagedDoltRuntimeLayout(cityPath)
 	if err != nil {
 		return managedDoltStartReport{}, err

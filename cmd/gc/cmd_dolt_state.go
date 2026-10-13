@@ -478,6 +478,26 @@ func newDoltStateCmd(stdout, stderr io.Writer) *cobra.Command {
 	_ = preflightClean.MarkFlagRequired("city")
 	cmd.AddCommand(preflightClean)
 
+	// The provider script calls this before its start and recover ops, so a
+	// hand-run gc-beads-bd.sh honors the hold too, including its shell
+	// fallback that spawns dolt sql-server without any Go spawner.
+	holdCheck := &cobra.Command{
+		Use:    "hold-check",
+		Short:  "Exit nonzero when a managed Dolt maintenance hold is in force",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if err := managedDoltMaintenanceHoldRefusal(cityPath); err != nil {
+				fmt.Fprintf(stderr, "gc dolt-state hold-check: %v\n", err) //nolint:errcheck
+				return errExit
+			}
+			return nil
+		},
+	}
+	holdCheck.Flags().StringVar(&cityPath, "city", "", "city root")
+	_ = holdCheck.MarkFlagRequired("city")
+	cmd.AddCommand(holdCheck)
+
 	return cmd
 }
 

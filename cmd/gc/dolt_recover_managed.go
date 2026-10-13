@@ -60,6 +60,12 @@ func recoverManagedDoltProcessWithOps(cityPath, host, port, user, logLevel strin
 	if strings.TrimSpace(port) == "" {
 		return managedDoltRecoverReport{}, fmt.Errorf("missing port")
 	}
+	// Ahead of the lock wait, and ahead of stop and preflight cleanup, both
+	// of which touch the data dir an offline GC owns. The start op below
+	// re-checks under the lock.
+	if err := managedDoltMaintenanceHoldRefusal(cityPath); err != nil {
+		return managedDoltRecoverReport{}, err
+	}
 	host = normalizeManagedDoltBindHost(host)
 	if strings.TrimSpace(user) == "" {
 		user = "root"

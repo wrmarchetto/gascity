@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "next_id": 203,
+  "next_id": 205,
   "permanent_ids": [
     {
       "name": "help",
@@ -1210,6 +1210,21 @@
       "exclusion": "hidden-private"
     },
     {
+      "path": "gc dolt-state hold-check",
+      "aliases": [],
+      "conditional_modes": [],
+      "hidden": true,
+      "effective_hidden": true,
+      "disable_flag_parsing": false,
+      "shape": "runnable",
+      "classification": "excluded",
+      "notice_policy": "ineligible",
+      "recording_policy": "excluded",
+      "owner": "excluded",
+      "mode": "hidden-private",
+      "exclusion": "hidden-private"
+    },
+    {
       "path": "gc dolt-state inspect-managed",
       "aliases": [],
       "conditional_modes": [],
@@ -2381,6 +2396,36 @@
       "classification": "maintenance-dolt-gc",
       "owner": "immediate",
       "id": 88
+    },
+    {
+      "path": "gc maintenance hold",
+      "aliases": [],
+      "conditional_modes": [],
+      "hidden": false,
+      "effective_hidden": false,
+      "disable_flag_parsing": false,
+      "shape": "runnable",
+      "recording_policy": "recordable",
+      "mode": "standard",
+      "notice_policy": "eligible",
+      "classification": "maintenance-hold",
+      "owner": "immediate",
+      "id": 203
+    },
+    {
+      "path": "gc maintenance release",
+      "aliases": [],
+      "conditional_modes": [],
+      "hidden": false,
+      "effective_hidden": false,
+      "disable_flag_parsing": false,
+      "shape": "runnable",
+      "recording_policy": "recordable",
+      "mode": "standard",
+      "notice_policy": "eligible",
+      "classification": "maintenance-release",
+      "owner": "immediate",
+      "id": 204
     },
     {
       "path": "gc maintenance status",

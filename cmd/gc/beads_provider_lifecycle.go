@@ -882,6 +882,11 @@ func ensureBeadsProvider(cityPath string) error {
 	}
 	provider := beadsProvider(cityPath)
 	if strings.HasPrefix(provider, "exec:") {
+		if providerUsesBdStoreContract(provider) {
+			if err := managedDoltMaintenanceHoldRefusal(cityPath); err != nil {
+				return err
+			}
+		}
 		release, err := acquireProviderSemaphoreForOp(cityPath, "start")
 		if err != nil {
 			return err
@@ -1277,6 +1282,14 @@ func healthBeadsProviderContext(ctx context.Context, cityPath string, waitForSco
 	}
 	provider := beadsProvider(cityPath)
 	if strings.HasPrefix(provider, "exec:") {
+		// Refuse ahead of the health op as well as the recover op. Under a
+		// hold the server is down by declaration, so health can only fail
+		// and lead to recover, and every agent bd call pays this door.
+		if providerUsesBdStoreContract(provider) {
+			if err := managedDoltMaintenanceHoldRefusal(cityPath); err != nil {
+				return err
+			}
+		}
 		release, err := acquireProviderSemaphoreForOpContext(ctx, cityPath, "health")
 		if err != nil {
 			return err

@@ -926,6 +926,9 @@ var (
 )
 
 var recoverManagedBDCommand = func(cityPath string) error {
+	if err := managedDoltMaintenanceHoldRefusal(cityPath); err != nil {
+		return err
+	}
 	script := gcBeadsBdScriptPath(cityPath)
 	overrides := cityRuntimeEnvMapForCity(cityPath)
 	setProjectedDoltEnvEmpty(overrides)
@@ -1125,6 +1128,12 @@ func resolvedRuntimeCityDoltTargetContext(ctx context.Context, cityPath string, 
 			}
 		} else if ctxErr := ctx.Err(); ctxErr != nil {
 			return contract.DoltConnectionTarget{}, false, ctxErr
+		} else if isManagedDoltMaintenanceHold(err) {
+			// Surface the hold instead of falling through to a generic
+			// "managed runtime unavailable": this resolver feeds every
+			// gc bd / hook / mail env build, so the hold is the one
+			// message agents see while it is in force.
+			return contract.DoltConnectionTarget{}, false, err
 		}
 	}
 	// Last-resort: when all other recovery paths have been exhausted but the
@@ -1286,6 +1295,12 @@ func bdCommandRunnerWithManagedRetryErr(cityPath string, envFn func(dir string) 
 		}
 		if bdTransportRecoverableError(cityPath, dir, env, err) {
 			if recErr := recoverManagedBDCommand(cityPath); recErr != nil {
+				// A held server is down on purpose. Retrying would only
+				// fail the same way, and the bare transport error would
+				// tell the agent nothing about why.
+				if isManagedDoltMaintenanceHold(recErr) {
+					return out, fmt.Errorf("%w (bd: %w)", recErr, err)
+				}
 				return out, err
 			}
 		}
