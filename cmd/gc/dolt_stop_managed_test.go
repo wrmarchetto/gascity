@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -162,5 +163,67 @@ name = "mayor"
 	got := resolveManagedDoltStopTimeout(dir)
 	if got != config.DefaultDoltStopTimeout {
 		t.Errorf("resolveManagedDoltStopTimeout() with invalid duration = %v, want %v (default)", got, config.DefaultDoltStopTimeout)
+	}
+}
+
+// deletedCityScopeForTest builds a bd-provider city scope, then deletes it,
+// returning the path that no longer exists. It is the state the dolt scope
+// watchdog acts in: the scope-gone check has just proved the directory is
+// gone, and everything it calls afterwards still names it.
+//
+// clearGCEnv supplies the GC_HOME that a production watchdog inherits.
+// Without one EnsureBuiltinRuntimeAssets returns before the shim writer, so
+// a test lacking it would pass against the defect it exists to catch.
+func deletedCityScopeForTest(t *testing.T) string {
+	t.Helper()
+	clearGCEnv(t)
+	city := filepath.Join(t.TempDir(), "scope")
+	if err := os.MkdirAll(city, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(city, "city.toml"), []byte("[workspace]\nname = \"scope\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(city); err != nil {
+		t.Fatal(err)
+	}
+	return city
+}
+
+// A config load names a city that does not exist, so it must leave none
+// behind. The builtin-asset step ran before the read that reports the
+// missing city.toml, and its shim writer MkdirAll'd <city>/.gc/scripts back
+// into existence (ci-0z2h08).
+func TestLoadCityConfigOfDeletedScopeRecreatesNothing(t *testing.T) {
+	city := deletedCityScopeForTest(t)
+	if _, err := loadCityConfig(city, io.Discard); err == nil {
+		t.Fatalf("loadCityConfig(%s) of a deleted scope succeeded", city)
+	}
+	if _, err := os.Stat(city); !os.IsNotExist(err) {
+		t.Fatalf("stat %s after loading a deleted scope: err = %v, want not-exist", city, err)
+	}
+}
+
+// The scope watchdog's reap path resolves the stop grace from the scope it
+// has just proved deleted. It must fall back to the default and recreate
+// nothing -- this is the call that left /var/tmp gate worktrees holding a
+// fresh .gc/scripts/gc-beads-bd.sh 42s after removal (ci-0z2h08).
+//
+// Pinned at this call rather than through a watchdog process, because the
+// suite's watchdog is a re-exec of the TEST binary and cannot represent the
+// defect. Measured: with the guard removed, a test-binary watchdog given a
+// real scope and GC_HOME reaped and recreated nothing, and strace showed it
+// never touched GC_HOME. That end-to-end test passed against the defect and
+// was deleted. The production path was instead checked by hand with real
+// binaries, a fake dolt on PATH and the scope rm -rf'd: the installed gc
+// recreated <scope>/.gc/scripts/gc-beads-bd.sh and this branch's build did
+// not.
+func TestResolveManagedDoltStopTimeoutForDeletedScopeRecreatesNothing(t *testing.T) {
+	city := deletedCityScopeForTest(t)
+	if got := resolveManagedDoltStopTimeout(city); got != config.DefaultDoltStopTimeout {
+		t.Errorf("resolveManagedDoltStopTimeout(deleted) = %v, want default %v", got, config.DefaultDoltStopTimeout)
+	}
+	if _, err := os.Stat(city); !os.IsNotExist(err) {
+		t.Fatalf("stat %s after resolving its stop timeout: err = %v, want not-exist", city, err)
 	}
 }
