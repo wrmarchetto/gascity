@@ -1,8 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	iofs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +42,20 @@ type builtinRuntimeState struct {
 // production loader routes through it so any gc command self-heals a cold
 // cache after a binary upgrade or cache eviction. It injects nothing into
 // config composition.
+//
+// A city.toml that does not exist gets NO readiness work. The load that
+// follows fails on the missing file regardless, so skipping changes no
+// successful load. Running it anyway is how a deleted scope came back: the
+// dolt scope watchdog, having just proved its scope gone, resolves the stop
+// grace through loadCityConfig, and the shim writer below MkdirAll'd
+// <scope>/.gc/scripts into existence again (ci-0z2h08). Only a definite
+// not-exist skips. Any other stat error proceeds as before, so a flaky
+// filesystem cannot quietly leave a live city without its shim.
 func ensureBuiltinPacksForConfigLoad(fs fsys.FS, tomlPath string, warningWriter io.Writer) error {
 	if !usesOSFS(fs) {
+		return nil
+	}
+	if _, err := os.Stat(tomlPath); errors.Is(err, iofs.ErrNotExist) {
 		return nil
 	}
 	return EnsureBuiltinRuntimeAssets(filepath.Dir(tomlPath), warningWriter)
