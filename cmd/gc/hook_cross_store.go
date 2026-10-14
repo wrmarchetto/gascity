@@ -128,24 +128,38 @@ func appendOneRigHookStore(stores []hookStore, cityPath string, cfg *config.City
 // entry is appended LAST so the rig store keeps bestStoreWithWork's
 // emit-on-timeout contract as the primary entry.
 func appendCityHookStore(stores []hookStore, cityPath string, cfg *config.City, a *config.Agent, identityOverrides map[string]string) []hookStore {
-	if cfg == nil || a == nil {
+	city, ok := cityHookStore(cityPath, cfg, a, identityOverrides)
+	if !ok {
 		return stores
+	}
+	return append(stores, city)
+}
+
+// cityHookStore builds the CITY store entry for agent a, whatever the agent's
+// own scope. It is the city leg of the rig-scoped federation above and, for
+// every agent, the store gc hook --claim reads the claiming SESSION bead from:
+// session beads live only in the city store, so the claim's own work store is
+// the wrong one for any rig-scoped agent (ci-d9w7fl). ok is false when the
+// city env cannot be built.
+func cityHookStore(cityPath string, cfg *config.City, a *config.Agent, identityOverrides map[string]string) (hookStore, bool) {
+	if cfg == nil || a == nil {
+		return hookStore{}, false
 	}
 	view := *a
 	view.Dir = ""
 	cityEnv, err := hookQueryEnv(cityPath, cfg, &view)
 	if err != nil || cityEnv == nil {
-		return stores
+		return hookStore{}, false
 	}
 	for _, k := range hookIdentityEnvKeys {
 		if v, ok := identityOverrides[k]; ok {
 			cityEnv[k] = v
 		}
 	}
-	return append(stores, hookStore{
+	return hookStore{
 		dir: cityPath,
 		env: mergeRuntimeEnv(os.Environ(), cityEnv),
-	})
+	}, true
 }
 
 // rigScopedHookRig returns the rig whose store a rig-scoped agent must ALSO

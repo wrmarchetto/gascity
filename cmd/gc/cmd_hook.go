@@ -560,6 +560,7 @@ func cmdHookWithOptions(args []string, opts hookCommandOptions, stdout, stderr i
 			DrainAck: opts.DrainAck,
 			JSON:     opts.JSON,
 		}
+		claimOpts.SessionStore, _ = cityHookStore(cityPath, cfg, &a, overrides)
 		return claimHookWork(workQuery, workDir, queryEnv, stores, claimOpts, emitQueryFailure, stdout, stderr)
 	}
 	return doHook(workQuery, workDir, false, runner, stdout, stderr)

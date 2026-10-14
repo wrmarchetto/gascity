@@ -43,6 +43,13 @@ type hookClaimOptions struct {
 	Env                []string
 	DrainAck           bool
 	JSON               bool
+	// SessionStore is where the claiming session's own bead is read from --
+	// always the CITY store (cityHookStore), never the store the work was
+	// claimed from. The zero value resolves no session bead at all, and the
+	// production reader refuses it rather than falling back to the claim's
+	// store, because that fallback is the defect: a rig-scoped session's work
+	// store is its rig, which holds no session bead (ci-d9w7fl).
+	SessionStore hookStore
 }
 
 type hookClaimOps struct {
@@ -78,7 +85,7 @@ type hookClaimOps struct {
 	// gc.session_name) onto the claimed bead in ONE update. Best-effort.
 	StampWorkMeta hookStampWorkMetaFunc
 	// ReadSessionBead returns the session bead named by GC_SESSION_ID, from
-	// the same store the claim reads. It exists so the claim can resolve the
+	// hookClaimOptions.SessionStore. It exists so the claim can resolve the
 	// CLAIMING AGENT's worktree (contract.WorkerDirFromMetadata) rather than
 	// the dir threaded down from agentCommandDir, which is the bead store's
 	// SHARED checkout by explicit design (cmd/gc/cmd_start.go). Best-effort:
@@ -901,7 +908,7 @@ func hookPoolClaimWithBdStore(ctx context.Context, dir string, env []string, bea
 // (the cache-reconcile flood class). Best-effort: a missing repo, detached HEAD,
 // absent session, or write error never blocks the claim.
 func stampHookClaimIdentity(bead beads.Bead, opts hookClaimOptions, ops hookClaimOps, dir string, stderr io.Writer) (beads.Bead, bool) {
-	sessionBead := hookClaimSessionBead(opts, ops, dir, stderr)
+	sessionBead := hookClaimSessionBead(opts, ops, stderr)
 	patch := hookClaimIdentityPatch(bead, opts, ops, hookClaimWorkerDir(sessionBead))
 	// Rides the same single write as gc.session_id, which it exists to
 	// outlive: that key is overwritten by every reclaim.
@@ -999,14 +1006,14 @@ func hookClaimWorkerDir(sessionBead beads.Bead) string {
 //
 // Cost: one extra store read per claim tick, on top of the work query's own.
 // It is skipped entirely when no session is claiming.
-func hookClaimSessionBead(opts hookClaimOptions, ops hookClaimOps, dir string, stderr io.Writer) beads.Bead {
+func hookClaimSessionBead(opts hookClaimOptions, ops hookClaimOps, stderr io.Writer) beads.Bead {
 	sessionID := hookClaimSessionID(opts.Env)
 	if sessionID == "" || ops.ReadSessionBead == nil {
 		return beads.Bead{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hookClaimMutationTimeout)
 	defer cancel()
-	sessionBead, err := ops.ReadSessionBead(ctx, dir, opts.Env, sessionID, opts.Assignee)
+	sessionBead, err := ops.ReadSessionBead(ctx, opts.SessionStore.dir, opts.SessionStore.env, sessionID, opts.Assignee)
 	if err != nil {
 		if stderr != nil {
 			fmt.Fprintf(stderr, "gc hook --claim: reading session bead %s to resolve the worker worktree and claimant provider: %v\n", sessionID, err) //nolint:errcheck
@@ -1097,7 +1104,14 @@ func hookReadClaimedBeadWithBdStore(_ context.Context, dir string, env []string,
 // separate seam from ReadWorkMeta despite the identical body: that one is the
 // post-stamp readback of the WORK bead and tests fake it with the work bead's
 // metadata, so sharing it would answer this lookup with the wrong bead.
+//
+// An empty dir is refused, not defaulted. bd would resolve it from cwd and
+// BEADS_DIR, which for a rig-scoped session is the rig store -- the exact
+// wrong-store read this seam was moved off (ci-d9w7fl).
 func hookReadSessionBeadWithBdStore(_ context.Context, dir string, env []string, sessionID, actor string) (beads.Bead, error) {
+	if strings.TrimSpace(dir) == "" {
+		return beads.Bead{}, fmt.Errorf("reading session bead %q: no city store resolved for it", sessionID)
+	}
 	return hookClaimBdStore(dir, env, actor).Get(sessionID)
 }
 

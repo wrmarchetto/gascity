@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
@@ -440,5 +441,68 @@ func TestDoHookClaimAdoptionReconcilesDurableStartedFact(t *testing.T) {
 	}
 	if len(emitted) != 1 || emitted[0].ID != "gcg-attempt" || emitted[0].Metadata[beadmeta.SessionIDMetadataKey] != "mc-sess1" {
 		t.Fatalf("started emission = %#v, want durable adopted step", emitted)
+	}
+}
+
+// TestClaimReadsSessionBeadFromCityStoreNotWorkStore pins that a rig-scoped
+// session's claim reads its OWN session bead from the city store, not from
+// the rig store it claimed the work from.
+//
+// Modeled on astoria-sel4/lab.pm adopting as-wddx6 (ci-d9w7fl): the work bead
+// lives in the rig store, the session bead only in the city store, and the
+// read through the claim's own store answered `bead not found`. The stand-in
+// reader answers ONLY for the city store's dir and env and refuses every other
+// store the way the rig store did, so the stamped claimant record and worktree
+// can only appear if the read went to the right store. Before the fix the
+// patch carried gc.claim_sessions ["mc-sess1::"] and no gc.work_dir -- the
+// shape measured on 58 of 58 claimant entries in the astoria-sel4 store.
+func TestClaimReadsSessionBeadFromCityStoreNotWorkStore(t *testing.T) {
+	const (
+		rigDir  = "/rigs/astoria-sel4"
+		cityDir = "/city"
+	)
+	spy := &stampMetaSpy{}
+	reads := 0
+	ops := hookClaimOps{
+		Runner: func(string, string) (string, error) {
+			return `[{"id":"as-wddx6","status":"in_progress","assignee":"gc__role-mc-sess1","metadata":{"gc.routed_to":"worker"}}]`, nil
+		},
+		Claim: func(context.Context, string, []string, string, string) (beads.Bead, bool, error) {
+			t.Error("Claim must not be called on the existing-assignment path")
+			return beads.Bead{}, false, nil
+		},
+		ReadSessionBead: func(_ context.Context, dir string, env []string, id, _ string) (beads.Bead, error) {
+			reads++
+			if scope, _ := lookupEnvValue(env, "GC_STORE_SCOPE"); dir != cityDir || scope != "city" {
+				return beads.Bead{}, fmt.Errorf("getting bead %q: %w", id, beads.ErrNotFound)
+			}
+			return poolClaimSessionBead(id, poolClaimWorkerDir), nil
+		},
+		ResolveWorkBranch: func(string) string { return "bd-as-wddx6" },
+		StampWorkMeta:     spy.fn,
+		ReadWorkMeta: func(_ context.Context, _ string, _ []string, id, assignee string) (beads.Bead, error) {
+			return beads.Bead{ID: id, Status: "in_progress", Assignee: assignee}, nil
+		},
+		PublishRunMap: noopPublishRunMap,
+	}
+	opts := poolClaimOpts()
+	opts.Env = append(opts.Env, "GC_STORE_SCOPE=rig")
+	opts.SessionStore = hookStore{dir: cityDir, env: []string{"GC_STORE_SCOPE=city"}}
+
+	var stdout, stderr bytes.Buffer
+	if code := doHookClaim("bd ready --json", rigDir, opts, ops, &stdout, &stderr); code != 0 {
+		t.Fatalf("doHookClaim = %d, want 0; stderr=%s", code, stderr.String())
+	}
+	if reads == 0 {
+		t.Fatal("claim never read the session bead, so the store it reads from is unpinned")
+	}
+	if got := spy.patch[beadmeta.WorkDirMetadataKey]; got != poolClaimWorkerDir {
+		t.Errorf("gc.work_dir = %q, want %q; stderr=%s", got, poolClaimWorkerDir, stderr.String())
+	}
+	if got := spy.patch[beadmeta.ClaimSessionsMetadataKey]; got != poolClaimSessionsRecord {
+		t.Errorf("gc.claim_sessions = %q, want %q", got, poolClaimSessionsRecord)
+	}
+	if strings.Contains(stderr.String(), "bead not found") {
+		t.Errorf("claim reported the session bead missing: %s", stderr.String())
 	}
 }
