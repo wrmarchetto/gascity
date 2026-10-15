@@ -55,6 +55,7 @@ test('a snapshot fed mirror publishes nothing, which is why dryRun sends upserts
     conversation: { scope_id: 's', provider: 'slack', account_id: 'a', conversation_id: 'c', kind: 'room' },
     sessionID: 's',
     publish: async (body) => { seen.push(body) },
+    hasUnansweredInbound: async () => true,
   })
   await mirror.handleStructuredEvent({ operation: 'snapshot', structured_messages: messages })
   assert.equal(seen.length, 0, 'a snapshot is a watermark')

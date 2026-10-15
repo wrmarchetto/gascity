@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createAssistantTurnMirror, reconnectAssistantTurnStream, streamAssistantTurns } from '../lib/assistant-turn-mirror.mjs'
+import { createAssistantTurnMirror, inboundAwaitsAnswer, newestTranscriptPath, reconnectAssistantTurnStream, streamAssistantTurns } from '../lib/assistant-turn-mirror.mjs'
 
 // Scope: the assistant-turn mirror's frame consumer -- which turns it publishes
 // and which it refuses -- plus the chunking policy and the reconnect loop.
@@ -45,6 +45,12 @@ const assistantText = (id, text) => ({
 
 const structured = (messages) => ({ structured_messages: messages })
 
+// answersEveryTurn opens the answer-only gate for every turn. The suites above
+// the answer-only section pin what is eligible INSIDE a turn the gate has
+// already admitted, so they hold it open, and the gate's own behavior is pinned
+// separately below against a transcript stand-in.
+const answersEveryTurn = async () => true
+
 // attach(mirror) walks a consumer past its attach watermark with an empty
 // snapshot. Every test below that expects a publish goes through it, and so
 // does every exclusion test: after the watermark landed, an exclusion driven as
@@ -60,6 +66,7 @@ test('mirrors a final assistant text turn through extmsg outbound without an age
   const calls = []
   const mirror = createAssistantTurnMirror({
     conversation,
+    hasUnansweredInbound: answersEveryTurn,
     sessionID: 'session-under-test',
     publish: async (body) => calls.push(body),
   })
@@ -77,7 +84,7 @@ test('mirrors a final assistant text turn through extmsg outbound without an age
 
 test('does not mirror a structured tool result', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
   await attach(mirror)
 
   await mirror.handleStructuredEvent(upsert([{
@@ -92,7 +99,7 @@ test('does not mirror a structured tool result', async () => {
 
 test('does not mirror assistant tool-use blocks', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
   await attach(mirror)
 
   await mirror.handleStructuredEvent(upsert([{
@@ -107,7 +114,7 @@ test('does not mirror assistant tool-use blocks', async () => {
 
 test('does not mirror inbound traffic from another agent', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
   await attach(mirror)
 
   await mirror.handleStructuredEvent(upsert([{
@@ -122,7 +129,7 @@ test('does not mirror inbound traffic from another agent', async () => {
 
 test('does not re-mirror a Slack channel message already visible to its sender', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
   await attach(mirror)
 
   await mirror.handleStructuredEvent(upsert([{
@@ -138,7 +145,7 @@ test('does not re-mirror a Slack channel message already visible to its sender',
 
 test('does not mirror a non-text block that carries text of its own', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
   await attach(mirror)
 
   // The block projection sets .text on more than text blocks. An image block
@@ -165,6 +172,7 @@ test('mirrors a long assistant turn as labeled lossless chunks instead of droppi
   const calls = []
   const mirror = createAssistantTurnMirror({
     conversation,
+    hasUnansweredInbound: answersEveryTurn,
     sessionID: 'session-under-test',
     maxMessageLength: 24,
     publish: async (body) => calls.push(body),
@@ -183,7 +191,7 @@ test('mirrors a long assistant turn as labeled lossless chunks instead of droppi
 
 test("does not duplicate a turn an upsert's inclusive tail replays", async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
   await attach(mirror)
   const turn = assistantText('assistant-stable-id', 'one durable answer')
 
@@ -219,6 +227,7 @@ test('a mirror pinned to a retired backing session goes quiet after respawn', as
   let reconnects = 0
   const mirror = createAssistantTurnMirror({
     conversation,
+    hasUnansweredInbound: answersEveryTurn,
     sessionID: 's-before-respawn',
     publish: async (body) => calls.push(body),
   })
@@ -251,6 +260,7 @@ test('replays an unacknowledged assistant turn after controller restart makes ou
   let publishes = 0
   const mirror = createAssistantTurnMirror({
     conversation,
+    hasUnansweredInbound: answersEveryTurn,
     sessionID: 'lab/lead',
     publish: async (body) => {
       publishes += 1
@@ -297,6 +307,7 @@ test('reconnects through a stable named session after its backing session respaw
   const openedTargets = []
   const mirror = createAssistantTurnMirror({
     conversation,
+    hasUnansweredInbound: answersEveryTurn,
     sessionID: namedSession,
     publish: async (body) => calls.push(body),
   })
@@ -335,7 +346,7 @@ test('reconnects through a stable named session after its backing session respaw
 
 test('publishes nothing from the transcript that already existed when it attached', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
 
   await mirror.handleStructuredEvent({
     operation: 'snapshot',
@@ -351,7 +362,7 @@ test('publishes nothing from the transcript that already existed when it attache
 
 test('publishes a turn that arrives after the attach watermark', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
 
   await mirror.handleStructuredEvent({ operation: 'snapshot', structured_messages: [assistantText('backlog-1', 'before the consumer existed')] })
   await mirror.handleStructuredEvent(upsert([assistantText('backlog-1', 'before the consumer existed'), assistantText('live-1', 'this one is live')]))
@@ -361,7 +372,7 @@ test('publishes a turn that arrives after the attach watermark', async () => {
 
 test('watermarks the transcript a reset frame restates rather than republishing it', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
 
   await attach(mirror)
   await mirror.handleStructuredEvent(upsert([assistantText('live-1', 'delivered while the cursor held')]))
@@ -385,6 +396,7 @@ test('retries a turn the adapter refused even when the retry arrives inside a re
   let publishes = 0
   const mirror = createAssistantTurnMirror({
     conversation,
+    hasUnansweredInbound: answersEveryTurn,
     sessionID: 'session-under-test',
     publish: async (body) => {
       publishes += 1
@@ -407,7 +419,7 @@ test('retries a turn the adapter refused even when the retry arrives inside a re
 
 test('watermarks a reconnect snapshot instead of republishing the transcript it restates', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
 
   await attach(mirror)
   await mirror.handleStructuredEvent(upsert([assistantText('live-1', 'seen live')]))
@@ -432,7 +444,7 @@ test('watermarks a reconnect snapshot instead of republishing the transcript it 
 
 test('watermarks a frame whose operation it does not recognize', async () => {
   const calls = []
-  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body) })
+  const mirror = createAssistantTurnMirror({ conversation, sessionID: 'session-under-test', publish: async (body) => calls.push(body), hasUnansweredInbound: answersEveryTurn })
 
   await attach(mirror)
   // operation is required and enum-constrained on the wire, so an unrecognized
@@ -442,4 +454,227 @@ test('watermarks a frame whose operation it does not recognize', async () => {
   await mirror.handleStructuredEvent({ operation: 'coalesce', structured_messages: [assistantText('unknown-op-1', 'from a wire this consumer does not know')] })
 
   assert.deepEqual(calls, [], 'signature: an unrecognized operation must not publish')
+})
+
+// --- answer-only gate ---
+//
+// The mirror publishes a turn ONLY when it answers an inbound human message on
+// the bound conversation. Everything else the session says -- turns started by
+// mail, a nudge, an order -- is its own working narration and must not reach
+// the channel (bead ci-06lx7u: 68 such posts in a day, about 20 of them
+// overnight reports that nothing needed the reader).
+//
+// The gate is driven here through a stand-in of the extmsg transcript that the
+// publish leg writes into, so "answered" is what the real wire would record
+// rather than a flag the test flips. inboundAwaitsAnswer is the same function
+// the entrypoint applies to GET /extmsg/transcript.
+
+const turnStep = (id, text) => ({ ...assistantText(id, text), stop_reason: 'tool_use' })
+const turnEnd = (id, text) => ({ ...assistantText(id, text), stop_reason: 'end_turn' })
+
+// The reminder gc's extmsg fan-out nudges a member session with
+// (formatExtmsgNotifyReminder, internal/api/handler_extmsg.go). The Go half of
+// this layout is pinned by TestExtmsgReminderCarriesTheMirrorDeliveryMarker.
+const reminderFor = (provider, conversationID, actorKind) =>
+  `<system-reminder>\nNew message in shared conversation ${provider}/${conversationID}:\n\n- U0READER (${actorKind}): are you there?\n\n</system-reminder>`
+const deliveredPrompt = (id, text) => ({
+  id,
+  role: 'user',
+  status: 'final',
+  user_prompt: { text },
+  blocks: [{ type: 'text', text }],
+})
+
+function conversationTranscript(sessionID = 'session-under-test') {
+  const rows = []
+  const append = (row) => rows.push({ Sequence: rows.length + 1, ...row })
+  return {
+    rows,
+    inbound: ({ isBot = false } = {}) => append({ Kind: 'inbound', SourceSessionID: '', Actor: { id: 'U0READER', is_bot: isBot }, Text: 'are you there?' }),
+    outboundFrom: (source) => append({ Kind: 'outbound', SourceSessionID: source, Actor: { id: '', is_bot: false }, Text: 'from elsewhere' }),
+    publish: async (body) => append({ Kind: 'outbound', SourceSessionID: body.session_id, Actor: { id: '', is_bot: false }, Text: body.text }),
+    hasUnansweredInbound: async () => inboundAwaitsAnswer([...rows].reverse(), sessionID),
+    published: () => rows.filter((row) => row.Kind === 'outbound' && row.SourceSessionID === sessionID).map((row) => row.Text),
+  }
+}
+
+async function attachedTo(transcript) {
+  const mirror = createAssistantTurnMirror({
+    conversation,
+    sessionID: 'session-under-test',
+    publish: transcript.publish,
+    hasUnansweredInbound: transcript.hasUnansweredInbound,
+  })
+  await attach(mirror)
+  return mirror
+}
+
+test('a turn with no inbound message to answer publishes nothing', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+
+  // A mail-woken turn: narration, then the closing summary.
+  await mirror.handleStructuredEvent(upsert([
+    turnStep('mail-turn-1', 'Two controller mails came in. Checking both.'),
+    turnEnd('mail-turn-2', 'Neither needs the reader, so I sent nothing.'),
+  ]))
+
+  assert.deepEqual(transcript.published(), [], 'signature: a turn answering no inbound must stay off the channel')
+})
+
+test('a turn answering an inbound message publishes exactly once', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+  transcript.inbound()
+
+  await mirror.handleStructuredEvent(upsert([turnEnd('answer-1', 'Yes, here.')]))
+
+  assert.deepEqual(transcript.published(), ['Yes, here.'], 'signature: an answering turn must publish exactly once')
+})
+
+test('every message of an answering turn publishes, not only the first', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+  transcript.inbound()
+
+  // Publishing the first message writes an outbound row newer than the
+  // inbound. Asked per message, the transcript would then read "answered" and
+  // drop the actual reply that closes the turn, so the decision has to hold
+  // for the rest of the turn.
+  await mirror.handleStructuredEvent(upsert([turnStep('answer-1', 'Recorded. Checking the fix beads.')]))
+  await mirror.handleStructuredEvent(upsert([turnEnd('answer-2', 'Recorded and committed.')]))
+
+  assert.deepEqual(transcript.published(), ['Recorded. Checking the fix beads.', 'Recorded and committed.'], 'signature: an open turn must stay open until it ends')
+})
+
+test('the turn after an answering turn is silent', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+  transcript.inbound()
+
+  await mirror.handleStructuredEvent(upsert([turnEnd('answer-1', 'Yes, here.')]))
+  await mirror.handleStructuredEvent(upsert([turnEnd('mail-turn-1', 'Nothing new needs the reader.')]))
+
+  assert.deepEqual(transcript.published(), ['Yes, here.'], 'signature: an answered inbound must not open the next turn')
+})
+
+test('text written before a mid-turn inbound stays silent and text after it publishes', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+
+  // A message typed while the session is mid-turn can reach it as a queued
+  // command attachment, which the structured stream projects with no blocks at
+  // all. The extmsg row is then the ONLY evidence, so the gate is re-asked at
+  // every message until it opens.
+  await mirror.handleStructuredEvent(upsert([turnStep('mail-turn-1', 'Notes are restored.')]))
+  transcript.inbound()
+  await mirror.handleStructuredEvent(upsert([turnEnd('mail-turn-2', 'Got it, thanks.')]))
+
+  assert.deepEqual(transcript.published(), ['Got it, thanks.'], 'signature: the gate must be re-asked until it opens')
+})
+
+test('an answer delivered as the next prompt publishes even when an earlier turn posted after the inbound', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+
+  // The message arrives mid-turn and is held for the next prompt, but the
+  // running turn speaks again before it ends. The transcript gate admits that
+  // speech -- it cannot tell the session has not read the message yet -- and
+  // its outbound row then reads as the answer. The delivered prompt is what
+  // keeps the real reply from being dropped as already answered.
+  await mirror.handleStructuredEvent(upsert([turnStep('mail-turn-1', 'Checking the hold.')]))
+  transcript.inbound()
+  await mirror.handleStructuredEvent(upsert([turnEnd('mail-turn-2', 'The hold self-resolved.')]))
+  await mirror.handleStructuredEvent(upsert([
+    deliveredPrompt('prompt-1', reminderFor('slack', conversation.conversation_id, 'human')),
+    turnEnd('answer-1', 'Yes, here.'),
+  ]))
+
+  assert.deepEqual(transcript.published(), ['The hold self-resolved.', 'Yes, here.'], 'signature: a delivered inbound must open its turn')
+})
+
+test('a reminder for another conversation does not open the turn', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+
+  await mirror.handleStructuredEvent(upsert([
+    deliveredPrompt('prompt-1', reminderFor('slack', 'C0THEROOM', 'human')),
+    turnEnd('reply-elsewhere', 'Answered in the other room.'),
+  ]))
+
+  assert.deepEqual(transcript.published(), [], 'signature: only the bound conversation may open a turn')
+})
+
+test('a reminder for an agent post does not open the turn', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+
+  await mirror.handleStructuredEvent(upsert([
+    deliveredPrompt('prompt-1', reminderFor('slack', conversation.conversation_id, 'agent')),
+    turnEnd('reply-to-agent', 'Noted.'),
+  ]))
+
+  assert.deepEqual(transcript.published(), [], 'signature: an agent post must not open a turn')
+})
+
+test('the reminder text inside a tool result does not open the turn', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+
+  // A session reading its own logs sees the reminder as tool output. Only a
+  // delivery -- a user prompt -- is evidence the session was asked something.
+  await mirror.handleStructuredEvent(upsert([
+    {
+      id: 'tool-result-1',
+      role: 'user',
+      status: 'final',
+      blocks: [{ type: 'tool_result', content: reminderFor('slack', conversation.conversation_id, 'human') }],
+    },
+    turnEnd('mail-turn-1', 'Nothing new needs the reader.'),
+  ]))
+
+  assert.deepEqual(transcript.published(), [], 'signature: a quoted reminder is not a delivery')
+})
+
+test('a restating frame closes the turn the gate had opened', async () => {
+  const transcript = conversationTranscript()
+  const mirror = await attachedTo(transcript)
+  transcript.inbound()
+
+  await mirror.handleStructuredEvent(upsert([turnStep('answer-1', 'Looking now.')]))
+  // A reconnect cannot say whether the turn in progress is still the one that
+  // was opened -- a respawned target restates a NEW transcript -- so the gate
+  // is asked again, and the transcript now reads answered.
+  await mirror.handleStructuredEvent({ operation: 'snapshot', structured_messages: [turnStep('startup-1', 'Starting up.')] })
+  await mirror.handleStructuredEvent(upsert([turnEnd('startup-2', 'Nothing needs the reader.')]))
+
+  assert.deepEqual(transcript.published(), ['Looking now.'], 'signature: a restating frame must close the open turn')
+})
+
+test('inboundAwaitsAnswer reads the newest rows down to this session\'s last post', () => {
+  const human = { Kind: 'inbound', SourceSessionID: '', Actor: { is_bot: false } }
+  const bot = { Kind: 'inbound', SourceSessionID: '', Actor: { is_bot: true } }
+  const mine = { Kind: 'outbound', SourceSessionID: 'me', Actor: {} }
+  const theirs = { Kind: 'outbound', SourceSessionID: 'someone-else', Actor: {} }
+
+  assert.equal(inboundAwaitsAnswer([human, mine], 'me'), true, 'a human message newer than my last post awaits me')
+  assert.equal(inboundAwaitsAnswer([mine, human], 'me'), false, 'my post newer than the message answered it')
+  assert.equal(inboundAwaitsAnswer([theirs, human, mine], 'me'), true, 'another session posting does not answer for me')
+  assert.equal(inboundAwaitsAnswer([bot, mine], 'me'), false, 'an agent post is not a human message to answer')
+  assert.equal(inboundAwaitsAnswer([], 'me'), false, 'an empty conversation awaits nothing')
+})
+
+test('newestTranscriptPath asks for the bound conversation newest first', () => {
+  const path = newestTranscriptPath(conversation, 50)
+  const [route, query] = path.split('?')
+  const params = new URLSearchParams(query)
+
+  assert.equal(route, '/extmsg/transcript')
+  // Oldest-first is the server default, and read that way the walk would stop
+  // at the conversation's FIRST rows and answer about a day nobody remembers.
+  assert.equal(params.get('order'), 'desc', 'signature: the transcript must be read newest first')
+  assert.equal(params.get('limit'), '50', 'signature: the page bound must reach the query')
+  for (const [field, value] of Object.entries(conversation)) {
+    assert.equal(params.get(field), value, `query must carry ${field}`)
+  }
 })

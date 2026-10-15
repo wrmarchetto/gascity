@@ -53,6 +53,11 @@ export async function dryRun(messages, maxMessageLength = defaultMaxMessageLengt
       published.push({ timestamp: current?.timestamp ?? '', length: body.text.length, key: body.idempotency_key })
     },
     maxMessageLength,
+    // A recording carries no extmsg transcript, so every turn is treated as
+    // answering one. The figures are therefore the pre-gate upper bound -- what
+    // the mirror published before ci-06lx7u -- and not a prediction of what
+    // it publishes now.
+    hasUnansweredInbound: async () => true,
   })
   for (const message of messages) {
     current = message
