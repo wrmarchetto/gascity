@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Consume one configured session's structured transcript stream and publish its
 // final assistant text to the configured Slack conversation through gc's extmsg
-// outbound API. It reconnects after a supervisor restart or session handover;
-// process supervision still stays outside this component.
+// outbound API -- but only for a turn that answers a human message on that
+// conversation (see createAssistantTurnMirror). It reconnects after a
+// supervisor restart or session handover; process supervision still stays
+// outside this component.
 
-import { createAssistantTurnMirror, reconnectAssistantTurnStream } from './lib/assistant-turn-mirror.mjs'
+import { createAssistantTurnMirror, inboundAwaitsAnswer, newestTranscriptPath, reconnectAssistantTurnStream } from './lib/assistant-turn-mirror.mjs'
 import { cityName, env, makeGcClient } from './lib/gc-client.mjs'
 
 const required = (name) => {
@@ -46,6 +48,15 @@ const mirror = createAssistantTurnMirror({
   sessionID: SESSION,
   maxMessageLength: MAX_MESSAGE_LENGTH,
   publish: (body) => gcFetch('POST', '/extmsg/outbound', body),
+  // 50 rows is a bound on how far back an unanswered message is looked for,
+  // not a page to exhaust: rows from other publishers newer than both the
+  // message and this session's last post would have to fill it.
+  hasUnansweredInbound: async () => {
+    const path = newestTranscriptPath(conversation, 50)
+    const page = await gcFetch('GET', path)
+    if (!Array.isArray(page?.items)) throw new Error(`GET ${path}: response has no items array; the extmsg transcript wire changed`)
+    return inboundAwaitsAnswer(page.items, SESSION)
+  },
 })
 
 const controller = new AbortController()

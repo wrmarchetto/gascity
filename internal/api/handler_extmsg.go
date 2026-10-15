@@ -229,11 +229,18 @@ func extmsgNotifyExplicitTargetSessionID(ctx context.Context, svc *extmsg.Servic
 }
 
 func (s *Server) extmsgNotifyInboundMembers(ctx context.Context, msg extmsg.ExternalInboundMessage) {
-	actorKind := "agent"
-	if !msg.Actor.IsBot {
-		actorKind = "human"
+	s.extmsgNotifyMembers(ctx, msg.Conversation, msg.Actor.DisplayName, extmsgInboundActorKind(msg.Actor), msg.Text, "", msg.ExplicitTarget)
+}
+
+// extmsgInboundActorKind is the kind an inbound reminder names its sender
+// with. The openclaw assistant-turn mirror keys on "(human)" in the delivered
+// reminder to tell a person's message from a bot's, so the word is a wire
+// contract: TestExtmsgReminderCarriesTheMirrorDeliveryMarker.
+func extmsgInboundActorKind(actor extmsg.ExternalActor) string {
+	if actor.IsBot {
+		return "agent"
 	}
-	s.extmsgNotifyMembers(ctx, msg.Conversation, msg.Actor.DisplayName, actorKind, msg.Text, "", msg.ExplicitTarget)
+	return "human"
 }
 
 // extmsgNotifyReminder collects the inputs the inbound-message

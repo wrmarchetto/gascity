@@ -350,6 +350,20 @@ It also retries a failed connection after a supervisor restart. Its process
 supervisor remains responsible for restarting the out-of-process component if
 the process itself exits.
 
+**It publishes only a turn that answers a person.** Most of a session's
+turns are its own work -- woken by mail, a nudge, an order -- and before this
+rule every one of them reached the channel (68 posts in a day, bead
+ci-06lx7u). A turn is published when either the conversation's extmsg
+transcript holds a human message newer than the session's last post
+(`GET /extmsg/transcript`, newest first), or the turn's own prompt delivers
+gc's inbound reminder for this conversation from a human sender. The first
+covers a message delivered mid-turn, which the structured stream does not
+show; the second covers a message held for the next prompt while the running
+turn spoke first. Once open, a turn stays open until an assistant message
+ends it (any `stop_reason` but `tool_use`) or a restating frame arrives, so
+the narration before a reply is published along with it. Turning the mirror
+off instead would discard every reply, the half-open bridge of ci-899qtt.
+
 **It starts from now, not from the beginning.** Only an `operation: "upsert"`
 frame extends the transcript; every other frame restates it whole, and a
 restated transcript is treated as a watermark -- its turns are recorded as

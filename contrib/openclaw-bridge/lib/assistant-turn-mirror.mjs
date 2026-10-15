@@ -17,6 +17,33 @@ function finalAssistantText(message) {
     .join('')
 }
 
+// INBOUND_REMINDER_LEAD opens the nudge gc's extmsg fan-out sends a member
+// session, laid out as "<lead><provider>/<conversation>:", a blank line, then
+// "- <actor> (human): <text>" for a person or "(agent)" for a bot
+// (formatExtmsgNotifyReminder, internal/api/handler_extmsg.go). The deferred
+// wrapper that holds a nudge for the next prompt quotes it intact.
+// TestExtmsgReminderCarriesTheMirrorDeliveryMarker reads this literal out of
+// this file and pins the Go half of the layout.
+const INBOUND_REMINDER_LEAD = 'New message in shared conversation '
+
+function inboundDeliveryPattern(conversation) {
+  const lead = `${INBOUND_REMINDER_LEAD}${conversation.provider}/${conversation.conversation_id}:\n\n- `
+  return new RegExp(`${lead.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^\n]*? \\(human\\): `)
+}
+
+// deliversInbound is true for a user PROMPT carrying a human's message on the
+// bound conversation. A tool result quoting the same reminder is the session
+// reading a log, not being asked anything, so only user_prompt is read.
+function deliversInbound(message, pattern) {
+  return message?.role === 'user' && typeof message.user_prompt?.text === 'string' && pattern.test(message.user_prompt.text)
+}
+
+function endsTurn(message) {
+  if (message?.role !== 'assistant' || message.status !== 'final') return false
+  const reason = message.stop_reason
+  return typeof reason === 'string' && reason !== '' && reason !== 'tool_use'
+}
+
 function splitWithPartCount(text, maxMessageLength, partCount) {
   const chars = Array.from(text)
   const chunks = []
@@ -54,6 +81,31 @@ export function chunkAssistantTurn(text, maxMessageLength = defaultMaxMessageLen
     if (chunks.length === partCount) return chunks
     partCount = chunks.length
   }
+}
+
+// inboundAwaitsAnswer reads extmsg transcript rows, newest first, and answers
+// whether a human message on the conversation is newer than this session's own
+// latest post -- that is, whether the session owes the conversation a reply.
+//
+// Rows are the wire shape of GET /extmsg/transcript: Kind and SourceSessionID
+// at the top level, Actor.is_bot inside. An agent's post (is_bot) is not a
+// message to answer, and another session's outbound does not answer for this
+// one. A page holding neither kind of row reads as nothing owed: a reply the
+// session missed costs one unanswered message, which its reader can see, while
+// reading too far back re-opens every turn the mirror exists to keep quiet.
+export function inboundAwaitsAnswer(rowsNewestFirst, sessionID) {
+  for (const row of rowsNewestFirst) {
+    if (row?.Kind === 'outbound' && row.SourceSessionID === sessionID) return false
+    if (row?.Kind === 'inbound' && row.Actor?.is_bot !== true) return true
+  }
+  return false
+}
+
+// newestTranscriptPath is the GET inboundAwaitsAnswer reads. order=desc is
+// load-bearing: the server's default is oldest first.
+export function newestTranscriptPath(conversation, limit) {
+  const params = new URLSearchParams({ ...conversation, order: 'desc', limit: String(limit) })
+  return `/extmsg/transcript?${params}`
 }
 
 // createAssistantTurnMirror returns a stateful SSE-frame consumer.
@@ -97,41 +149,82 @@ export function chunkAssistantTurn(text, maxMessageLength = defaultMaxMessageLen
 // while watermarking only the first, buys those turns and reopens the flood:
 // the reconnect that follows a respawn restates a whole transcript under ids
 // that are new because the file is new.
-export function createAssistantTurnMirror({ conversation, sessionID, publish, maxMessageLength = defaultMaxMessageLength }) {
+//
+// ONLY A TURN THAT ANSWERS AN INBOUND HUMAN MESSAGE IS PUBLISHED. A session's
+// turns are mostly its own work -- woken by mail, a nudge, an order -- and
+// mirroring them put that narration in front of the conversation's reader, 68
+// posts in a day (bead ci-06lx7u). A turn opens on either of two pieces of
+// evidence and stays open until it ends:
+//
+//   * hasUnansweredInbound() -- the extmsg transcript holds a human message
+//     newer than this session's last post (inboundAwaitsAnswer). Asked at each
+//     message until it opens, because a message typed mid-turn can reach the
+//     session as a queued-command attachment the structured stream projects
+//     with no blocks, and the transcript row is then the only evidence.
+//   * the turn's own prompt delivers the conversation's inbound reminder. The
+//     row alone is not enough: a message held for the next prompt lets the
+//     running turn speak first, its outbound row then reads as the answer, and
+//     the real reply would be dropped.
+//
+// A turn ends at an assistant message whose stop_reason is anything but
+// tool_use, the rule InferActivity applies (internal/sessionlog/tail.go). A
+// restating frame also closes it: a respawned target restates a new
+// transcript, so the open turn cannot be assumed to be the one now running.
+//
+// THE REJECTED ALTERNATIVE is turning the mirror off and having the session
+// send its replies explicitly. That re-opens ci-899qtt's half-open bridge: the
+// session's answers to the conversation were silently discarded.
+export function createAssistantTurnMirror({ conversation, sessionID, publish, hasUnansweredInbound, maxMessageLength = defaultMaxMessageLength }) {
   if (!conversation || typeof conversation !== 'object') throw new TypeError('conversation is required')
   if (typeof sessionID !== 'string' || sessionID === '') throw new TypeError('sessionID is required')
   if (typeof publish !== 'function') throw new TypeError('publish is required')
+  if (typeof hasUnansweredInbound !== 'function') throw new TypeError('hasUnansweredInbound is required')
   // Settled: delivered, or watermarked as predating this process. Pending:
   // accepted for delivery and not yet acknowledged, which is the one thing a
   // restating frame must still publish -- otherwise a refused post becomes
   // silent loss the moment the stream reconnects.
+  // A turn answered silently is settled like a published one: it was decided,
+  // and only a pending id is ever reconsidered.
   const settledIDs = new Set()
   const pendingIDs = new Set()
+  const deliveryPattern = inboundDeliveryPattern(conversation)
+  let turnAnswers = false
 
   async function handleStructuredEvent(event) {
     const messages = event?.structured_messages
     if (!Array.isArray(messages)) return
     const restatesTranscript = event?.operation !== 'upsert'
+    if (restatesTranscript) turnAnswers = false
     for (const message of messages) {
+      if (!restatesTranscript && deliversInbound(message, deliveryPattern)) turnAnswers = true
       const id = typeof message?.id === 'string' ? message.id : ''
       const text = finalAssistantText(message)
-      if (id === '' || text === '' || settledIDs.has(id)) continue
-      if (restatesTranscript && !pendingIDs.has(id)) {
-        settledIDs.add(id)
-        continue
+      if (id !== '' && text !== '' && !settledIDs.has(id)) {
+        if (restatesTranscript && !pendingIDs.has(id)) {
+          settledIDs.add(id)
+        } else {
+          // Pending before the gate is asked, so a gate that throws leaves the
+          // message to be reconsidered on the reconnect rather than watermarked.
+          pendingIDs.add(id)
+          if (!turnAnswers) turnAnswers = await hasUnansweredInbound()
+          if (turnAnswers) await publishTurn(id, text)
+          pendingIDs.delete(id)
+          settledIDs.add(id)
+        }
       }
-      pendingIDs.add(id)
-      const chunks = chunkAssistantTurn(text, maxMessageLength)
-      for (const [index, chunk] of chunks.entries()) {
-        await publish({
-          session_id: sessionID,
-          conversation,
-          text: chunk,
-          idempotency_key: `assistant-turn:${id}:${index + 1}`,
-        })
-      }
-      pendingIDs.delete(id)
-      settledIDs.add(id)
+      if (!restatesTranscript && endsTurn(message)) turnAnswers = false
+    }
+  }
+
+  async function publishTurn(id, text) {
+    const chunks = chunkAssistantTurn(text, maxMessageLength)
+    for (const [index, chunk] of chunks.entries()) {
+      await publish({
+        session_id: sessionID,
+        conversation,
+        text: chunk,
+        idempotency_key: `assistant-turn:${id}:${index + 1}`,
+      })
     }
   }
 
