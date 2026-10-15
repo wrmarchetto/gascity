@@ -139,3 +139,83 @@ func runUpstreamProbeCloseGateGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 }
+
+// TestEvaluateUpstreamProbeCloseGateKeepsNodeTestModules pins that a branch
+// whose only tests are Node ES/CommonJS test modules keeps them through the
+// revert. The probe mimics `node --test <file>...`, which silently skips a
+// named file that does not exist: classified as production, the modified
+// test goes back to its pre-patch body and the new one is deleted, so the
+// probe stays green on the old suite and the gate refuses a valid probe as
+// "still passes" (measured on ci-06lx7u). Each suffix gets its own fixture
+// so dropping either one from the classifier fails its own subtest. The
+// go-seam variant also carries a kept _test.go, the ci-06lx7u workaround:
+// without it a misclassification trips the cheaper "no test path" refusal
+// and never reaches the revert that makes the probe silently stay green.
+func TestEvaluateUpstreamProbeCloseGateKeepsNodeTestModules(t *testing.T) {
+	for _, tc := range []struct {
+		suffix string
+		goSeam bool
+	}{
+		{".test.mjs", false},
+		{".test.mjs", true},
+		{".test.cjs", false},
+		{".test.cjs", true},
+	} {
+		suffix := tc.suffix
+		name := suffix
+		if tc.goSeam {
+			name += "/go-seam"
+		}
+		t.Run(name, func(t *testing.T) {
+			repoDir := newUpstreamProbeCloseGateRepo(t)
+			testDir := filepath.Join("contrib", "bridge", "test")
+			existing := filepath.Join(testDir, "bridge"+suffix)
+			added := filepath.Join(testDir, "regression"+suffix)
+
+			// The pre-patch suite passes on any tree, as the old 18-test
+			// openclaw-bridge suite did, so only the branch's tests can
+			// tell the patch apart.
+			runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "main")
+			if err := os.MkdirAll(filepath.Join(repoDir, testDir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(repoDir, existing), []byte("exit 0\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runUpstreamProbeCloseGateGit(t, repoDir, "add", existing)
+			runUpstreamProbeCloseGateGit(t, repoDir, "commit", "-q", "-m", "pre-patch suite")
+			runUpstreamProbeCloseGateGit(t, repoDir, "update-ref", "refs/remotes/upstream/main", "HEAD")
+
+			runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-B", "fix/ci-probe")
+			if err := os.WriteFile(filepath.Join(repoDir, "upstream_owned.txt"), []byte("fixed\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			assertFixed := []byte("test \"$(cat upstream_owned.txt)\" = fixed\n")
+			for _, path := range []string{existing, added} {
+				if err := os.WriteFile(filepath.Join(repoDir, path), assertFixed, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			staged := []string{"add", "upstream_owned.txt", existing, added}
+			if tc.goSeam {
+				if err := os.WriteFile(filepath.Join(repoDir, "seam_test.go"), []byte("test fixture\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				staged = append(staged, "seam_test.go")
+			}
+			runUpstreamProbeCloseGateGit(t, repoDir, staged...)
+			runUpstreamProbeCloseGateGit(t, repoDir, "commit", "-q", "-m", "fork fix and node regression tests")
+
+			probe := "for f in " + existing + " " + added + "; do [ -f \"$f\" ] || continue; sh \"$f\" || exit 1; done"
+			store := beads.NewMemStoreFrom(1, []beads.Bead{{
+				ID:       "ci-probe",
+				Metadata: map[string]string{upstreamProbeMetadataKey: probe},
+			}}, nil)
+
+			var stderr strings.Builder
+			if blocked := evaluateUpstreamProbeCloseGate([]string{"close", "ci-probe"}, store, nil, repoDir, &stderr); blocked {
+				t.Fatalf("%s tests were reverted as production: %s", suffix, stderr.String())
+			}
+		})
+	}
+}
