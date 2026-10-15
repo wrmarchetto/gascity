@@ -267,6 +267,62 @@ func TestStopGateStillBlocksUnlabeledAndClosedPMSittingBeads(t *testing.T) {
 	}
 }
 
+// TestStopGateNeverOrdersDrainAckWhileSessionHoldsPMSitting pins that an
+// EPHEMERAL session holding an open PM sitting is not told to drain-ack.
+//
+// The sitting exemption removes the bead from the closing contract, but the
+// session still holds it, so the turn boundary is not the end of its work.
+// Falling through to the drain-ack branch asked astoria-sel4/lab.pm to drain
+// twice in the middle of a live operator interview (ci-d9w7fl). The two
+// exemption tests above use a NAMED origin, which the drain-ack branch never
+// reaches, so they stay green over exactly this defect. drainAcked is false
+// here because that is the only value under which the branch can fire.
+func TestStopGateNeverOrdersDrainAckWhileSessionHoldsPMSitting(t *testing.T) {
+	for _, label := range []string{"pm-init", "pm-plan", "pm-chat"} {
+		t.Run(label, func(t *testing.T) {
+			facts := stopGateHoldingWork()
+			facts.drainAcked = false
+			facts.outstanding = []beads.Bead{{
+				ID:     "as-wddx6",
+				Status: "in_progress",
+				Labels: []string{label},
+			}}
+
+			if verdict := evaluateStopGate(facts); verdict.block {
+				t.Fatalf("gate blocked an ephemeral session holding an open %q sitting: %q", label, verdict.reason)
+			}
+		})
+	}
+}
+
+// TestStopGateHeldSittingDropsDrainAckFromOutstandingReason pins the same
+// invariant on the other block path. A session holding a sitting AND an
+// ordinary bead must close the ordinary one, but the sitting outlives that
+// close, so the block text must not end with "then drain-ack" -- that line
+// is the same interruption delivered one step later.
+func TestStopGateHeldSittingDropsDrainAckFromOutstandingReason(t *testing.T) {
+	facts := stopGateHoldingWork()
+	facts.outstanding = append(facts.outstanding, beads.Bead{
+		ID:     "as-wddx6",
+		Status: "in_progress",
+		Labels: []string{"pm-plan"},
+	})
+
+	verdict := evaluateStopGate(facts)
+	if !verdict.block {
+		t.Fatal("gate allowed the turn to end while an ordinary claimed bead was unclosed")
+	}
+	if !strings.Contains(verdict.reason, "ci-yxpd") {
+		t.Errorf("block reason does not name the ordinary bead: %q", verdict.reason)
+	}
+	if strings.Contains(verdict.reason, "as-wddx6") {
+		t.Errorf("block reason asks the session to close its open sitting: %q", verdict.reason)
+	}
+	if strings.Contains(verdict.reason, "gc runtime drain-ack") {
+		t.Errorf("block reason orders a drain-ack while a sitting is held: %q", verdict.reason)
+	}
+}
+
 // TestStopGateBlocksEphemeralSessionThatSkippedDrainAck pins the second
 // observed shape: the bead WAS closed and the turn still ended one command
 // early, leaving the session holding its agent's concurrency slot with

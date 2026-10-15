@@ -179,20 +179,35 @@ func evaluateStopGate(f stopGateFacts) stopGateVerdict {
 		// It remains claimed so closing that question can wake the next session.
 		return allow
 	}
-	if outstanding := stopGateClosingContractBeads(f.outstanding); len(outstanding) > 0 {
-		f.outstanding = outstanding
+	if len(stopGateClosingContractBeads(f.outstanding)) > 0 {
 		return stopGateVerdict{block: true, reason: stopGateOutstandingReason(f)}
 	}
-	// No claimed work. Only an ephemeral worker still owes a drain-ack; a named
-	// holder never received a drain to acknowledge, so gating it on drainAcked
-	// would block it at every turn boundary with no way out.
-	if !strings.EqualFold(strings.TrimSpace(f.sessionOrigin), sessionOriginEphemeral) {
-		return allow
-	}
-	if f.drainAcked {
+	if !stopGateOwesDrainAck(f) || f.drainAcked {
 		return allow
 	}
 	return stopGateVerdict{block: true, reason: stopGateDrainAckReason()}
+}
+
+// stopGateOwesDrainAck reports whether the session's contract ends in a
+// drain-ack at all. Only an ephemeral worker owes one -- a named holder never
+// received a drain to acknowledge, so gating it on drainAcked would block it at
+// every turn boundary with no way out.
+//
+// A held PM sitting cancels the debt. The sitting is exempt from the closing
+// contract, NOT absent: the session still holds it and the next turn continues
+// it. Treating the exemption as "no claimed work" told an ephemeral PM to
+// drain twice mid-way through a live operator interview (ci-d9w7fl), and the
+// drain-ack refusal would then have punished the ack for the held bead.
+func stopGateOwesDrainAck(f stopGateFacts) bool {
+	if !strings.EqualFold(strings.TrimSpace(f.sessionOrigin), sessionOriginEphemeral) {
+		return false
+	}
+	for _, bead := range f.outstanding {
+		if isOpenPMSittingBead(bead) {
+			return false
+		}
+	}
+	return true
 }
 
 // stopGateClosingContractBeads returns the outstanding beads that still keep
@@ -280,13 +295,13 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	var b strings.Builder
 	b.WriteString("Stop blocked: this session's closing contract is not finished.\n\n")
 	b.WriteString("Still open and assigned to this session:\n")
-	for _, bead := range f.outstanding {
+	for _, bead := range stopGateClosingContractBeads(f.outstanding) {
 		fmt.Fprintf(&b, "  %s\n", bead.ID)
 	}
 	b.WriteString("\nFinish the closing steps your prompt specifies for each id above")
 	b.WriteString(" -- set the result metadata the bead asks for, then close it")
 	b.WriteString(" with a reason saying what changed and how it was verified.\n")
-	if strings.EqualFold(strings.TrimSpace(f.sessionOrigin), sessionOriginEphemeral) {
+	if stopGateOwesDrainAck(f) {
 		b.WriteString("\nThen, as your final action:\n  gc runtime drain-ack\n")
 	}
 	// The parked exit comes FIRST, and the order is the instruction. A session
