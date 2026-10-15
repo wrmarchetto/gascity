@@ -233,10 +233,19 @@ func exitCode(err error) int {
 	return -1
 }
 
+// upstreamProbeTestPath decides which branch paths the retirement experiment
+// keeps. A test suffix missing here is reverted as production code, and a
+// runner that skips a missing file (node --test does) then reruns the
+// pre-patch suite green, so the gate refuses a correct probe. contrib/
+// openclaw-bridge tests are Node modules under a nested test/, which the
+// top-level test/ prefix does not reach, hence .test.mjs and .test.cjs.
+// The city's upstream-patch audit keeps the same list in
+// assets/scripts/upstreampatch.py and must change with this one.
 func upstreamProbeTestPath(path string) bool {
 	return strings.HasSuffix(path, "_test.go") ||
 		strings.HasSuffix(path, ".test.ts") || strings.HasSuffix(path, ".test.tsx") ||
 		strings.HasSuffix(path, ".test.js") || strings.HasSuffix(path, ".test.jsx") ||
+		strings.HasSuffix(path, ".test.mjs") || strings.HasSuffix(path, ".test.cjs") ||
 		strings.HasSuffix(path, ".test.py") || strings.HasSuffix(path, "_test.py") ||
 		strings.HasSuffix(path, ".test.sh") ||
 		strings.HasPrefix(path, "test/") || strings.HasPrefix(path, "testdata/") ||
