@@ -39,13 +39,7 @@ func isPoolManagedSessionBead(bead beads.Bead) bool {
 
 // isPoolManagedSessionInfo is the session.Info mirror of isPoolManagedSessionBead.
 func isPoolManagedSessionInfo(i sessionpkg.Info) bool {
-	if isEphemeralSessionInfo(i) {
-		return true
-	}
-	if i.PoolManaged {
-		return true
-	}
-	return strings.TrimSpace(i.PoolSlot) != ""
+	return sessionpkg.IsPoolManagedInfo(i)
 }
 
 // isCanonicalPoolManagedSessionBeadForTemplate is the bead-shape companion to
@@ -65,14 +59,7 @@ func isCanonicalPoolManagedSessionBeadForTemplate(bead beads.Bead, template stri
 // isCanonicalPoolManagedSessionInfoForTemplate is the session.Info mirror of
 // isCanonicalPoolManagedSessionBeadForTemplate.
 func isCanonicalPoolManagedSessionInfoForTemplate(i sessionpkg.Info, template string) bool {
-	template = strings.TrimSpace(template)
-	if template == "" || !isPoolManagedSessionInfo(i) {
-		return false
-	}
-	if strings.TrimSpace(i.PoolSlot) != "" {
-		return false
-	}
-	return infoIdentifiesAsCanonical(i, template)
+	return sessionpkg.IsCanonicalPoolManagedInfoForTemplate(i, template)
 }
 
 func resolveLegacyPoolTemplate(cfg *config.City, storedTemplate string) string {
@@ -449,15 +436,7 @@ func sessionBeadAgentName(bead beads.Bead) string {
 // sessionBeadAgentNameInfo is the session.Info mirror of sessionBeadAgentName:
 // agent_name metadata (untrimmed), then the agent:<name> label fallback.
 func sessionBeadAgentNameInfo(i sessionpkg.Info) string {
-	if i.AgentName != "" {
-		return i.AgentName
-	}
-	for _, label := range i.Labels {
-		if strings.HasPrefix(label, "agent:") {
-			return strings.TrimPrefix(label, "agent:")
-		}
-	}
-	return ""
+	return sessionpkg.AgentNameOf(i)
 }
 
 // sessionAgentMetricIdentity resolves the stable agent-identity label for the

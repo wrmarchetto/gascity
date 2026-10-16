@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"reflect"
+	"maps"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -350,17 +350,22 @@ func TestSessionBeadSnapshotFromReconcileRowsIndexPrecedence(t *testing.T) {
 		"dup":            "s-dup-canonical",
 	}
 
-	if !reflect.DeepEqual(snap.beadIDByAgentName, wantBeadIDByAgentName) {
-		t.Errorf("beadIDByAgentName:\n got=%v\nwant=%v", snap.beadIDByAgentName, wantBeadIDByAgentName)
+	// Lookup prefers the agent-name index, so the merged view is the template
+	// hints overlaid by the agent names.
+	wantBeadID := maps.Clone(wantBeadIDByTemplateHint)
+	maps.Copy(wantBeadID, wantBeadIDByAgentName)
+	wantSessionName := maps.Clone(wantSessionNameByTemplateHint)
+	maps.Copy(wantSessionName, wantSessionNameByAgentName)
+	for identity, wantID := range wantBeadID {
+		e, ok := snap.identities.Lookup(identity)
+		if !ok || e.BeadID != wantID || e.SessionName != wantSessionName[identity] {
+			t.Errorf("Lookup(%q) = %+v, %v; want bead %q session %q", identity, e, ok, wantID, wantSessionName[identity])
+		}
 	}
-	if !reflect.DeepEqual(snap.sessionNameByAgentName, wantSessionNameByAgentName) {
-		t.Errorf("sessionNameByAgentName:\n got=%v\nwant=%v", snap.sessionNameByAgentName, wantSessionNameByAgentName)
-	}
-	if !reflect.DeepEqual(snap.beadIDByTemplateHint, wantBeadIDByTemplateHint) {
-		t.Errorf("beadIDByTemplateHint:\n got=%v\nwant=%v", snap.beadIDByTemplateHint, wantBeadIDByTemplateHint)
-	}
-	if !reflect.DeepEqual(snap.sessionNameByTemplateHint, wantSessionNameByTemplateHint) {
-		t.Errorf("sessionNameByTemplateHint:\n got=%v\nwant=%v", snap.sessionNameByTemplateHint, wantSessionNameByTemplateHint)
+	for _, identity := range []string{"gone", "nameless", "frontend/worker", "frontend/worker-1"} {
+		if e, ok := snap.identities.Lookup(identity); ok {
+			t.Errorf("Lookup(%q) = %+v, want no entry", identity, e)
+		}
 	}
 	// The closed bead (ga-closed) is excluded; the 9 open beads remain in openInfos.
 	if got := len(snap.openInfos); got != 9 {
