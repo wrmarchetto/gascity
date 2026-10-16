@@ -35,6 +35,10 @@ package main
 // ACTIVE), which is the discriminator an operator reaches for. A holder parked
 // on a human gate for an hour is inactive and still holds live work, so an
 // activity-keyed lease lapses under it and re-opens the theft this closes.
+// Activity IS read for one population: holders whose drain-ack the controller
+// refused (claimHolderHasRetired). There it can only restore a lease the
+// refusal would otherwise lapse, never lapse one, so the rejection stands for
+// every holder that has not said it is finished.
 //
 // NOT renewed here: gc.last_heartbeat_at, the committed cross-node stamp
 // `gc bd heartbeat` writes for the dashboard (gastownhall/gascity#1855). That
@@ -90,7 +94,32 @@ const (
 	// cityStoreRef is the store-ref label the assigned-work snapshot gives the
 	// city store. Rig stores carry their rig name.
 	cityStoreRef = "city"
+
+	// drainAckedHolderQuietWindow is how long a holder whose drain-ack was
+	// refused may go without a turn before renewal stops. Measured 2026-10-16
+	// over 97 refused sessions with attributable transcripts: quiet gaps that
+	// ended in the holder writing again reached 1635s (p95 600s, the Bash
+	// tool cap). Silences never followed by another turn overlap that below
+	// 30 min (one at 1674s), so the two do not separate there, and the window
+	// is sited by cost instead. Lapsing a resumer re-opens the theft, while
+	// keeping a silent holder's lease longer only delays a hand-on, so it
+	// clears every resumed gap and stays well under the hours-scale silences
+	// (4248s to 9042s, and ci-amflbh's 12h) the exclusion exists for. Pinned
+	// to those figures by
+	// TestDrainAckedHolderQuietWindowSitsBetweenTheMeasuredRegimes.
+	//
+	// It bounds when renewal STOPS, not when the lease lapses. The last
+	// renewal can land just inside the window, so a wedged holder's lease
+	// lapses up to one TTL after it.
+	drainAckedHolderQuietWindow = 45 * time.Minute
 )
+
+// transcriptActivityProbe reports when a session's transcript was last
+// appended to, or the zero time when none can be attributed to it. A renewer
+// field rather than a direct call so tests serve known instants: a real file
+// under t.TempDir() would exercise the keyed path resolver, which is
+// sessionTranscriptActivity's subject, not this file's.
+type transcriptActivityProbe func(info sessionpkg.Info, searchPaths []string) time.Time
 
 // claimLeaseRenewal names one claim whose lease the controller will push
 // forward on this tick.
@@ -116,8 +145,9 @@ type claimLeaseRenewer struct {
 	// renewedAt records the last ATTEMPT, not the last success. A bd refusal
 	// means the caller no longer holds the lease, and retrying that every
 	// patrol tick would spend a subprocess per tick to be told so again.
-	renewedAt map[string]time.Time
-	interval  time.Duration
+	renewedAt      map[string]time.Time
+	interval       time.Duration
+	lastTranscript transcriptActivityProbe
 }
 
 // newClaimLeaseRenewer builds a renewer on the package's own interval. The
@@ -126,7 +156,11 @@ type claimLeaseRenewer struct {
 // no caller, test included, has a reason to run a different cadence than the
 // one the TTL fixes.
 func newClaimLeaseRenewer() *claimLeaseRenewer {
-	return &claimLeaseRenewer{renewedAt: make(map[string]time.Time), interval: claimLeaseRenewInterval}
+	return &claimLeaseRenewer{
+		renewedAt:      make(map[string]time.Time),
+		interval:       claimLeaseRenewInterval,
+		lastTranscript: sessionTranscriptActivity,
+	}
 }
 
 // due returns the claims whose lease must be refreshed now, and records the
@@ -148,6 +182,7 @@ func (r *claimLeaseRenewer) due(
 	storeRefAware := len(assignedWorkStoreRefs) == len(assignedWorkBeads) && len(assignedWorkBeads) > 0
 	ownership := newOpenSessionOwnership(cityPath, cfg, openSessionInfos, storeRefAware)
 	drained := newDrainAckedHolders(openSessionInfos)
+	searchPaths := transcriptSearchPaths(cfg)
 
 	var targets []claimLeaseRenewal
 	seen := make(map[string]struct{}, len(assignedWorkBeads))
@@ -173,7 +208,8 @@ func (r *claimLeaseRenewer) due(
 		if !claimHolderIsPresent(ownership, cityStore, assignee, storeRef) {
 			continue
 		}
-		if claimHolderHasDrainAcked(drained, cityStore, assignee) {
+		if holder, refused := refusedClaimHolder(drained, cityStore, assignee); refused &&
+			r.claimHolderHasRetired(holder, searchPaths, now) {
 			continue
 		}
 		if last, ok := r.renewedAt[wb.ID]; ok && now.Sub(last) < r.interval {
@@ -191,8 +227,8 @@ func (r *claimLeaseRenewer) due(
 }
 
 // drainAckedHolders indexes every identity of every open session whose drain
-// acknowledgement the controller refused.
-type drainAckedHolders map[string]struct{}
+// acknowledgement the controller refused, to that session's Info.
+type drainAckedHolders map[string]sessionpkg.Info
 
 // newDrainAckedHolders builds that index from this tick's session snapshot. It
 // mirrors newOpenSessionOwnership's legacy index rather than extending it: the
@@ -206,49 +242,83 @@ func newDrainAckedHolders(openSessionInfos []sessionpkg.Info) drainAckedHolders 
 			continue
 		}
 		for _, id := range sessionBeadAssigneeIdentitiesInfo(info) {
-			drained[id] = struct{}{}
+			drained[id] = info
 		}
 	}
 	return drained
 }
 
-// claimHolderHasDrainAcked reports whether the claim's holder has already told
-// the controller it is finished and been refused for still owning this work.
-//
-// A lease says "I am still working on this". A session in that state is not:
-// `gc runtime drain-ack` is the last call an agent makes, the controller's
-// refusal leaves the session active without telling it anything
-// (session_reconciler.go, the DrainAckAssignedWorkReason patch), and nothing in
-// the tree hands it back its turn. MEASURED (ci-amflbh): one such session held
-// a P1 claim for twelve hours with its lease reading "heartbeat just now"
-// throughout, because every other liveness source the controller reads -- the
-// runtime being alive, the session bead being open, the tmux pane reporting
-// activity -- was answering truthfully about a session that was doing nothing.
-//
-// Rejected: a grace period before renewal stops, so a session that resumed work
-// after the refusal keeps its lease. Nothing resumes it; the only transition out
-// of the state is the idle-timeout backstop's forced STOP
-// (drain_ack_wedge_exit_test.go), so the grace would only postpone the lapse and
-// would need an instant nothing recorded. Rejected the other way: releasing the
-// claim here as well. That is the orphan-release path's decision and it keeps the
-// bead assigned deliberately, so the lease lapsing is the whole change -- after
-// it, `bd reclaim` can hand the work on without a human running `unclaim
-// --force`.
+// refusedClaimHolder returns the claim holder's session when the controller
+// has refused that session's drain acknowledgement. Returns (holder, refused).
 //
 // Reads the same two sources as claimHolderIsPresent, in the same order, and
 // fails toward RENEWING: an unreadable store yields the zero bead with found=true
 // (liveOpenSessionAssignmentBead), which carries no state reason and so leaves the
 // lease alone. Losing a live holder's lease re-opens the claim theft ci-pzejlf
-// closed; leaving a retired holder's lease standing one more interval does not.
-func claimHolderHasDrainAcked(drained drainAckedHolders, cityStore beads.Store, assignee string) bool {
-	if _, ok := drained[strings.TrimSpace(assignee)]; ok {
-		return true
+// closed, and leaving a retired holder's lease standing one more interval does not.
+//
+// The fallback re-reads the matched bead through the session front door because
+// the transcript probe needs the projected Info, and this path is reached only
+// for a refused holder that missed the snapshot. If that read fails, the holder
+// is judged on its refusal instant alone, the same treatment a holder with no
+// attributable transcript gets.
+func refusedClaimHolder(drained drainAckedHolders, cityStore beads.Store, assignee string) (sessionpkg.Info, bool) {
+	if info, ok := drained[strings.TrimSpace(assignee)]; ok {
+		return info, true
 	}
 	sb, found := liveOpenSessionAssignmentBead(cityStore, assignee)
-	if !found {
-		return false
+	if !found || strings.TrimSpace(sb.Metadata["state_reason"]) != sessionpkg.DrainAckAssignedWorkReason {
+		return sessionpkg.Info{}, false
 	}
-	return strings.TrimSpace(sb.Metadata["state_reason"]) == sessionpkg.DrainAckAssignedWorkReason
+	info, err := sessionFrontDoor(cityStore).Get(sb.ID)
+	if err != nil {
+		return sessionpkg.Info{
+			ID:                        sb.ID,
+			DrainAckRefusedAtMetadata: sb.Metadata[sessionpkg.DrainAckRefusedAtMetadataKey],
+		}, true
+	}
+	return info, true
+}
+
+// claimHolderHasRetired reports whether a holder whose drain-ack was refused
+// has stayed retired: no turn for drainAckedHolderQuietWindow, measured from
+// the later of the refusal and its last transcript append.
+//
+// A lease says "I am still working on this". A session that drain-acked and
+// then sat still is not. MEASURED (ci-amflbh): one such session held a P1
+// claim for twelve hours with its lease reading "heartbeat just now"
+// throughout, because every other liveness source the controller reads -- the
+// runtime being alive, the session bead being open, the tmux pane reporting
+// activity -- was answering truthfully about a session that was doing nothing.
+// But the refusal alone does not mean that. 40 of 46 refused sessions took
+// another turn unaided (ci-8ajvxn), and nothing clears the state reason when
+// they do, so keying on the refusal alone lapsed working holders' leases and
+// let `bd reclaim` take live work (ci-kkezqd, as-ognbh).
+//
+// Rejected: "any transcript write after the refusal". drain-ack pokes the
+// controller, so the refusal lands while the agent's turn is still closing
+// out, and every refusal measured had transcript writes within seconds after
+// it. That rule renews every refused holder forever. Rejected: pane activity
+// and currently_processing_bead_id. The first is a TUI spinner as much as a
+// turn (ci-jvbkio) and read as active through the whole ci-amflbh wedge, and
+// the second is written by the controller on wake, not by a turn.
+//
+// A zero reading from both sources -- a refusal stamped before the instant
+// was recorded, with no attributable transcript -- leaves nothing to show the
+// holder resumed, so the exclusion holds as it did before transcripts were
+// read.
+func (r *claimLeaseRenewer) claimHolderHasRetired(holder sessionpkg.Info, searchPaths []string, now time.Time) bool {
+	last, err := time.Parse(time.RFC3339, strings.TrimSpace(holder.DrainAckRefusedAtMetadata))
+	if err != nil {
+		last = time.Time{}
+	}
+	if t := r.lastTranscript(holder, searchPaths); t.After(last) {
+		last = t
+	}
+	if last.IsZero() {
+		return true
+	}
+	return now.Sub(last) >= drainAckedHolderQuietWindow
 }
 
 // claimHolderIsPresent reports whether a claim's assignee still names a

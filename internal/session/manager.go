@@ -485,6 +485,11 @@ type Info struct {
 	// carries only Info and its Store.Get budget is pinned.
 	DrainOriginMetadata    string // drain_origin (raw; NormalizeDrainOrigin gates it)
 	DrainAckReasonMetadata string // drain_ack_reason (raw)
+	// DrainAckRefusedAtMetadata is the RAW drain_ack_refused_at metadata
+	// (RFC3339 or empty). Claim-lease renewal reads it off the tick's snapshot
+	// to date a refused holder's last known turn, so it must be on Info rather
+	// than a second store read per refused holder per tick.
+	DrainAckRefusedAtMetadata string // drain_ack_refused_at (raw)
 	// UnknownStateFirstSeen / UnknownStateValue / UnknownStateEscalatedAt are the
 	// RAW unknown_state_first_seen / _value / _escalated_at metadata, the durable
 	// throttle markers the unknown-state diagnostic emitter reads to gate emission

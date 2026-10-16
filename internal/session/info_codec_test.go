@@ -149,6 +149,7 @@ func infoFromPersistedBeadFrozen(b beads.Bead) Info {
 		StrandedEventEmittedAt:         b.Metadata["stranded_event_emitted_at"],
 		DrainOriginMetadata:            b.Metadata[DrainOriginMetadataKey],
 		DrainAckReasonMetadata:         b.Metadata[DrainAckReasonMetadataKey],
+		DrainAckRefusedAtMetadata:      b.Metadata[DrainAckRefusedAtMetadataKey],
 		UnknownStateFirstSeen:          b.Metadata["unknown_state_first_seen"],
 		UnknownStateValue:              b.Metadata["unknown_state_value"],
 		UnknownStateEscalatedAt:        b.Metadata["unknown_state_escalated_at"],

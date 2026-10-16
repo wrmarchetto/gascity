@@ -192,6 +192,7 @@ var infoKeyCodec = []infoKeySpec{
 	{"stranded_event_emitted_at", func(i *Info, v string) { i.StrandedEventEmittedAt = v }},
 	{DrainOriginMetadataKey, func(i *Info, v string) { i.DrainOriginMetadata = v }},
 	{DrainAckReasonMetadataKey, func(i *Info, v string) { i.DrainAckReasonMetadata = v }},
+	{DrainAckRefusedAtMetadataKey, func(i *Info, v string) { i.DrainAckRefusedAtMetadata = v }},
 	{"unknown_state_first_seen", func(i *Info, v string) { i.UnknownStateFirstSeen = v }},
 	{"unknown_state_value", func(i *Info, v string) { i.UnknownStateValue = v }},
 	{"unknown_state_escalated_at", func(i *Info, v string) { i.UnknownStateEscalatedAt = v }},
