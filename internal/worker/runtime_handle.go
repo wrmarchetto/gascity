@@ -11,6 +11,7 @@ import (
 	"github.com/gastownhall/gascity/internal/promptsafe"
 	"github.com/gastownhall/gascity/internal/runtime"
 	sessionpkg "github.com/gastownhall/gascity/internal/session"
+	"github.com/gastownhall/gascity/internal/sessionlog"
 )
 
 // ErrOperationUnsupported reports that a worker handle cannot support the
@@ -23,21 +24,27 @@ type RuntimeHandleConfig struct {
 	Provider     runtime.Provider
 	SessionName  string
 	ProviderName string
-	Transport    string
-	ProcessNames []string
-	Recorder     events.Recorder
+	// ProviderFamily is the built-in provider the ProviderName key descends
+	// from, e.g. "claude" for a city's [providers.claude-analyst]. Empty
+	// falls back to sessionlog.ProviderFamily(ProviderName), which recognizes
+	// a bare built-in key but never a city-defined one.
+	ProviderFamily string
+	Transport      string
+	ProcessNames   []string
+	Recorder       events.Recorder
 }
 
 // RuntimeHandle adapts a legacy runtime session name to the canonical worker
 // interface so higher layers do not bypass internal/worker for lifecycle or
 // pending interaction operations.
 type RuntimeHandle struct {
-	provider     runtime.Provider
-	sessionName  string
-	providerName string
-	transport    string
-	processNames []string
-	recorder     events.Recorder
+	provider       runtime.Provider
+	sessionName    string
+	providerName   string
+	providerFamily string
+	transport      string
+	processNames   []string
+	recorder       events.Recorder
 }
 
 var _ Handle = (*RuntimeHandle)(nil)
@@ -54,13 +61,19 @@ func NewRuntimeHandle(cfg RuntimeHandleConfig) (*RuntimeHandle, error) {
 	if recorder == nil {
 		recorder = events.Discard
 	}
+	providerName := strings.TrimSpace(cfg.ProviderName)
+	providerFamily := strings.TrimSpace(cfg.ProviderFamily)
+	if providerFamily == "" {
+		providerFamily = sessionlog.ProviderFamily(providerName)
+	}
 	return &RuntimeHandle{
-		provider:     cfg.Provider,
-		sessionName:  strings.TrimSpace(cfg.SessionName),
-		providerName: strings.TrimSpace(cfg.ProviderName),
-		transport:    strings.TrimSpace(cfg.Transport),
-		processNames: append([]string(nil), cfg.ProcessNames...),
-		recorder:     recorder,
+		provider:       cfg.Provider,
+		sessionName:    strings.TrimSpace(cfg.SessionName),
+		providerName:   providerName,
+		providerFamily: providerFamily,
+		transport:      strings.TrimSpace(cfg.Transport),
+		processNames:   append([]string(nil), cfg.ProcessNames...),
+		recorder:       recorder,
 	}, nil
 }
 
@@ -402,7 +415,11 @@ func (h *RuntimeHandle) nudgeWaitIdle(ctx context.Context, req NudgeRequest) (Nu
 		}
 		return NudgeResult{Delivered: true}, nil
 	}
-	if h.providerName != "claude" {
+	// The family, NOT providerName: the raw key of a city's claude wrapper
+	// (claude-analyst, claude-mayor) never equals "claude", and comparing it
+	// refused every such idle seat as provider_not_nudgeable (ci-oow9up).
+	// providerName stays raw because operation events report it verbatim.
+	if h.providerFamily != "claude" {
 		return NudgeResult{Delivered: false, Skip: sessionpkg.NudgeSkipProviderUnsupported}, nil
 	}
 	waiter, ok := h.provider.(runtime.IdleWaitProvider)
