@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -276,5 +277,64 @@ func TestFreshCreateStillTakesAnIdleAsleepSlotsNumber(t *testing.T) {
 	}
 	if slot := claimFreshCreatePoolSlotInfo(bp, &cfg.Agents[0], map[int]bool{}); slot != 1 {
 		t.Errorf("fresh create took slot %d, want 1 -- an asleep ephemeral is replaced in place, not worked around", slot)
+	}
+}
+
+// TestFreshCreateNeverNumbersASlotPastTheConfiguredBound replays the
+// astoria-sel4 lab.engineer tick of 2026-10-16 01:45:19Z (ci-1tv1cr, controller
+// trace tick 014563) and pins that a full pool refuses a fresh create rather
+// than minting a slot number above max_active_sessions.
+//
+// The above-bound number is not merely untidy. existingPoolSlotWithConfigInfo
+// resolves an out-of-bounds pool_slot to 0 -- it is written for the
+// cap-lowered case -- so the session wearing it is invisible to usedSlots and
+// to the working-slot reservation, and the allocator hands the same number out
+// again. Measured: four sessions were created at slot 3 of this two-slot pool
+// within 92s, every one triggered by as-8bc6k waiting at the pool door, and
+// the last two shared a worktree. AgentBase carries the slot, so the same
+// number is the same work_dir.
+//
+// The slot-3 holder is AWAKE and WORKING, because that is what ci-sv0fq7 was
+// at this tick. That is the case that matters: it is a live session whose own
+// resume the duplicate create displaced, verbatim "pool session ci-sv0fq7
+// concrete slot already claimed" in the supervisor log. The second assertion
+// pins that half.
+func TestFreshCreateNeverNumbersASlotPastTheConfiguredBound(t *testing.T) {
+	base := time.Date(2026, 10, 16, 1, 40, 0, 0, time.UTC)
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents:    []config.Agent{poolAgent("worker", "rig", intPtr(2), 0)},
+	}
+	// ci-91qcet is alias-less and holds its work under its session name, as
+	// measured: its own alias reservation had been refused at create.
+	slotTwo := contentionSession(t, "ci-91qcet", "", "2", base)
+	slotTwo.AgentName = "rig/worker-2"
+	slotThree := contentionSession(t, "ci-sv0fq7", "rig/worker-3", "3", base.Add(4*time.Minute))
+	slotThree.AgentName = "rig/worker-3"
+	sessions := []sessionpkg.Info{
+		contentionSession(t, "ci-nxhqne", "rig/worker-1", "1", base),
+		slotTwo,
+		slotThree,
+	}
+	work := []beads.Bead{
+		contentionWork("as-f74", "rig/worker-3", "in_progress", -1),
+		contentionWork("as-f54", "rig/worker-1", "in_progress", -1),
+		contentionWork("as-f55", "gc-ci-91qcet", "in_progress", -1),
+		contentionWork("as-8bc6k", "rig/worker", "open", 1),
+	}
+
+	got := planOneTick(t, cfg, sessions, work)
+
+	if got["as-8bc6k"] == "" {
+		t.Fatalf("as-8bc6k produced no request at all; the fixture no longer reaches the fresh-create allocator and pins nothing: %v", got)
+	}
+	for id, outcome := range got {
+		if strings.HasPrefix(outcome, "create rig/worker-") &&
+			outcome != "create rig/worker-1" && outcome != "create rig/worker-2" {
+			t.Errorf("%s planned %q in a two-slot pool; a number past the bound is invisible to the slot reservation, so the next create is handed it too", id, outcome)
+		}
+		if strings.Contains(outcome, "concrete slot already claimed") {
+			t.Errorf("%s: %s -- a fresh create displaced a working session's own resume", id, outcome)
+		}
 	}
 }

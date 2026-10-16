@@ -106,7 +106,7 @@ func claimPoolSlotWithConfigInfo(cfg *config.City, cfgAgent *config.Agent, info 
 // state to make room for one that will find none.
 //
 // MEASURED at the 04:47:49 tick reproduced in
-// TestFreshCreateDoesNotTakeAWorkingSlotsNumber: a fresh create took slot 1
+// TestFreshCreatePlannedFirstLeavesWorkingSlotsAlone: a fresh create took slot 1
 // from a live session and that session's resume errored out of the tick.
 //
 // Scoped to sessions holding WORK rather than to every open session, and the
@@ -135,13 +135,28 @@ func poolSlotsHeldByWorkingSessionsInfo(bp *agentBuildParams, cfgAgent *config.A
 }
 
 // claimFreshCreatePoolSlotInfo reserves the lowest slot that neither an earlier
-// request this tick nor a live working session already holds.
+// request this tick nor a live working session already holds, or returns 0
+// when every slot inside the agent's configured bound is taken.
+//
+// The bound is the whole point of the 0. The unbounded loop this replaced
+// minted a number past max_active_sessions whenever the pool was full, and a
+// number past the bound is one existingPoolSlotWithConfigInfo resolves to 0 --
+// so the session wearing it reserves nothing, and the NEXT full tick mints the
+// same number again. Same number means same AgentBase means same work_dir: two
+// live sessions in one worktree (ci-1tv1cr, replayed in
+// TestFreshCreateNeverNumbersASlotPastTheConfiguredBound). Widening the
+// reservation to above-bound slots instead is the rejected alternative: it
+// stops the duplicate but keeps minting sessions past the pool's own cap.
 func claimFreshCreatePoolSlotInfo(bp *agentBuildParams, cfgAgent *config.Agent, used map[int]bool) int {
 	if cfgAgent == nil || cfgAgent.UsesCanonicalSingletonPoolIdentity() {
 		return 0
 	}
 	held := poolSlotsHeldByWorkingSessionsInfo(bp, cfgAgent)
+	bounded := poolSlotHasConfiguredBound(cfgAgent)
 	for slot := 1; ; slot++ {
+		if bounded && !inBoundsPoolSlot(cfgAgent, slot) {
+			return 0
+		}
 		if used[slot] || held[slot] {
 			continue
 		}
