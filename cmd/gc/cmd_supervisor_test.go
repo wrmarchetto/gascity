@@ -4183,6 +4183,37 @@ func TestRunSupervisorRejectsSupervisorOnFallbackSocket(t *testing.T) {
 	}
 }
 
+// TestSupervisorRunCommandExitsWithDuplicateCode pins that the duplicate
+// code survives the cobra layer to the process exit status, which is what
+// the unit's RestartPreventExitStatus reads. Driven through run(), because
+// a RunE collapsing every nonzero to errExit turned 3 into 1 (ci-8yxqq3).
+func TestSupervisorRunCommandExitsWithDuplicateCode(t *testing.T) {
+	gcHome := shortTempDir(t, "gc-home-")
+	runtimeDir := shortTempDir(t, "gc-run-")
+	t.Setenv("GC_HOME", gcHome)
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	t.Setenv("BEADS_ACTOR", "test")
+
+	sockPath := filepath.Join(gcHome, "supervisor.sock")
+	startTestSupervisorSocket(t, sockPath, func(cmd string) string {
+		if cmd == "ping" {
+			return "4242\n"
+		}
+		return ""
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"supervisor", "run"}, &stdout, &stderr)
+	if code != supervisorExitCodePortInUse {
+		t.Fatalf("gc supervisor run exit = %d, want %d (the code the "+
+			"unit's RestartPreventExitStatus lists); stderr=%q",
+			code, supervisorExitCodePortInUse, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "already running (PID 4242)") {
+		t.Fatalf("stderr = %q, want the duplicate guard's line", stderr.String())
+	}
+}
+
 func TestRunSupervisorSIGTERMPreservesSessionsEndToEnd(t *testing.T) {
 	gcHome := shortTempDir(t, "gc-home-")
 	runtimeDir := shortTempDir(t, "gc-run-")
