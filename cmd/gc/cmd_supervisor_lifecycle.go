@@ -445,10 +445,9 @@ already captures output (e.g. a hand-managed systemd unit with
 StandardOutput=journal).`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if doSupervisorRun(stdout, stderr) != 0 {
-				return errExit
-			}
-			return nil
+			// not errExit: it exits 1, and the unit's RestartPreventExitStatus
+			// needs the duplicate guard's code to reach the process (ci-8yxqq3).
+			return exitForCode(doSupervisorRun(stdout, stderr))
 		},
 	}
 }
