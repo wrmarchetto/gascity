@@ -29,10 +29,22 @@ timeout_s = 900
 [[mutation]]
 id = "let-a-fresh-create-take-a-working-slots-number"
 path = "cmd/gc/build_desired_state_pool_info.go"
+#
+# The configured-bound check 29ecac074 put between the binding and the loop
+# body stays in BOTH halves. Dropping it too would make this row measure the
+# bound and the reservation at once, and a death could not say which.
 find = '''	held := poolSlotsHeldByWorkingSessionsInfo(bp, cfgAgent)
+	bounded := poolSlotHasConfiguredBound(cfgAgent)
 	for slot := 1; ; slot++ {
+		if bounded && !inBoundsPoolSlot(cfgAgent, slot) {
+			return 0
+		}
 		if used[slot] || held[slot] {'''
-replace = '''	for slot := 1; ; slot++ {
+replace = '''	bounded := poolSlotHasConfiguredBound(cfgAgent)
+	for slot := 1; ; slot++ {
+		if bounded && !inBoundsPoolSlot(cfgAgent, slot) {
+			return 0
+		}
 		if used[slot] {'''
 expect_output = ["concrete slot already claimed"]
 

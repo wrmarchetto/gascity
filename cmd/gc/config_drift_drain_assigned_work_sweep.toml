@@ -1,0 +1,32 @@
+# Proves the config-drift drain's assigned-work yield is enforced by the
+# reconciler-level suite, not merely by the predicate's own table test
+# (ci-ke4nck).
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of. See the mutation-sweep skill.
+
+[sweep]
+name = "config-drift drain yields to work claimed mid-drain"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "ConfigDriftDrain",
+]
+timeout_s = 900
+
+# The predicate as it stood before the fix, by revert rather than by hand so the
+# pre-fix text is the real one. The gate deliberately excludes
+# TestAssignedWorkDrainReasonCancelable: a table test on the predicate dies to
+# this mutant trivially and says nothing about whether the reconciler consults
+# it at both the drain-ack site and the deadline site.
+[[mutation]]
+id = "config-drift-drain-ignores-assigned-work"
+path = "cmd/gc/session_wake.go"
+revert_to = "420284d3a"
+expect_output = [
+  "--- FAIL: TestReconcileSessionBeads_ConfigDriftDrainYieldsToWorkClaimedMidDrain",
+  "--- FAIL: TestAdvanceSessionDrains_ConfigDriftDrainCanceledForAssignedWork",
+]
