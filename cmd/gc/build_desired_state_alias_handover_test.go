@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -98,19 +99,28 @@ func TestPoolSessionAliasHandoverReclaimsFromOwnOutgoingIncarnation(t *testing.T
 // assertion: the runtime probe, not the metadata state, is what proves nobody
 // is still claiming under the alias. A bead can say it is on the way out while
 // its pane is very much alive.
+//
+// This used to accept an alias-less create as the refusal. A running holder at
+// the SAME agent_name and slot is a session in the same worktree, so the create
+// itself is now refused (ci-1tv1cr, pool_slot_occupant.go) and the holder must
+// keep its alias.
 func TestPoolSessionAliasHandoverRefusesWhileTheHolderStillRuns(t *testing.T) {
 	bp, cfg, store, _ := poolSessionAliasRefusalFixture(t)
-	outgoingPoolIncarnation(t, store, "city-stop", "1")
+	holder := outgoingPoolIncarnation(t, store, "city-stop", "1")
 	if err := bp.sp.Start(context.Background(), "worker-ci-predecessor", runtime.Config{}); err != nil {
 		t.Fatalf("seeding a running runtime session: %v", err)
 	}
 
-	info, err := createPoolSessionBeadWithGuardedAlias(bp, &cfg.Agents[0], "worker", "worker-1", 1, nil)
-	if err != nil {
-		t.Fatalf("createPoolSessionBeadWithGuardedAlias: %v", err)
+	_, err := createPoolSessionBeadWithGuardedAlias(bp, &cfg.Agents[0], "worker", "worker-1", 1, nil)
+	if !errors.Is(err, errPoolSlotOccupied) {
+		t.Fatalf("err = %v, want errPoolSlotOccupied: a create was materialized beside a holder whose runtime is still up", err)
 	}
-	if info.Alias != "" {
-		t.Fatalf("alias = %q, want empty: the alias was taken from a holder whose runtime is still up", info.Alias)
+	stored, err := store.Get(holder.ID)
+	if err != nil {
+		t.Fatalf("store.Get(%s): %v", holder.ID, err)
+	}
+	if stored.Metadata["alias"] != "worker-1" {
+		t.Fatalf("holder alias = %q, want %q: the alias was taken from a holder whose runtime is still up", stored.Metadata["alias"], "worker-1")
 	}
 }
 

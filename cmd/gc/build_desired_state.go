@@ -192,6 +192,7 @@ var (
 	errPoolSessionCreatePartial         = errors.New("pool session create skipped: demand read partial")
 	errPoolSessionCreateProviderRed     = errors.New("pool session create skipped: provider red")
 	errPoolSessionCreateBackoff         = errors.New("pool session create skipped: failed-create backoff active")
+	errPoolSessionCreateNoFreeSlot      = errors.New("pool session create skipped: every slot within max_active_sessions is held")
 )
 
 // poolSessionCreateFairShareCounter rotates scarce create tokens across
@@ -4091,6 +4092,9 @@ func selectOrPlanPoolSessionBead(
 	if slot == 0 {
 		slot = claimFreshCreatePoolSlotInfo(bp, cfgAgent, usedSlots)
 	}
+	if slot == 0 && !cfgAgent.UsesCanonicalSingletonPoolIdentity() {
+		return session.Info{}, 0, nil, errPoolSessionCreateNoFreeSlot
+	}
 	_, qualifiedInstance, poolSlot := poolDesiredRequestIdentity(cfgAgent, slot)
 	metadata := poolTriggerMetadata(bp, cfgAgent, qualifiedInstance, request)
 
@@ -4251,6 +4255,9 @@ func createPoolSessionBeadWithGuardedAlias(
 	var info session.Info
 	createdWithLock := false
 	lockErr := session.WithCitySessionIdentifierLocks(bp.cityPath, lockIDs, func() error {
+		if err := refusePoolSlotOccupied(bp, cfgAgent, alias, slot); err != nil {
+			return err
+		}
 		createIdentity := identity
 		if alias != "" {
 			// The handover predicate is what lets this slot reclaim its alias
@@ -4289,7 +4296,7 @@ func createPoolSessionBeadWithGuardedAlias(
 		createdWithLock = true
 		return err
 	})
-	if createdWithLock {
+	if createdWithLock || errors.Is(lockErr, errPoolSlotOccupied) {
 		return info, lockErr
 	}
 	if lockErr != nil && bp.stderr != nil {
