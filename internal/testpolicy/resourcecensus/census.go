@@ -228,8 +228,12 @@ var bootstrapPolicy = Ledger{
 			// proof. It is a DECLARED Medium owner, which clears the Small
 			// debt ratchet, and this all-source audit row takes it anyway --
 			// tagged calls receive no Medium exemption here.
-			BaselineCalls:   629,
-			BaselineFiles:   186,
+			// +1 call / 1 file (ci-tv6nxl): the sync compaction-pending suite
+			// runs commands/sync/run.sh as a real `sh` child, like every
+			// sibling suite in examples/bd/dolt. The script is the artifact
+			// under test, and only a real process carries its exit code.
+			BaselineCalls:   630,
+			BaselineFiles:   187,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
 			OwnerBead:       "ga-80po0c.2",
@@ -321,8 +325,10 @@ var bootstrapPolicy = Ledger{
 			// again here. The spawn is the demand predicate ITSELF -- a shell
 			// pipeline over bd -- so it cannot be replaced by a Go re-derivation
 			// without the test losing the only thing it proves.
-			BaselineCalls:   430,
-			BaselineFiles:   128,
+			// +1 call / 1 file (ci-tv6nxl): the sync compaction-pending suite,
+			// recorded on the all-source audit row above and counted again here.
+			BaselineCalls:   431,
+			BaselineFiles:   129,
 			ReportedCalls:   380,
 			ReportedFiles:   98,
 			OwnerBead:       "ga-80po0c.2",
@@ -769,8 +775,12 @@ var bootstrapPolicy = Ledger{
 			// network, a store or process state -- one reads the index, the
 			// other prints a recipe without running it -- so they are
 			// irreducible rather than heavy.
-			BaselineCalls:   418,
-			BaselineFiles:   121,
+			// +1 call / 1 file (ci-tv6nxl): the sync compaction-pending suite,
+			// which stays Small debt. Its spawn runs against a t.TempDir() city
+			// with a fake bd and a loopback listener, and sits in the shared
+			// helper every case calls, so a Medium owner would not cover it.
+			BaselineCalls:   419,
+			BaselineFiles:   122,
 			ReportedCalls:   394,
 			ReportedFiles:   105,
 			OwnerBead:       "ga-80po0c.2.1",
