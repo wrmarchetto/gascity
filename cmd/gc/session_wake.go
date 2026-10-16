@@ -276,9 +276,22 @@ func cancelSessionDrainForAssignedWorkInfo(info sessions.Info, sp runtime.Provid
 	return cancelSessionDrainIfInfo(info, sp, dt, assignedWorkDrainReasonCancelable)
 }
 
+// assignedWorkDrainReasonCancelable names the drains that yield to assigned
+// work the session holds at ack or deadline time.
+//
+// config-drift is included because the drain-start guard already defers a
+// config-drift drain over live assigned work (session_reconciler.go, "Skipping
+// config-drift drain"), so a drain left standing over work claimed AFTER it
+// began contradicts that guard one tick later. Excluded, the deadline
+// force-stops the holder to asleep with its claim still on it, and that
+// stranded claim's wake demand mints a fresh pool session every tick
+// (ci-ke4nck: five sessions in two minutes, four in one slot of a max-2 pool).
+//
+// idle and suspended stay out. An idle drain cannot coexist with assigned work
+// the awake set sees, and a suspended agent must stop whatever it holds.
 func assignedWorkDrainReasonCancelable(reason string) bool {
 	switch reason {
-	case "orphaned", "no-wake-reason":
+	case "orphaned", "no-wake-reason", "config-drift":
 		return true
 	default:
 		return false

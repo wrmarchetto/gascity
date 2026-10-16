@@ -1219,7 +1219,7 @@ func TestAssignedWorkDrainReasonCancelable(t *testing.T) {
 		{reason: "orphaned", want: true},
 		{reason: "no-wake-reason", want: true},
 		{reason: "idle", want: false},
-		{reason: "config-drift", want: false},
+		{reason: "config-drift", want: true},
 		{reason: "suspended", want: false},
 		{reason: "", want: false},
 	}
