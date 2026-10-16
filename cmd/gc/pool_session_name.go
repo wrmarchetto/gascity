@@ -649,7 +649,7 @@ func liveOpenSessionAssignmentExists(store beads.Store, assignee string) bool {
 // an unreadable store cannot be mistaken for a dead holder and reopen a live
 // claim. A caller reading fields off the returned bead must therefore treat the
 // zero value as "unknown", not as "the field is empty" -- see
-// claimHolderHasDrainAcked, which keeps renewing in that case.
+// refusedClaimHolder, which keeps renewing in that case.
 func liveOpenSessionAssignmentBead(store beads.Store, assignee string) (beads.Bead, bool) {
 	assignee = strings.TrimSpace(assignee)
 	if store == nil || assignee == "" {

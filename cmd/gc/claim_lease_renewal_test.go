@@ -32,6 +32,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -328,15 +329,56 @@ func TestClaimLeaseRenewalWarnsWhenPatrolCannotSustainIt(t *testing.T) {
 // drainAckRefusedFixture is the steady tick a refused drain acknowledgement
 // leaves behind: the session is open and alive, its claim is still in_progress
 // and still assigned to it, and the only thing that changed is the state reason
-// the controller wrote when it declined the acknowledgement.
-func drainAckRefusedFixture(t *testing.T) claimLeaseTestFixture {
+// and refusal instant the controller wrote when it declined the
+// acknowledgement. A zero refusedAt writes the reason alone, the shape of a
+// refusal recorded before the instant was stamped.
+//
+// The session also carries the two fields the real transcript probe resolves
+// on, session_key salted per run, so that only an Info projected from the
+// whole bead can reach the scripted transcript.
+func drainAckRefusedFixture(t *testing.T, refusedAt time.Time) claimLeaseTestFixture {
 	t.Helper()
 	f := newClaimLeaseFixture(t)
-	f.session.Metadata["state_reason"] = sessionpkg.DrainAckAssignedWorkReason
-	if err := f.store.SetMetadata(f.session.ID, "state_reason", sessionpkg.DrainAckAssignedWorkReason); err != nil {
-		t.Fatalf("SetMetadata(state_reason): %v", err)
+	patch := map[string]string{
+		"state_reason": sessionpkg.DrainAckAssignedWorkReason,
+		"session_key":  fmt.Sprintf("sk-%d", time.Now().UnixNano()),
+		"work_dir":     t.TempDir(),
+	}
+	if !refusedAt.IsZero() {
+		patch[sessionpkg.DrainAckRefusedAtMetadataKey] = refusedAt.UTC().Format(time.RFC3339)
+	}
+	for k, v := range patch {
+		f.session.Metadata[k] = v
+		if err := f.store.SetMetadata(f.session.ID, k, v); err != nil {
+			t.Fatalf("SetMetadata(%s): %v", k, err)
+		}
 	}
 	return f
+}
+
+// scriptedTranscript stands in for the transcript-mtime probe. It answers
+// only for the fixture session's own key and FAILS the test for any other
+// key, so a renewer that probes the wrong holder cannot borrow an answer meant
+// for someone else.
+//
+// An Info with no session key or work dir gets the zero reading, as
+// sessionTranscriptActivity gives it -- the keyed resolver cannot attribute
+// such a row. Answering on Info.ID instead let a fallback that skipped the
+// session front door, and so carried no key, read the scripted transcript
+// anyway: the fallback-skips-front-door row SURVIVED the first sweep.
+func scriptedTranscript(t *testing.T, f claimLeaseTestFixture, last time.Time) transcriptActivityProbe {
+	t.Helper()
+	want := f.session.Metadata["session_key"]
+	return func(info sessionpkg.Info, _ []string) time.Time {
+		if strings.TrimSpace(info.SessionKey) == "" || strings.TrimSpace(info.WorkDir) == "" {
+			return time.Time{}
+		}
+		if info.SessionKey != want {
+			t.Errorf("transcript probed for session key %q, want only %q", info.SessionKey, want)
+			return time.Time{}
+		}
+		return last
+	}
 }
 
 func TestClaimLeaseRenewalStopsOnceTheHolderHasDrainAcked(t *testing.T) {
@@ -346,13 +388,115 @@ func TestClaimLeaseRenewalStopsOnceTheHolderHasDrainAcked(t *testing.T) {
 	// the lease forward every two minutes until a human ran `gc bd unclaim
 	// --force`. `gc bd show` read "heartbeat just now" the whole time, which is
 	// the single sentence a lease exists to be able to say truthfully.
-	f := drainAckRefusedFixture(t)
+	//
+	// The transcript is written a few seconds AFTER the refusal, not before
+	// it. drain-ack pokes the controller, so the refusal lands while the
+	// agent's turn is still closing out, and every measured refusal has that
+	// trailing burst. A fixture whose transcript stopped before the refusal
+	// would pass a renewer that keys on "any write since the refusal" -- the
+	// rule that can never lapse anyone.
+	now := time.Now()
+	refusedAt := now.Add(-drainAckedHolderQuietWindow - 30*time.Minute)
+	f := drainAckRefusedFixture(t, refusedAt)
 	r := newClaimLeaseRenewer()
+	r.lastTranscript = scriptedTranscript(t, f, refusedAt.Add(5*time.Second))
+
+	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, now)
+
+	if len(got) != 0 {
+		t.Fatalf("due = %v, want none -- the holder told the controller it was finished and has been silent since", renewalIDs(got))
+	}
+}
+
+func TestClaimLeaseRenewalResumesOnceADrainAckedHolderTakesAnotherTurn(t *testing.T) {
+	// The defect this file was reopened for (ci-kkezqd). as-ognbh's holder
+	// was refused at 02:07:47Z, went back to work on that same bead, and
+	// lost its lease anyway because the state reason it carried is never
+	// cleared. 40 of 46 refused sessions resume unaided (ci-8ajvxn), so the
+	// refusal alone describes the common healthy case as a retirement.
+	//
+	// The refusal is dated long before the window so that only the fresh
+	// transcript write can be what keeps the lease -- a refusal inside the
+	// window would renew on its own and this test would not see the
+	// transcript read deleted.
+	now := time.Now()
+	refusedAt := now.Add(-3 * drainAckedHolderQuietWindow)
+	f := drainAckRefusedFixture(t, refusedAt)
+	r := newClaimLeaseRenewer()
+	r.lastTranscript = scriptedTranscript(t, f, now.Add(-time.Minute))
+
+	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, now)
+
+	if len(got) != 1 || got[0].BeadID != f.work.ID {
+		t.Fatalf("due = %v, want [%s] -- the holder wrote to its transcript after the refusal", renewalIDs(got), f.work.ID)
+	}
+}
+
+func TestClaimLeaseRenewalCarriesADrainAckedHolderThroughAQuietGap(t *testing.T) {
+	// A resumed holder is not writing continuously. Measured over 98 refused
+	// sessions, quiet gaps that ENDED in more transcript writes reached
+	// 1635s, with p95 at the 10-minute tool cap. Lapsing the lease at the
+	// first silent tick would re-open the theft for every one of those, so
+	// the holder keeps its lease until the silence outlasts the window.
+	//
+	// Set just inside the window, against a transcript that went quiet at
+	// the refusal, so a renewer measuring from the wrong instant, or with
+	// the comparison flipped, fails here.
+	now := time.Now()
+	refusedAt := now.Add(-drainAckedHolderQuietWindow + time.Minute)
+	f := drainAckRefusedFixture(t, refusedAt)
+	r := newClaimLeaseRenewer()
+	r.lastTranscript = scriptedTranscript(t, f, refusedAt.Add(-time.Minute))
+
+	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, now)
+
+	if len(got) != 1 || got[0].BeadID != f.work.ID {
+		t.Fatalf("due = %v, want [%s] -- the holder has been quiet for less than the window", renewalIDs(got), f.work.ID)
+	}
+}
+
+func TestClaimLeaseRenewalDatesAnUnattributableHolderFromItsRefusal(t *testing.T) {
+	// A zero probe reading is ABSENT, not old: a provider with no keyed
+	// transcript, or a file not yet written. The refusal instant is then the
+	// only date there is, so the holder gets the window from the refusal and
+	// no more. Both arms are asserted because each alone passes a renewer
+	// that ignores the refusal stamp in one direction.
+	now := time.Now()
+	for _, tc := range []struct {
+		name      string
+		refusedAt time.Time
+		want      int
+	}{
+		{"refused inside the window", now.Add(-time.Minute), 1},
+		{"refused beyond the window", now.Add(-drainAckedHolderQuietWindow - time.Minute), 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := drainAckRefusedFixture(t, tc.refusedAt)
+			r := newClaimLeaseRenewer()
+			r.lastTranscript = scriptedTranscript(t, f, time.Time{})
+
+			got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, now)
+
+			if len(got) != tc.want {
+				t.Fatalf("due = %v, want %d renewal(s)", renewalIDs(got), tc.want)
+			}
+		})
+	}
+}
+
+func TestClaimLeaseRenewalStopsForAnUndatedRefusalWithNoTranscript(t *testing.T) {
+	// A state reason with no refusal instant and no transcript reading leaves
+	// nothing to measure a resumption from. The exclusion then holds as it did
+	// before transcripts were read, rather than renewing a holder nothing can
+	// show is working.
+	f := drainAckRefusedFixture(t, time.Time{})
+	r := newClaimLeaseRenewer()
+	r.lastTranscript = scriptedTranscript(t, f, time.Time{})
 
 	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, time.Now())
 
 	if len(got) != 0 {
-		t.Fatalf("due = %v, want none -- the holder told the controller it was finished", renewalIDs(got))
+		t.Fatalf("due = %v, want none -- nothing dates the holder's last turn", renewalIDs(got))
 	}
 }
 
@@ -363,13 +507,33 @@ func TestClaimLeaseRenewalStopsForADrainAckedHolderMissingFromTheSnapshot(t *tes
 	// pins. Reading the refusal out of the snapshot ALONE would leave the
 	// fallback renewing a retired holder's lease forever, and the fallback is
 	// reached on exactly the ticks nobody is watching.
-	f := drainAckRefusedFixture(t)
+	now := time.Now()
+	refusedAt := now.Add(-drainAckedHolderQuietWindow - 30*time.Minute)
+	f := drainAckRefusedFixture(t, refusedAt)
 	r := newClaimLeaseRenewer()
+	r.lastTranscript = scriptedTranscript(t, f, refusedAt.Add(5*time.Second))
 
-	got := r.due("", f.cfg, f.store, nil, []beads.Bead{f.work}, nil, time.Now())
+	got := r.due("", f.cfg, f.store, nil, []beads.Bead{f.work}, nil, now)
 
 	if len(got) != 0 {
 		t.Fatalf("due = %v, want none -- the store says this holder retired", renewalIDs(got))
+	}
+}
+
+func TestClaimLeaseRenewalResumesForADrainAckedHolderMissingFromTheSnapshot(t *testing.T) {
+	// The fallback's other direction. A fallback that read the refusal but
+	// not the transcript would lapse a resumed holder on exactly the ticks
+	// its session missed the snapshot.
+	now := time.Now()
+	refusedAt := now.Add(-3 * drainAckedHolderQuietWindow)
+	f := drainAckRefusedFixture(t, refusedAt)
+	r := newClaimLeaseRenewer()
+	r.lastTranscript = scriptedTranscript(t, f, now.Add(-time.Minute))
+
+	got := r.due("", f.cfg, f.store, nil, []beads.Bead{f.work}, nil, now)
+
+	if len(got) != 1 || got[0].BeadID != f.work.ID {
+		t.Fatalf("due = %v, want [%s] from the store fallback -- the holder took another turn", renewalIDs(got), f.work.ID)
 	}
 }
 
@@ -380,16 +544,51 @@ func TestClaimLeaseRenewalKeepsRenewingUnderAnyOtherStateReason(t *testing.T) {
 	// "reactivated" -- so a guard that read the key's presence would lapse the
 	// lease of every live holder in the city and hand `bd reclaim` the whole
 	// board.
+	//
+	// The probe is scripted to report an ancient transcript, so this also
+	// pins that only a refused holder is ever judged on activity. That is
+	// what keeps the header's rejection of activity-keyed renewal intact.
 	f := newClaimLeaseFixture(t)
-	f.session.Metadata["state_reason"] = "creation_complete"
-	if err := f.store.SetMetadata(f.session.ID, "state_reason", "creation_complete"); err != nil {
-		t.Fatalf("SetMetadata(state_reason): %v", err)
+	for k, v := range map[string]string{
+		"state_reason": "creation_complete",
+		"session_key":  fmt.Sprintf("sk-%d", time.Now().UnixNano()),
+		"work_dir":     t.TempDir(),
+	} {
+		f.session.Metadata[k] = v
+		if err := f.store.SetMetadata(f.session.ID, k, v); err != nil {
+			t.Fatalf("SetMetadata(%s): %v", k, err)
+		}
 	}
+	now := time.Now()
 	r := newClaimLeaseRenewer()
+	r.lastTranscript = scriptedTranscript(t, f, now.Add(-24*time.Hour))
 
-	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, time.Now())
+	got := r.due("", f.cfg, f.store, f.openInfos(), []beads.Bead{f.work}, nil, now)
 
 	if len(got) != 1 || got[0].BeadID != f.work.ID {
 		t.Fatalf("due = %v, want [%s] -- an ordinary state reason is not a retirement", renewalIDs(got), f.work.ID)
+	}
+}
+
+func TestDrainAckedHolderQuietWindowSitsBetweenTheMeasuredRegimes(t *testing.T) {
+	// The window is sited against a measurement, so it is pinned to the
+	// measured figures rather than recomputed from itself. Measured
+	// 2026-10-16 over the 97 refused sessions whose Claude transcripts were
+	// attributable: the longest quiet gap that ended in the holder writing
+	// again was 1635s (p95 600s), and the shortest hours-scale silence never
+	// followed by another turn was 4248s. Shorter terminal silences exist
+	// (one at 1674s) and are deliberately on the renewing side -- see the
+	// constant's comment for why cost, not separation, places it. A new
+	// measurement that moves either edge past the window fails here, which
+	// is the prompt to re-site it.
+	const (
+		longestResumedQuiet = 1635 * time.Second
+		shortestWedgedQuiet = 4248 * time.Second
+	)
+	if drainAckedHolderQuietWindow <= longestResumedQuiet {
+		t.Errorf("window %s does not clear the longest measured resumed gap %s", drainAckedHolderQuietWindow, longestResumedQuiet)
+	}
+	if drainAckedHolderQuietWindow >= shortestWedgedQuiet {
+		t.Errorf("window %s does not fall below the shortest measured wedge %s", drainAckedHolderQuietWindow, shortestWedgedQuiet)
 	}
 }
