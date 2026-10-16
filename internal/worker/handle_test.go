@@ -1586,6 +1586,72 @@ func TestRuntimeHandleNudgeWaitIdleClaudeWrapsReminder(t *testing.T) {
 	}
 }
 
+// TestRuntimeHandleNudgeWaitIdleGatesOnProviderFamilyNotKey pins that the
+// wait-idle path decides deliverability from the provider FAMILY. A city
+// wraps claude under its own keys (claude-analyst, claude-mayor), and a
+// comparison against the raw key reported every such seat
+// provider_not_nudgeable while it sat idle (ci-oow9up). The second row is
+// why the family is passed in rather than guessed from the key: a key that
+// merely contains "claude" but descends from codex must stay unsupported.
+func TestRuntimeHandleNudgeWaitIdleGatesOnProviderFamilyNotKey(t *testing.T) {
+	cases := []struct {
+		name          string
+		providerName  string
+		family        string
+		wantDelivered bool
+		wantSkip      sessionpkg.NudgeSkip
+	}{
+		{"custom key on claude family", "claude-analyst", "claude", true, sessionpkg.NudgeSkipNone},
+		{"claude-looking key on codex family", "my-claude", "codex", false, sessionpkg.NudgeSkipProviderUnsupported},
+		{"bare builtin key with no family", "claude", "", true, sessionpkg.NudgeSkipNone},
+		{"custom key with no family", "claude-analyst", "", false, sessionpkg.NudgeSkipProviderUnsupported},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sp := runtime.NewFake()
+			if err := sp.Start(context.Background(), "seat", runtime.Config{}); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			sp.WaitForIdleErrors["seat"] = nil
+
+			handle, err := NewRuntimeHandle(RuntimeHandleConfig{
+				Provider:       sp,
+				SessionName:    "seat",
+				ProviderName:   tc.providerName,
+				ProviderFamily: tc.family,
+			})
+			if err != nil {
+				t.Fatalf("NewRuntimeHandle: %v", err)
+			}
+			result, err := handle.Nudge(context.Background(), NudgeRequest{
+				Text:     "wake",
+				Delivery: NudgeDeliveryWaitIdle,
+				Source:   "mail",
+			})
+			if err != nil {
+				t.Fatalf("Nudge(wait_idle): %v", err)
+			}
+			if result.Delivered != tc.wantDelivered || result.Skip != tc.wantSkip {
+				t.Fatalf("Nudge(wait_idle) = {Delivered:%v Skip:%q}, want {Delivered:%v Skip:%q}",
+					result.Delivered, result.Skip, tc.wantDelivered, tc.wantSkip)
+			}
+			var nudgeNow int
+			for _, call := range sp.Calls {
+				if call.Method == "NudgeNow" {
+					nudgeNow++
+				}
+			}
+			wantNudgeNow := 0
+			if tc.wantDelivered {
+				wantNudgeNow = 1
+			}
+			if nudgeNow != wantNudgeNow {
+				t.Fatalf("NudgeNow calls = %d, want %d", nudgeNow, wantNudgeNow)
+			}
+		})
+	}
+}
+
 func TestRuntimeHandleNudgeWaitIdleHonorsCallerContext(t *testing.T) {
 	sp := runtime.NewFake()
 	if err := sp.Start(context.Background(), "legacy-worker", runtime.Config{}); err != nil {

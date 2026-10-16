@@ -5188,6 +5188,112 @@ func TestDeliverSessionNudgeWaitIdleIdleTargetNotShortCircuited(t *testing.T) {
 	}
 }
 
+// customClaudeNudgeTargets are the two ways a running seat on a city-defined
+// claude wrapper reaches the nudge path: with the resolved provider already
+// carrying its built-in ancestor (an agent the config resolves), and with
+// only the raw key, leaving the family to the city's provider table.
+func customClaudeNudgeTargets(dir string) map[string]nudgeTarget {
+	base := "builtin:claude"
+	return map[string]nudgeTarget{
+		"resolved ancestor": {
+			cityPath:    dir,
+			agent:       config.Agent{Name: "worker"},
+			resolved:    &config.ResolvedProvider{Name: "claude-analyst", BuiltinAncestor: "claude"},
+			sessionName: "sess-worker",
+		},
+		"provider table": {
+			cityPath: dir,
+			cfg: &config.City{Providers: map[string]config.ProviderSpec{
+				"claude-analyst": {Base: &base},
+			}},
+			agent:       config.Agent{Name: "worker"},
+			resolved:    &config.ResolvedProvider{Name: "claude-analyst"},
+			sessionName: "sess-worker",
+		},
+	}
+}
+
+// TestDeliverSessionNudgeWaitIdleDeliversLiveToCustomClaudeProvider pins that
+// a wait-idle nudge to an idle seat whose provider key is a claude wrapper is
+// delivered live. Both gates compared the raw key to "claude", so mail
+// --notify reported provider_not_nudgeable to an idle liaison and only the
+// queue poller ever reached it (ci-oow9up). The assertion is on NudgeNow and
+// an empty queue, because the queued fallback also exits 0.
+func TestDeliverSessionNudgeWaitIdleDeliversLiveToCustomClaudeProvider(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	for name, target := range customClaudeNudgeTargets(t.TempDir()) {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			target.cityPath = dir
+			fake := runtime.NewFake()
+			if err := fake.Start(context.Background(), "sess-worker", runtime.Config{}); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			fake.SetActivity("sess-worker", time.Now().Add(-time.Hour))
+			fake.WaitForIdleErrors["sess-worker"] = nil
+			prev := startNudgePoller
+			startNudgePoller = func(string, string, string) error { return nil }
+			t.Cleanup(func() { startNudgePoller = prev })
+
+			var stdout, stderr bytes.Buffer
+			if code := deliverSessionNudgeWithProvider(target, fake, nudgeDeliveryWaitIdle, &stdout, &stderr); code != 0 {
+				t.Fatalf("deliver = %d, want 0; stderr: %s", code, stderr.String())
+			}
+			var nudgeNow int
+			for _, call := range fake.Calls {
+				if call.Method == "NudgeNow" {
+					nudgeNow++
+				}
+			}
+			if nudgeNow != 1 {
+				t.Fatalf("NudgeNow calls = %d, want 1 (live delivery); stdout: %s", nudgeNow, stdout.String())
+			}
+			pending, inFlight, dead, err := listQueuedNudges(dir, "worker", time.Now())
+			if err != nil {
+				t.Fatalf("listQueuedNudges: %v", err)
+			}
+			if len(pending)+len(inFlight)+len(dead) != 0 {
+				t.Fatalf("pending/inFlight/dead = %d/%d/%d, want none queued", len(pending), len(inFlight), len(dead))
+			}
+		})
+	}
+}
+
+// TestDeliverSessionNudgeWaitIdleBusyCustomClaudeQueuesWithoutBlocking pins
+// the busy short-circuit to the same family test as the handle. Left on the
+// raw key it skips a busy claude-wrapper seat, and once the handle accepts
+// the family that seat blocks the caller in WaitForIdle for the full 30s.
+func TestDeliverSessionNudgeWaitIdleBusyCustomClaudeQueuesWithoutBlocking(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	for name, target := range customClaudeNudgeTargets(t.TempDir()) {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			target.cityPath = dir
+			fake := runtime.NewFake()
+			if err := fake.Start(context.Background(), "sess-worker", runtime.Config{}); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			fake.SetActivity("sess-worker", time.Now())
+			prev := startNudgePoller
+			startNudgePoller = func(string, string, string) error { return nil }
+			t.Cleanup(func() { startNudgePoller = prev })
+
+			var stdout, stderr bytes.Buffer
+			if code := deliverSessionNudgeWithProvider(target, fake, nudgeDeliveryWaitIdle, &stdout, &stderr); code != 0 {
+				t.Fatalf("deliver = %d, want 0; stderr: %s", code, stderr.String())
+			}
+			for _, call := range fake.Calls {
+				if call.Method == "WaitForIdle" {
+					t.Fatalf("busy target must not block in WaitForIdle; calls = %#v", fake.Calls)
+				}
+			}
+			if !strings.Contains(stdout.String(), "Queued nudge for worker") {
+				t.Fatalf("stdout = %q, want queued", stdout.String())
+			}
+		})
+	}
+}
+
 // TestBlockedQueuedNudgeReason_GetWaitErrorMapping is the design-promised A2
 // oracle for the WI-1 nudge residual closure: blockedQueuedNudgeReason gates
 // wait-sourced nudges by reading the referenced wait through the session front

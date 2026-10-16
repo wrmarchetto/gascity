@@ -222,6 +222,24 @@ func (t nudgeTarget) sessionTransport() string {
 	return t.agent.Session
 }
 
+// providerFamily is the built-in provider the target's key descends from,
+// and the ONLY value either wait-idle gate may compare: this busy
+// short-circuit and RuntimeHandle.nudgeWaitIdle. Comparing providerName
+// instead refused every claude-wrapper seat (claude-analyst, claude-mayor)
+// as provider_not_nudgeable while it sat idle (ci-oow9up). Empty means
+// undetermined, which both gates read as unsupported rather than widening
+// on a key that merely looks like claude.
+func (t nudgeTarget) providerFamily() string {
+	if t.resolved != nil && strings.TrimSpace(t.resolved.BuiltinAncestor) != "" {
+		return strings.TrimSpace(t.resolved.BuiltinAncestor)
+	}
+	var providers map[string]config.ProviderSpec
+	if t.cfg != nil {
+		providers = t.cfg.Providers
+	}
+	return config.BuiltinFamily(t.providerName(), providers)
+}
+
 func (t nudgeTarget) providerName() string {
 	if t.resolved != nil && strings.TrimSpace(t.resolved.Name) != "" {
 		return strings.TrimSpace(t.resolved.Name)
@@ -935,7 +953,7 @@ func deliverSessionNudgeWithWorker(target nudgeTarget, store beads.Store, sp run
 	// live in-process and non-claude returns immediately (see
 	// internal/worker/runtime_handle.go nudgeWaitIdle), so short-circuiting
 	// those would needlessly downgrade live delivery to queued. (gco-90ui)
-	if mode == nudgeDeliveryWaitIdle && target.sessionTransport() != "acp" && target.providerName() == "claude" {
+	if mode == nudgeDeliveryWaitIdle && target.sessionTransport() != "acp" && target.providerFamily() == "claude" {
 		if obs, obsErr := nudgeObserveTarget(target, sessStore, sp); obsErr == nil && obs.Running && nudgeObservationBusy(obs) {
 			return queueSessionNudgeWithWorker(target, store, sp, message, mode, jsonOutput, stdout, stderr)
 		}
@@ -1117,6 +1135,7 @@ func workerHandleForNudgeTarget(target nudgeTarget, store beads.Store, sp runtim
 			target.cfg,
 			target.sessionName,
 			strings.TrimSpace(target.providerName()),
+			target.providerFamily(),
 			strings.TrimSpace(target.sessionTransport()),
 			nil,
 		)
@@ -1137,6 +1156,7 @@ func workerHandleForNudgeTarget(target nudgeTarget, store beads.Store, sp runtim
 		target.cfg,
 		target.sessionName,
 		strings.TrimSpace(target.providerName()),
+		target.providerFamily(),
 		strings.TrimSpace(target.sessionTransport()),
 		nil,
 	)
