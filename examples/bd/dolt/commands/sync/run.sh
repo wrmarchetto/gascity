@@ -30,6 +30,10 @@
 #                     a fresh remote can exceed the prior fixed 120s ceiling).
 #                     Metadata queries (remote lookup, active branch) keep their
 #                     own 120s bound.
+#   GC_DOLT_COMPACT_PENDING_PUSH_MAX_AGE_SECS
+#     (default: 172800) — the compactor's retry window for a deferred push.
+#                     A diverged database whose divergence the compactor will
+#                     push within this window is reported, not failed.
 set -e
 
 dry_run=false
@@ -256,6 +260,74 @@ classify_count() {
   printf '%s\n' "$cc_out" | awk -F, 'NR == 2 { gsub(/^"|"$/, "", $1); print $1; exit }'
 }
 
+# Retry window for a deferred post-compaction push, read from the compactor's
+# own variable so the two cannot be configured apart. The default MUST equal
+# commands/compact/run.sh's, gated by TestSyncPendingPushMaxAgeMatchesCompactor:
+# a longer window here quiets the patrol for markers the compactor already
+# refuses as stale.
+pending_push_max_age_secs="${GC_DOLT_COMPACT_PENDING_PUSH_MAX_AGE_SECS:-172800}"
+
+# compaction_push_pending <db> <remote> <remote-branch> -- succeed, printing the
+# owning marker's directory name, when mol-dog-compactor holds a deferred
+# force-push for exactly this remote ref that it WILL make on its next run.
+#
+# A flatten rewrites local history, so until the compactor's compare-and-swap
+# push lands, ancestry classification reads "diverged". Reported as manual
+# reconcile, that paged a P1 suspecting a second writer for a state the
+# compactor resolved by itself two hours later (ci-9bsc7i, ci-tv6nxl).
+#
+# Mirrors the compactor's own gates (push_remote_after_compaction and
+# ensure_remote_push_retry_fresh in commands/compact/run.sh): pending-gc is
+# consulted before pending-push, the marker must name this remote and branch,
+# its expected head must be VERIFIED and equal the fetched remote head, and it
+# must be inside the retry window. Matching on the marker's mere presence is
+# the tempting shortcut, and it would silence the patrol exactly when the
+# compactor refuses (remote moved, stale marker), leaving the database
+# unpushed with nothing paging. Read-only.
+compaction_push_pending() {
+  cp_db="$1"
+  cp_remote="$2"
+  cp_branch="$3"
+  cp_marker=""
+  for cp_dir in compact-pending-gc compact-pending-push; do
+    if [ -f "$PACK_STATE_DIR/$cp_dir/$cp_db" ]; then
+      cp_marker="$PACK_STATE_DIR/$cp_dir/$cp_db"
+      break
+    fi
+  done
+  [ -n "$cp_marker" ] || return 1
+
+  cp_val() {
+    awk -v prefix="$1=" 'index($0, prefix) == 1 { print substr($0, length(prefix) + 1); exit }' "$cp_marker"
+  }
+  [ "$(cp_val remote)" = "$cp_remote" ] || return 1
+  cp_marker_branch=$(cp_val remote_branch)
+  [ -n "$cp_marker_branch" ] || cp_marker_branch=$(cp_val local_branch)
+  [ -n "$cp_marker_branch" ] || cp_marker_branch="main"
+  [ "$cp_marker_branch" = "$cp_branch" ] || return 1
+  [ "$(cp_val expected_remote_head_verified)" = 1 ] || return 1
+  cp_expected=$(cp_val expected_remote_head)
+  case "$cp_expected" in
+    ''|*[!A-Za-z0-9]*) return 1 ;;
+  esac
+
+  cp_created=$(cp_val created_at)
+  case "$cp_created" in
+    ''|*[!0-9TZ:.-]*) return 1 ;;
+  esac
+  cp_created_epoch=$(date -u -d "$cp_created" +%s 2>/dev/null ||
+    date -ju -f "%Y-%m-%dT%H:%M:%SZ" "$cp_created" +%s 2>/dev/null) || return 1
+  cp_age=$(( $(date -u +%s) - cp_created_epoch ))
+  # A non-numeric window makes this test error, which fails closed. The
+  # compactor exits on the same value, so it is not pushing either.
+  [ "$cp_age" -le "$pending_push_max_age_secs" ] 2>/dev/null || return 1
+
+  cp_out=$(dolt_sql "USE \`$cp_db\`; SELECT hash FROM dolt_remote_branches WHERE name = 'remotes/$cp_remote/$cp_branch'") || return 1
+  cp_head=$(printf '%s\n' "$cp_out" | awk -F, 'NR == 2 { gsub(/^"|"$/, "", $1); print $1; exit }')
+  [ "$cp_head" = "$cp_expected" ] || return 1
+  basename "$(dirname "$cp_marker")"
+}
+
 find_remote_sql() {
   db="$1"
   remote_csv=$(dolt_sql "USE \`$db\`; SELECT name, url FROM dolt_remotes LIMIT 1") || return 1
@@ -428,6 +500,10 @@ sync_database_sql() {
           ff_status="ahead $ahead"
         elif [ "$ahead" = 0 ]; then
           ff_decision="skip"; ff_status="behind $behind"; ff_rc=0
+        elif cp_owner=$(compaction_push_pending "$name" "$remote_name" "$remote_branch"); then
+          ff_decision="skip"
+          ff_status="compaction push pending ($cp_owner, $ahead ahead / $behind behind)"
+          ff_rc=0
         else
           ff_decision="skip"; ff_status="diverged ($ahead ahead / $behind behind)"; ff_rc=1
         fi
@@ -453,6 +529,7 @@ sync_database_sql() {
       up-to-date) echo "  $name: up-to-date with $remote_name:$remote_branch" ;;
       behind*)    echo "  $name: $ff_status — pull needed (gc dolt pull)" ;;
       diverged*)  echo "  $name: $ff_status — manual reconcile" >&2 ;;
+      compaction*) echo "  $name: $ff_status — mol-dog-compactor force-pushes it on its next run" ;;
       *)          echo "  $name: skipped [$ff_status]" ;;
     esac
     return "$ff_rc"
