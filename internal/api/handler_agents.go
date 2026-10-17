@@ -184,6 +184,14 @@ func agentSessionName(cityName, qualifiedName, sessionTemplate string) string {
 	return agent.SessionNameFor(cityName, qualifiedName, sessionTemplate)
 }
 
+// agentRuntimeSessionName resolves one agent identity to its live session's
+// name through the city session store. A pool session runs as
+// "<template>-<beadID>", which agentSessionName cannot derive. Callers
+// resolving many identities build one statusSessionSnapshot instead.
+func (s *Server) agentRuntimeSessionName(ctx context.Context, name string, cfg *config.City) string {
+	return s.statusSessionSnapshot(ctx).runtimeSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate)
+}
+
 // WaitForAgentVisibilityIn polls cfgSnapshot() until findAgent resolves the
 // given qualified agent name, or returns an error if ctx is done. It is the
 // shared building block for AgentVisibilityWaiter implementations.
@@ -456,12 +464,12 @@ func computeAgentState(suspended, quarantined, running bool, activeBead string, 
 
 // enrichSessionMeta populates model and context usage fields on the agent
 // response by reading the tail of the agent's session JSONL file.
-func (s *Server) enrichSessionMeta(resp *agentResponse, agentCfg config.Agent, qualifiedName string) {
+func (s *Server) enrichSessionMeta(resp *agentResponse, agentCfg config.Agent, qualifiedName, sessionName string) {
 	factory, err := s.workerFactory(s.state.CityBeadStore())
 	if err != nil {
 		return
 	}
-	transcriptState, err := s.resolveAgentTranscript(qualifiedName, agentCfg)
+	transcriptState, err := s.resolveAgentTranscript(qualifiedName, agentCfg, sessionName)
 	if err != nil {
 		return
 	}

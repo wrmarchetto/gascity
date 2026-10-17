@@ -38,10 +38,11 @@ func (s *Server) handleAgentOutputStream(w http.ResponseWriter, r *http.Request,
 	if provider == "" {
 		provider = strings.TrimSpace(cfg.Workspace.Provider)
 	}
+	sessionName := s.agentRuntimeSessionName(r.Context(), name, cfg)
 	var logPath string
 	resolveLogPath := func() string { return "" }
 	if workDir != "" {
-		transcriptState, err := s.resolveAgentTranscript(name, agentCfg)
+		transcriptState, err := s.resolveAgentTranscript(name, agentCfg, sessionName)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())
 			return
@@ -49,7 +50,7 @@ func (s *Server) handleAgentOutputStream(w http.ResponseWriter, r *http.Request,
 		provider = transcriptState.provider
 		logPath = transcriptState.path
 		resolveLogPath = func() string {
-			resolved, err := s.resolveAgentTranscript(name, agentCfg)
+			resolved, err := s.resolveAgentTranscript(name, agentCfg, sessionName)
 			if err != nil {
 				return ""
 			}
@@ -57,7 +58,7 @@ func (s *Server) handleAgentOutputStream(w http.ResponseWriter, r *http.Request,
 		}
 	}
 
-	handle := s.agentWorkerHandle(name, cfg)
+	handle := s.agentWorkerHandle(sessionName)
 	running, _ := workerHandleRunning(r.Context(), handle)
 
 	// If no session log and agent isn't running, return 404 before committing SSE headers.
@@ -80,7 +81,7 @@ func (s *Server) handleAgentOutputStream(w http.ResponseWriter, r *http.Request,
 	}
 
 	ctx := r.Context()
-	workerOps := s.watchAgentWorkerOperationSignals(ctx, name, cfg)
+	workerOps := s.watchAgentWorkerOperationSignals(ctx, sessionName)
 	if logPath != "" {
 		s.streamSessionLog(ctx, w, name, provider, logPath, resolveLogPath, workerOps)
 	} else {

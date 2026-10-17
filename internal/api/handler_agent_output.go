@@ -43,14 +43,16 @@ type agentTranscriptState struct {
 	path        string
 }
 
-func (s *Server) resolveAgentTranscript(name string, agentCfg config.Agent) (*agentTranscriptState, error) {
+// resolveAgentTranscript locates name's transcript. sessionName is the
+// runtime name from agentRuntimeSessionName, resolved once by the caller.
+func (s *Server) resolveAgentTranscript(name string, agentCfg config.Agent, sessionName string) (*agentTranscriptState, error) {
 	cfg := s.state.Config()
 	state := &agentTranscriptState{}
 	if cfg == nil {
 		return state, nil
 	}
 
-	state.sessionName = agentSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate)
+	state.sessionName = sessionName
 	state.provider = strings.TrimSpace(agentCfg.Provider)
 	if state.provider == "" {
 		state.provider = strings.TrimSpace(cfg.Workspace.Provider)
@@ -63,10 +65,7 @@ func (s *Server) resolveAgentTranscript(name string, agentCfg config.Agent) (*ag
 		state.workDir = abs
 	}
 
-	state.sessionName, state.sessionID = s.resolveAgentSessionSubjects(name, cfg)
-	if state.sessionID == "" {
-		state.sessionName = agentSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate)
-	}
+	state.sessionID = s.agentSessionID(state.sessionName)
 	if state.sessionID == "" {
 		if sp := s.state.SessionProvider(); sp != nil && state.sessionName != "" {
 			if sessionID, err := sp.GetMeta(state.sessionName, "GC_SESSION_ID"); err == nil {
@@ -95,8 +94,8 @@ func (s *Server) resolveAgentTranscript(name string, agentCfg config.Agent) (*ag
 // trySessionLogOutputHuma is the Huma-compatible variant of trySessionLogOutput.
 // tail carries the client's ?tail= value; tailProvided reports whether the
 // client supplied the param at all.
-func (s *Server) trySessionLogOutputHuma(name string, agentCfg config.Agent, tailInput int, tailProvided bool, before string) (*agentOutputResponse, error) {
-	transcriptState, err := s.resolveAgentTranscript(name, agentCfg)
+func (s *Server) trySessionLogOutputHuma(name string, agentCfg config.Agent, sessionName string, tailInput int, tailProvided bool, before string) (*agentOutputResponse, error) {
+	transcriptState, err := s.resolveAgentTranscript(name, agentCfg, sessionName)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +150,8 @@ func (s *Server) handleAgentOutput(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 
-	resp, err := s.trySessionLogOutput(r, name, agentCfg)
+	sessionName := s.agentRuntimeSessionName(r.Context(), name, cfg)
+	resp, err := s.trySessionLogOutput(r, name, agentCfg, sessionName)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "reading session log: "+err.Error())
 		return
@@ -161,13 +161,13 @@ func (s *Server) handleAgentOutput(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 
-	handle := s.agentWorkerHandle(name, cfg)
+	handle := s.agentWorkerHandle(sessionName)
 	s.peekFallbackOutput(r.Context(), w, name, handle)
 }
 
 // trySessionLogOutput is the legacy HTTP wrapper around the shared Huma
 // transcript reader.
-func (s *Server) trySessionLogOutput(r *http.Request, name string, agentCfg config.Agent) (*agentOutputResponse, error) {
+func (s *Server) trySessionLogOutput(r *http.Request, name string, agentCfg config.Agent, sessionName string) (*agentOutputResponse, error) {
 	tailInput := 0
 	tailProvided := false
 	if rawTail := r.URL.Query().Get("tail"); rawTail != "" {
@@ -176,7 +176,7 @@ func (s *Server) trySessionLogOutput(r *http.Request, name string, agentCfg conf
 			tailInput = parsedTail
 		}
 	}
-	return s.trySessionLogOutputHuma(name, agentCfg, tailInput, tailProvided, r.URL.Query().Get("before"))
+	return s.trySessionLogOutputHuma(name, agentCfg, sessionName, tailInput, tailProvided, r.URL.Query().Get("before"))
 }
 
 // peekFallbackOutput returns raw terminal text wrapped as a single turn.
@@ -218,11 +218,10 @@ func (s *Server) resolveAgentWorkDir(a config.Agent, qualifiedName string) strin
 	)
 }
 
-func (s *Server) agentWorkerHandle(name string, cfg *config.City) agentPeekHandle {
-	if cfg == nil {
+func (s *Server) agentWorkerHandle(sessionName string) agentPeekHandle {
+	if sessionName == "" {
 		return nil
 	}
-	sessionName := agentSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate)
 	handle, _ := s.workerHandleForSessionTarget(s.state.CityBeadStore(), sessionName)
 	return handle
 }
