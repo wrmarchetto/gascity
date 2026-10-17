@@ -47,35 +47,7 @@ func isEphemeralSessionBead(bead beads.Bead) bool {
 // sessionOriginInfo is the session.Info mirror of sessionOrigin: a
 // field-for-field projection over the typed Info instead of raw bead metadata.
 func sessionOriginInfo(i sessionpkg.Info) string {
-	origin := strings.TrimSpace(i.SessionOrigin)
-	if origin != "" {
-		return origin
-	}
-	if isNamedSessionInfo(i) {
-		return "named"
-	}
-	if isManualSessionInfo(i) {
-		return "manual"
-	}
-	if i.PoolManaged {
-		return "ephemeral"
-	}
-	if strings.TrimSpace(i.PoolSlot) != "" {
-		return "ephemeral"
-	}
-	if i.DependencyOnly {
-		return "ephemeral"
-	}
-	template := strings.TrimSpace(i.Template)
-	if template != "" {
-		if slot := resolvePoolSlot(strings.TrimSpace(sessionBeadAgentNameInfo(i)), template); slot > 0 {
-			return "ephemeral"
-		}
-		if slot := resolvePoolSlot(strings.TrimSpace(i.SessionNameMetadata), template); slot > 0 {
-			return "ephemeral"
-		}
-	}
-	return ""
+	return sessionpkg.OriginOf(i)
 }
 
 // isEphemeralSessionInfo is the session.Info mirror of isEphemeralSessionBead.

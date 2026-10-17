@@ -4200,14 +4200,7 @@ func beadIdentifiesAsCanonical(bead beads.Bead, canonical string) bool {
 
 // infoIdentifiesAsCanonical is the session.Info mirror of beadIdentifiesAsCanonical.
 func infoIdentifiesAsCanonical(i session.Info, canonical string) bool {
-	canonical = strings.TrimSpace(canonical)
-	if canonical == "" {
-		return false
-	}
-	return strings.TrimSpace(i.AgentName) == canonical ||
-		strings.TrimSpace(i.Alias) == canonical ||
-		strings.TrimSpace(i.Title) == canonical ||
-		containsString(i.Labels, "agent:"+canonical)
+	return session.InfoIdentifiesAsCanonical(i, canonical)
 }
 
 func createPoolSessionBeadWithGuardedAlias(

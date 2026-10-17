@@ -178,7 +178,7 @@ func (s *Server) buildStatusBody(ctx context.Context, lite bool) StatusBody {
 			if rigName != "" {
 				perRigAgentTotals[rigName]++
 			}
-			sessName := agentSessionName(cityName, ea.qualifiedName, sessTmpl)
+			sessName := sessionSnapshot.runtimeSessionName(cityName, ea.qualifiedName, sessTmpl)
 			info, hasInfo := sessionSnapshot.bySessionName[sessName]
 			running := statusProviderRunning(sp, sessName)
 			if running {
@@ -469,7 +469,19 @@ func (s *Server) countSessions(snapshot statusSessionSnapshot) (active, suspende
 type statusSessionSnapshot struct {
 	bySessionName map[string]statusSessionInfo
 	byTemplate    map[string][]statusSessionInfo
+	identities    session.IdentityIndex
 	partialErrors []string
+}
+
+// runtimeSessionName resolves an agent identity to its live session's
+// session_name, which for a pool session is "<template>-<beadID>" and cannot be
+// derived. Mirrors statusObservationTargetForIdentity in cmd/gc, falling back
+// to the derived name when no open session answers to the identity.
+func (s statusSessionSnapshot) runtimeSessionName(cityName, qualifiedName, sessTmpl string) string {
+	if e, ok := s.identities.Lookup(qualifiedName); ok {
+		return e.SessionName
+	}
+	return agentSessionName(cityName, qualifiedName, sessTmpl)
 }
 
 type statusSessionInfo struct {
@@ -545,6 +557,7 @@ func (s *Server) statusSessionSnapshot(ctx context.Context) statusSessionSnapsho
 	}
 
 	seenSessionName := make(map[string]bool, len(infos))
+	indexed := make([]session.Info, 0, len(infos))
 	for _, sessInfo := range infos {
 		if sessInfo.Closed {
 			continue
@@ -569,7 +582,9 @@ func (s *Server) statusSessionSnapshot(ctx context.Context) statusSessionSnapsho
 		if info.template != "" {
 			snapshot.byTemplate[info.template] = append(snapshot.byTemplate[info.template], info)
 		}
+		indexed = append(indexed, sessInfo)
 	}
+	snapshot.identities = session.NewIdentityIndex(indexed)
 	return snapshot
 }
 
