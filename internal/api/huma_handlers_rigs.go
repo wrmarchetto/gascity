@@ -539,7 +539,7 @@ func (s *Server) humaHandleRigDelete(_ context.Context, input *RigDeleteInput) (
 }
 
 // humaHandleRigAction is the Huma-typed handler for POST /v0/rig/{name}/{action}.
-func (s *Server) humaHandleRigAction(_ context.Context, input *RigActionInput) (*RigActionResponse, error) {
+func (s *Server) humaHandleRigAction(ctx context.Context, input *RigActionInput) (*RigActionResponse, error) {
 	name := input.Name
 	action := input.Action
 
@@ -565,7 +565,7 @@ func (s *Server) humaHandleRigAction(_ context.Context, input *RigActionInput) (
 		return resp, nil
 
 	case "restart":
-		return s.humaHandleRigRestart(name)
+		return s.humaHandleRigRestart(ctx, name)
 
 	default:
 		return nil, apierr.InvalidRequest.WithStatus(http.StatusNotFound, "unknown rig action: "+action)
@@ -574,7 +574,7 @@ func (s *Server) humaHandleRigAction(_ context.Context, input *RigActionInput) (
 
 // humaHandleRigRestart kills all agents in a rig so the reconciler restarts them.
 // Uses sp.Stop() directly — no StateMutator dependency for runtime kills.
-func (s *Server) humaHandleRigRestart(name string) (*RigActionResponse, error) {
+func (s *Server) humaHandleRigRestart(ctx context.Context, name string) (*RigActionResponse, error) {
 	cfg := s.state.Config()
 	sp := s.state.SessionProvider()
 	cityName := s.state.CityName()
@@ -594,6 +594,7 @@ func (s *Server) humaHandleRigRestart(name string) (*RigActionResponse, error) {
 	// Best-effort kill: the agent set may change between config read and each
 	// Stop call (pool scaling, config reload). The reconciler is the
 	// convergence mechanism — survivors will be caught on its next tick.
+	sessionSnapshot := s.statusSessionSnapshot(ctx)
 	killed := make([]string, 0)
 	failed := make([]string, 0)
 	for _, a := range cfg.Agents {
@@ -602,7 +603,7 @@ func (s *Server) humaHandleRigRestart(name string) (*RigActionResponse, error) {
 		}
 		expanded := expandAgent(a, cityName, cfg.Workspace.SessionTemplate, sp)
 		for _, ea := range expanded {
-			sessionName := agentSessionName(cityName, ea.qualifiedName, cfg.Workspace.SessionTemplate)
+			sessionName := sessionSnapshot.runtimeSessionName(cityName, ea.qualifiedName, cfg.Workspace.SessionTemplate)
 			if err := sp.Stop(sessionName); err != nil {
 				// "session gone" is benign — agent wasn't running.
 				if !runtime.IsSessionGone(err) {

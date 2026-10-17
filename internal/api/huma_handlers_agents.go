@@ -49,6 +49,7 @@ func (s *Server) humaHandleAgentList(ctx context.Context, input *AgentListInput)
 		}
 	}
 
+	sessionSnapshot := s.statusSessionSnapshot(ctx)
 	var agents []agentResponse
 	for _, a := range cfg.Agents {
 		// Provenance is a property of the declared agent, shared by every
@@ -63,7 +64,7 @@ func (s *Server) humaHandleAgentList(ctx context.Context, input *AgentListInput)
 				continue
 			}
 
-			sessionName := agentSessionName(cityName, ea.qualifiedName, sessTmpl)
+			sessionName := sessionSnapshot.runtimeSessionName(cityName, ea.qualifiedName, sessTmpl)
 			running := sp.IsRunning(sessionName)
 
 			if input.Running == "true" && !running {
@@ -133,7 +134,7 @@ func (s *Server) humaHandleAgentList(ctx context.Context, input *AgentListInput)
 			}
 
 			if running && provider == "claude" && canAttributeSession(a, ea.qualifiedName, cfg, s.state.CityPath()) {
-				s.enrichSessionMeta(&resp, a, ea.qualifiedName)
+				s.enrichSessionMeta(&resp, a, ea.qualifiedName, sessionName)
 			}
 
 			agents = append(agents, resp)
@@ -157,34 +158,33 @@ func (s *Server) humaHandleAgentList(ctx context.Context, input *AgentListInput)
 
 // humaHandleAgent is the Huma-typed handler for
 // GET /v0/city/{cityName}/agent/{base} (unqualified form).
-func (s *Server) humaHandleAgent(_ context.Context, input *AgentGetInput) (*IndexOutput[agentResponse], error) {
-	return s.agentByName(input.Name)
+func (s *Server) humaHandleAgent(ctx context.Context, input *AgentGetInput) (*IndexOutput[agentResponse], error) {
+	return s.agentByName(ctx, input.Name)
 }
 
 // humaHandleAgentQualified is the Huma-typed handler for
 // GET /v0/city/{cityName}/agent/{dir}/{base} (qualified form).
-func (s *Server) humaHandleAgentQualified(_ context.Context, input *AgentGetQualifiedInput) (*IndexOutput[agentResponse], error) {
-	return s.agentByName(input.QualifiedName())
+func (s *Server) humaHandleAgentQualified(ctx context.Context, input *AgentGetQualifiedInput) (*IndexOutput[agentResponse], error) {
+	return s.agentByName(ctx, input.QualifiedName())
 }
 
 // agentByName is the shared agent-get implementation. Both the qualified
 // and unqualified routes normalize to a single "name" string before
 // dispatching here.
-func (s *Server) agentByName(name string) (*IndexOutput[agentResponse], error) {
+func (s *Server) agentByName(ctx context.Context, name string) (*IndexOutput[agentResponse], error) {
 	if name == "" {
 		return nil, apierr.InvalidRequest.Msg("agent name required")
 	}
 
 	cfg := s.state.Config()
 	sp := s.state.SessionProvider()
-	cityName := s.state.CityName()
 
 	agentCfg, ok := findAgent(cfg, name)
 	if !ok {
 		return nil, apierr.AgentNotFound.Msg("agent " + name + " not found")
 	}
 
-	sessionName := agentSessionName(cityName, name, cfg.Workspace.SessionTemplate)
+	sessionName := s.agentRuntimeSessionName(ctx, name, cfg)
 	running := sp.IsRunning(sessionName)
 
 	suspended := agentCfg.Suspended
@@ -249,7 +249,7 @@ func (s *Server) agentByName(name string) (*IndexOutput[agentResponse], error) {
 	resp.State = computeAgentState(suspended, quarantined, running, resp.ActiveBead, lastActivity)
 
 	if running && provider == "claude" && canAttributeSession(agentCfg, name, cfg, s.state.CityPath()) {
-		s.enrichSessionMeta(&resp, agentCfg, name)
+		s.enrichSessionMeta(&resp, agentCfg, name, sessionName)
 	}
 
 	return &IndexOutput[agentResponse]{
@@ -418,22 +418,22 @@ func (s *Server) agentActionByName(name, action string) (*OKResponse, error) {
 
 // humaHandleAgentOutput is the Huma-typed handler for GET /v0/agent/{base}/output
 // (unqualified agent name, no rig prefix).
-func (s *Server) humaHandleAgentOutput(_ context.Context, input *AgentOutputInput) (*struct {
+func (s *Server) humaHandleAgentOutput(ctx context.Context, input *AgentOutputInput) (*struct {
 	Body agentOutputResponse
 }, error,
 ) {
 	tail, provided := input.Compactions()
-	return s.agentOutputByName(input.Name, tail, provided, input.Before)
+	return s.agentOutputByName(ctx, input.Name, tail, provided, input.Before)
 }
 
 // humaHandleAgentOutputQualified is the Huma-typed handler for
 // GET /v0/agent/{dir}/{base}/output (qualified agent name with rig prefix).
-func (s *Server) humaHandleAgentOutputQualified(_ context.Context, input *AgentOutputQualifiedInput) (*struct {
+func (s *Server) humaHandleAgentOutputQualified(ctx context.Context, input *AgentOutputQualifiedInput) (*struct {
 	Body agentOutputResponse
 }, error,
 ) {
 	tail, provided := input.Compactions()
-	return s.agentOutputByName(input.QualifiedName(), tail, provided, input.Before)
+	return s.agentOutputByName(ctx, input.QualifiedName(), tail, provided, input.Before)
 }
 
 // agentOutputByName is the shared implementation for the agent output
@@ -442,7 +442,7 @@ func (s *Server) humaHandleAgentOutputQualified(_ context.Context, input *AgentO
 // false, the handler applies the default (1 compaction). When provided
 // is true and tail==0, return all compactions (sessionlog's
 // "no pagination" mode).
-func (s *Server) agentOutputByName(name string, tail int, provided bool, before string) (*struct {
+func (s *Server) agentOutputByName(ctx context.Context, name string, tail int, provided bool, before string) (*struct {
 	Body agentOutputResponse
 }, error,
 ) {
@@ -452,7 +452,8 @@ func (s *Server) agentOutputByName(name string, tail int, provided bool, before 
 		return nil, apierr.AgentNotFound.Msg("agent " + name + " not found")
 	}
 
-	resp, err := s.trySessionLogOutputHuma(name, agentCfg, tail, provided, before)
+	sessionName := s.agentRuntimeSessionName(ctx, name, cfg)
+	resp, err := s.trySessionLogOutputHuma(name, agentCfg, sessionName, tail, provided, before)
 	if err != nil {
 		return nil, apierr.Internal.Msg("reading session log: " + err.Error())
 	}
@@ -464,7 +465,6 @@ func (s *Server) agentOutputByName(name string, tail int, provided bool, before 
 
 	// No session file found — fall back to Peek() (raw terminal text).
 	sp := s.state.SessionProvider()
-	sessionName := agentSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate)
 	if !sp.IsRunning(sessionName) {
 		return nil, apierr.AgentNotFound.Msg("agent " + name + " not running")
 	}
@@ -494,6 +494,7 @@ func (s *Server) agentOutputByName(name string, tail int, provided bool, before 
 // before the SSE response is committed.
 type agentStreamState struct {
 	name           string
+	sessionName    string
 	logPath        string
 	provider       string
 	running        bool
@@ -504,7 +505,7 @@ type agentStreamState struct {
 // resolveAgentStream is shared between the precheck and stream callback.
 // Returns the resolved state or an HTTP error if the agent doesn't exist
 // or has no output available.
-func (s *Server) resolveAgentStream(name string) (*agentStreamState, error) {
+func (s *Server) resolveAgentStream(ctx context.Context, name string) (*agentStreamState, error) {
 	cfg := s.state.Config()
 	agentCfg, ok := findAgent(cfg, name)
 	if !ok {
@@ -512,31 +513,31 @@ func (s *Server) resolveAgentStream(name string) (*agentStreamState, error) {
 	}
 
 	workDir := s.resolveAgentWorkDir(agentCfg, name)
-	transcriptState, err := s.resolveAgentTranscript(name, agentCfg)
+	sessionName := s.agentRuntimeSessionName(ctx, name, cfg)
+	transcriptState, err := s.resolveAgentTranscript(name, agentCfg, sessionName)
 	if err != nil {
 		return nil, apierr.Internal.Msg(err.Error())
 	}
 	provider := transcriptState.provider
 	logPath := transcriptState.path
 
-	sp := s.state.SessionProvider()
-	sessionName := transcriptState.sessionName
-	running := sp.IsRunning(sessionName)
+	running := s.state.SessionProvider().IsRunning(sessionName)
 
 	if logPath == "" && !running {
 		return nil, apierr.AgentNotFound.Msg("agent " + name + " not running")
 	}
 	return &agentStreamState{
-		name:     name,
-		logPath:  logPath,
-		provider: provider,
-		running:  running,
-		cfg:      cfg,
+		name:        name,
+		sessionName: sessionName,
+		logPath:     logPath,
+		provider:    provider,
+		running:     running,
+		cfg:         cfg,
 		resolveLogPath: func() string {
 			if workDir == "" {
 				return ""
 			}
-			resolved, err := s.resolveAgentTranscript(name, agentCfg)
+			resolved, err := s.resolveAgentTranscript(name, agentCfg, sessionName)
 			if err != nil {
 				return ""
 			}
@@ -545,8 +546,8 @@ func (s *Server) resolveAgentStream(name string) (*agentStreamState, error) {
 	}, nil
 }
 
-func (s *Server) checkAgentOutputStream(_ context.Context, input *AgentOutputStreamInput) error {
-	_, err := s.resolveAgentStream(input.Base)
+func (s *Server) checkAgentOutputStream(ctx context.Context, input *AgentOutputStreamInput) error {
+	_, err := s.resolveAgentStream(ctx, input.Base)
 	return err
 }
 
@@ -554,8 +555,8 @@ func (s *Server) streamAgentOutput(hctx huma.Context, input *AgentOutputStreamIn
 	s.doStreamAgentOutput(hctx, input.Base, send)
 }
 
-func (s *Server) checkAgentOutputStreamQualified(_ context.Context, input *AgentOutputStreamQualifiedInput) error {
-	_, err := s.resolveAgentStream(input.QualifiedName())
+func (s *Server) checkAgentOutputStreamQualified(ctx context.Context, input *AgentOutputStreamQualifiedInput) error {
+	_, err := s.resolveAgentStream(ctx, input.QualifiedName())
 	return err
 }
 
@@ -565,7 +566,8 @@ func (s *Server) streamAgentOutputQualified(hctx huma.Context, input *AgentOutpu
 
 // doStreamAgentOutput is the shared streaming implementation.
 func (s *Server) doStreamAgentOutput(hctx huma.Context, name string, send sse.Sender) {
-	state, err := s.resolveAgentStream(name)
+	ctx := hctx.Context()
+	state, err := s.resolveAgentStream(ctx, name)
 	if err != nil {
 		return
 	}
@@ -573,11 +575,10 @@ func (s *Server) doStreamAgentOutput(hctx huma.Context, name string, send sse.Se
 		hctx.SetHeader("GC-Agent-Status", "stopped")
 	}
 	flushSSEHeaders(hctx)
-	ctx := hctx.Context()
-	workerOps := s.watchAgentWorkerOperationSignals(ctx, state.name, state.cfg)
+	workerOps := s.watchAgentWorkerOperationSignals(ctx, state.sessionName)
 	if state.logPath != "" {
 		s.streamSessionLogHuma(ctx, send, state.name, state.provider, state.logPath, state.resolveLogPath, workerOps)
 	} else {
-		s.streamPeekOutputHuma(ctx, send, state.name, s.agentWorkerHandle(state.name, state.cfg), workerOps)
+		s.streamPeekOutputHuma(ctx, send, state.name, s.agentWorkerHandle(state.sessionName), workerOps)
 	}
 }

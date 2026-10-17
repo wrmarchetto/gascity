@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/session"
 )
@@ -13,32 +12,32 @@ func (s *Server) watchSessionWorkerOperationSignals(ctx context.Context, info se
 	return s.watchWorkerOperationSignals(ctx, info.ID, info.SessionName)
 }
 
-func (s *Server) resolveAgentSessionSubjects(name string, cfg *config.City) (string, string) {
-	if s == nil || s.state == nil || cfg == nil {
-		return "", ""
+// agentSessionID resolves a runtime session name to its session bead ID, or ""
+// when no bead answers to it.
+func (s *Server) agentSessionID(sessionName string) string {
+	sessionName = strings.TrimSpace(sessionName)
+	if s == nil || s.state == nil || sessionName == "" {
+		return ""
 	}
-
-	sessionName := strings.TrimSpace(agentSessionName(s.state.CityName(), name, cfg.Workspace.SessionTemplate))
-	if sessionName == "" {
-		return "", ""
+	store := s.state.CityBeadStore()
+	if store == nil {
+		return ""
 	}
-
-	sessionID := ""
-	if store := s.state.CityBeadStore(); store != nil {
-		if id, err := s.resolveSessionIDWithConfig(store, sessionName); err == nil {
-			sessionID = strings.TrimSpace(id)
-		}
+	id, err := s.resolveSessionIDWithConfig(store, sessionName)
+	if err != nil {
+		return ""
 	}
-
-	return sessionName, sessionID
+	return strings.TrimSpace(id)
 }
 
-func (s *Server) watchAgentWorkerOperationSignals(ctx context.Context, name string, cfg *config.City) <-chan struct{} {
-	sessionName, sessionID := s.resolveAgentSessionSubjects(name, cfg)
+// watchAgentWorkerOperationSignals watches an agent's session, where
+// sessionName comes from agentRuntimeSessionName.
+func (s *Server) watchAgentWorkerOperationSignals(ctx context.Context, sessionName string) <-chan struct{} {
+	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return nil
 	}
-	return s.watchWorkerOperationSignals(ctx, sessionID, sessionName)
+	return s.watchWorkerOperationSignals(ctx, s.agentSessionID(sessionName), sessionName)
 }
 
 func (s *Server) watchWorkerOperationSignals(ctx context.Context, subjects ...string) <-chan struct{} {

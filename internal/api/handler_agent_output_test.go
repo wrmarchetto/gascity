@@ -365,7 +365,7 @@ func TestResolveAgentTranscriptUsesBeadSessionIDWhenRuntimeMetaMissing(t *testin
 		t.Fatalf("PersistSessionKey: %v", err)
 	}
 
-	resolved, err := srv.resolveAgentTranscript("myrig/worker", state.cfg.Agents[0])
+	resolved, err := srv.resolveAgentTranscript("myrig/worker", state.cfg.Agents[0], sessionName)
 	if err != nil {
 		t.Fatalf("resolveAgentTranscript: %v", err)
 	}
@@ -608,11 +608,11 @@ func TestAgentOutputStreamFollowsRotatedGeminiTranscriptAfterWake(t *testing.T) 
 		t.Fatalf("chtimes(second transcript): %v", err)
 	}
 
-	sessionName := agentSessionName(fixture.state.CityName(), "myrig/worker", fixture.state.cfg.Workspace.SessionTemplate)
+	// recordOperationEvent's subject: the session ID, never a derived name.
 	fixture.state.eventProv.(*events.Fake).Record(events.Event{
 		Type:    events.WorkerOperation,
 		Actor:   "worker",
-		Subject: sessionName,
+		Subject: fixture.info.ID,
 	})
 
 	if body := waitForRecorderSubstring(t, rec, "second-output", 1500*time.Millisecond); !strings.Contains(body, "second-output") {
@@ -668,11 +668,11 @@ func TestCityScopedAgentOutputStreamFollowsRotatedGeminiTranscriptAfterWake(t *t
 		t.Fatalf("chtimes(second transcript): %v", err)
 	}
 
-	sessionName := agentSessionName(fixture.state.CityName(), "myrig/worker", fixture.state.cfg.Workspace.SessionTemplate)
+	// recordOperationEvent's subject: the session ID, never a derived name.
 	fixture.state.eventProv.(*events.Fake).Record(events.Event{
 		Type:    events.WorkerOperation,
 		Actor:   "worker",
-		Subject: sessionName,
+		Subject: fixture.info.ID,
 	})
 
 	if body := waitForRecorderSubstring(t, rec, "second-output", 1500*time.Millisecond); !strings.Contains(body, "second-output") {
