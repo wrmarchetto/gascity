@@ -33,6 +33,11 @@ const BDMetricsDisabledEntry = BDMetricsDisableEnv + "=1"
 // WithUsageMetricsDisabled uses for gc's own metrics, where gc owns the
 // decision outright -- would silently cancel an operator's `bd metrics on`.
 //
+// That limits gc, not a city. A city may set the variable outright for every
+// session through [workspace] env, real HOME included, to stop bd's unlocked
+// config rewrite from flipping a recorded opt-out (city ci-hljn94). That
+// guards consent rather than overriding it.
+//
 // The rejected alternative is to hand the child the operator's real home, or
 // to copy the operator's bd config into the substitute one. Both undo the
 // sandbox that motivated the rewrite: ConditionEnv substitutes HOME precisely
