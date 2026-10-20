@@ -13,7 +13,7 @@ package main
 // Scope: the advice's shape against the REAL Tier 1 work query
 // (config.Agent.EffectiveAssignedInProgressQuery), executed as a shell against
 // a fake bd. Delegated elsewhere: whether the gate lets a parked turn END
-// (cmd_hook_stop_test.go's TestStopGateAllowsClaimParkedOnOpenAssignedQuestion
+// (cmd_hook_stop_test.go's TestStopGateAllowsClaimParkedOnOpenOwnedQuestion
 // and TestStopGateParkedClaimProbeDrivesTheStoreCommands), and the tier's
 // blocked_by enrichment in general
 // (internal/config/workquery_inprogress_blocked_test.go).
