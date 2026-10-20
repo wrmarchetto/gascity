@@ -1163,31 +1163,55 @@ func TestFindSessionFileByIDForCandidatesUsesNewestMatch(t *testing.T) {
 	}
 }
 
-func TestFindSessionFileByIDForCandidatesPrefersEarlierSearchPath(t *testing.T) {
-	firstBase := t.TempDir()
-	secondBase := t.TempDir()
-	for _, base := range []string{firstBase, secondBase} {
+func TestFindSessionFileByIDForCandidatesFollowsNewestCopyAcrossSearchPaths(t *testing.T) {
+	staleBase := t.TempDir()
+	liveBase := t.TempDir()
+	for _, base := range []string{staleBase, liveBase} {
 		if err := os.MkdirAll(filepath.Join(base, "alias-slug"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	want := filepath.Join(firstBase, "alias-slug", "session-123.jsonl")
-	if err := os.WriteFile(want, []byte(`{}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	newerInLaterBase := filepath.Join(secondBase, "alias-slug", "session-123.jsonl")
-	if err := os.WriteFile(newerInLaterBase, []byte(`{}`+"\n"), 0o644); err != nil {
-		t.Fatal(err)
+	stale := filepath.Join(staleBase, "alias-slug", "session-123.jsonl")
+	want := filepath.Join(liveBase, "alias-slug", "session-123.jsonl")
+	for _, path := range []string{stale, want} {
+		if err := os.WriteFile(path, []byte(`{}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	past := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(want, past, past); err != nil {
+	if err := os.Chtimes(stale, past, past); err != nil {
 		t.Fatal(err)
 	}
 
-	got := findSessionFileByIDForCandidates([]string{firstBase, secondBase}, []string{"alias-slug"}, "session-123.jsonl")
+	got := findSessionFileByIDForCandidates([]string{staleBase, liveBase}, []string{"alias-slug"}, "session-123.jsonl")
 	if got != want {
-		t.Fatalf("findSessionFileByIDForCandidates() = %q, want earlier search path %q", got, want)
+		t.Fatalf("findSessionFileByIDForCandidates() = %q, want newest copy %q", got, want)
+	}
+}
+
+func TestFindSessionFileByIDForCandidatesBreaksMtimeTieOnEarlierSearchPath(t *testing.T) {
+	firstBase := t.TempDir()
+	secondBase := t.TempDir()
+	stamp := time.Unix(1_700_000_000, 0)
+	var paths []string
+	for _, base := range []string{firstBase, secondBase} {
+		if err := os.MkdirAll(filepath.Join(base, "alias-slug"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(base, "alias-slug", "session-123.jsonl")
+		if err := os.WriteFile(path, []byte(`{}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+
+	got := findSessionFileByIDForCandidates([]string{firstBase, secondBase}, []string{"alias-slug"}, "session-123.jsonl")
+	if got != paths[0] {
+		t.Fatalf("findSessionFileByIDForCandidates() = %q, want earlier search path on a tie %q", got, paths[0])
 	}
 }
 
