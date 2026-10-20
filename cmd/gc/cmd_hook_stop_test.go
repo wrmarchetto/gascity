@@ -63,14 +63,14 @@ func TestStopGateBlocksTurnWhileClaimedWorkIsUnclosed(t *testing.T) {
 	}
 }
 
-// TestStopGateAllowsClaimParkedOnOpenAssignedQuestion pins the one deliberate
+// TestStopGateAllowsClaimParkedOnOpenOwnedQuestion pins the one deliberate
 // exception to the closing contract. ask-pm records the exact blocker on the
 // held bead; the fact is true only after the Stop probe has verified that the
-// dependency target is still open and has an assignee. A parked claim remains
+// dependency target is still open and has an owner. A parked claim remains
 // claimed and in_progress so that closing the question wakes its next holder.
-func TestStopGateAllowsClaimParkedOnOpenAssignedQuestion(t *testing.T) {
+func TestStopGateAllowsClaimParkedOnOpenOwnedQuestion(t *testing.T) {
 	facts := stopGateHoldingWork()
-	facts.parkedOnOpenAssignedQuestion = true
+	facts.parkedOnOpenOwnedQuestion = true
 
 	if evaluateStopGate(facts).block {
 		t.Fatal("gate blocked a claimed bead deliberately parked on an open assigned question")
@@ -104,7 +104,8 @@ show:ci-held)
   printf '%s\n' '{"id":"ci-held","status":"in_progress","assignee":"worker","metadata":{"gc.waiting_on_question":"ci-question"},"dependencies":[{"id":"ci-question","dependency_type":"blocks"}]}'
   ;;
 show:ci-question)
-  printf '{"id":"ci-question","status":"%s","assignee":"%s"}\n' "$STOP_GATE_QUESTION_STATUS" "$STOP_GATE_QUESTION_ASSIGNEE"
+  printf '{"id":"ci-question","status":"%s","assignee":"%s","metadata":{"gc.routed_to":"%s"}}\n' \
+    "$STOP_GATE_QUESTION_STATUS" "$STOP_GATE_QUESTION_ASSIGNEE" "$STOP_GATE_QUESTION_ROUTED_TO"
   ;;
 *)
   exit 71
@@ -119,20 +120,26 @@ esac
 	t.Setenv("GC_SESSION_NAME", "")
 	t.Setenv("GC_ALIAS", "")
 
+	owner := func(routedTo string) bool { return routedTo == "bench-tech" }
 	for _, tc := range []struct {
 		name     string
 		status   string
 		assignee string
+		routedTo string
 		want     bool
 	}{
 		{name: "open assigned question", status: "open", assignee: "decision-owner", want: true},
 		{name: "closed question", status: "closed", assignee: "decision-owner", want: false},
 		{name: "unassigned question", status: "open", assignee: "", want: false},
+		{name: "unassigned question routed to an owned queue", status: "open", routedTo: "bench-tech", want: true},
+		{name: "unassigned question routed to an unowned queue", status: "open", routedTo: "gone-tech", want: false},
+		{name: "closed question routed to an owned queue", status: "closed", routedTo: "bench-tech", want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("STOP_GATE_QUESTION_STATUS", tc.status)
 			t.Setenv("STOP_GATE_QUESTION_ASSIGNEE", tc.assignee)
-			if got := stopGateHasOnlyParkedClaims([]hookStore{{dir: t.TempDir()}}); got != tc.want {
+			t.Setenv("STOP_GATE_QUESTION_ROUTED_TO", tc.routedTo)
+			if got := stopGateHasOnlyParkedClaims([]hookStore{{dir: t.TempDir()}}, owner); got != tc.want {
 				t.Fatalf("stopGateHasOnlyParkedClaims() = %v, want %v", got, tc.want)
 			}
 		})
@@ -143,6 +150,10 @@ esac
 // configuration, assigned-work probe, and Stop payload parsing together. It
 // would fail if the exception existed only in evaluateStopGate while the live
 // hook never established the parked-claim fact.
+//
+// The routed rows pin ci-f0rn8k: a bench sitting stays unassigned until its
+// technician claims it, so its owner is the gc.routed_to queue, and only a
+// queue the city config can serve -- a known agent, not suspended -- counts.
 func TestCmdHookStopAllowsParkedClaimThroughTheRealHookPath(t *testing.T) {
 	clearGCEnv(t)
 	disableManagedDoltRecoveryForTest(t)
@@ -156,6 +167,15 @@ name = "test-city"
 [[agent]]
 name = "worker"
 work_query = "printf '[]'"
+
+[[agent]]
+name = "bench-tech"
+work_query = "printf '[]'"
+
+[[agent]]
+name = "parked-tech"
+work_query = "printf '[]'"
+suspended = true
 ` + builtinImportsTOML("core", "bd")
 	writeBuiltinImportsLock(t, cityDir, "core", "bd")
 	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(cityTOML), 0o644); err != nil {
@@ -177,7 +197,8 @@ show:ci-held)
   printf '%s\n' '{"id":"ci-held","status":"in_progress","assignee":"worker","metadata":{"gc.waiting_on_question":"ci-question"},"dependencies":[{"id":"ci-question","dependency_type":"blocks"}]}'
   ;;
 show:ci-question)
-  printf '{"id":"ci-question","status":"%s","assignee":"decision-owner"}\n' "$STOP_GATE_QUESTION_STATUS"
+  printf '{"id":"ci-question","status":"%s","assignee":"%s","metadata":{"gc.routed_to":"%s"}}\n' \
+    "$STOP_GATE_QUESTION_STATUS" "$STOP_GATE_QUESTION_ASSIGNEE" "$STOP_GATE_QUESTION_ROUTED_TO"
   ;;
 *)
   exit 71
@@ -195,20 +216,34 @@ esac
 	t.Setenv("GC_SESSION_NAME", "")
 	t.Setenv("GC_ALIAS", "")
 	t.Setenv("GC_SESSION_ORIGIN", sessionOriginEphemeral)
-	t.Setenv("STOP_GATE_QUESTION_STATUS", "open")
 
-	var stderr bytes.Buffer
-	if code := cmdHookStop(bytes.NewBufferString(`{"stop_hook_active":false}`), &stderr); code != stopGateAllowExitCode {
-		t.Fatalf("cmdHookStop() = %d, want %d; stderr=%s", code, stopGateAllowExitCode, stderr.String())
-	}
-
-	stderr.Reset()
-	t.Setenv("STOP_GATE_QUESTION_STATUS", "closed")
-	if code := cmdHookStop(bytes.NewBufferString(`{"stop_hook_active":false}`), &stderr); code != stopGateBlockExitCode {
-		t.Fatalf("cmdHookStop() after question close = %d, want %d; stderr=%s", code, stopGateBlockExitCode, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "ci-held") {
-		t.Fatalf("closed-question block reason = %q, want held bead id", stderr.String())
+	for _, tc := range []struct {
+		name     string
+		status   string
+		assignee string
+		routedTo string
+		want     int
+	}{
+		{name: "open assigned question", status: "open", assignee: "decision-owner", want: stopGateAllowExitCode},
+		{name: "unassigned question routed to a live queue", status: "open", routedTo: "bench-tech", want: stopGateAllowExitCode},
+		{name: "unassigned question routed to a suspended agent", status: "open", routedTo: "parked-tech", want: stopGateBlockExitCode},
+		{name: "unassigned question routed to an unknown agent", status: "open", routedTo: "no-such-tech", want: stopGateBlockExitCode},
+		{name: "unassigned unrouted question", status: "open", want: stopGateBlockExitCode},
+		{name: "closed routed question", status: "closed", routedTo: "bench-tech", want: stopGateBlockExitCode},
+		{name: "closed assigned question", status: "closed", assignee: "decision-owner", want: stopGateBlockExitCode},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("STOP_GATE_QUESTION_STATUS", tc.status)
+			t.Setenv("STOP_GATE_QUESTION_ASSIGNEE", tc.assignee)
+			t.Setenv("STOP_GATE_QUESTION_ROUTED_TO", tc.routedTo)
+			var stderr bytes.Buffer
+			if code := cmdHookStop(bytes.NewBufferString(`{"stop_hook_active":false}`), &stderr); code != tc.want {
+				t.Fatalf("cmdHookStop() = %d, want %d; stderr=%s", code, tc.want, stderr.String())
+			}
+			if tc.want == stopGateBlockExitCode && !strings.Contains(stderr.String(), "ci-held") {
+				t.Fatalf("block reason = %q, want held bead id", stderr.String())
+			}
+		})
 	}
 }
 
@@ -760,7 +795,7 @@ func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
 //	the same bead, question CLOSED        gc hook stop -> exit 2, this message
 //
 // So a bead genuinely parked on a PM question never reaches this text, by
-// either route: evaluateStopGate returns early on parkedOnOpenAssignedQuestion
+// either route: evaluateStopGate returns early on parkedOnOpenOwnedQuestion
 // when the asker is still in_progress, and assets/scripts/ask-pm.py in fact
 // leaves the asker BLOCKED, which stopGateHeldClaimsQuery (in_progress and open
 // only) does not list at all. az-lmrn's own question az-hrud closed at

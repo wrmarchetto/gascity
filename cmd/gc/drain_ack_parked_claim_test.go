@@ -9,7 +9,7 @@
 //
 // WHY THIS SUITE EXISTS, AND WHAT IT PINS AGAINST. The Stop gate DOES have a
 // parked exception (cmd_hook_stop.go evaluateStopGate, case
-// parkedOnOpenAssignedQuestion) and this refusal does not, so the pair looks
+// parkedOnOpenOwnedQuestion) and this refusal does not, so the pair looks
 // asymmetric, and the obvious repair -- give the refusal the same exception --
 // was proposed, built and REJECTED under ci-gfc8rk. Two commit bodies already
 // decided it and a third measurement disproved the premise:

@@ -134,10 +134,11 @@ type stopGateFacts struct {
 	// answered. Distinct from an empty outstanding list, because "no work" and
 	// "could not tell" must reach opposite verdicts on a gate that fails open.
 	unknownWork bool
-	// parkedOnOpenAssignedQuestion is established only when every claimed bead
-	// is linked to, and records, an open assigned question. Such work is
-	// intentionally parked for a later wake rather than abandoned.
-	parkedOnOpenAssignedQuestion bool
+	// parkedOnOpenOwnedQuestion is established only when every claimed bead
+	// is linked to, and records, an open question with an owner -- see
+	// stopGateQuestionIsOpenAndOwned. Such work is intentionally parked for a
+	// later wake rather than abandoned.
+	parkedOnOpenOwnedQuestion bool
 }
 
 // stopGateVerdict is the gate's decision plus the text handed back to the
@@ -174,8 +175,8 @@ func evaluateStopGate(f stopGateFacts) stopGateVerdict {
 		// Could not tell. Not the same as "nothing outstanding": blocking here
 		// would wedge every session in the city the moment the store went down.
 		return allow
-	case f.parkedOnOpenAssignedQuestion:
-		// The held work is deliberately blocked on a durable, assigned question.
+	case f.parkedOnOpenOwnedQuestion:
+		// The held work is deliberately blocked on a durable, owned question.
 		// It remains claimed so closing that question can wake the next session.
 		return allow
 	}
@@ -244,7 +245,7 @@ func isOpenPMSittingBead(bead beads.Bead) bool {
 
 // stopGateParkedShape describes the ONE parking shape this gate honors. The
 // advice text renders itself from these fields and
-// stopGateClaimIsParkedOnOpenAssignedQuestion reads the same values, so the
+// stopGateClaimIsParkedOnOpenOwnedQuestion reads the same values, so the
 // prose cannot name a shape the city does not wake.
 //
 // It exists because the two drifted and the drift was unobservable from
@@ -272,7 +273,7 @@ func isOpenPMSittingBead(bead beads.Bead) bool {
 // deliberate: live beads carry it, the city's assets/scripts/ask-pm.py writes
 // it, doctor/stranded-parked-work reads it, and the predicate behind it never
 // checked for a question TYPE -- it requires only that the named bead be open
-// and assigned. A rename would need a migration and buy nothing.
+// and owned. A rename would need a migration and buy nothing.
 type stopGateParkedShape struct {
 	status      string // bead status a parked claim is LEFT at -- never changed
 	metadataKey string // records the id the claim waits on
@@ -326,7 +327,8 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	b.WriteString(" that park is permanent.\n")
 	fmt.Fprintf(&b, "\nPark it this way instead and it wakes by itself: leave"+
 		" it %s with its assignee, file what you are waiting on as an open"+
-		" bead assigned to whoever must act, add a blocking dependency from"+
+		" bead assigned to whoever must act -- or routed to the agent whose"+
+		" queue serves it -- add a blocking dependency from"+
 		" your bead on that one, and record that id in your bead's %s"+
 		" metadata. The dependency is the wake -- your bead is withheld while"+
 		" the blocker is open and served again once it closes.\n",
@@ -434,7 +436,7 @@ func gatherStopGateFacts(stdin io.Reader, stderr io.Writer) stopGateFacts {
 	if facts.restartRequested {
 		return facts
 	}
-	facts.outstanding, facts.unknownWork, facts.parkedOnOpenAssignedQuestion = readStopGateOutstandingWork(stderr)
+	facts.outstanding, facts.unknownWork, facts.parkedOnOpenOwnedQuestion = readStopGateOutstandingWork(stderr)
 	return facts
 }
 
@@ -533,9 +535,9 @@ func readStopGateSessionSignals(stderr io.Writer) (bool, bool) {
 // cmdHookWithOptions' store resolution to avoid them would let the gate and
 // the claim drift apart, which is the one thing the design forbids.
 type hookStopProbe struct {
-	Outstanding                  []beads.Bead
-	ParkedOnOpenAssignedQuestion bool
-	Err                          error
+	Outstanding               []beads.Bead
+	ParkedOnOpenOwnedQuestion bool
+	Err                       error
 }
 
 // probeStopGateOutstanding runs the agent's assigned-in-progress query across
@@ -587,8 +589,8 @@ func probeStopGateOutstanding(cfg *config.City, cityPath, cityName string, a *co
 		if !known || len(held) == 0 {
 			return
 		}
-		if stopGateClaimsAreAllParked(held, stores) {
-			probe.ParkedOnOpenAssignedQuestion = true
+		if stopGateClaimsAreAllParked(held, stores, stopGateConfiguredQueueOwner(cfg, cityPath)) {
+			probe.ParkedOnOpenOwnedQuestion = true
 			return
 		}
 		// The ordinary work query hides dependency-blocked claims. A held
@@ -619,17 +621,17 @@ func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool, bool) {
 			outstanding = append(outstanding, bead)
 		}
 	}
-	return outstanding, false, probe.ParkedOnOpenAssignedQuestion
+	return outstanding, false, probe.ParkedOnOpenOwnedQuestion
 }
 
 // stopGateHasOnlyParkedClaims reports whether every held in-progress bead is
-// durably linked to the open, assigned question recorded on it. This is a
+// durably linked to the open, owned question recorded on it. This is a
 // separate probe from the ordinary work query because that query deliberately
 // hides dependency-blocked work from a worker; the Stop gate must still see a
 // held bead to distinguish a designed wait from an abandoned claim.
-func stopGateHasOnlyParkedClaims(stores []hookStore) bool {
+func stopGateHasOnlyParkedClaims(stores []hookStore, owner stopGateQueueOwner) bool {
 	held, known := stopGateHeldClaims(stores)
-	return known && len(held) > 0 && stopGateClaimsAreAllParked(held, stores)
+	return known && len(held) > 0 && stopGateClaimsAreAllParked(held, stores, owner)
 }
 
 // stopGateHeldClaims reads every bead this session holds, without the regular
@@ -685,7 +687,7 @@ func stopGateHeldClaims(stores []hookStore) ([]beads.Bead, bool) {
 	return held, true
 }
 
-func stopGateClaimsAreAllParked(claims []beads.Bead, stores []hookStore) bool {
+func stopGateClaimsAreAllParked(claims []beads.Bead, stores []hookStore, owner stopGateQueueOwner) bool {
 	if len(claims) == 0 {
 		return false
 	}
@@ -697,16 +699,16 @@ func stopGateClaimsAreAllParked(claims []beads.Bead, stores []hookStore) bool {
 		}
 		seen[claim.ID] = struct{}{}
 		found = true
-		if !stopGateClaimIsParkedOnAnyStore(claim, stores) {
+		if !stopGateClaimIsParkedOnAnyStore(claim, stores, owner) {
 			return false
 		}
 	}
 	return found
 }
 
-func stopGateClaimIsParkedOnAnyStore(claim beads.Bead, stores []hookStore) bool {
+func stopGateClaimIsParkedOnAnyStore(claim beads.Bead, stores []hookStore, owner stopGateQueueOwner) bool {
 	for _, store := range stores {
-		if stopGateClaimIsParkedOnOpenAssignedQuestion(claim, store) {
+		if stopGateClaimIsParkedOnOpenOwnedQuestion(claim, store, owner) {
 			return true
 		}
 	}
@@ -779,7 +781,7 @@ func stopGateSessionInstanceIdentities() map[string]struct{} {
 	return identities
 }
 
-func stopGateClaimIsParkedOnOpenAssignedQuestion(claim beads.Bead, store hookStore) bool {
+func stopGateClaimIsParkedOnOpenOwnedQuestion(claim beads.Bead, store hookStore, owner stopGateQueueOwner) bool {
 	questionID := strings.TrimSpace(claim.Metadata[stopGateParkShape.metadataKey])
 	if questionID == "" {
 		return false
@@ -792,7 +794,7 @@ func stopGateClaimIsParkedOnOpenAssignedQuestion(claim beads.Bead, store hookSto
 	if !ok {
 		return false
 	}
-	return stopGateQuestionIsOpenAndAssigned(question)
+	return stopGateQuestionIsOpenAndOwned(question, owner)
 }
 
 // stopGateShownBead is the small bd show wire projection the Stop gate needs.
@@ -845,14 +847,34 @@ func stopGateHasBlockingDependency(claim stopGateShownBead, questionID string) b
 	return false
 }
 
-func stopGateQuestionIsOpenAndAssigned(question stopGateShownBead) bool {
-	if strings.TrimSpace(question.Assignee) == "" {
-		return false
-	}
+// stopGateQuestionIsOpenAndOwned reports whether a parked claim's question is
+// open and has someone to answer it: an assignee, or else a gc.routed_to queue
+// that owner accepts. A bench sitting is routed but stays unassigned until its
+// technician claims it, so the assignee alone refused every such park.
+func stopGateQuestionIsOpenAndOwned(question stopGateShownBead, owner stopGateQueueOwner) bool {
 	switch strings.ToLower(strings.TrimSpace(question.Status)) {
 	case "open", "in_progress":
-		return true
 	default:
 		return false
+	}
+	if strings.TrimSpace(question.Assignee) != "" {
+		return true
+	}
+	routedTo := strings.TrimSpace(question.Metadata[beadmeta.RoutedToMetadataKey])
+	return routedTo != "" && owner != nil && owner(routedTo)
+}
+
+// stopGateQueueOwner reports whether a gc.routed_to value names a queue that
+// will serve the bead. Injected so the store probe stays free of city config.
+type stopGateQueueOwner func(routedTo string) bool
+
+// stopGateConfiguredQueueOwner accepts a route naming a configured agent that
+// is not effectively suspended. A pool at zero sessions still owns its queue,
+// because routed demand spawns it, so session liveness is not consulted.
+func stopGateConfiguredQueueOwner(cfg *config.City, cityPath string) stopGateQueueOwner {
+	st := loadSuspensionStateBestEffort(cityPath)
+	return func(routedTo string) bool {
+		a, ok := findAgentByQualified(cfg, routedTo)
+		return ok && !isAgentEffectivelySuspendedWith(cfg, cityPath, &a, st)
 	}
 }
