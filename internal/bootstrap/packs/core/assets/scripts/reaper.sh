@@ -1041,6 +1041,10 @@ while IFS= read -r DB; do
     fi
 
     # Step 5: Auto-close stale issues (exclude P0/P1, epics, active deps).
+    # extmsg control records (bindings, memberships, routes) are written once
+    # and stay idle while live, so age says nothing about them. Transcript
+    # rows stay eligible: closing one is how retention bounds them.
+    # not a second NOT IN: dolt 2.2.3 inverts two ANDed NOT IN subqueries.
     DB_ISSUES_CLOSED=0
     get_sql_rows "$DB" "stale issue" "
         SELECT id, CASE WHEN COALESCE(assignee, '') = '' THEN 'bare' ELSE 'force' END
@@ -1052,6 +1056,12 @@ while IFS= read -r DB; do
         AND (
             JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.expires_at')) IS NULL
             OR JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.expires_at')) = ''
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM \`$DB\`.labels lbl
+            WHERE lbl.issue_id = issues.id
+            AND lbl.label LIKE 'gc:extmsg-%'
+            AND lbl.label != 'gc:extmsg-transcript'
         )
         AND id NOT IN (
             SELECT DISTINCT d.issue_id FROM \`$DB\`.dependencies d

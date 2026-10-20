@@ -96,6 +96,27 @@ func applyDefaultRoute(ctx context.Context, deps InboundDeps, result *InboundRes
 	return nil
 }
 
+// ensureBindingMembership restores the membership an active binding implies.
+// Members are who the API notifies, and a membership closed outside extmsg (a
+// store sweep, a hand close) otherwise leaves the binding routing to nobody.
+// It writes nothing when the membership is already open.
+func ensureBindingMembership(ctx context.Context, deps InboundDeps, binding SessionBindingRecord, now time.Time) error {
+	if deps.Services.Transcript == nil {
+		return nil
+	}
+	if _, err := deps.Services.Transcript.EnsureMembership(ctx, EnsureMembershipInput{
+		Caller:         Caller{Kind: CallerController, ID: "inbound-membership"},
+		Conversation:   binding.Conversation,
+		SessionID:      bindingMembershipKey(binding),
+		BackfillPolicy: MembershipBackfillSinceJoin,
+		Owner:          MembershipOwnerBinding,
+		Now:            now,
+	}); err != nil {
+		return fmt.Errorf("restoring membership for binding %s: %w", binding.ID, err)
+	}
+	return nil
+}
+
 // resolveInboundTarget resolves the delivery target for an inbound message and
 // records it on result: an existing binding first, then a group route, then the
 // configured default route. result is left unrouted when nothing matches. Both
@@ -113,6 +134,9 @@ func resolveInboundTarget(ctx context.Context, deps InboundDeps, result *Inbound
 		return fmt.Errorf("resolving binding: %w", err)
 	}
 	if binding != nil {
+		if err := ensureBindingMembership(ctx, deps, *binding, now); err != nil {
+			return err
+		}
 		result.Binding = binding
 		result.TargetSessionID = binding.SessionID
 		result.TargetAgentName = binding.AgentName

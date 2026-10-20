@@ -146,6 +146,10 @@ func (s *Server) extmsgNotifyMembers(
 		log.Printf("extmsg: ListMemberships failed for %s/%s: %v", conv.Provider, conv.ConversationID, err)
 		return
 	}
+	if len(members) == 0 {
+		log.Printf("extmsg: %s/%s has no open members; message stored but no session notified", conv.Provider, conv.ConversationID)
+		return
+	}
 
 	excludedResolvedID := ""
 	excludedSelector := apiNormalizeSessionTarget(excludeSelector)

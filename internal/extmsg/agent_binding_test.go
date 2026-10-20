@@ -292,6 +292,48 @@ func TestHandleInboundNormalizedAgentBindingRoutesAgentTarget(t *testing.T) {
 	}
 }
 
+// The reaper closes a membership with a bare store close, which skips every
+// extmsg writer, and the API notifies only open members (city bead ci-8auztj).
+func TestInboundRestoresBoundAgentMembershipClosedOutsideExtmsg(t *testing.T) {
+	freezeTestClock(t)
+	store := beads.NewMemStore()
+	fabric := NewServices(store)
+	ref := testConversationRef()
+	caller := testControllerCaller()
+
+	if _, err := fabric.Bindings.Bind(context.Background(), caller, BindInput{
+		Conversation: ref,
+		AgentName:    "rig-a/helper",
+		Now:          testNow(),
+	}); err != nil {
+		t.Fatalf("Bind(agent): %v", err)
+	}
+	members, err := fabric.Transcript.ListMemberships(context.Background(), caller, ref)
+	if err != nil || len(members) != 1 {
+		t.Fatalf("memberships after bind = %#v, %v; want one", members, err)
+	}
+	if err := store.Close(members[0].ID); err != nil {
+		t.Fatalf("close membership: %v", err)
+	}
+
+	if _, err := HandleInboundNormalized(context.Background(), InboundDeps{Services: fabric}, ExternalInboundMessage{
+		Conversation: ref,
+		Actor:        ExternalActor{ID: "user-1", DisplayName: "User One"},
+		Text:         "halt the bench",
+		ReceivedAt:   testNow(),
+	}); err != nil {
+		t.Fatalf("HandleInboundNormalized: %v", err)
+	}
+
+	members, err = fabric.Transcript.ListMemberships(context.Background(), caller, ref)
+	if err != nil {
+		t.Fatalf("ListMemberships: %v", err)
+	}
+	if len(members) != 1 || members[0].SessionID != "rig-a/helper" {
+		t.Fatalf("memberships after inbound = %#v, want the bound agent rig-a/helper", members)
+	}
+}
+
 // agentTestResolver maps session selectors (agent names or concrete IDs) to
 // concrete session IDs the way the API layer's session resolution does.
 func agentTestResolver(mapping map[string]string) func(context.Context, string) (string, error) {
