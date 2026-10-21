@@ -634,10 +634,14 @@ func FindSessionFileByID(searchPaths []string, workDir, sessionID string) string
 	return findSessionFileByIDForCandidates(searchPaths, claudeProjectSlugCandidates(workDir), fileName)
 }
 
+// findSessionFileByIDForCandidates returns the newest copy of a keyed
+// transcript across every root, not the first root holding one. Rotating
+// CLAUDE_CONFIG_DIR resumes a session under a new home and freezes the old
+// copy, which may sit earlier in observe_paths. Ties keep the earlier root.
 func findSessionFileByIDForCandidates(searchPaths, slugs []string, fileName string) string {
+	var bestPath string
+	var bestTime int64
 	for _, base := range searchPaths {
-		var bestPath string
-		var bestTime int64
 		for _, slug := range slugs {
 			path := filepath.Join(base, slug, fileName)
 			info, err := os.Stat(path)
@@ -650,11 +654,8 @@ func findSessionFileByIDForCandidates(searchPaths, slugs []string, fileName stri
 				bestPath = path
 			}
 		}
-		if bestPath != "" {
-			return bestPath
-		}
 	}
-	return ""
+	return bestPath
 }
 
 func findClaudeLatestSessionFile(searchPaths []string, workDir string) string {

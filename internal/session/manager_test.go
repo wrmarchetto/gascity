@@ -4391,6 +4391,60 @@ func TestTranscriptPathPrefersSessionKey(t *testing.T) {
 	}
 }
 
+func TestTranscriptPathFollowsNewestAccountHomeAfterRotation(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManagerWithOptions(store, sp)
+
+	workDir := t.TempDir()
+	info, err := mgr.CreateSession(context.Background(), CreateOptions{
+		Template: "helper",
+		Command:  "claude",
+		WorkDir:  workDir,
+		Provider: "claude",
+		Resume: ProviderResume{
+			ResumeFlag:    "--resume",
+			ResumeStyle:   "flag",
+			SessionIDFlag: "--session-id",
+		},
+		Hints:     runtime.Config{},
+		ExtraMeta: map[string]string{"session_origin": "manual"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// A pool rotation resumes the session under a new account home, leaving
+	// the old home's copy frozen ahead of it in observe_paths order.
+	homes := t.TempDir()
+	var searchPaths, copies []string
+	for _, account := range []string{"account0", "account1"} {
+		base := filepath.Join(homes, account, ".claude", "projects")
+		slugDir := filepath.Join(base, sessionlog.ProjectSlug(workDir))
+		if err := os.MkdirAll(slugDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll: %v", err)
+		}
+		path := filepath.Join(slugDir, info.SessionKey+".jsonl")
+		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%s): %v", account, err)
+		}
+		searchPaths = append(searchPaths, base)
+		copies = append(copies, path)
+	}
+	frozen := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(copies[0], frozen, frozen); err != nil {
+		t.Fatalf("Chtimes: %v", err)
+	}
+
+	path, err := mgr.TranscriptPath(info.ID, searchPaths)
+	if err != nil {
+		t.Fatalf("TranscriptPath: %v", err)
+	}
+	if path != copies[1] {
+		t.Errorf("TranscriptPath = %q, want live account1 copy %q", path, copies[1])
+	}
+}
+
 func TestTranscriptPathDoesNotFallBackWhenSessionKeyMisses(t *testing.T) {
 	store := beads.NewMemStore()
 	sp := runtime.NewFake()
