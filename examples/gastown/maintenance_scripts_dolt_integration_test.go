@@ -15,77 +15,7 @@ import (
 )
 
 func TestReaperWorkflowRootCleanupRealDoltSemantics(t *testing.T) {
-	doltPath, err := exec.LookPath("dolt")
-	if err != nil {
-		t.Skipf("dolt not found: %v", err)
-	}
-
-	cityDir := t.TempDir()
-	dataDir := filepath.Join(t.TempDir(), "dolt")
-	for _, db := range []string{"citydb", "rigdb"} {
-		dbDir := filepath.Join(dataDir, db)
-		if err := os.MkdirAll(dbDir, 0o755); err != nil {
-			t.Fatalf("MkdirAll(%s): %v", dbDir, err)
-		}
-		runDoltForMaintenanceTest(t, doltPath, dbDir, "init", "--name", "Gas City", "--email", "test@example.com")
-		runDoltSQLForMaintenanceTest(t, doltPath, dbDir, maintenanceReaperSchemaSQL())
-	}
-
-	runDoltSQLForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "citydb"), maintenanceReaperCitySeedSQL())
-	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "citydb"), "add", ".")
-	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "citydb"), "commit", "-m", "seed city workflow roots")
-
-	runDoltSQLForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "rigdb"), maintenanceReaperRigSeedSQL())
-	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "rigdb"), "add", ".")
-	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "rigdb"), "commit", "-m", "seed rig workflow roots")
-
-	port := startDoltServerForMaintenanceTest(t, doltPath, dataDir)
-	waitForDoltServerForMaintenanceTest(t, doltPath, port, "citydb")
-	writeCityBeadsMetadata(t, cityDir, "citydb")
-	rigDir := filepath.Join(cityDir, "rigs", "rig-with-db-alias")
-	writeCityBeadsMetadata(t, rigDir, "rigdb")
-	writeSiteRigBinding(t, cityDir, "rig-with-db-alias", rigDir)
-
-	binDir := t.TempDir()
-	bdLog := filepath.Join(t.TempDir(), "bd.log")
-	if err := os.Symlink(doltPath, filepath.Join(binDir, "dolt")); err != nil {
-		t.Fatalf("Symlink(dolt): %v", err)
-	}
-	writeExecutable(t, filepath.Join(binDir, "bd"), `#!/bin/sh
-set -e
-printf '%s\n' "$*" >> "$BD_CALL_LOG"
-case "$1" in
-  prune)
-    printf '{"pruned_count":0}\n'
-    ;;
-  close)
-    issue_id="$2"
-    DOLT_CLI_PASSWORD="${GC_DOLT_PASSWORD:-}" dolt --host "$GC_DOLT_HOST" --port "$GC_DOLT_PORT" --user "$GC_DOLT_USER" --no-tls --use-db citydb sql \
-      -q "UPDATE issues SET status='closed', closed_at=NOW() WHERE id='${issue_id}'; CALL DOLT_COMMIT('-Am', 'test bd close')"
-    ;;
-esac
-exit 0
-`)
-	writeMaintenanceGCStub(t, filepath.Join(binDir, "gc"), `#!/bin/sh
-case "$1 $2" in
-  "session prune")
-    printf '{"count":0}\n'
-    ;;
-esac
-exit 0
-`)
-
-	env := map[string]string{
-		"BD_CALL_LOG":      bdLog,
-		"GC_CITY":          cityDir,
-		"GC_CITY_PATH":     cityDir,
-		"GC_DOLT_HOST":     "127.0.0.1",
-		"GC_DOLT_PORT":     fmt.Sprintf("%d", port),
-		"GC_DOLT_USER":     "root",
-		"GC_DOLT_PASSWORD": "",
-		"PATH":             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-	}
-	runScript(t, coreScriptPath("reaper.sh"), env)
+	doltPath, port, bdLog := runReaperAgainstRealDolt(t, maintenanceReaperCitySeedSQL(), maintenanceReaperRigSeedSQL())
 
 	bdData, err := os.ReadFile(bdLog)
 	if err != nil {
@@ -131,6 +61,122 @@ exit 0
 	requireMaintenanceStatuses(t, rigIssueStatuses, map[string]string{
 		"rig-issue-preserve": "open",
 	})
+}
+
+// The stale-issue sweep keys on updated_at alone, and an extmsg membership is
+// written once at bind time and never again (city bead ci-8auztj).
+func TestReaperStaleSweepSparesExtmsgControlRecords(t *testing.T) {
+	seed := `
+INSERT INTO issues (id, title, status, issue_type, priority, created_at, updated_at, assignee, metadata) VALUES
+  ('stale-plain', 'ordinary stale task', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-transcript-row', 'slack/default/C1#1', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-membership', 'liaison -> slack/default/C1', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-binding', 'binding', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{"expires_at":""}'),
+  ('stale-transcript-state', 'slack/default/C1/state', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-delivery', 'delivery route', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-group', 'group root', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-group-participant', 'group participant', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}');
+INSERT INTO labels (issue_id, label) VALUES
+  ('stale-transcript-row', 'gc:extmsg-transcript'),
+  ('stale-membership', 'gc:extmsg-membership'),
+  ('stale-membership', 'extmsg:membership:session:v1:liaison'),
+  ('stale-binding', 'gc:extmsg-binding'),
+  ('stale-transcript-state', 'gc:extmsg-transcript-state'),
+  ('stale-delivery', 'gc:extmsg-delivery'),
+  ('stale-group', 'gc:extmsg-group'),
+  ('stale-group-participant', 'gc:extmsg-group-participant');
+`
+	doltPath, port, _ := runReaperAgainstRealDolt(t, seed, maintenanceReaperRigSeedSQL())
+
+	requireMaintenanceStatuses(t, queryMaintenanceStatusByID(t, doltPath, port, "citydb", "issues"), map[string]string{
+		"stale-plain":             "closed",
+		"stale-transcript-row":    "closed",
+		"stale-membership":        "open",
+		"stale-binding":           "open",
+		"stale-transcript-state":  "open",
+		"stale-delivery":          "open",
+		"stale-group":             "open",
+		"stale-group-participant": "open",
+	})
+}
+
+// runReaperAgainstRealDolt seeds a city and a rig database on a private Dolt
+// server, runs reaper.sh once against them, and returns where to read results.
+// The bd stub turns `bd close` into a real status update.
+func runReaperAgainstRealDolt(t *testing.T, citySeedSQL, rigSeedSQL string) (doltPath string, port int, bdLog string) {
+	t.Helper()
+	doltPath, err := exec.LookPath("dolt")
+	if err != nil {
+		t.Skipf("dolt not found: %v", err)
+	}
+
+	cityDir := t.TempDir()
+	dataDir := filepath.Join(t.TempDir(), "dolt")
+	for _, db := range []string{"citydb", "rigdb"} {
+		dbDir := filepath.Join(dataDir, db)
+		if err := os.MkdirAll(dbDir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%s): %v", dbDir, err)
+		}
+		runDoltForMaintenanceTest(t, doltPath, dbDir, "init", "--name", "Gas City", "--email", "test@example.com")
+		runDoltSQLForMaintenanceTest(t, doltPath, dbDir, maintenanceReaperSchemaSQL())
+	}
+
+	runDoltSQLForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "citydb"), citySeedSQL)
+	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "citydb"), "add", ".")
+	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "citydb"), "commit", "-m", "seed city workflow roots")
+
+	runDoltSQLForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "rigdb"), rigSeedSQL)
+	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "rigdb"), "add", ".")
+	runDoltForMaintenanceTest(t, doltPath, filepath.Join(dataDir, "rigdb"), "commit", "-m", "seed rig workflow roots")
+
+	port = startDoltServerForMaintenanceTest(t, doltPath, dataDir)
+	waitForDoltServerForMaintenanceTest(t, doltPath, port, "citydb")
+	writeCityBeadsMetadata(t, cityDir, "citydb")
+	rigDir := filepath.Join(cityDir, "rigs", "rig-with-db-alias")
+	writeCityBeadsMetadata(t, rigDir, "rigdb")
+	writeSiteRigBinding(t, cityDir, "rig-with-db-alias", rigDir)
+
+	binDir := t.TempDir()
+	bdLog = filepath.Join(t.TempDir(), "bd.log")
+	if err := os.Symlink(doltPath, filepath.Join(binDir, "dolt")); err != nil {
+		t.Fatalf("Symlink(dolt): %v", err)
+	}
+	writeExecutable(t, filepath.Join(binDir, "bd"), `#!/bin/sh
+set -e
+printf '%s\n' "$*" >> "$BD_CALL_LOG"
+case "$1" in
+  prune)
+    printf '{"pruned_count":0}\n'
+    ;;
+  close)
+    issue_id="$2"
+    DOLT_CLI_PASSWORD="${GC_DOLT_PASSWORD:-}" dolt --host "$GC_DOLT_HOST" --port "$GC_DOLT_PORT" --user "$GC_DOLT_USER" --no-tls --use-db citydb sql \
+      -q "UPDATE issues SET status='closed', closed_at=NOW() WHERE id='${issue_id}'; CALL DOLT_COMMIT('-Am', 'test bd close')"
+    ;;
+esac
+exit 0
+`)
+	writeMaintenanceGCStub(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+case "$1 $2" in
+  "session prune")
+    printf '{"count":0}\n'
+    ;;
+esac
+exit 0
+`)
+
+	env := map[string]string{
+		"BD_CALL_LOG":      bdLog,
+		"GC_CITY":          cityDir,
+		"GC_CITY_PATH":     cityDir,
+		"GC_DOLT_HOST":     "127.0.0.1",
+		"GC_DOLT_PORT":     fmt.Sprintf("%d", port),
+		"GC_DOLT_USER":     "root",
+		"GC_DOLT_PASSWORD": "",
+		"PATH":             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+	}
+	runScript(t, coreScriptPath("reaper.sh"), env)
+	return doltPath, port, bdLog
 }
 
 func maintenanceReaperSchemaSQL() string {
