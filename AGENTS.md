@@ -355,8 +355,9 @@ becoming more useful as models improve — it becomes LESS useful instead.
   must be checked manually.
 
 - `TESTING.md` — testing philosophy, tier boundaries, and sharded local
-  runners. Read before writing any test. For broad local sweeps, prefer the
-  documented shard targets (`make test-fast-parallel`,
+  runners. Read before writing any test. In-session, prefer
+  `make test-affected` to a whole-tree sweep. For broad local sweeps, prefer
+  the documented shard targets (`make test-fast-parallel`,
   `make test-cmd-gc-process-parallel`, `make test-integration-shards-parallel`,
   `make test-local-full-parallel`) over raw `go test`.
 
@@ -404,8 +405,13 @@ concurrent builds.
 
 Before considering any task complete:
 
-- Fast unit baseline passes (`make test`, or `make test-fast-parallel` on
-  machines where sharding is useful)
+- The push gate passed: `git push`, without `--no-verify`, ran
+  `.githooks/pre-push` to a green finish. It runs the full fast suite for any
+  push that changes a Go build input, so do not also run `make test` or
+  `make test-fast-parallel` before pushing -- that is the same suite twice.
+  While working, test the packages you changed (`go test ./internal/foo/`)
+  or run `make test-affected`, the fast suite over only the packages the work
+  since its fork point off main can reach
 - Broader process/integration coverage uses the sharded targets documented in
   `TESTING.md` instead of one monolithic `go test ./...` sweep
 - `go vet ./...` clean
