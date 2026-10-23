@@ -16,7 +16,9 @@ package main
 // (cmd_hook_stop_test.go's TestStopGateAllowsClaimParkedOnOpenOwnedQuestion
 // and TestStopGateParkedClaimProbeDrivesTheStoreCommands), and the tier's
 // blocked_by enrichment in general
-// (internal/config/workquery_inprogress_blocked_test.go).
+// (internal/config/workquery_inprogress_blocked_test.go). The tier tests here
+// cover the held shape only: the released shape is woken by the routed tier,
+// the path ask-pm.py's release relies on.
 //
 //	go test ./cmd/gc/ -run TestStopGateParkShape
 
@@ -27,6 +29,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/config"
 )
 
@@ -170,7 +173,8 @@ func TestStopGateParkShapeStatusIsAStatusTheWorkQueryAsksFor(t *testing.T) {
 }
 
 // TestStopGateParkShapeAdviceNamesTheShapeItHonors pins that the paragraph is
-// RENDERED from stopGateParkShape rather than restating it.
+// RENDERED from stopGateParkShapeFor rather than restating it, for both the
+// held park and the released one a draining session is given.
 //
 // What it cannot catch, stated so it is not mistaken for more than it is:
 // while the text is built from the struct these assertions are near-tautologies
@@ -180,42 +184,58 @@ func TestStopGateParkShapeStatusIsAStatusTheWorkQueryAsksFor(t *testing.T) {
 // edit, not in today's run. The assertion with an independent source is the
 // sibling above.
 func TestStopGateParkShapeAdviceNamesTheShapeItHonors(t *testing.T) {
-	reason := stopGateOutstandingReason(stopGateHoldingWork())
-	_, body, found := strings.Cut(reason, "\n")
-	if !found {
-		t.Fatalf("block reason has no body after its header line: %q", reason)
-	}
+	for _, origin := range []string{"named", sessionOriginEphemeral} {
+		t.Run(origin, func(t *testing.T) {
+			facts := stopGateHoldingWork()
+			facts.sessionOrigin = origin
+			shape := stopGateParkShapeFor(facts)
+			reason := stopGateOutstandingReason(facts)
+			_, body, found := strings.Cut(reason, "\n")
+			if !found {
+				t.Fatalf("block reason has no body after its header line: %q", reason)
+			}
 
-	if !strings.Contains(body, stopGateParkShape.metadataKey) {
-		t.Errorf("advice never names %s, the key the gate reads to recognize a "+
-			"park, so a reader cannot produce the shape: %q",
-			stopGateParkShape.metadataKey, body)
-	}
-	if !strings.Contains(body, stopGateParkShape.status) {
-		t.Errorf("advice never names the status a parked claim is left at, so a "+
-			"reader must guess it: %q", body)
-	}
-	// The dependency is the wake -- the metadata alone records an intention
-	// that no tier acts on. stopGateHasBlockingDependency requires the edge
-	// and inProgressBlockedByEnrichmentScript reads it; advice that omitted it
-	// would produce a bead served immediately instead of a parked one.
-	//
-	// "blocking dependency" and not the bare word "dependency": a mutation
-	// sweep on this file deleted the whole instruction and SURVIVED the looser
-	// check, because the sentence explaining that the dependency is the wake
-	// still carried the word. The cost of the tighter phrase is that a rewrite
-	// to some other spelling of the edge goes red; that red is a prompt to
-	// re-read this comment, which is the cheaper failure.
-	depAt := strings.Index(body, "blocking dependency")
-	if depAt < 0 {
-		t.Errorf("advice records the waited-on id but never says to add the "+
-			"blocking dependency that actually withholds and wakes the bead: %q", body)
-	}
-	// Link first, record second -- the order the city's own ask-pm.py follows
-	// and documents. A reader who records the metadata and then stops has a
-	// bead that looks parked to a human and is served to the next session.
-	if keyAt := strings.Index(body, stopGateParkShape.metadataKey); depAt >= 0 && depAt > keyAt {
-		t.Errorf("advice names the metadata record before the dependency that "+
-			"makes it mean anything: %q", body)
+			if !strings.Contains(body, shape.metadataKey) {
+				t.Errorf("advice never names %s, the key the gate reads to recognize a "+
+					"park, so a reader cannot produce the shape: %q",
+					shape.metadataKey, body)
+			}
+			if !strings.Contains(body, stopGateParkedExitMarker(shape)) {
+				t.Errorf("advice never names what a parked claim is left as, so a "+
+					"reader must guess it: %q", body)
+			}
+			if !shape.assigned && !strings.Contains(body, beadmeta.RoutedToMetadataKey) {
+				t.Errorf("advice releases the claim without naming %s, the route "+
+					"that serves it again, so the bead is left unowned: %q",
+					beadmeta.RoutedToMetadataKey, body)
+			}
+			// The dependency is the wake -- the metadata alone records an
+			// intention that no tier acts on. stopGateHasBlockingDependency
+			// requires the edge and inProgressBlockedByEnrichmentScript reads it.
+			//
+			// "blocking dependency" and not the bare word "dependency": a mutation
+			// sweep on this file deleted the whole instruction and SURVIVED the
+			// looser check, because the sentence explaining that the dependency
+			// is the wake still carried the word.
+			depAt := strings.Index(body, "blocking dependency")
+			if depAt < 0 {
+				t.Errorf("advice records the waited-on id but never says to add the "+
+					"blocking dependency that actually withholds and wakes the bead: %q", body)
+			}
+			// Link first, record second -- the order the city's own ask-pm.py
+			// follows and documents. A reader who records the metadata and then
+			// stops has a bead that looks parked to a human and is served to the
+			// next session.
+			if keyAt := strings.Index(body, shape.metadataKey); depAt >= 0 && depAt > keyAt {
+				t.Errorf("advice names the metadata record before the dependency that "+
+					"makes it mean anything: %q", body)
+			}
+			// Release last: released before the dependency exists, the bead is
+			// ready and routed, and the pool reclaims it unanswered.
+			if releaseAt := strings.Index(body, "drop its assignee"); !shape.assigned && releaseAt < depAt {
+				t.Errorf("advice releases the claim before the dependency that "+
+					"withholds it exists: %q", body)
+			}
+		})
 	}
 }
