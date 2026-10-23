@@ -212,7 +212,10 @@ Willie's prior is testing: the full suite plausibly runs more than once per
 bead, and the gascity suite roughly tripled in six months (pm-log #148-#149).
 Scope is every rig's bead lifecycle, and fixes land where that lifecycle is
 configured -- the city repo's hooks, gates, merge sweep and agent prompts,
-gc itself, and each rig's own test entry points (pm-log #149).
+gc itself, and each rig's own test entry points (pm-log #149). The baseline
+found 61-95% of that time in every rig is merge-queue wait, so Willie
+revectored the epic onto the queue: queue work leads, and the test work
+already accepted continues where it shortens a gate (pm-log #158).
 
 Acceptance:
 
@@ -222,9 +225,16 @@ Acceptance:
   full-suite runs per bead and each suite's size and runtime. Built from
   records that already exist over a representative window, and recorded
   before any reduction lands (pm-log #150).
-- Target: Willie sets the reduction target at the baseline review and it
-  is logged then; a post-change window over the same measure meets it
-  (pm-log #150).
+- Target: in every rig, last code commit to landing on main is under one
+  hour at the 90th percentile, and shorter is better. Willie set no tighter
+  number. A post-change window over the baseline's measure meets it
+  (pm-log #158).
+- Merge queue first: one rig's gate no longer consumes the sweep pass
+  budget of every other rig, and a rig's closed branches land together
+  under one gate run rather than one branch per pass. Queue wait per rig
+  is decomposed before and after -- passes waited, budget-exhausted
+  deferrals, gate time against cap, wait behind other rigs' gates
+  (pm-log #158).
 - Slow tests first: each rig's tests ranked by time cost; slow ones get a
   speed fix before any pruning; a test is removed or merged only on
   redundancy evidence -- another test fails on the same broken code, or

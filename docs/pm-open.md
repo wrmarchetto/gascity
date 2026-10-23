@@ -299,3 +299,16 @@ Update 2026-10-23 (pm-log #147): RESOLVED. Willie chose (c), criterion 4
 dropped, via gs-3vdb's close reason, and confirmed it in sitting gs-otx1.
 Criterion 3's assignments of record are superseded by the Opus 5.5
 convergence.
+
+## 10. Which percentile "everything under an hour" means (2026-10-23)
+
+Willie's baseline ruling (city ci-uuh5rs) was "everything under an hour,
+shorter better", with no exact targets. pm-log #158 wrote bead-cycle-time's
+Target criterion as p90 under one hour in every rig. The alternatives were
+median (half of beads may exceed the hour) and max (one outlier fails the
+epic). Also unconfirmed there: criteria 3 to 5 kept under "perhaps
+revector", rather than dropped.
+
+Would settle it: Willie confirming or correcting the percentile, and
+whether the remaining test-speed criteria stay, at the epic review or a
+pm-chat sitting.

@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-kmgc 2026-10-23T15:38:00Z
+last_seen: gs-1pl0 2026-10-23T15:50:01Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5291,5 +5291,65 @@ against the five criteria and the dependency line:
 
 Verdict: ACCEPT bead-cycle-time. Rig store since last_seen moved by
 gs-rvw5 (routed, in progress), gs-zle6 filed, and this summons.
+
+Source: roadmap bead-cycle-time
+
+## 158. bead-cycle-time revectored onto the merge queue, target under 1 h p90 (2026-10-23)
+
+Willie answered the baseline review at the liaison pane (city ci-uuh5rs,
+close reason, 15:46Z), verbatim: "I don't want to set exact target times.
+I'd like everything to be under an hour, but even shorter would be better.
+But these times are way worse than I thought. It seems the merge queue is
+the actual problem, so perhaps we need to revector the epic to focus on
+reducing the merge queue time".
+
+Roadmap edit, made from that ruling:
+
+- Criterion 2 (Target) no longer waits on a number Willie declined to set.
+  It is now: last code commit to main under one hour at the 90th percentile
+  in every rig, shorter better, met by a post-change window over the
+  baseline's measure. The p90 reading of "everything" is the PM's: a max is
+  hostage to one outlier and a median leaves half the beads over the hour.
+  Unconfirmed, so it is pm-open #10.
+- New criterion, Merge queue first: one rig's gate stops consuming every
+  rig's pass budget, a rig's closed branches land together under one gate
+  run, and queue wait is decomposed per rig before and after.
+- Criteria 3 to 5 stay as Willie accepted them in #150-#153. "Perhaps
+  revector" is read as a change of focus, not a withdrawal of accepted
+  criteria, and most of them are already closed or in flight. The
+  description now says queue work leads.
+
+Source: PM inference, unconfirmed
+
+## 159. DECOMP bead-cycle-time (gs-1pl0): ACCEPT the queue-first beads (2026-10-23)
+
+The mayor proposed four unfiled beads under the rewrite in #158, and asked
+what happens to the in-flight test-speed beads. Checked against the
+rewritten criteria and the dependency line:
+
+- Merge queue first: A (analyst, decompose queue wait per rig from the
+  sweep run logs) is the before half of the criterion's decomposition. B
+  (toolsmith, one rig's gate stops consuming the pass budget -- lanes,
+  parallel gates or fast gates first) and C (toolsmith, batch-merge per rig
+  with one gate run and bisection on failure) are its two clauses.
+- Target: D (analyst, post-change window after B and C) is the
+  measurement, and replaces the numeric-target window bead.
+- Possible gap, sequenced not missing: in astoria-sel4 a 52.6 h p90 with
+  61% queue leaves hours of non-queue time, which no queue bead reaches. If
+  A shows any rig's non-queue stages alone over the hour, that rig gets a
+  bead filed from A's report, as criterion 3's beads were from the
+  baseline.
+- In flight, all stay in scope, because gate runtime is queue time:
+  ci-p8kdpw (city gate suites) and gs-zle6 (gascity packages) shorten the
+  gates a pass runs serially; gs-rvw5 shortens the push gate, which sits
+  inside the measured interval (gascity push gate 14m median, 25m p90).
+- One ordering correction: ci-ms847d adds gascity's Go suite to its sweep
+  gate. Under today's serial 1200 s pass that is a 10-plus-minute gate
+  taken out of every other rig's budget, the exact effect B removes. It
+  now waits on B as well as gs-zle6, and its "own lane" is B's lane design.
+
+Verdict: ACCEPT bead-cycle-time, with ci-ms847d ordered after B. Rig store
+since last_seen moved by gs-kmgc closing (#157), gs-zle6 claimed, and this
+summons.
 
 Source: roadmap bead-cycle-time
