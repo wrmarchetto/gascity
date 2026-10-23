@@ -312,3 +312,8 @@ revector", rather than dropped.
 Would settle it: Willie confirming or correcting the percentile, and
 whether the remaining test-speed criteria stay, at the epic review or a
 pm-chat sitting.
+
+Update 2026-10-23 (pm-log #161): RESOLVED. The liaison read Willie's words
+as delegating the measure, so p90 stands as the PM's ruling, and criteria
+3-5 stay because every one cuts time inside the Target interval.
+

@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-1pl0 2026-10-23T15:50:01Z
+last_seen: gs-e6ld 2026-10-23T17:05:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5353,3 +5353,63 @@ since last_seen moved by gs-kmgc closing (#157), gs-zle6 claimed, and this
 summons.
 
 Source: roadmap bead-cycle-time
+
+## 160. DECOMP bead-cycle-time (gs-e6ld): ACCEPT C's closure and E (2026-10-23)
+
+A's report (city ci-bq7qvz, docs/merge-queue-wait.md at 19bb445c, 96
+passes over 37.9 h, 52 landings) found queueing dominant in every rig with
+a different cause per rig: zephyr waits behind its own branches, city waits
+behind zephyr's gate, sel4 waits out the 30 min rest between passes, and
+gascity ran no gate in the window. Checked the mayor's two changes against
+the criteria and the dependency line:
+
+- C closed as a duplicate (city ci-sx056l, no-op): ci-cicsvc (closed,
+  shipped, 8354d8b5 on fix/ci-cicsvc-sweep-suite-once) already gates each
+  repo's whole queue as one merge and bisects a red batch. That is the
+  "land together under one gate run" clause of Merge queue first. It is
+  not on city main yet, so the clause is met only when it lands, and D
+  (ci-r81svr) now waits on it and on B (ci-ms65m7) -- the window cannot
+  open before both are live. B building on that branch is the mayor's HOW.
+- E (toolsmith, cut the 30 min rest or start a pass when a branch becomes
+  eligible) is needed by the Target criterion: sel4's queue time is the
+  rest, which neither B nor ci-cicsvc touches, so without E sel4 has no
+  bead between it and the hour. This is the gap #159 held open for A's
+  report, landing on the queue side rather than the non-queue side (sel4
+  own stages 6 min p90, so #159's non-queue trigger did not fire). After B
+  is the right order, same script. In scope: the merge sweep is named in
+  the description's fix locations.
+- Zephyr's gate ran 1336 s against ZEPHYR_GATE_TIMEOUT=890 at host load
+  35-40. That blocks the Target for zephyr, and its owners are already
+  filed: az-r41s shortens the suite, B decides the lane. Recorded for B's
+  design: parallel gates raise host load, which is what pushes zephyr past
+  its cap, so B's lane choice must not trade one rig's budget for another
+  rig's timeout. D measures zephyr against the hour like any rig, and the
+  epic-close summons is the backstop if it still fails. Zephyr main red
+  (az-1obl, P1) is a zephyr defect outside this epic.
+- No hardware, no upstream rig. E sits in the city store with the sweep.
+
+Verdict: ACCEPT bead-cycle-time. Rig store since last_seen moved only by
+this summons (gs-0y4d hold:mayor and gs-zle6 in progress, both unchanged
+in substance).
+
+Source: roadmap bead-cycle-time
+
+## 161. pm-open #10 closed: the percentile is the PM's, criteria 3-5 stay (2026-10-23)
+
+The liaison (mail ci-wisp-mmv2nn2) read Willie's 15:46Z words on city
+ci-uuh5rs -- "I don't want to set exact target times. I'd like everything
+to be under an hour, but even shorter would be better" -- as delegating the
+measure: asking him to pick a percentile is the exact target he declined
+to set, and his standing rule is to keep ceremony off him. Taken as
+settling #10 without a sitting.
+
+- Percentile: p90 stands as the PM's ruling, for the reason in #158.
+- Criteria 3-5: the liaison's test is keep a test-speed criterion where it
+  cuts queue or landing time, drop it where it does not. Every remaining
+  one passes: the Target interval runs from the last code commit, so
+  in-session runs (criterion 5's mappers), the push gate (gs-rvw5) and the
+  sweep gate's runtime (criterion 3's beads, ci-ms847d) all sit inside it.
+  Criterion 4 is already met (ci-ufxl74 closed). No roadmap edit.
+
+Source: pm-log #158
+
