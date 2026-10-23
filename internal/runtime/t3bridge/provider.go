@@ -42,13 +42,16 @@ var defaultWSURLCandidates = []string{
 	"ws://localhost:3773/ws",
 }
 
+// bridgeConnectRetryWindow bounds how long rpcCall retries a transient bridge
+// error before returning it.
+var bridgeConnectRetryWindow = 8 * time.Second
+
 const (
-	bridgeConnectRetryWindow = 8 * time.Second
-	bridgeConnectBaseDelay   = 100 * time.Millisecond
-	bridgeConnectMaxDelay    = 1 * time.Second
-	bridgeHTTPTimeout        = 12 * time.Second
-	bridgeWSTimeout          = 3 * time.Second
-	snapshotCacheTTL         = 10 * time.Second
+	bridgeConnectBaseDelay = 100 * time.Millisecond
+	bridgeConnectMaxDelay  = 1 * time.Second
+	bridgeHTTPTimeout      = 12 * time.Second
+	bridgeWSTimeout        = 3 * time.Second
+	snapshotCacheTTL       = 10 * time.Second
 )
 
 // Provider wraps an exec.Provider, moving the T3-specific lifecycle and turn

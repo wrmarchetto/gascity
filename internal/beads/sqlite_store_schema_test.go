@@ -12,10 +12,12 @@ import (
 )
 
 func TestSQLiteStoreAcceptsOnlyCanonicalDeployedSchemaLayoutsWithoutRewrite(t *testing.T) {
+	t.Parallel()
 	for _, revision := range []bool{false, true} {
 		for _, legacyDeps := range []bool{false, true} {
 			name := fmt.Sprintf("revision=%t/legacy-deps=%t", revision, legacyDeps)
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				dir := t.TempDir()
 				createSQLiteSchemaFixture(t, dir, revision, legacyDeps, nil)
 				before := snapshotSQLiteSchemaSource(t, dir)
@@ -51,6 +53,7 @@ func TestSQLiteStoreAcceptsOnlyCanonicalDeployedSchemaLayoutsWithoutRewrite(t *t
 }
 
 func TestSQLiteStoreRejectsSchemaDriftBeforeReadOnlyOrWritableMutation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		mutate func([]string) []string
@@ -117,6 +120,7 @@ func TestSQLiteStoreRejectsSchemaDriftBeforeReadOnlyOrWritableMutation(t *testin
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
 			dir := t.TempDir()
 			createSQLiteSchemaFixture(t, dir, true, false, test.mutate)
 			before := snapshotSQLiteSchemaSource(t, dir)

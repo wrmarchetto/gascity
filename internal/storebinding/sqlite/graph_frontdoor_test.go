@@ -57,6 +57,7 @@ func mustCreateGraphBead(t *testing.T, front storebinding.GraphStore, b beads.Be
 }
 
 func TestOpenGraphAdoptsTheDeployedPathAndReservedNamespace(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	component := openGraphComponent(t, root)
 
@@ -76,6 +77,7 @@ func TestOpenGraphAdoptsTheDeployedPathAndReservedNamespace(t *testing.T) {
 // TestOpenGraphAdoptsExistingRowsInPlace pins that a second open of the same
 // deployed file serves the same rows: adoption, not replacement.
 func TestOpenGraphAdoptsExistingRowsInPlace(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	first, err := OpenGraph(graphSpec(t, root))
 	if err != nil {
@@ -101,6 +103,7 @@ func TestOpenGraphAdoptsExistingRowsInPlace(t *testing.T) {
 }
 
 func TestOpenGraphRejectsAForeignProvider(t *testing.T) {
+	t.Parallel()
 	spec := graphSpec(t, t.TempDir())
 	spec.Provider = storebinding.ProviderID("postgres")
 	component, err := OpenGraph(spec)
@@ -117,6 +120,7 @@ func TestOpenGraphRejectsAForeignProvider(t *testing.T) {
 // class is refused when the component opens, not when a caller reaches the one
 // method it is missing.
 func TestNewGraphComponentRefusesAnIncompleteEngine(t *testing.T) {
+	t.Parallel()
 	component, err := newGraphComponent(beads.NewMemStore())
 	if component != nil {
 		t.Fatal("newGraphComponent accepted a store that is not the deployed Graph engine")
@@ -131,6 +135,7 @@ func TestNewGraphComponentRefusesAnIncompleteEngine(t *testing.T) {
 // other classes because the engine behind it IS a beads.Store, so an embedded
 // field would have handed callers the whole generic surface.
 func TestGraphFrontDoorHidesTheRawStore(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 
 	// Positive control: the engine behind the front door genuinely IS a
@@ -191,6 +196,7 @@ func TestGraphFrontDoorHidesTheRawStore(t *testing.T) {
 // generic beads adapter, ReadyContext is a capability error. Over the deployed
 // engine it must be an answer.
 func TestGraphFrontDoorReadyContextAnswersInsteadOfVetoing(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	ready := mustCreateGraphBead(t, front, beads.Bead{Title: "actionable", Type: "task"})
 	blocker := mustCreateGraphBead(t, front, beads.Bead{Title: "blocker", Type: "task"})
@@ -227,6 +233,7 @@ func TestGraphFrontDoorReadyContextAnswersInsteadOfVetoing(t *testing.T) {
 }
 
 func TestGraphFrontDoorReadyContextHonorsACancelledContext(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	mustCreateGraphBead(t, front, beads.Bead{Title: "actionable", Type: "task"})
 
@@ -245,6 +252,7 @@ func TestGraphFrontDoorReadyContextHonorsACancelledContext(t *testing.T) {
 }
 
 func TestGraphFrontDoorCountCountsAndExcludesTypes(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	mustCreateGraphBead(t, front, beads.Bead{Title: "task", Type: "task"})
 	mustCreateGraphBead(t, front, beads.Bead{Title: "another task", Type: "task"})
@@ -274,6 +282,7 @@ func TestGraphFrontDoorCountCountsAndExcludesTypes(t *testing.T) {
 }
 
 func TestGraphFrontDoorWaitForParentProjectionObservesTheReparent(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	oldParent := mustCreateGraphBead(t, front, beads.Bead{Title: "old parent", Type: "molecule"})
 	newParent := mustCreateGraphBead(t, front, beads.Bead{Title: "new parent", Type: "molecule"})
@@ -294,6 +303,7 @@ func TestGraphFrontDoorWaitForParentProjectionObservesTheReparent(t *testing.T) 
 // makes the method non-vacuous: a projection that does not reflect the move
 // must be an error, not a silent success.
 func TestGraphFrontDoorWaitForParentProjectionReportsDivergence(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	oldParent := mustCreateGraphBead(t, front, beads.Bead{Title: "old parent", Type: "molecule"})
 	newParent := mustCreateGraphBead(t, front, beads.Bead{Title: "new parent", Type: "molecule"})
@@ -315,6 +325,7 @@ func TestGraphFrontDoorWaitForParentProjectionReportsDivergence(t *testing.T) {
 // claim contract the CLI's hook --claim path depends on. Every clause here is
 // behavior that would otherwise have to be re-implemented in a projection.
 func TestGraphFrontDoorClaimPreservesDeployedSemantics(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	target := mustCreateGraphBead(t, front, beads.Bead{Title: "claimable", Type: "task"})
 
@@ -371,6 +382,7 @@ func TestGraphFrontDoorClaimPreservesDeployedSemantics(t *testing.T) {
 // TestGraphFrontDoorClaimAndReleaseArePaired pins the acquire/release duality:
 // the contract exposed the release half long before it had an acquire half.
 func TestGraphFrontDoorClaimAndReleaseArePaired(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	target := mustCreateGraphBead(t, front, beads.Bead{Title: "claimable", Type: "task"})
 
@@ -393,6 +405,7 @@ func TestGraphFrontDoorClaimAndReleaseArePaired(t *testing.T) {
 // concurrency: the deployed engine serializes claims through one write
 // connection, and the front door must not widen that.
 func TestGraphFrontDoorClaimHasExactlyOneWinner(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	target := mustCreateGraphBead(t, front, beads.Bead{Title: "contended", Type: "task"})
 
@@ -429,6 +442,7 @@ func TestGraphFrontDoorClaimHasExactlyOneWinner(t *testing.T) {
 }
 
 func TestGraphFrontDoorTxCommitsOrRollsBackAtomically(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	existing := mustCreateGraphBead(t, front, beads.Bead{Title: "existing", Type: "task"})
 
@@ -483,6 +497,7 @@ func TestGraphFrontDoorTxCommitsOrRollsBackAtomically(t *testing.T) {
 }
 
 func TestGraphFrontDoorApplyGraphPlanIsAtomicAndTyped(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 
 	result, err := front.ApplyGraphPlan(context.Background(), &beads.GraphApplyPlan{
@@ -539,6 +554,7 @@ func TestGraphFrontDoorApplyGraphPlanIsAtomicAndTyped(t *testing.T) {
 // would be writable through the front door and readable only by reaching past
 // it for a raw store.
 func TestGraphFrontDoorRoundTripsOpaqueEdgeMetadata(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 
 	const payload = `{"recipe":"build","wait":"gate"}`
@@ -572,6 +588,7 @@ func TestGraphFrontDoorRoundTripsOpaqueEdgeMetadata(t *testing.T) {
 }
 
 func TestGraphFrontDoorAppliesSelectedStorageTiers(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 
 	wisp, err := front.CreateWithStorage(beads.Bead{Title: "wisp", Type: "task"}, beads.StorageEphemeral)
@@ -620,6 +637,7 @@ func TestGraphFrontDoorAppliesSelectedStorageTiers(t *testing.T) {
 }
 
 func TestGraphFrontDoorConditionalWritesGateOnRevision(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	target := mustCreateGraphBead(t, front, beads.Bead{Title: "conditional", Type: "task"})
 
@@ -665,6 +683,7 @@ func TestGraphFrontDoorConditionalWritesGateOnRevision(t *testing.T) {
 }
 
 func TestGraphFrontDoorReopenAndCloseAllRoundTrip(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	first := mustCreateGraphBead(t, front, beads.Bead{Title: "one", Type: "task"})
 	second := mustCreateGraphBead(t, front, beads.Bead{Title: "two", Type: "task"})
@@ -702,6 +721,7 @@ func TestGraphFrontDoorReopenAndCloseAllRoundTrip(t *testing.T) {
 }
 
 func TestGraphFrontDoorDependenciesSurviveRestart(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	first, err := OpenGraph(graphSpec(t, root))
 	if err != nil {
@@ -752,6 +772,7 @@ func TestGraphFrontDoorDependenciesSurviveRestart(t *testing.T) {
 // retention at its default-disabled setting until root-aware retention lands,
 // and a closed member must survive a restart.
 func TestGraphFrontDoorKeepsClosedMembersOfLiveRoots(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	first, err := OpenGraph(graphSpec(t, root))
 	if err != nil {
@@ -784,6 +805,7 @@ func TestGraphFrontDoorKeepsClosedMembersOfLiveRoots(t *testing.T) {
 }
 
 func TestGraphFrontDoorPingsTheOpenComponent(t *testing.T) {
+	t.Parallel()
 	if err := openGraphFrontDoor(t).Ping(); err != nil {
 		t.Fatalf("Ping: %v", err)
 	}
@@ -792,6 +814,7 @@ func TestGraphFrontDoorPingsTheOpenComponent(t *testing.T) {
 // TestGraphComponentClosesOnce pins that closing twice is not an error: the
 // provider unwinds components it may already have closed.
 func TestGraphComponentClosesOnce(t *testing.T) {
+	t.Parallel()
 	component, err := OpenGraph(graphSpec(t, t.TempDir()))
 	if err != nil {
 		t.Fatalf("OpenGraph: %v", err)
@@ -808,6 +831,7 @@ func TestGraphComponentClosesOnce(t *testing.T) {
 // the other side: the Graph component's path is the deployed graph directory,
 // never a Work residence, and the front door mints only the reserved prefix.
 func TestGraphFrontDoorCannotBeMistakenForAWorkStore(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	component := openGraphComponent(t, root)
 	if filepath.Base(filepath.Dir(component.Path())) != "graph" {
@@ -830,6 +854,7 @@ func TestGraphFrontDoorCannotBeMistakenForAWorkStore(t *testing.T) {
 // TestApplyGenesisSequenceFloorRejectsANegativeFloor keeps a nonsense value
 // from reaching the engine, where it would be indistinguishable from genesis.
 func TestApplyGenesisSequenceFloorRejectsANegativeFloor(t *testing.T) {
+	t.Parallel()
 	component := openGraphComponent(t, t.TempDir())
 	if err := component.ApplyGenesisSequenceFloor(-1); err == nil {
 		t.Fatal("ApplyGenesisSequenceFloor accepted a negative floor")
@@ -839,6 +864,7 @@ func TestApplyGenesisSequenceFloorRejectsANegativeFloor(t *testing.T) {
 // TestApplyGenesisSequenceFloorNeverLowers pins idempotence: replaying an
 // older value must not walk the allocator backwards into a minted suffix.
 func TestApplyGenesisSequenceFloorNeverLowers(t *testing.T) {
+	t.Parallel()
 	component := openGraphComponent(t, t.TempDir())
 	if err := component.ApplyGenesisSequenceFloor(500); err != nil {
 		t.Fatalf("ApplyGenesisSequenceFloor(500): %v", err)
@@ -861,6 +887,7 @@ func TestApplyGenesisSequenceFloorNeverLowers(t *testing.T) {
 // — no front door, no knowledge that any floor was ever applied — must still
 // mint above it.
 func TestApplyGenesisSequenceFloorSurvivesRollbackToTheDeployedBinary(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	component := openGraphComponent(t, root)
 	for i := 0; i < 3; i++ {

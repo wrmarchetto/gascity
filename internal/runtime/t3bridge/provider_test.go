@@ -922,7 +922,17 @@ func TestRPCSnapshot_FallsBackToWSURLFileWhenEnvStale(t *testing.T) {
 	}
 }
 
+// shrinkBridgeConnectRetryWindow keeps rpcCall's retry loop, which still
+// retries at least once, but stops a dead-port test waiting out 8s per call.
+func shrinkBridgeConnectRetryWindow(t *testing.T) {
+	t.Helper()
+	prev := bridgeConnectRetryWindow
+	bridgeConnectRetryWindow = 150 * time.Millisecond
+	t.Cleanup(func() { bridgeConnectRetryWindow = prev })
+}
+
 func TestStart_TransientBridgeFailureReturnsInitializing(t *testing.T) {
+	shrinkBridgeConnectRetryWindow(t)
 	oldDefaults := defaultWSURLCandidates
 	defaultWSURLCandidates = nil
 	t.Cleanup(func() {
@@ -953,6 +963,7 @@ func TestStart_TransientBridgeFailureReturnsInitializing(t *testing.T) {
 }
 
 func TestPeek_TransientBridgeFailureSoftDegrades(t *testing.T) {
+	shrinkBridgeConnectRetryWindow(t)
 	oldDefaults := defaultWSURLCandidates
 	defaultWSURLCandidates = nil
 	t.Cleanup(func() {
@@ -1007,6 +1018,7 @@ func TestResolveConfigProviderModel_PrefersStoredEnvelopeIntent(t *testing.T) {
 // A transiently unreachable bridge is a failed observation, not an
 // authoritative claim that no T3 sessions are running.
 func TestListRunningSoftUnavailableIsRuntimeUnavailable(t *testing.T) {
+	shrinkBridgeConnectRetryWindow(t)
 	resetBridgeAuthCacheForTest(t)
 	oldDefaults := defaultWSURLCandidates
 	defaultWSURLCandidates = nil

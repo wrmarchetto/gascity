@@ -3,6 +3,7 @@ package exec //nolint:revive // internal package, always imported with alias
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/mail"
@@ -255,6 +256,20 @@ esac
 `
 }
 
+// writeExecutable writes a script that parallel subtests exec. A fork from
+// another subtest while the write fd is open would inherit it and fail the
+// exec with "text file busy" (golang.org/issue/22315), and forks wait on
+// syscall.ForkLock.
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(path, []byte(content), 0o755)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExecConformance(t *testing.T) {
 	mailtest.RunProviderTests(t, func(t *testing.T) mail.Provider {
 		dir := t.TempDir()
@@ -264,9 +279,7 @@ func TestExecConformance(t *testing.T) {
 		}
 
 		scriptPath := filepath.Join(dir, "mail-provider")
-		if err := os.WriteFile(scriptPath, []byte(statefulScript(stateDir)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, scriptPath, statefulScript(stateDir))
 
 		return NewProvider(scriptPath)
 	})

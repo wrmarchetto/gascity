@@ -112,9 +112,12 @@ func (l wrappedLeg) wrapped(tb storebindingtest.TB, observer storebinding.ClassO
 
 // TestWrappedClassFrontsRunTheUnchangedCorpus is the slice's exit evidence.
 func TestWrappedClassFrontsRunTheUnchangedCorpus(t *testing.T) {
+	t.Parallel()
 	for _, leg := range wrappedLegs() {
 		t.Run(leg.name, func(t *testing.T) {
+			t.Parallel()
 			t.Run("graph", func(t *testing.T) {
+				t.Parallel()
 				storebindingtest.RunGraphStoreTests(storebindingtest.Wrap(t), storebindingtest.GraphSuite{
 					NewStore: func(tb storebindingtest.TB) storebinding.GraphStore {
 						return leg.wrapped(tb, nil).Graph
@@ -123,6 +126,7 @@ func TestWrappedClassFrontsRunTheUnchangedCorpus(t *testing.T) {
 				})
 			})
 			t.Run("sessions", func(t *testing.T) {
+				t.Parallel()
 				storebindingtest.RunSessionsStoreTests(storebindingtest.Wrap(t), storebindingtest.SessionsSuite{
 					NewStore: func(tb storebindingtest.TB) storebinding.SessionsStore {
 						return leg.wrapped(tb, nil).Sessions
@@ -131,6 +135,7 @@ func TestWrappedClassFrontsRunTheUnchangedCorpus(t *testing.T) {
 				})
 			})
 			t.Run("orders", func(t *testing.T) {
+				t.Parallel()
 				storebindingtest.RunOrdersStoreTests(storebindingtest.Wrap(t), storebindingtest.OrdersSuite{
 					NewStore: func(tb storebindingtest.TB) storebinding.OrdersStore {
 						return leg.wrapped(tb, nil).Orders
@@ -139,6 +144,7 @@ func TestWrappedClassFrontsRunTheUnchangedCorpus(t *testing.T) {
 				})
 			})
 			t.Run("nudges", func(t *testing.T) {
+				t.Parallel()
 				storebindingtest.RunNudgeFrontDoorTests(storebindingtest.Wrap(t), storebindingtest.NudgesSuite{
 					NewFrontDoors: func(tb storebindingtest.TB) storebinding.NudgeFrontDoors {
 						return leg.wrapped(tb, nil).Nudges
@@ -147,6 +153,7 @@ func TestWrappedClassFrontsRunTheUnchangedCorpus(t *testing.T) {
 				})
 			})
 			t.Run("messaging", func(t *testing.T) {
+				t.Parallel()
 				storebindingtest.RunMessagingFrontDoorTests(storebindingtest.Wrap(t), storebindingtest.MessagingSuite{
 					NewFrontDoors: func(tb storebindingtest.TB) storebinding.MessagingFrontDoors {
 						return leg.wrapped(tb, nil).Messaging
@@ -155,6 +162,7 @@ func TestWrappedClassFrontsRunTheUnchangedCorpus(t *testing.T) {
 				})
 			})
 			t.Run("mail-provider", func(t *testing.T) {
+				t.Parallel()
 				storebindingtest.RunMailProviderTests(t, storebindingtest.MessagingSuite{
 					NewFrontDoors: func(tb storebindingtest.TB) storebinding.MessagingFrontDoors {
 						return leg.wrapped(tb, nil).Messaging

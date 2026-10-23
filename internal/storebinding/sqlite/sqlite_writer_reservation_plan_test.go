@@ -10,6 +10,7 @@ import (
 )
 
 func TestSQLiteWriterReservationPlanUsesJournalModeAndSidecarState(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name        string
 		writeFormat byte
@@ -203,6 +204,7 @@ func TestSQLiteWriterReservationPlanUsesJournalModeAndSidecarState(t *testing.T)
 }
 
 func TestSQLiteWriterReservationPlanRejectsMalformedWALAndSHMHeaders(t *testing.T) {
+	t.Parallel()
 	validDatabase := sqliteHeaderForTest(2, 2)
 	validWAL := sqliteWALHeaderForTest()
 	validSHM := sqliteSHMHeaderForTest()
@@ -271,6 +273,7 @@ func TestSQLiteWriterReservationPlanRejectsMalformedWALAndSHMHeaders(t *testing.
 }
 
 func TestSQLiteWriterReservationPlanValidatesWALIndexCommittedPrefix(t *testing.T) {
+	t.Parallel()
 	validWAL, frameChecksums := sqliteWALWithFramesForTest(7, 0)
 	for _, scenario := range []struct {
 		name     string
