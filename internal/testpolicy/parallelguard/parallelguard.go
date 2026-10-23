@@ -27,8 +27,13 @@ type Hazards map[string]string
 // no test is derived serial, since either means the scan saw nothing.
 func Check(t testing.TB, hazards Hazards) {
 	t.Helper()
+	check(t, ".", hazards)
+}
+
+func check(t testing.TB, dir string, hazards Hazards) {
+	t.Helper()
 	fset := token.NewFileSet()
-	tests, declared, err := parsePackage(fset, ".")
+	tests, declared, err := parsePackage(fset, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
