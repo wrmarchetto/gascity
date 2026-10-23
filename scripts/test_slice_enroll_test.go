@@ -16,7 +16,7 @@ import (
 func TestSliceEnrollFallbackMatrix(t *testing.T) {
 	root := repoRoot(t)
 
-	cmd := exec.Command(filepath.Join(root, "scripts", "test-slice-enroll-test"))
+	cmd := exec.Command(filepath.Join(root, "scripts", "test-slice-enroll.test.sh"))
 	cmd.Dir = root
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -26,6 +26,6 @@ func TestSliceEnrollFallbackMatrix(t *testing.T) {
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("test-slice-enroll-test failed: %v\n%s", err, out)
+		t.Fatalf("test-slice-enroll.test.sh failed: %v\n%s", err, out)
 	}
 }

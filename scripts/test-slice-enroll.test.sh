@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# test-slice-enroll-test — self-test for scripts/lib/test-slice.sh.
+# test-slice-enroll.test.sh — self-test for scripts/lib/test-slice.sh.
 #
 # Exercises the gascity-test.slice auto-enrollment decision matrix with fake
 # systemd-run/systemctl binaries on a fully controlled PATH, including every
 # plain-execution fallback that must keep CI and non-systemd hosts unaffected.
 #
-# Run directly:    scripts/test-slice-enroll-test
+# Run directly:    scripts/test-slice-enroll.test.sh
 # Run via go test: go test ./scripts -run TestSliceEnroll
 
 set -euo pipefail
@@ -307,7 +307,7 @@ run_entry wrap-large-listing "$cgroup_outside"
 expect_log_lines wrap-large-listing "$sdr_log" 2
 
 if [[ "$failures" -ne 0 ]]; then
-  echo "test-slice-enroll-test: $failures failure(s)" >&2
+  echo "test-slice-enroll.test.sh: $failures failure(s)" >&2
   exit 1
 fi
-echo "test-slice-enroll-test: all scenarios passed"
+echo "test-slice-enroll.test.sh: all scenarios passed"

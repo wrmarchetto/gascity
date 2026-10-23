@@ -226,7 +226,7 @@ resolve_shellcheck() {
   # GOPATH/bin first: that is where scripts/install-shellcheck.sh puts the
   # pinned build, and preferring it over PATH keeps the gate off a version
   # the host happens to carry. It also sidesteps a PATH shim that is present
-  # but unrunnable, which is what made scripts/test-slice-enroll-test probe
+  # but unrunnable, which is what made scripts/test-slice-enroll.test.sh probe
   # `shellcheck --version` before trusting a non-zero exit.
   candidate="$(go env GOPATH 2>/dev/null || true)/bin/shellcheck"
   if [ -x "$candidate" ] && "$candidate" --version >/dev/null 2>&1; then

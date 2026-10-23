@@ -13,7 +13,7 @@
 #   source "$repo_root/scripts/lib/test-slice.sh"
 #   gc_test_slice_reexec "$repo_root/scripts/<entrypoint>" "$@"
 #
-# Self-test: scripts/test-slice-enroll-test (run by go test ./scripts).
+# Self-test: scripts/test-slice-enroll.test.sh (run by go test ./scripts).
 
 GC_TEST_SLICE_UNIT="gascity-test.slice"
 
