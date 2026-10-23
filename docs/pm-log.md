@@ -5058,3 +5058,24 @@ gs-yvxt touched; gs-otx1 filed (this sitting); gs-3vdb closed 2026-10-12.
 pm-open #9 is answered by this entry.
 
 Source: pm-log #145 (gate gs-3vdb close reason, confirmed by Willie in gs-otx1)
+
+## 148. pm-chat gs-otx1: new city-efficiency epic opened for interview (2026-10-23)
+
+Willie brought a second epic to this sitting: city efficiency. Work takes a
+very long time to complete, and the first task is to find what takes the
+majority of the non-development time -- his prior is testing. His three
+seed questions, verbatim in substance:
+
+1. What stages does a bead go through to get closed out? Is the full test
+   suite run multiple times, and how long does that take?
+2. How much have the tests grown over time? Are tests being added that
+   provide little value, so that pruning is warranted?
+3. Should tests be separated into tiers, or subsets run based on what code
+   changed (dependency-graph frameworks mapping changes to tests)?
+
+Interview in progress in this sitting; slug, acceptance criteria and status
+land in the roadmap entry that follows. gs-78op's close is held until that
+entry is committed, so the agent-efficiency epic-close summons finds this
+epic to promote rather than an empty roadmap.
+
+Source: Willie, pm-chat sitting gs-otx1
