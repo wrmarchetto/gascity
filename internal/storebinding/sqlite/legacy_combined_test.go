@@ -20,6 +20,7 @@ import (
 )
 
 func TestOpenLegacyCombinedSourceUsesOnlyHistoricalInfraPath(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	other, err := beads.OpenSQLiteStore(filepath.Join(city, ".gc"), beads.WithSQLiteStoreIDPrefix("gcg"))
 	if err != nil {
@@ -36,6 +37,7 @@ func TestOpenLegacyCombinedSourceUsesOnlyHistoricalInfraPath(t *testing.T) {
 }
 
 func TestLegacyCombinedSourceClassifiesAndPreservesRecordsWithoutMutatingSource(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	source := openLegacyCombinedWriter(t, city)
 	work, err := source.Create(beads.Bead{ID: "gcg-1", Title: "work", Type: "task"})
@@ -124,6 +126,7 @@ func TestLegacyCombinedSourceClassifiesAndPreservesRecordsWithoutMutatingSource(
 }
 
 func TestLegacyCombinedSourceReopensPrivateSnapshotReadOnlyAfterRecovery(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	source := openLegacyCombinedWriter(t, city)
 	if _, err := source.Create(beads.Bead{ID: "gcg-read-only-snapshot", Title: "private recovery", Type: "task"}); err != nil {
@@ -144,6 +147,7 @@ func TestLegacyCombinedSourceReopensPrivateSnapshotReadOnlyAfterRecovery(t *test
 }
 
 func TestLegacyCombinedSourceCloseRetriesStoreCleanupBeforeRemovingSnapshot(t *testing.T) {
+	t.Parallel()
 	snapshotDir := t.TempDir()
 	opened, err := beads.OpenSQLiteStore(snapshotDir, beads.WithSQLiteStoreIDPrefix("gcg"))
 	if err != nil {
@@ -265,6 +269,7 @@ func TestLegacyCombinedFenceSnapshotCancellationCleansPrivateSnapshotRoot(t *tes
 }
 
 func TestLegacyCombinedSourceRejectsAChangedCopyWindow(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	source := openLegacyCombinedWriter(t, city)
 	t.Cleanup(func() { _ = source.CloseStore() })
@@ -289,6 +294,7 @@ func TestLegacyCombinedSourceRejectsAChangedCopyWindow(t *testing.T) {
 }
 
 func TestCopyLegacyCombinedSnapshotOmitsDerivedWALIndex(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	sourceDir, err := LegacyCombinedSourceDir(city)
 	if err != nil {
@@ -325,6 +331,7 @@ func TestCopyLegacyCombinedSnapshotOmitsDerivedWALIndex(t *testing.T) {
 }
 
 func TestLegacyCombinedFenceComparisonAllowsOnlyWALIndexReaderMarkChurn(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	sourceDir, err := LegacyCombinedSourceDir(city)
 	if err != nil {
@@ -389,6 +396,7 @@ func TestLegacyCombinedFenceComparisonAllowsOnlyWALIndexReaderMarkChurn(t *testi
 }
 
 func TestCopyLegacyCombinedSnapshotRejectsReplacementAfterSourceCensus(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	sourceDir, err := LegacyCombinedSourceDir(city)
 	if err != nil {

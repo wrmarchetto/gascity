@@ -86,6 +86,7 @@ func witnessOf(t *testing.T, front storebinding.GraphStore, floors GraphAllocato
 // whole design rests on: the digest describes the graph, not the file. Two
 // stores at different paths, written in different orders, must agree.
 func TestGraphWitnessIsIndependentOfPhysicalPlacementAndOrder(t *testing.T) {
+	t.Parallel()
 	forward := openGraphFrontDoor(t)
 	seedWitnessGraph(t, forward, canonicalWitnessSeeds(), canonicalWitnessEdges())
 
@@ -112,6 +113,7 @@ func TestGraphWitnessIsIndependentOfPhysicalPlacementAndOrder(t *testing.T) {
 // completeness mechanism: an empty class still emits every family, so an
 // exporter that skipped one is a structural difference, not a coincidence.
 func TestGraphWitnessCarriesEveryFamilyWithExplicitZeroCounts(t *testing.T) {
+	t.Parallel()
 	empty := witnessOf(t, openGraphFrontDoor(t), GraphAllocatorFloors{})
 
 	counts := map[string]int{}
@@ -148,6 +150,7 @@ func TestGraphWitnessCarriesEveryFamilyWithExplicitZeroCounts(t *testing.T) {
 // field that does NOT move the digest is a field a migration could silently
 // drop.
 func TestGraphWitnessMovesForEveryContractedField(t *testing.T) {
+	t.Parallel()
 	floors := GraphAllocatorFloors{CrossClassMaximum: 900, PersistedFloor: 900}
 	baseline := func(t *testing.T) (storebinding.GraphStore, string) {
 		t.Helper()
@@ -224,6 +227,7 @@ func TestGraphWitnessMovesForEveryContractedField(t *testing.T) {
 // an edge carried, are different graphs — a migration that moved the edges but
 // dropped their payloads must not hash equal.
 func TestGraphWitnessCarriesOpaqueEdgeMetadata(t *testing.T) {
+	t.Parallel()
 	withPayload := func(t *testing.T, payload string) string {
 		t.Helper()
 		front := openGraphFrontDoor(t)
@@ -256,6 +260,7 @@ func TestGraphWitnessCarriesOpaqueEdgeMetadata(t *testing.T) {
 // on, are different graphs. A wisp that arrives as a durable row survives GC
 // it should not have survived, so the tier is semantic, not physical.
 func TestGraphWitnessSeparatesStorageTiers(t *testing.T) {
+	t.Parallel()
 	tiered := func(t *testing.T, storage beads.StorageClass) string {
 		t.Helper()
 		front := openGraphFrontDoor(t)
@@ -278,6 +283,7 @@ func TestGraphWitnessSeparatesStorageTiers(t *testing.T) {
 // the rows" mechanism. A destination that re-mints from zero must fail digest
 // equality before it can ever collide.
 func TestGraphWitnessMovesForAllocatorFloors(t *testing.T) {
+	t.Parallel()
 	front := openGraphFrontDoor(t)
 	seedWitnessGraph(t, front, canonicalWitnessSeeds(), canonicalWitnessEdges())
 
@@ -297,6 +303,7 @@ func TestGraphWitnessMovesForAllocatorFloors(t *testing.T) {
 // TestGraphWitnessSurvivesAFreshReopen is the witness contract's fresh-reopen rule: the digest
 // must be reproducible from durable bytes, not from a warm connection.
 func TestGraphWitnessSurvivesAFreshReopen(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	first, err := OpenGraph(graphSpec(t, root))
 	if err != nil {
@@ -320,6 +327,7 @@ func TestGraphWitnessSurvivesAFreshReopen(t *testing.T) {
 // that contradicts itself is refused rather than witnessed. A confident digest
 // over damaged state is worse than no digest at all.
 func TestGraphWitnessBlocksOnDamagedState(t *testing.T) {
+	t.Parallel()
 	t.Run("internal edge to an absent Graph bead", func(t *testing.T) {
 		front := openGraphFrontDoor(t)
 		seedWitnessGraph(t, front, canonicalWitnessSeeds(), canonicalWitnessEdges())
@@ -378,6 +386,7 @@ func witnessFamilyCount(t *testing.T, witness storebinding.SemanticWitness, fami
 // or, worse, would produce digests that differ purely by which classes were
 // resident, which would make the equality claim meaningless.
 func TestGraphWitnessAdmitsCrossClassAndExternalReferences(t *testing.T) {
+	t.Parallel()
 	floors := GraphAllocatorFloors{CrossClassMaximum: 900, PersistedFloor: 900}
 	for name, edge := range map[string][3]string{
 		"outbound required cross-class reference": {"gcg-10", "ga-4321", "tracks"},
@@ -424,6 +433,7 @@ func TestGraphWitnessAdmitsCrossClassAndExternalReferences(t *testing.T) {
 // only thing that can move the digest is the kind itself — which is what makes
 // "an internal edge became external" a detectable change of graph.
 func TestGraphWitnessBindsReferenceKindIntoTheDigest(t *testing.T) {
+	t.Parallel()
 	dep := beads.Dep{IssueID: "gcg-10", DependsOnID: "gcg-11", Type: "blocks"}
 	digestOf := func(kind string) string {
 		stream := &canonicalStream{}
@@ -450,6 +460,7 @@ func TestGraphWitnessBindsReferenceKindIntoTheDigest(t *testing.T) {
 // happens to hold. An ID that declares nothing recognizable is internal: an
 // unreadable endpoint is not a license to skip resolution.
 func TestGraphEndpointKindReadsTheDeclarationNotTheStore(t *testing.T) {
+	t.Parallel()
 	for id, want := range map[string]string{
 		"gcg-10":               graphRefKindInternal,
 		"gcg-4.1":              graphRefKindInternal,
@@ -494,6 +505,7 @@ func TestGraphEndpointKindReadsTheDeclarationNotTheStore(t *testing.T) {
 // endpoint outside the class is visible from one side only, and that asymmetry
 // is explained by non-residence rather than by a lost index row.
 func TestGraphWitnessEdgeMultiplicityCrossChecksWhatBothIndexesCanSee(t *testing.T) {
+	t.Parallel()
 	resident := map[string]struct{}{"gcg-10": {}, "gcg-11": {}}
 	internal := beads.Dep{IssueID: "gcg-11", DependsOnID: "gcg-10", Type: "blocks"}
 	outbound := beads.Dep{IssueID: "gcg-10", DependsOnID: "ga-1", Type: "tracks"}
@@ -532,6 +544,7 @@ func TestGraphWitnessEdgeMultiplicityCrossChecksWhatBothIndexesCanSee(t *testing
 }
 
 func TestGraphWitnessRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
 	if _, err := GraphSemanticWitness(context.Background(), nil, GraphAllocatorFloors{}); err == nil {
 		t.Fatal("GraphSemanticWitness(nil front door) succeeded")
 	}
@@ -549,6 +562,7 @@ func TestGraphWitnessRejectsInvalidInput(t *testing.T) {
 // TestSemanticWitnessValidationRejectsMalformedValues keeps the shared witness
 // type from accepting something no real export could have produced.
 func TestSemanticWitnessValidationRejectsMalformedValues(t *testing.T) {
+	t.Parallel()
 	valid := witnessOf(t, openGraphFrontDoor(t), GraphAllocatorFloors{})
 
 	for name, mutate := range map[string]func(w *storebinding.SemanticWitness){

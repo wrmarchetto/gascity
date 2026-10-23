@@ -11,6 +11,7 @@ import (
 )
 
 func TestCopyPinnedSQLiteSnapshotFileRejectsSameSizeContentChangedAfterCensus(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	sourcePath := filepath.Join(directory, graphFilename)
 	original := []byte("source")
@@ -57,6 +58,7 @@ func TestCopyPinnedSQLiteSnapshotFileRejectsSameSizeContentChangedAfterCensus(t 
 }
 
 func TestCopyGraphSnapshotMakesReadOnlySourceComponentsOwnerWritable(t *testing.T) {
+	t.Parallel()
 	for _, sourceMode := range []os.FileMode{0o400, 0o444} {
 		t.Run(sourceMode.String(), func(t *testing.T) {
 			sourceDir := filepath.Join(t.TempDir(), graphDirectoryName)

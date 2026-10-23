@@ -30,6 +30,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
 	"github.com/gastownhall/gascity/internal/beads"
 )
 
@@ -64,16 +65,48 @@ func TestStopGateBlocksTurnWhileClaimedWorkIsUnclosed(t *testing.T) {
 }
 
 // TestStopGateAllowsClaimParkedOnOpenOwnedQuestion pins the one deliberate
-// exception to the closing contract. ask-pm records the exact blocker on the
-// held bead; the fact is true only after the Stop probe has verified that the
-// dependency target is still open and has an owner. A parked claim remains
-// claimed and in_progress so that closing the question wakes its next holder.
+// exception to the closing contract, and its scope. The parked fact is true
+// only after the Stop probe has verified that the dependency target is still
+// open and has an owner. A session that stays keeps the claim in_progress so
+// closing the question wakes it. A session that owes a drain-ack is blocked
+// with the release instead: the drain refuses any held in_progress claim, so
+// allowing the stop there wedged gs-jqz2's pool slot for an hour (ci-rj0znb).
 func TestStopGateAllowsClaimParkedOnOpenOwnedQuestion(t *testing.T) {
-	facts := stopGateHoldingWork()
-	facts.parkedOnOpenOwnedQuestion = true
+	for _, tc := range []struct {
+		origin string
+		labels []string
+		block  bool
+	}{
+		{origin: "named"},
+		{origin: "manual"},
+		{origin: sessionOriginEphemeral, block: true},
+		// A held PM sitting cancels the drain debt (ci-d9w7fl), parked or not.
+		{origin: sessionOriginEphemeral, labels: []string{"pm-chat"}},
+	} {
+		t.Run(tc.origin+strings.Join(tc.labels, ","), func(t *testing.T) {
+			facts := stopGateHoldingWork()
+			facts.sessionOrigin = tc.origin
+			facts.outstanding[0].Labels = tc.labels
+			facts.parked, facts.outstanding = facts.outstanding, nil
 
-	if evaluateStopGate(facts).block {
-		t.Fatal("gate blocked a claimed bead deliberately parked on an open assigned question")
+			verdict := evaluateStopGate(facts)
+			if verdict.block != tc.block {
+				t.Fatalf("block = %v, want %v for a %q session whose claims are all parked: %q",
+					verdict.block, tc.block, tc.origin, verdict.reason)
+			}
+			if !tc.block {
+				return
+			}
+			for _, want := range []string{"ci-yxpd", "drop its assignee", beadmeta.RoutedToMetadataKey, "gc runtime drain-ack"} {
+				if !strings.Contains(verdict.reason, want) {
+					t.Errorf("release reason lacks %q: %q", want, verdict.reason)
+				}
+			}
+			if strings.Index(verdict.reason, "drop its assignee") > strings.Index(verdict.reason, "gc runtime drain-ack") {
+				t.Errorf("release reason orders the drain-ack before the release it "+
+					"depends on: %q", verdict.reason)
+			}
+		})
 	}
 }
 
@@ -215,16 +248,17 @@ esac
 	t.Setenv("GC_SESSION_ID", "worker")
 	t.Setenv("GC_SESSION_NAME", "")
 	t.Setenv("GC_ALIAS", "")
-	t.Setenv("GC_SESSION_ORIGIN", sessionOriginEphemeral)
 
 	for _, tc := range []struct {
 		name     string
+		origin   string
 		status   string
 		assignee string
 		routedTo string
 		want     int
 	}{
 		{name: "open assigned question", status: "open", assignee: "decision-owner", want: stopGateAllowExitCode},
+		{name: "open assigned question, session owes a drain-ack", origin: sessionOriginEphemeral, status: "open", assignee: "decision-owner", want: stopGateBlockExitCode},
 		{name: "unassigned question routed to a live queue", status: "open", routedTo: "bench-tech", want: stopGateAllowExitCode},
 		{name: "unassigned question routed to a suspended agent", status: "open", routedTo: "parked-tech", want: stopGateBlockExitCode},
 		{name: "unassigned question routed to an unknown agent", status: "open", routedTo: "no-such-tech", want: stopGateBlockExitCode},
@@ -233,6 +267,11 @@ esac
 		{name: "closed assigned question", status: "closed", assignee: "decision-owner", want: stopGateBlockExitCode},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			origin := tc.origin
+			if origin == "" {
+				origin = "named"
+			}
+			t.Setenv("GC_SESSION_ORIGIN", origin)
 			t.Setenv("STOP_GATE_QUESTION_STATUS", tc.status)
 			t.Setenv("STOP_GATE_QUESTION_ASSIGNEE", tc.assignee)
 			t.Setenv("STOP_GATE_QUESTION_ROUTED_TO", tc.routedTo)
@@ -795,7 +834,7 @@ func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
 //	the same bead, question CLOSED        gc hook stop -> exit 2, this message
 //
 // So a bead genuinely parked on a PM question never reaches this text, by
-// either route: evaluateStopGate returns early on parkedOnOpenOwnedQuestion
+// either route: evaluateStopGate diverts on the parked fact
 // when the asker is still in_progress, and assets/scripts/ask-pm.py in fact
 // leaves the asker BLOCKED, which stopGateHeldClaimsQuery (in_progress and open
 // only) does not list at all. az-lmrn's own question az-hrud closed at
@@ -825,53 +864,67 @@ func TestStopGateSeesPinnedOpenContinuationWork(t *testing.T) {
 // TestStopGateParkShapeStatusIsAStatusTheWorkQueryAsksFor, which refuses any
 // park status the work query never asks bd for.
 func TestStopGateOutstandingReasonNamesTheParkedExit(t *testing.T) {
-	reason := stopGateOutstandingReason(stopGateHoldingWork())
+	for _, origin := range []string{"named", sessionOriginEphemeral} {
+		t.Run(origin, func(t *testing.T) {
+			facts := stopGateHoldingWork()
+			facts.sessionOrigin = origin
+			exit := stopGateParkedExitMarker(stopGateParkShapeFor(facts))
+			reason := stopGateOutstandingReason(facts)
 
-	// The header line is "Stop blocked: ..." on every refusal, so searching the
-	// whole string for "blocked" is a TAUTOLOGY -- it matched before this arm
-	// was written and the first draft of this test passed against the very text
-	// it was meant to reject. Everything below reads the body only.
-	_, body, found := strings.Cut(reason, "\n")
-	if !found {
-		t.Fatalf("block reason has no body after its header line: %q", reason)
-	}
+			// The header line is "Stop blocked: ..." on every refusal, so searching
+			// the whole string for "blocked" is a TAUTOLOGY -- it matched before
+			// this arm was written and the first draft of this test passed against
+			// the very text it was meant to reject. Everything below reads the body.
+			_, body, found := strings.Cut(reason, "\n")
+			if !found {
+				t.Fatalf("block reason has no body after its header line: %q", reason)
+			}
 
-	if !strings.Contains(body, stopGateParkShape.status) {
-		t.Errorf("block reason offers no parked exit, so a session holding "+
-			"work that is waiting on someone else has no compliant move: %q", body)
+			if !strings.Contains(body, exit) {
+				t.Errorf("block reason offers no parked exit, so a session holding "+
+					"work that is waiting on someone else has no compliant move: %q", body)
+			}
+			// The move this test used to require. It reads as a compliant park
+			// and is not one.
+			//
+			// The negated form is deleted before the search rather than excluded
+			// from it: the advice has to be able to WARN about this move, and a
+			// bare absence check on the phrase banned the warning along with the
+			// instruction.
+			imperative := strings.ReplaceAll(strings.ToLower(body), "do not set it blocked", "")
+			if strings.Contains(imperative, "set it blocked") {
+				t.Errorf("block reason tells the session to set its bead blocked, a "+
+					"park no work query serves and no dependency close leaves: %q", body)
+			}
+			// Naming the STATE without naming the CONDITION it is for leaves the
+			// reader to guess when it applies, and the guess this message has
+			// already produced once was close-as-failed.
+			if !strings.Contains(body, "waiting") {
+				t.Errorf("block reason names no condition under which the parked exit "+
+					"is the right one: %q", body)
+			}
+			// Work that genuinely cannot be done still closes failed, so this
+			// asserts the pair, not a removal.
+			if !strings.Contains(body, "close it as failed") {
+				t.Errorf("block reason dropped the close-as-failed exit: %q", body)
+			}
+			// The ordering is the instruction. A reader who has already met
+			// "close it as failed" has an answer and stops.
+			if strings.Index(body, exit) > strings.Index(body, "close it as failed") {
+				t.Errorf("the parked exit is offered after close-as-failed, so the "+
+					"session that needs it has already been given a wrong answer: %q", body)
+			}
+		})
 	}
-	// The move this test used to require. It reads as a compliant park and is
-	// not one.
-	//
-	// The negated form is deleted before the search rather than excluded from
-	// it: the advice has to be able to WARN about this move, and a bare
-	// absence check on the phrase banned the warning along with the
-	// instruction. Removing "do not set it blocked" first leaves only an
-	// imperative to find.
-	imperative := strings.ReplaceAll(strings.ToLower(body), "do not set it blocked", "")
-	if strings.Contains(imperative, "set it blocked") {
-		t.Errorf("block reason tells the session to set its bead blocked, a "+
-			"park no work query serves and no dependency close leaves: %q", body)
+}
+
+// stopGateParkedExitMarker is the phrase that can only appear in the advice
+// for shape. The released status "open" is not one -- it is in every reason.
+func stopGateParkedExitMarker(shape stopGateParkedShape) string {
+	if shape.assigned {
+		return shape.status
 	}
-	// Naming the STATE without naming the CONDITION it is for leaves the reader
-	// to guess when it applies, and the guess this message has already produced
-	// once was close-as-failed.
-	if !strings.Contains(body, "waiting") {
-		t.Errorf("block reason names no condition under which the parked exit "+
-			"is the right one: %q", body)
-	}
-	// The failure exit must still be offered -- work that genuinely cannot be
-	// done still closes failed -- so this asserts the pair, not a removal.
-	if !strings.Contains(body, "close it as failed") {
-		t.Errorf("block reason dropped the close-as-failed exit: %q", body)
-	}
-	// The ordering is the instruction. A reader who has already met "close it
-	// as failed" has an answer and stops; the parked exit has to come first or
-	// the session that needs it never reaches it.
-	if strings.Index(body, stopGateParkShape.status) > strings.Index(body, "close it as failed") {
-		t.Errorf("the parked exit is offered after close-as-failed, so the "+
-			"session that needs it has already been given a wrong answer: %q", body)
-	}
+	return "drop its assignee"
 }
 
 // TestStopGateOutstandingReasonQualifiesTheParkedExitForRunningWork pins the
@@ -900,40 +953,49 @@ func TestStopGateOutstandingReasonNamesTheParkedExit(t *testing.T) {
 // Asserted on MEANING and on ORDER, never on wording, for the reason
 // TestStopGateOutstandingReasonNamesTheParkedExit states.
 func TestStopGateOutstandingReasonQualifiesTheParkedExitForRunningWork(t *testing.T) {
-	reason := stopGateOutstandingReason(stopGateHoldingWork())
+	for _, tc := range []struct {
+		origin     string
+		qualifiers []string
+	}{
+		{origin: "named", qualifiers: []string{"changes no status", "READINESS"}},
+		{origin: sessionOriginEphemeral, qualifiers: []string{"Releasing ends the claim", "stop a detached job"}},
+	} {
+		t.Run(tc.origin, func(t *testing.T) {
+			facts := stopGateHoldingWork()
+			facts.sessionOrigin = tc.origin
+			reason := stopGateOutstandingReason(facts)
 
-	// Body only. "blocked" appears in the header on every refusal, and the
-	// sibling test records the first draft of an assertion here passing against
-	// the very text it was written to reject.
-	_, body, found := strings.Cut(reason, "\n")
-	if !found {
-		t.Fatalf("block reason has no body after its header line: %q", reason)
-	}
+			// Body only. "blocked" appears in the header on every refusal, and the
+			// sibling test records the first draft of an assertion here passing
+			// against the very text it was written to reject.
+			_, body, found := strings.Cut(reason, "\n")
+			if !found {
+				t.Fatalf("block reason has no body after its header line: %q", reason)
+			}
 
-	// Fatal, not Errorf: strings.Index answers -1 for an absent substring, so
-	// the order assertions below would fire on the same absence and report it
-	// as a misplacement.
-	if !strings.Contains(body, "changes no status") {
-		t.Fatalf("block reason never says the park leaves the claim's status "+
-			"alone, so a session holding a bead with a detached run still "+
-			"executing cannot tell the park from the one that aborts it: %q", body)
-	}
-	if !strings.Contains(body, "READINESS") {
-		t.Errorf("block reason claims the park is safe for a running job "+
-			"without naming the guard shape it is NOT safe for: %q", body)
-	}
+			// Fatal, not Errorf: strings.Index answers -1 for an absent substring,
+			// so the order assertions below would report the absence as a
+			// misplacement.
+			for _, q := range tc.qualifiers {
+				if !strings.Contains(body, q) {
+					t.Fatalf("block reason never says what the park does to a "+
+						"detached run still executing against the bead (%q): %q", q, body)
+				}
+			}
 
-	parkedAt := strings.Index(body, stopGateParkShape.status)
-	qualifiedAt := strings.Index(body, "changes no status")
-	if qualifiedAt < parkedAt {
-		t.Errorf("the qualification precedes the parked exit it qualifies, so it "+
-			"reads as advice about some other move: %q", body)
-	}
-	// The reader who has met close-as-failed has an answer and stops reading --
-	// the same argument that puts the parked exit first.
-	if failedAt := strings.Index(body, "close it as failed"); qualifiedAt > failedAt {
-		t.Errorf("the qualification is offered after close-as-failed, so the "+
-			"session running a detached job has already been given a wrong "+
-			"answer: %q", body)
+			parkedAt := strings.Index(body, stopGateParkedExitMarker(stopGateParkShapeFor(facts)))
+			qualifiedAt := strings.Index(body, tc.qualifiers[0])
+			if qualifiedAt < parkedAt {
+				t.Errorf("the qualification precedes the parked exit it qualifies, so "+
+					"it reads as advice about some other move: %q", body)
+			}
+			// The reader who has met close-as-failed has an answer and stops
+			// reading -- the same argument that puts the parked exit first.
+			if failedAt := strings.Index(body, "close it as failed"); qualifiedAt > failedAt {
+				t.Errorf("the qualification is offered after close-as-failed, so the "+
+					"session running a detached job has already been given a wrong "+
+					"answer: %q", body)
+			}
+		})
 	}
 }

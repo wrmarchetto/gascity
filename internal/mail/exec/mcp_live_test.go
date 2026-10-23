@@ -70,9 +70,7 @@ func TestMCPMailConformanceLive(t *testing.T) {
 			"export GC_MCP_MAIL_CACHE_DIR=%q\n"+
 			"exec %q \"$@\"\n",
 			serverURL, project, filepath.Join(dir, "bridge-cache"), scriptPath)
-		if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, wrapperPath, wrapper)
 
 		return NewProvider(wrapperPath)
 	})

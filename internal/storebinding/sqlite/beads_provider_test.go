@@ -183,6 +183,7 @@ func openBeadsBinding(tb storebindingtest.TB, root string) storebinding.OpenedBi
 // resource-free construction contract is what lets a composition root build
 // every compiled provider before it knows which one config selects.
 func TestBeadsProviderFactoryIsResourceFree(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if _, err := (BeadsProviderFactory{}).New(beadsTestSpec(root)); err != nil {
 		t.Fatalf("constructing the Beads provider: %v", err)
@@ -199,6 +200,7 @@ func TestBeadsProviderFactoryIsResourceFree(t *testing.T) {
 // TestBeadsProviderFactoryRefusesAnotherProvidersBinding proves the factory
 // answers only for its own exact provider ID.
 func TestBeadsProviderFactoryRefusesAnotherProvidersBinding(t *testing.T) {
+	t.Parallel()
 	spec := beadsTestSpec(t.TempDir())
 	spec.Provider = ProviderID
 	if _, err := (BeadsProviderFactory{}).New(spec); !errors.Is(err, ErrInvalidBeadsBinding) {
@@ -210,6 +212,7 @@ func TestBeadsProviderFactoryRefusesAnotherProvidersBinding(t *testing.T) {
 // facade answers for exactly the binding it was constructed from. Answering
 // for a second would inspect a database the caller never named.
 func TestBeadsProviderInspectRefusesAnUnboundSpecification(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	seedBeadsSource(t, root)
 	provider := newBeadsProvider(t, beadsTestSpec(root))
@@ -224,6 +227,7 @@ func TestBeadsProviderInspectRefusesAnUnboundSpecification(t *testing.T) {
 // descriptor: one physical component carrying every class, not six components
 // and not a one-class Graph binding wearing a new provider ID.
 func TestBeadsProviderDescribesOneSixClassComponent(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	seedBeadsSource(t, root)
 	provider := newBeadsProvider(t, beadsTestSpec(root))
@@ -277,6 +281,7 @@ func TestBeadsProviderDescribesOneSixClassComponent(t *testing.T) {
 // observed can be lost or invented between the provider and the component
 // machinery it delegates to.
 func TestBeadsTargetWideningIsExactlyInvertible(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	seedBeadsSource(t, root)
 	path, err := GraphPath(root)
@@ -318,6 +323,7 @@ func TestBeadsTargetWideningIsExactlyInvertible(t *testing.T) {
 // the generic lifecycle and proves the opened binding hands back all six
 // closed class contracts.
 func TestBeadsProviderOpensEverySixClassFrontDoor(t *testing.T) {
+	t.Parallel()
 	opened := openBeadsBinding(storebindingtest.Wrap(t), t.TempDir())
 
 	if _, ok := opened.Work(); !ok {
@@ -349,6 +355,7 @@ func TestBeadsProviderOpensEverySixClassFrontDoor(t *testing.T) {
 // descriptor that no longer describes what is on disk must be refused rather
 // than opened optimistically.
 func TestBeadsProviderOpenRefusesAMovedComponent(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	seedBeadsSource(t, root)
 	spec := beadsTestSpec(root)
@@ -392,6 +399,7 @@ func TestBeadsProviderOpenRefusesAMovedComponent(t *testing.T) {
 // Work-migration lifecycle, so admitting a migration open would enroll a
 // participant that can never activate or hand back a receipt.
 func TestBeadsProviderOpenRefusesModesItHasNoLifecycleFor(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []storebinding.OpenMode{
 		storebinding.OpenModeAdmittedMigrationDestination,
 		storebinding.OpenModeRetainedSource,
@@ -414,6 +422,7 @@ func TestBeadsProviderOpenRefusesModesItHasNoLifecycleFor(t *testing.T) {
 // three optional lifecycle questions. Reporting a lifecycle this provider does
 // not implement is the same defect class as over-declaring a capability.
 func TestBeadsProviderDeclaresNoMigrationLifecycle(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	provider := newBeadsProvider(t, beadsTestSpec(root))
 	if _, ok := provider.RetainedGuards(); ok {
@@ -432,6 +441,7 @@ func TestBeadsProviderDeclaresNoMigrationLifecycle(t *testing.T) {
 // compare-and-swap claim; an engine that has neither must be refused for every
 // class that declares them, so the loss surfaces at Open and never mid-claim.
 func TestBeadsCapabilityVerificationFailsClosed(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	seedBeadsSource(t, root)
 	engine, err := beads.OpenSQLiteStore(filepath.Join(root, graphDirectoryName), beads.WithSQLiteStoreIDPrefix(graphIDPrefix))
@@ -487,6 +497,7 @@ func TestBeadsCapabilityVerificationFailsClosed(t *testing.T) {
 // arrive from a private snapshot taken under a held writer fence, reaching the
 // deployed snapshot machinery through this provider's own fence projection.
 func TestBeadsProviderCompletesInspectionOnlyUnderAFence(t *testing.T) {
+	t.Parallel()
 	if !sqliteWriterFencingSupported() {
 		t.Skip("SQLite writer fencing requires Linux OFD locks")
 	}
@@ -579,6 +590,7 @@ func TestBeadsProviderCompletesInspectionOnlyUnderAFence(t *testing.T) {
 // under-declares would open cleanly and then silently refuse callers that ask
 // for a capability the engine genuinely has.
 func TestBeadsProviderOpenRefusesACallerShapedCapabilityDeclaration(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	seedBeadsSource(t, root)
 	spec := beadsTestSpec(root)
@@ -629,6 +641,7 @@ func TestBeadsProviderOpenRefusesACallerShapedCapabilityDeclaration(t *testing.T
 // arrived through Inspect and Open rather than through a directly constructed
 // adapter set.
 func TestBeadsProviderClassConformance(t *testing.T) {
+	t.Parallel()
 	capability := storebinding.ClassCapability{Available: true, Transactions: true, Claims: true}
 
 	t.Run("graph", func(t *testing.T) {

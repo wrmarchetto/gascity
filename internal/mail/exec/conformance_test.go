@@ -3,11 +3,28 @@ package exec //nolint:revive // internal package, always imported with alias
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/mail/mailtest"
 )
+
+// loadTolerantCallTimeout is a hang detector, not an assertion. The push gate
+// runs tests at nice 10, where nice-0 load starved one MCP Send of its ~80
+// processes past the provider's default per-call timeout. It stays inside the
+// gate's 20m per-package go test budget.
+const loadTolerantCallTimeout = 5 * time.Minute
+
+// newLoadTolerantProvider returns a provider whose per-call timeout is
+// loadTolerantCallTimeout. A passing call returns when its script exits, so
+// the wider bound only delays the report of a call that is truly wedged.
+func newLoadTolerantProvider(script string) *Provider {
+	p := NewProvider(script)
+	p.timeout = loadTolerantCallTimeout
+	return p
+}
 
 // statefulScript returns a shell script body that maintains message state
 // in a temp directory. Each message is stored as a file with line-based
@@ -255,6 +272,20 @@ esac
 `
 }
 
+// writeExecutable writes a script that parallel subtests exec. A fork from
+// another subtest while the write fd is open would inherit it and fail the
+// exec with "text file busy" (golang.org/issue/22315), and forks wait on
+// syscall.ForkLock.
+func writeExecutable(t *testing.T, path, content string) {
+	t.Helper()
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(path, []byte(content), 0o755)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExecConformance(t *testing.T) {
 	mailtest.RunProviderTests(t, func(t *testing.T) mail.Provider {
 		dir := t.TempDir()
@@ -264,10 +295,8 @@ func TestExecConformance(t *testing.T) {
 		}
 
 		scriptPath := filepath.Join(dir, "mail-provider")
-		if err := os.WriteFile(scriptPath, []byte(statefulScript(stateDir)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, scriptPath, statefulScript(stateDir))
 
-		return NewProvider(scriptPath)
+		return newLoadTolerantProvider(scriptPath)
 	})
 }

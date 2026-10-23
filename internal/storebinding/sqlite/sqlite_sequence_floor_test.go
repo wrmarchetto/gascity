@@ -10,6 +10,7 @@ import (
 )
 
 func TestParseSQLiteSequenceFloorRequiresCanonicalNonnegativeInteger(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name     string
 		contents string
@@ -44,6 +45,7 @@ func TestParseSQLiteSequenceFloorRequiresCanonicalNonnegativeInteger(t *testing.
 }
 
 func TestCaptureSQLiteSequenceFloorCensusUsesPinnedDescriptorForValueAndHash(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	path := filepath.Join(directory, graphSequenceFloorFilename)
 	const censused = "7\n"
@@ -78,6 +80,7 @@ func TestCaptureSQLiteSequenceFloorCensusUsesPinnedDescriptorForValueAndHash(t *
 }
 
 func TestGraphAndLegacyTargetsBindSequenceFloorEvidence(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, graphDirectoryName)
 	if err := os.MkdirAll(graphDir, 0o700); err != nil {
@@ -155,6 +158,7 @@ func TestGraphAndLegacyTargetsBindSequenceFloorEvidence(t *testing.T) {
 }
 
 func TestCaptureSQLiteSequenceFloorRejectsMalformedOrHardLinkedSource(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name  string
 		setup func(t *testing.T, directory string)
@@ -197,6 +201,7 @@ func TestCaptureSQLiteSequenceFloorRejectsMalformedOrHardLinkedSource(t *testing
 }
 
 func TestGraphAndLegacySnapshotsCopyPinnedSequenceFloor(t *testing.T) {
+	t.Parallel()
 	graphRoot := t.TempDir()
 	graphDir := filepath.Join(graphRoot, graphDirectoryName)
 	if err := os.MkdirAll(graphDir, 0o700); err != nil {

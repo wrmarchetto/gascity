@@ -5,11 +5,13 @@
 // refusal writes. Five cases, one per way a claim can relate to a question.
 // All five assert the SAME outcome -- the acknowledgement is refused -- which
 // is the point: parking does not change the answer, and this file exists to
-// keep it that way.
+// keep it that way. A sixth drives the park the Stop gate prescribes to a
+// draining session and requires the slot to free: the gate releases the claim
+// instead of the refusal excusing it (ci-rj0znb).
 //
 // WHY THIS SUITE EXISTS, AND WHAT IT PINS AGAINST. The Stop gate DOES have a
-// parked exception (cmd_hook_stop.go evaluateStopGate, case
-// parkedOnOpenOwnedQuestion) and this refusal does not, so the pair looks
+// parked exception (cmd_hook_stop.go evaluateStopGate, the parked fact, for a
+// session that owes no drain-ack) and this refusal does not, so the pair looks
 // asymmetric, and the obvious repair -- give the refusal the same exception --
 // was proposed, built and REJECTED under ci-gfc8rk. Two commit bodies already
 // decided it and a third measurement disproved the premise:
@@ -49,7 +51,7 @@
 //
 // Run:
 //
-//	go test ./cmd/gc/ -run 'AgentDrainAckWithParked|AgentDrainAckWithUnparked'
+//	go test ./cmd/gc/ -run 'AgentDrainAckWithParked|AgentDrainAckWithUnparked|AgentDrainAckAfterPrescribedPark'
 package main
 
 import (
@@ -115,7 +117,7 @@ type parkedClaimFixture struct {
 	claimID string
 }
 
-func newParkedClaimFixture(t *testing.T, questionStatus, questionAssignee string, stamped, linked bool) parkedClaimFixture {
+func newParkedClaimFixture(t *testing.T, shape stopGateParkedShape, questionStatus, questionAssignee string, stamped, linked bool) parkedClaimFixture {
 	t.Helper()
 	env := newReconcilerTestEnv()
 	env.store = listWithoutDependenciesStore{Store: env.store}
@@ -147,10 +149,13 @@ func newParkedClaimFixture(t *testing.T, questionStatus, questionAssignee string
 	claim := beads.Bead{
 		Title:    "prefix hygiene: measure cache reuse",
 		Type:     "task",
-		Assignee: "worker",
+		Metadata: beads.StringMap{beadmeta.RoutedToMetadataKey: "worker"},
+	}
+	if shape.assigned {
+		claim.Assignee = "worker"
 	}
 	if stamped {
-		claim.Metadata = beads.StringMap{beadmeta.WaitingOnQuestionMetadataKey: question.ID}
+		claim.Metadata[shape.metadataKey] = question.ID
 	}
 	if linked {
 		claim.Dependencies = []beads.Dep{{DependsOnID: question.ID, Type: "blocks"}}
@@ -164,8 +169,8 @@ func newParkedClaimFixture(t *testing.T, questionStatus, questionAssignee string
 	// fixture: an open bead assigned to a pool slot alias is queue work the
 	// ci-fx4duc exclusion already drops, so every case here would pass for a
 	// reason that has nothing to do with what it claims to test.
-	inProgress := "in_progress"
-	if err := env.store.Update(created.ID, beads.UpdateOpts{Status: &inProgress}); err != nil {
+	status := shape.status
+	if err := env.store.Update(created.ID, beads.UpdateOpts{Status: &status}); err != nil {
 		t.Fatalf("Update(claim status): %v", err)
 	}
 	return parkedClaimFixture{env: env, session: session, claimID: created.ID}
@@ -227,7 +232,7 @@ func (f parkedClaimFixture) requireRefused(t *testing.T, why string) {
 // opposite verdict on the same bead is deliberate and is not, on its own, an
 // argument -- f75e6c710 examined exactly that asymmetry and chose to keep it.
 func TestReconcileSessionBeads_AgentDrainAckWithParkedClaimStaysActive(t *testing.T) {
-	newParkedClaimFixture(t, "open", "mayor", true, true).
+	newParkedClaimFixture(t, stopGateParkShape, "open", "mayor", true, true).
 		requireRefused(t, "a parked claim is in_progress work the session still owns; releasing the slot would hand a continuation group's siblings to the next occupant (52b502316)")
 }
 
@@ -240,7 +245,7 @@ func TestReconcileSessionBeads_AgentDrainAckWithParkedClaimStaysActive(t *testin
 // 11:15, so for that entire wedge the claim looked parked to a metadata reader
 // and was not parked at all.
 func TestReconcileSessionBeads_AgentDrainAckWithParkedClaimOnClosedQuestionStaysActive(t *testing.T) {
-	newParkedClaimFixture(t, "closed", "mayor", true, true).
+	newParkedClaimFixture(t, stopGateParkShape, "closed", "mayor", true, true).
 		requireRefused(t, "the question is answered, so the holder owes work again rather than a wait")
 }
 
@@ -250,7 +255,7 @@ func TestReconcileSessionBeads_AgentDrainAckWithParkedClaimOnClosedQuestionStays
 // raises pool demand; an unassigned question spawns nobody, so nothing will
 // ever close it and a wait on one would be permanent.
 func TestReconcileSessionBeads_AgentDrainAckWithParkedClaimOnUnassignedQuestionStaysActive(t *testing.T) {
-	newParkedClaimFixture(t, "open", "", true, true).
+	newParkedClaimFixture(t, stopGateParkShape, "open", "", true, true).
 		requireRefused(t, "an unassigned question can never be answered, so a wait on one is not a designed park")
 }
 
@@ -260,7 +265,7 @@ func TestReconcileSessionBeads_AgentDrainAckWithParkedClaimOnUnassignedQuestionS
 // a wait is still wired up -- the hole ci-iyb0gc named in the mutation it
 // required of the Stop gate's own exception.
 func TestReconcileSessionBeads_AgentDrainAckWithParkedStampButNoDependencyStaysActive(t *testing.T) {
-	newParkedClaimFixture(t, "open", "mayor", true, false).
+	newParkedClaimFixture(t, stopGateParkShape, "open", "mayor", true, false).
 		requireRefused(t, "a stamp with no live blocking dependency is not a park")
 }
 
@@ -270,6 +275,22 @@ func TestReconcileSessionBeads_AgentDrainAckWithParkedStampButNoDependencyStaysA
 // the parked ones, which is the measurement that disqualified parking as the
 // mechanism.
 func TestReconcileSessionBeads_AgentDrainAckWithUnparkedClaimStaysActive(t *testing.T) {
-	newParkedClaimFixture(t, "open", "mayor", false, true).
+	newParkedClaimFixture(t, stopGateParkShape, "open", "mayor", false, true).
 		requireRefused(t, "an unparked claim is work the session still owns and must keep refusing -- this is the hole the refusal exists for")
+}
+
+// TestReconcileSessionBeads_AgentDrainAckAfterPrescribedParkReleasesSlot
+// drives the sequence ci-rj0znb measured: park the claim exactly as the Stop
+// gate tells a session that owes a drain-ack, then acknowledge the drain. The
+// shape comes from stopGateParkShapeFor, so advising a park the refusal
+// punishes goes red here rather than wedging a pool slot (gs-jqz2).
+func TestReconcileSessionBeads_AgentDrainAckAfterPrescribedParkReleasesSlot(t *testing.T) {
+	shape := stopGateParkShapeFor(stopGateFacts{sessionOrigin: sessionOriginEphemeral})
+	f := newParkedClaimFixture(t, shape, "open", "mayor", true, true)
+	got := f.reconcileOnce(t)
+	if reason := got.Metadata["state_reason"]; reason != sessionpkg.DrainAckStopPendingReason {
+		t.Fatalf("state_reason = %q, want %q: the park the Stop gate prescribes "+
+			"to a draining session (status %q, assigned %v) must not hold its slot",
+			reason, sessionpkg.DrainAckStopPendingReason, shape.status, shape.assigned)
+	}
 }

@@ -1,0 +1,98 @@
+# Proves parallelguard's derivation and both of Check's refusals are enforced,
+# through its own self-tests and through the two packages that call it.
+#
+# NOT SWEPT here: whether the hazard lists are complete. A hazard nobody named
+# and the derivation cannot see is invisible to every row below. That is a
+# reading question per caller package, answered in each one's commit body.
+
+[sweep]
+name = "parallelguard derives the serial set and refuses either wrong side"
+repo = ".."
+
+[sweep.gate]
+argv = [
+  "go", "test", "-count=1",
+  "-run", "TestSerialFollowsPackageHelpersToEveryHazardKind|TestCheckRefusesATestOnEitherWrongSide|TestEveryTopLevelTestRunsInParallelUnlessItReachesProcessWideState",
+  "./internal/testpolicy/parallelguard/", "./internal/storebinding/sqlite/", "./internal/productmetrics/",
+]
+timeout_s = 900
+
+[[mutation]]
+id = "package-var-assignment-not-derived"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''			if node.Tok != token.DEFINE {'''
+replace = '''			if false && node.Tok != token.DEFINE {'''
+expect_output = ["Serial = map[", "make t.Parallel() its first statement"]
+
+[[mutation]]
+id = "package-var-increment-not-derived"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''		case *ast.IncDecStmt:
+			assigns(node.X)'''
+replace = '''		case *ast.IncDecStmt:
+			_ = node'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "qualified-call-matched-by-bare-name"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''if reason, ok := hazards[path+"."+node.Sel.Name]; ok {'''
+replace = '''if reason, ok := hazards[node.Sel.Name]; ok && path != "" {'''
+expect_output = ["Serial = map[", "make t.Parallel() its first statement"]
+
+[[mutation]]
+id = "helpers-not-followed"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''			} else if reason, ok := reached[node.Name]; ok {
+				hazard = reason
+			}'''
+replace = '''			}'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "methods-not-followed"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {'''
+replace = '''if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil && fn.Recv == nil {'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "shared-but-parallel-accepted"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''			if mustBeSerial && parallel {'''
+replace = '''			if false && mustBeSerial && parallel {'''
+expect_output = ["check failures = ", "TestUnsharedButSerial"]
+
+[[mutation]]
+id = "unshared-but-serial-accepted"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''			if !mustBeSerial && !parallel {'''
+replace = '''			if false && !mustBeSerial && !parallel {'''
+expect_output = ["check failures = ", "TestSharedButParallel"]
+
+[[mutation]]
+id = "empty-scan-accepted"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	if !found || len(serial) == 0 {'''
+replace = '''	if false && (!found || len(serial) == 0) {'''
+expect_output = ["check failures over an empty directory = "]
+
+[[mutation]]
+id = "forking-test-made-parallel"
+path = "internal/storebinding/sqlite/sqlite_fence_process_linux_test.go"
+find = '''func TestSQLiteWriterFenceProcessComposition(t *testing.T) {
+'''
+replace = '''func TestSQLiteWriterFenceProcessComposition(t *testing.T) {
+	t.Parallel()
+'''
+expect_output = ["TestSQLiteWriterFenceProcessComposition", "but calls t.Parallel"]
+
+[[mutation]]
+id = "fsync-bound-test-left-serial"
+path = "internal/storebinding/sqlite/beads_provider_test.go"
+find = '''func TestBeadsProviderClassConformance(t *testing.T) {
+	t.Parallel()
+'''
+replace = '''func TestBeadsProviderClassConformance(t *testing.T) {
+'''
+expect_output = ["TestBeadsProviderClassConformance", "make t.Parallel() its first statement"]

@@ -53,6 +53,10 @@ repo_root="${repo_root:-$(git rev-parse --show-toplevel)}"
 # visible to whoever is waiting on it.
 decision="$(printf '%s\n' "$push_records" | "$repo_root/scripts/push-gate-select" || true)"
 
+# The push gate is a merge-path gate, so its jobs do not yield to development
+# runs (docs/pm-log.md #162, scripts/test-local-parallel).
+export LOCAL_TEST_YIELD=0
+
 case "$decision" in
   none)
     echo "pre-push: no Go build inputs changed; skipping the fast suite"

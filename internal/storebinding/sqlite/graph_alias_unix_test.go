@@ -13,6 +13,7 @@ import (
 )
 
 func TestGraphPathCanonicalizesRootSymlink(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	alias := root + "-alias"
 	if err := os.Symlink(root, alias); err != nil {
@@ -36,6 +37,7 @@ func TestGraphPathCanonicalizesRootSymlink(t *testing.T) {
 }
 
 func TestInspectGraphRejectsHardLinkedDatabase(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, graphDirectoryName)
 	source := openGraphSource(t, graphDir)
@@ -59,6 +61,7 @@ func TestInspectGraphRejectsHardLinkedDatabase(t *testing.T) {
 }
 
 func TestPhysicalIdentityDoesNotDependOnPathSpelling(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	first := filepath.Join(directory, "first.sqlite")
 	second := filepath.Join(directory, "second.sqlite")

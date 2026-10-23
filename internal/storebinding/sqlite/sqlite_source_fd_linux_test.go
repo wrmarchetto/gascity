@@ -10,6 +10,7 @@ import (
 )
 
 func TestSQLiteFenceRefusesSourceDescriptorOpenInThisProcess(t *testing.T) {
+	t.Parallel()
 	databasePath := filepath.Join(t.TempDir(), graphFilename)
 	if err := os.WriteFile(databasePath, sqliteHeaderForTest(1, 1), 0o600); err != nil {
 		t.Fatalf("writing SQLite source: %v", err)
@@ -27,6 +28,7 @@ func TestSQLiteFenceRefusesSourceDescriptorOpenInThisProcess(t *testing.T) {
 }
 
 func TestSQLiteFenceRefusesHardLinkAliasDescriptorOpenInThisProcess(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	databasePath := filepath.Join(directory, graphFilename)
 	if err := os.WriteFile(databasePath, sqliteHeaderForTest(1, 1), 0o600); err != nil {

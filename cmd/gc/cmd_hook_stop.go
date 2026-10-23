@@ -134,11 +134,11 @@ type stopGateFacts struct {
 	// answered. Distinct from an empty outstanding list, because "no work" and
 	// "could not tell" must reach opposite verdicts on a gate that fails open.
 	unknownWork bool
-	// parkedOnOpenOwnedQuestion is established only when every claimed bead
-	// is linked to, and records, an open question with an owner -- see
+	// parked holds the session's claims only when every one is linked to, and
+	// records, an open question with an owner -- see
 	// stopGateQuestionIsOpenAndOwned. Such work is intentionally parked for a
-	// later wake rather than abandoned.
-	parkedOnOpenOwnedQuestion bool
+	// later wake rather than abandoned. Empty otherwise.
+	parked []beads.Bead
 }
 
 // stopGateVerdict is the gate's decision plus the text handed back to the
@@ -175,10 +175,15 @@ func evaluateStopGate(f stopGateFacts) stopGateVerdict {
 		// Could not tell. Not the same as "nothing outstanding": blocking here
 		// would wedge every session in the city the moment the store went down.
 		return allow
-	case f.parkedOnOpenOwnedQuestion:
+	case len(f.parked) > 0 && stopGateParkShapeFor(f).assigned:
 		// The held work is deliberately blocked on a durable, owned question.
-		// It remains claimed so closing that question can wake the next session.
+		// It remains claimed so closing that question wakes this session.
 		return allow
+	}
+	if len(f.parked) > 0 {
+		// Owes a drain-ack, which the controller refuses while any in_progress
+		// claim is held, parked or not (ci-rj0znb).
+		return stopGateVerdict{block: true, reason: stopGateReleaseParkedReason(f)}
 	}
 	if len(stopGateClosingContractBeads(f.outstanding)) > 0 {
 		return stopGateVerdict{block: true, reason: stopGateOutstandingReason(f)}
@@ -203,9 +208,11 @@ func stopGateOwesDrainAck(f stopGateFacts) bool {
 	if !strings.EqualFold(strings.TrimSpace(f.sessionOrigin), sessionOriginEphemeral) {
 		return false
 	}
-	for _, bead := range f.outstanding {
-		if isOpenPMSittingBead(bead) {
-			return false
+	for _, held := range [][]beads.Bead{f.outstanding, f.parked} {
+		for _, bead := range held {
+			if isOpenPMSittingBead(bead) {
+				return false
+			}
 		}
 	}
 	return true
@@ -243,8 +250,8 @@ func isOpenPMSittingBead(bead beads.Bead) bool {
 	return false
 }
 
-// stopGateParkedShape describes the ONE parking shape this gate honors. The
-// advice text renders itself from these fields and
+// stopGateParkedShape describes a parking shape the gate advises. The advice
+// text renders itself from these fields and
 // stopGateClaimIsParkedOnOpenOwnedQuestion reads the same values, so the
 // prose cannot name a shape the city does not wake.
 //
@@ -277,11 +284,33 @@ func isOpenPMSittingBead(bead beads.Bead) bool {
 type stopGateParkedShape struct {
 	status      string // bead status a parked claim is LEFT at -- never changed
 	metadataKey string // records the id the claim waits on
+	assigned    bool   // the claim keeps this session's assignee
 }
 
+// stopGateParkShape is the park for a session that stays: the claim is held
+// in_progress and the session itself is woken when the blocker closes.
 var stopGateParkShape = stopGateParkedShape{
 	status:      "in_progress",
 	metadataKey: beadmeta.WaitingOnQuestionMetadataKey,
+	assigned:    true,
+}
+
+// stopGateReleasedParkShape is the park for a session that owes a drain-ack.
+// The drain refusal counts a held in_progress claim as work, parked or not
+// (drain_ack_parked_claim_test.go), so a draining session hands the bead back
+// to its gc.routed_to queue -- the shape ask-pm.py writes (ci-1d6zgt).
+var stopGateReleasedParkShape = stopGateParkedShape{
+	status:      "open",
+	metadataKey: beadmeta.WaitingOnQuestionMetadataKey,
+	assigned:    false,
+}
+
+// stopGateParkShapeFor returns the park the gate advises, and honors, for f.
+func stopGateParkShapeFor(f stopGateFacts) stopGateParkedShape {
+	if stopGateOwesDrainAck(f) {
+		return stopGateReleasedParkShape
+	}
+	return stopGateParkShape
 }
 
 // stopGateOutstandingReason renders the block text for a session still
@@ -317,36 +346,50 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	// It names the metadata key and the dependency, not a command line: the
 	// exact bead invocation differs per agent for the reason given above,
 	// while the SHAPE is the same everywhere and is what the city reads. Both
-	// come from stopGateParkShape so this text cannot drift from the predicate
-	// that honors it -- the drift that made the previous wording advise a
-	// permanent park is recorded there.
+	// come from stopGateParkShapeFor so this text cannot drift from the
+	// predicate that honors it -- the drift that made the previous wording
+	// advise a permanent park is recorded on stopGateParkedShape.
 	b.WriteString("\nIf it is waiting on something -- an open question, another")
 	b.WriteString(" bead, an operator -- do NOT close it, and do NOT set it")
 	b.WriteString(" blocked. No work query serves a blocked bead and its")
 	b.WriteString(" status does not flip when the thing it waits on closes, so")
 	b.WriteString(" that park is permanent.\n")
-	fmt.Fprintf(&b, "\nPark it this way instead and it wakes by itself: leave"+
-		" it %s with its assignee, file what you are waiting on as an open"+
-		" bead assigned to whoever must act -- or routed to the agent whose"+
-		" queue serves it -- add a blocking dependency from"+
-		" your bead on that one, and record that id in your bead's %s"+
-		" metadata. The dependency is the wake -- your bead is withheld while"+
-		" the blocker is open and served again once it closes.\n",
-		stopGateParkShape.status, stopGateParkShape.metadataKey)
-	// Why the detached-run exception this paragraph used to carry is GONE
-	// rather than merely reworded: it existed because "set it blocked" is an
-	// abort for a bead something is still executing against -- Gas City's own
-	// bench work refuses every instrument call on a bead that is not
-	// in_progress, so the status change killed a detached soak at its next
-	// power cycle, hours after the turn that made it. The shape above changes
-	// no status at all, so that hazard cannot arise from following it. What
-	// survives is the one residue a status check does not cover, and it is
-	// stated rather than dropped.
-	b.WriteString("\nThat park changes no status, so a guard that re-checks")
-	b.WriteString(" the claim before each step still sees permission granted")
-	b.WriteString(" and a detached job you started keeps running. A guard that")
-	b.WriteString(" re-checks READINESS rather than status will see the bead")
-	b.WriteString(" withheld -- do not park one of those mid-run.\n")
+	shape := stopGateParkShapeFor(f)
+	if shape.assigned {
+		fmt.Fprintf(&b, "\nPark it this way instead and it wakes by itself: leave"+
+			" it %s with its assignee, file what you are waiting on as an open"+
+			" bead assigned to whoever must act -- or routed to the agent whose"+
+			" queue serves it -- add a blocking dependency from"+
+			" your bead on that one, and record that id in your bead's %s"+
+			" metadata. The dependency is the wake -- your bead is withheld while"+
+			" the blocker is open and served again once it closes.\n",
+			shape.status, shape.metadataKey)
+		// Why the detached-run exception this paragraph used to carry is GONE
+		// rather than merely reworded: it existed because "set it blocked" is an
+		// abort for a bead something is still executing against -- Gas City's own
+		// bench work refuses every instrument call on a bead that is not
+		// in_progress, so the status change killed a detached soak at its next
+		// power cycle, hours after the turn that made it. The shape above changes
+		// no status at all, so that hazard cannot arise from following it. What
+		// survives is the one residue a status check does not cover, and it is
+		// stated rather than dropped.
+		b.WriteString("\nThat park changes no status, so a guard that re-checks")
+		b.WriteString(" the claim before each step still sees permission granted")
+		b.WriteString(" and a detached job you started keeps running. A guard that")
+		b.WriteString(" re-checks READINESS rather than status will see the bead")
+		b.WriteString(" withheld -- do not park one of those mid-run.\n")
+	} else {
+		// Release last: released before the dependency exists, the bead is
+		// ready, routed and unassigned, and the pool reclaims it unanswered --
+		// the ordering ask-pm.py's release_asker_claim records.
+		fmt.Fprintf(&b, "\nPark it this way instead and it wakes by itself: file"+
+			" what you are waiting on as an open bead assigned to whoever must"+
+			" act -- or routed to the agent whose queue serves it -- add a"+
+			" blocking dependency from your bead on that one, and record that id"+
+			" in your bead's %s metadata. Then, as your LAST write to it, ",
+			shape.metadataKey)
+		writeStopGateReleaseInstruction(&b, shape)
+	}
 	b.WriteString("\nOnly if the work genuinely cannot be done, close it as")
 	b.WriteString(" failed with a failure class rather than leaving it open. A")
 	b.WriteString(" bead that is merely waiting has not failed. If you need a")
@@ -354,6 +397,37 @@ func stopGateOutstandingReason(f stopGateFacts) string {
 	b.WriteString(" in the close reason -- but do not end the turn with the bead")
 	b.WriteString(" still on your hook.\n")
 	return b.String()
+}
+
+// stopGateReleaseParkedReason renders the block text for a session that owes
+// a drain-ack while every claim it holds is parked in the held shape.
+func stopGateReleaseParkedReason(f stopGateFacts) string {
+	var b strings.Builder
+	b.WriteString("Stop blocked: this session must drain, and it still holds")
+	b.WriteString(" claims parked in_progress:\n")
+	for _, bead := range f.parked {
+		fmt.Fprintf(&b, "  %s\n", bead.ID)
+	}
+	b.WriteString("\nThe controller refuses the drain of a session holding an")
+	b.WriteString(" in_progress claim, parked or not, so acknowledging now would")
+	b.WriteString(" keep this session and its pool slot alive with nothing to do.")
+	b.WriteString(" Leave each one's blocking dependency and record in place, and ")
+	writeStopGateReleaseInstruction(&b, stopGateParkShapeFor(f))
+	b.WriteString("\nThen, as your final action:\n  gc runtime drain-ack\n")
+	return b.String()
+}
+
+// writeStopGateReleaseInstruction finishes a sentence telling a draining
+// session to hand its parked claim back to the queue in the released shape.
+func writeStopGateReleaseInstruction(b *strings.Builder, shape stopGateParkedShape) {
+	fmt.Fprintf(b, "release your claim: drop its assignee so it returns to %s,"+
+		" keeping a %s that names your pool. This session drains and does not"+
+		" come back, so it must not keep the claim: the dependency withholds"+
+		" the bead while the blocker is open and the route serves it to a"+
+		" fresh session once it closes.\n", shape.status, beadmeta.RoutedToMetadataKey)
+	b.WriteString("\nReleasing ends the claim, so a guard that re-checks it")
+	b.WriteString(" before each step refuses from then on -- stop a detached")
+	b.WriteString(" job you started on this bead before you release it.\n")
 }
 
 // stopGateDrainAckReason renders the block text for an ephemeral session with
@@ -436,7 +510,7 @@ func gatherStopGateFacts(stdin io.Reader, stderr io.Writer) stopGateFacts {
 	if facts.restartRequested {
 		return facts
 	}
-	facts.outstanding, facts.unknownWork, facts.parkedOnOpenOwnedQuestion = readStopGateOutstandingWork(stderr)
+	facts.outstanding, facts.unknownWork, facts.parked = readStopGateOutstandingWork(stderr)
 	return facts
 }
 
@@ -535,9 +609,9 @@ func readStopGateSessionSignals(stderr io.Writer) (bool, bool) {
 // cmdHookWithOptions' store resolution to avoid them would let the gate and
 // the claim drift apart, which is the one thing the design forbids.
 type hookStopProbe struct {
-	Outstanding               []beads.Bead
-	ParkedOnOpenOwnedQuestion bool
-	Err                       error
+	Outstanding []beads.Bead
+	Parked      []beads.Bead
+	Err         error
 }
 
 // probeStopGateOutstanding runs the agent's assigned-in-progress query across
@@ -590,7 +664,7 @@ func probeStopGateOutstanding(cfg *config.City, cityPath, cityName string, a *co
 			return
 		}
 		if stopGateClaimsAreAllParked(held, stores, stopGateConfiguredQueueOwner(cfg, cityPath)) {
-			probe.ParkedOnOpenOwnedQuestion = true
+			probe.Parked = held
 			return
 		}
 		// The ordinary work query hides dependency-blocked claims. A held
@@ -609,11 +683,11 @@ func probeStopGateOutstanding(cfg *config.City, cityPath, cityName string, a *co
 // claim saw. That query already excludes mail beads and dependency-blocked
 // steps, which is the behavior wanted here for free: a step this session
 // cannot progress must not hold its turn open.
-func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool, bool) {
+func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool, []beads.Bead) {
 	probe := &hookStopProbe{}
 	opts := hookCommandOptions{StopProbe: probe}
 	if cmdHookWithOptions(nil, opts, io.Discard, stderr) != 0 || probe.Err != nil {
-		return nil, true, false
+		return nil, true, nil
 	}
 	outstanding := make([]beads.Bead, 0, len(probe.Outstanding))
 	for _, bead := range probe.Outstanding {
@@ -621,7 +695,7 @@ func readStopGateOutstandingWork(stderr io.Writer) ([]beads.Bead, bool, bool) {
 			outstanding = append(outstanding, bead)
 		}
 	}
-	return outstanding, false, probe.ParkedOnOpenOwnedQuestion
+	return outstanding, false, probe.Parked
 }
 
 // stopGateHasOnlyParkedClaims reports whether every held in-progress bead is

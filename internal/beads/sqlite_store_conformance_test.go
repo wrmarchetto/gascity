@@ -24,6 +24,7 @@ func newSQLiteForConformance(t *testing.T) *beads.SQLiteStore {
 // suite — beadstest, the canonical kit — against the SQLite store, the same
 // suite MemStore/FileStore/NativeDoltStore pass.
 func TestSQLiteStoreConformance(t *testing.T) {
+	t.Parallel()
 	factory := func() beads.Store { return newSQLiteForConformance(t) }
 	beadstest.RunStoreTests(t, factory)
 	beadstest.RunSequentialIDTests(t, factory)
@@ -37,6 +38,7 @@ func TestSQLiteStoreConformance(t *testing.T) {
 // control epochs, drain reservations, and attach fences silently degrade to
 // unconditional writes on a routed city.
 func TestSQLiteStoreConditionalWriterConformance(t *testing.T) {
+	t.Parallel()
 	beadstest.RunConditionalWriterConformance(t, "SQLiteStore", func(t *testing.T) beads.Store {
 		return newSQLiteForConformance(t)
 	})
@@ -45,6 +47,7 @@ func TestSQLiteStoreConditionalWriterConformance(t *testing.T) {
 // TestSQLiteStoreFenceConformance proves the SQLite constructor persists
 // ownership generations instead of exposing a vacuous zero fence.
 func TestSQLiteStoreFenceConformance(t *testing.T) {
+	t.Parallel()
 	beadstest.RunFenceConformance(t, func() beads.Store {
 		return newSQLiteForConformance(t)
 	})
@@ -56,6 +59,7 @@ func TestSQLiteStoreFenceConformance(t *testing.T) {
 // rewritten), tolerance of already-gone ids, and chunking past the
 // bound-parameter limit.
 func TestSQLiteStoreDeleteBatch(t *testing.T) {
+	t.Parallel()
 	st := newSQLiteForConformance(t)
 	var _ beads.BatchDeleter = st
 
