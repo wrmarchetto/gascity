@@ -9,11 +9,13 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/runtime/runtimetest"
+	"github.com/gastownhall/gascity/internal/testutil"
 )
 
 const (
@@ -1365,26 +1367,28 @@ esac
 
 // TestProvider_StartCancellationInterruptsForegroundChild proves cooperative
 // cancellation reaches a foreground child of the adapter, not just the shell
-// leader. The adapter shell blocks in a foreground `sleep` far longer than the
-// provider's WaitDelay (mimicking a `ready_delay_ms` readiness delay). A
-// process-only interrupt would be deferred by the shell until the child
-// returned, so WaitDelay would force-kill the shell before its rollback trap
-// ran and the resource the adapter created would leak. Signaling the process
-// group unblocks the child so the trap runs inside the grace window.
+// leader. The adapter shell blocks in a foreground child that never returns on
+// its own (mimicking a `ready_delay_ms` readiness delay). A process-only
+// interrupt would be deferred by the shell until the child returned, so
+// WaitDelay would force-kill the shell before its rollback trap ran and the
+// resource the adapter created would leak. Signaling the process group
+// unblocks the child so the trap runs inside the grace window.
 func TestProvider_StartCancellationInterruptsForegroundChild(t *testing.T) {
 	dir := t.TempDir()
-	readyFile := filepath.Join(dir, "ready")
+	readyFIFO := filepath.Join(dir, "ready")
 	interruptFile := filepath.Join(dir, "interrupted")
+	if err := syscall.Mkfifo(readyFIFO, 0o600); err != nil {
+		t.Fatalf("mkfifo readiness pipe: %v", err)
+	}
 	script := writeScript(t, dir, fmt.Sprintf(`
 case "$1" in
   start)
     trap 'printf "%%s\n" interrupted > "%s"; exit 0' INT
-    : > "%s"
-    sleep 30
+    cat "%s"
     ;;
   *) exit 2 ;;
 esac
-	`, interruptFile, readyFile))
+	`, interruptFile, readyFIFO))
 	p := NewProvider(script)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1394,25 +1398,34 @@ esac
 		done <- p.Start(ctx, "test-sess", runtime.Config{})
 	}()
 
-	// Wait until the adapter is blocked in the foreground sleep.
-	readyDeadline := time.NewTimer(5 * time.Second)
+	// Ready means the child itself has opened the FIFO, which it can only do
+	// after exec. A marker the shell writes before spawning lets the cancel
+	// land mid-spawn, where dash's not-yet-exec'd child swallows SIGINT and
+	// the trap waits out the child.
+	readyDeadline := time.NewTimer(testutil.ExecRaceTimeout)
 	defer readyDeadline.Stop()
 	readyPoll := time.NewTicker(10 * time.Millisecond)
 	defer readyPoll.Stop()
+	var readyWriter *os.File
 	for {
-		if _, err := os.Stat(readyFile); err == nil {
+		f, err := os.OpenFile(readyFIFO, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+		if err == nil {
+			readyWriter = f
 			break
-		} else if !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("stat readiness marker: %v", err)
+		}
+		if !errors.Is(err, syscall.ENXIO) {
+			t.Fatalf("open readiness pipe: %v", err)
 		}
 		select {
 		case err := <-done:
-			t.Fatalf("Start returned before readiness marker: %v", err)
+			t.Fatalf("Start returned before the child opened the ready pipe: %v", err)
 		case <-readyPoll.C:
 		case <-readyDeadline.C:
-			t.Fatal("timed out waiting for readiness marker")
+			t.Fatal("timed out waiting for the child to open the readiness pipe")
 		}
 	}
+	// The open write end keeps cat blocked until this closes it.
+	defer readyWriter.Close() //nolint:errcheck // test cleanup
 
 	cancel()
 	select {
@@ -1420,7 +1433,7 @@ esac
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Start error = %v, want context.Canceled", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(testutil.ExecRaceTimeout):
 		t.Fatal("Start did not return after cancellation; foreground child blocked the rollback trap")
 	}
 
