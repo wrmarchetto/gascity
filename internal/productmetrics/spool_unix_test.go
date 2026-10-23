@@ -45,6 +45,7 @@ func unixStatInode(stat unix.Stat_t) uint64 {
 }
 
 func TestLoadSpoolQuotaDistinguishesAbsentFromDurableZero(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -62,6 +63,7 @@ func TestLoadSpoolQuotaDistinguishesAbsentFromDurableZero(t *testing.T) {
 }
 
 func TestRecordOnceWritesOneImmutableEventAndConservativeQuotaWithoutScanning(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -123,6 +125,7 @@ func TestRecordOnceWritesOneImmutableEventAndConservativeQuotaWithoutScanning(t 
 }
 
 func TestRecordOnceMissingQuotaRequiresExactEmptySpoolProof(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name  string
 		setup func(*testing.T, gchome.ProductUsageHome) string
@@ -226,6 +229,7 @@ func TestRecordOnceMissingQuotaRequiresExactEmptySpoolProof(t *testing.T) {
 }
 
 func TestRecordOnceFreshQuotaBootstrapNeverReplacesDestinationRace(t *testing.T) {
+	t.Parallel()
 	t.Run("clean first install", func(t *testing.T) {
 		home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 		if got := service.RecordOnce(permit, CommandHelp); got != RecordStored {
@@ -302,6 +306,7 @@ func TestRecordOnceFreshQuotaBootstrapNeverReplacesDestinationRace(t *testing.T)
 }
 
 func TestRecordOnceDecisionWindowGatesNoReplaceConflictReplay(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	eventData, err := EncodeEvent(testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp))
 	if err != nil {
@@ -348,6 +353,7 @@ func TestRecordOnceDecisionWindowGatesNoReplaceConflictReplay(t *testing.T) {
 }
 
 func TestRecordOnceFirstAttemptWinsEvenWhenTheAttemptFails(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	if got := service.RecordOnce(permit, CommandID(65535)); got != RecordDropped {
 		t.Fatalf("invalid first attempt = %v", got)
@@ -361,6 +367,7 @@ func TestRecordOnceFirstAttemptWinsEvenWhenTheAttemptFails(t *testing.T) {
 }
 
 func TestRecordOnceConcurrentAttemptsHaveOneFirstAttemptWinner(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	start := make(chan struct{})
 	results := make(chan RecordResult, 2)
@@ -391,6 +398,7 @@ func TestRecordOnceConcurrentAttemptsHaveOneFirstAttemptWinner(t *testing.T) {
 }
 
 func TestRecordOnceDropsExactRecordAndGenerationStalePermits(t *testing.T) {
+	t.Parallel()
 	t.Run("record incarnation replaced", func(t *testing.T) {
 		home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 		replacement := enabledState(7, 2, testInstallationID, testSpoolGeneration)
@@ -413,6 +421,7 @@ func TestRecordOnceDropsExactRecordAndGenerationStalePermits(t *testing.T) {
 }
 
 func TestRecordOnceDropsOutOfRetentionInvocationHoursBeforeReservation(t *testing.T) {
+	t.Parallel()
 	for name, occurred := range map[string]time.Time{
 		"expired": testRecordHour.Add(-(maximumEventAgeHours + 1) * time.Hour),
 		"future":  testRecordHour.Add(time.Hour),
@@ -437,6 +446,7 @@ func TestRecordOnceDropsOutOfRetentionInvocationHoursBeforeReservation(t *testin
 }
 
 func TestRecordOnceDropsAtQuotaCapsAndNeverScansToMakeRoom(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	root := mustOpenMutableRoot(t, home)
 	if err := persistSpoolQuota(root, spoolQuota{Events: maximumSpoolEvents, Bytes: 1}); err != nil {
@@ -463,6 +473,7 @@ func TestRecordOnceDropsAtQuotaCapsAndNeverScansToMakeRoom(t *testing.T) {
 }
 
 func TestRecordOnceChecksDecisionBudgetBeforeUncancellableStorage(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -492,6 +503,7 @@ func TestRecordOnceChecksDecisionBudgetBeforeUncancellableStorage(t *testing.T) 
 }
 
 func TestRecordOnceRechecksDecisionBudgetAfterStateLockBeforeConfigRead(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -534,6 +546,7 @@ func TestRecordOnceRechecksDecisionBudgetAfterStateLockBeforeConfigRead(t *testi
 }
 
 func TestRecordOnceSpentBudgetAfterReservationLeavesOnlySafeOvercount(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -560,6 +573,7 @@ func TestRecordOnceSpentBudgetAfterReservationLeavesOnlySafeOvercount(t *testing
 }
 
 func TestRecordOnceDoesNotWriteAfterQuotaDirectorySyncIsUncertain(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -586,6 +600,7 @@ func TestRecordOnceDoesNotWriteAfterQuotaDirectorySyncIsUncertain(t *testing.T) 
 }
 
 func TestRecordOnceDecisionWindowGatesEveryForegroundQuotaBoundary(t *testing.T) {
+	t.Parallel()
 	t.Run("quota read", func(t *testing.T) {
 		home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 		root := mustOpenMutableRoot(t, home)
@@ -777,6 +792,7 @@ func TestRecordOnceDecisionWindowGatesEveryForegroundQuotaBoundary(t *testing.T)
 // with the whole suite green, because nothing else pins how long RecordOnce
 // may block a user's command on a lock another process holds.
 func TestRecordOnceAbandonsContendedStateLockWhenDecisionBudgetExpires(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	barrierRoot := mustOpenMutableRoot(t, home)
 	barrier, err := barrierRoot.acquireLock(context.Background(), stateLockName)
@@ -812,6 +828,7 @@ func TestRecordOnceAbandonsContendedStateLockWhenDecisionBudgetExpires(t *testin
 }
 
 func TestRecordOnceRejectsActiveOrRetiredControlEvidenceWithPresentQuota(t *testing.T) {
+	t.Parallel()
 	for _, controlName := range []string{spoolControlDirectoryName, retiredControlDirectoryName} {
 		for _, shape := range []string{"directory", "file", "symlink"} {
 			t.Run(controlName+"/"+shape, func(t *testing.T) {
@@ -887,6 +904,7 @@ func TestRecordOnceRejectsActiveOrRetiredControlEvidenceWithPresentQuota(t *test
 }
 
 func TestRecordOnceRejectsFallbackCursorEvidenceWithPresentLowQuota(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	root := mustOpenMutableRoot(t, home)
 	queued := testSpoolEvent(testEventIDTwo, "1.0.0", testRecordHour, CommandVersion)
@@ -940,6 +958,7 @@ func TestRecordOnceRejectsFallbackCursorEvidenceWithPresentLowQuota(t *testing.T
 }
 
 func TestClaimRestoreDeletePreservesOldestOrderAndQuotaDurability(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -989,6 +1008,7 @@ func TestClaimRestoreDeletePreservesOldestOrderAndQuotaDurability(t *testing.T) 
 }
 
 func TestRestoreSpoolClaimMismatchedDestinationCollisionPreservesBothFiles(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -1025,6 +1045,7 @@ func TestRestoreSpoolClaimMismatchedDestinationCollisionPreservesBothFiles(t *te
 }
 
 func TestRestoreSpoolClaimExactDestinationCollisionRetiresOnlyInflightDuplicate(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -1058,6 +1079,7 @@ func TestRestoreSpoolClaimExactDestinationCollisionRetiresOnlyInflightDuplicate(
 }
 
 func TestRestoreSpoolClaimExactCollisionInstallsClaimedSourceBeforeRetiringDestination(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	name := eventFileName(testEventIDOne)
 	queuePath := filepath.Join(home.Root(), queueDirectoryName, testSpoolGeneration, name)
@@ -1122,6 +1144,7 @@ func TestRestoreSpoolClaimExactCollisionInstallsClaimedSourceBeforeRetiringDesti
 }
 
 func TestRestoreSpoolClaimExchangeUncertaintyPreservesBothAuthoritiesAndQuota(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name           string
 		replace        string
@@ -1245,6 +1268,7 @@ func TestRestoreSpoolClaimExchangeUncertaintyPreservesBothAuthoritiesAndQuota(t 
 }
 
 func TestRestoreSpoolClaimDestinationChangeAtDeleteBoundaryPreservesInflightSource(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name   string
 		change func(string) error
@@ -1307,6 +1331,7 @@ func TestRestoreSpoolClaimDestinationChangeAtDeleteBoundaryPreservesInflightSour
 }
 
 func TestRestoreSpoolClaimCrossDeviceDestinationNeverAuthorizesInflightDeletion(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	name := eventFileName(testEventIDOne)
 	queuePath := filepath.Join(home.Root(), queueDirectoryName, testSpoolGeneration, name)
@@ -1347,6 +1372,7 @@ func TestRestoreSpoolClaimCrossDeviceDestinationNeverAuthorizesInflightDeletion(
 }
 
 func TestClaimSpoolBatchRejectsCrossDeviceGenerationAtDirectPostSweepReopen(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	plainRoot := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -1406,6 +1432,7 @@ func TestClaimSpoolBatchRejectsCrossDeviceGenerationAtDirectPostSweepReopen(t *t
 }
 
 func TestSpoolSweepRejectsCrossDeviceEventBeforeOpeningIt(t *testing.T) {
+	t.Parallel()
 	for _, tree := range []string{queueDirectoryName, inflightDirectoryName} {
 		t.Run(tree, func(t *testing.T) {
 			home, _, permit := newRecordServiceFixture(t, testEventIDThree)
@@ -1454,6 +1481,7 @@ func TestSpoolSweepRejectsCrossDeviceEventBeforeOpeningIt(t *testing.T) {
 }
 
 func TestRestoreSpoolClaimByteIdenticalInflightReplacementIsNotOriginalAuthority(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -1495,6 +1523,7 @@ func TestRestoreSpoolClaimByteIdenticalInflightReplacementIsNotOriginalAuthority
 }
 
 func TestClaimSpoolBatchLateMismatchedRestoreCollisionPreservesInflightSource(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	plainRoot := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -1544,6 +1573,7 @@ func TestClaimSpoolBatchLateMismatchedRestoreCollisionPreservesInflightSource(t 
 }
 
 func TestPrepareSpoolClaimReportsByteCountMismatchWithoutNilWrapArtifact(t *testing.T) {
+	t.Parallel()
 	_, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
 	data, err := EncodeEvent(event)
@@ -1567,6 +1597,7 @@ func TestPrepareSpoolClaimReportsByteCountMismatchWithoutNilWrapArtifact(t *test
 }
 
 func TestReconcileTreatsSecondFileWithSameEventIDAsPoison(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -1594,6 +1625,7 @@ func TestReconcileTreatsSecondFileWithSameEventIDAsPoison(t *testing.T) {
 }
 
 func TestReconcileDuplicateIDKeepsOldestFileAcrossQueueAndInflight(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -1620,6 +1652,7 @@ func TestReconcileDuplicateIDKeepsOldestFileAcrossQueueAndInflight(t *testing.T)
 }
 
 func TestSettledClaimCannotDeleteARestoredEventOrReleaseQuotaTwice(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -1664,6 +1697,7 @@ func TestSettledClaimCannotDeleteARestoredEventOrReleaseQuotaTwice(t *testing.T)
 }
 
 func TestClaimDeleteSyncFailureCannotUndercountAndReconciliationRepairs(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1713,6 +1747,7 @@ func TestClaimDeleteSyncFailureCannotUndercountAndReconciliationRepairs(t *testi
 }
 
 func TestClaimDeleteIdentityDisappearanceCannotReleaseQuota(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1757,6 +1792,7 @@ func TestClaimDeleteIdentityDisappearanceCannotReleaseQuota(t *testing.T) {
 }
 
 func TestClaimDeleteByteIdenticalReplacementCannotReleaseQuota(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1806,6 +1842,7 @@ func TestClaimDeleteByteIdenticalReplacementCannotReleaseQuota(t *testing.T) {
 }
 
 func TestClaimDeleteFinalGateSwapCannotReleaseQuota(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1878,6 +1915,7 @@ func TestClaimDeleteFinalGateSwapCannotReleaseQuota(t *testing.T) {
 }
 
 func TestClaimDeleteMissingFileSyncFailureCannotReleaseQuota(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1928,6 +1966,7 @@ func TestClaimDeleteMissingFileSyncFailureCannotReleaseQuota(t *testing.T) {
 }
 
 func TestMissingInflightSettlementRequiresDurableQueueDisposition(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name           string
 		setupQueue     func(*testing.T, string, string, []byte) storageTestHooks
@@ -2180,6 +2219,7 @@ func TestMissingInflightSettlementRequiresDurableQueueDisposition(t *testing.T) 
 }
 
 func TestClaimEnforcesBatchCountAndEncodedRequestLimit(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	longRelease := "1.0.0-" + strings.Repeat("a", 3000)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
@@ -2218,6 +2258,7 @@ func TestClaimEnforcesBatchCountAndEncodedRequestLimit(t *testing.T) {
 }
 
 func TestReconcileSpoolDeletesPoisonExpiredAndNonCurrentGenerationsWithoutReadingSparseFiles(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2294,6 +2335,7 @@ func TestReconcileSpoolDeletesPoisonExpiredAndNonCurrentGenerationsWithoutReadin
 }
 
 func TestReconcileMutationPassCannotCertifyQuotaAndMutationFreePassConverges(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2367,6 +2409,7 @@ func TestReconcileMutationPassCannotCertifyQuotaAndMutationFreePassConverges(t *
 }
 
 func TestReconcileSpoolUnlinksSymlinkedKnownTreeWithoutFollowingIt(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	target := filepath.Join(filepath.Dir(home.Root()), "outside-tree")
 	if err := os.Mkdir(target, 0o700); err != nil {
@@ -2398,6 +2441,7 @@ func TestReconcileSpoolUnlinksSymlinkedKnownTreeWithoutFollowingIt(t *testing.T)
 }
 
 func TestReconcileSpoolEnforcesExactFiveThousandEventBoundaryOldestFirst(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2446,6 +2490,7 @@ func TestReconcileSpoolEnforcesExactFiveThousandEventBoundaryOldestFirst(t *test
 }
 
 func TestReconcileSpoolEnforcesFourMiBByteBoundaryOldestFirst(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2498,6 +2543,7 @@ func TestReconcileSpoolEnforcesFourMiBByteBoundaryOldestFirst(t *testing.T) {
 }
 
 func TestPurgeSpoolUsesOneGlobalBudgetAndConvergesAcrossCalls(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2550,6 +2596,7 @@ func TestPurgeSpoolUsesOneGlobalBudgetAndConvergesAcrossCalls(t *testing.T) {
 }
 
 func TestPurgeSpoolWithinBudgetConvergesWithOneAggregateMeter(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2590,6 +2637,7 @@ func TestPurgeSpoolWithinBudgetConvergesWithOneAggregateMeter(t *testing.T) {
 }
 
 func TestPurgeSpoolWithinBudgetKeepsCumulativeEventCapAcrossPasses(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2631,6 +2679,7 @@ func TestPurgeSpoolWithinBudgetKeepsCumulativeEventCapAcrossPasses(t *testing.T)
 }
 
 func TestPurgeSpoolTreatsFutureControlFilesAsUnrecognizedResidue(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"status.toml"} {
 		t.Run(name, func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -2673,6 +2722,7 @@ func TestPurgeSpoolTreatsFutureControlFilesAsUnrecognizedResidue(t *testing.T) {
 }
 
 func TestPurgeSpoolPreservesFutureControlResidueShapesWithoutDescent(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"status.toml"} {
 		for _, shape := range []string{"hardlink", "symlink", "cross-device"} {
 			t.Run(name+"/"+shape, func(t *testing.T) {
@@ -2746,6 +2796,7 @@ func TestPurgeSpoolPreservesFutureControlResidueShapesWithoutDescent(t *testing.
 }
 
 func TestPurgeSpawnThrottleRemovesSafeCorruptAndOversizedRecords(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		body []byte
@@ -2785,6 +2836,7 @@ func TestPurgeSpawnThrottleRemovesSafeCorruptAndOversizedRecords(t *testing.T) {
 }
 
 func TestPurgeSpawnThrottlePreservesUnsafeFilesystemShapes(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"symlink", "cross-device"} {
 		t.Run(shape, func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -2853,6 +2905,7 @@ func TestPurgeSpawnThrottlePreservesUnsafeFilesystemShapes(t *testing.T) {
 }
 
 func TestRootTempJournalMalformedCanonicalMarkerIsNonAuthorizing(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -2895,6 +2948,7 @@ func TestRootTempJournalMalformedCanonicalMarkerIsNonAuthorizing(t *testing.T) {
 }
 
 func TestRootTempJournalCrossDeviceMarkerEvidenceCannotAuthorizeMappedTempMutation(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	name := fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xa93))
@@ -2954,6 +3008,7 @@ func TestRootTempJournalCrossDeviceMarkerEvidenceCannotAuthorizeMappedTempMutati
 }
 
 func TestRootTempJournalCrossDeviceMappedTempIsRejectedBeforeOpenOrMutation(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	name := fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xa98))
@@ -3012,6 +3067,7 @@ func TestRootTempJournalCrossDeviceMappedTempIsRejectedBeforeOpenOrMutation(t *t
 }
 
 func TestRootTempJournalIntentWithMappedTempRemainsPendingWithoutMutation(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -3052,6 +3108,7 @@ func TestRootTempJournalIntentWithMappedTempRemainsPendingWithoutMutation(t *tes
 }
 
 func TestRootTempJournalBoundIdentityMismatchPreservesBothFiles(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -3088,6 +3145,7 @@ func TestRootTempJournalBoundIdentityMismatchPreservesBothFiles(t *testing.T) {
 }
 
 func TestRootTempJournalRevalidatesMarkerAfterDeleteHookBeforeTempUnlink(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	name := fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xa97))
@@ -3139,6 +3197,7 @@ func TestRootTempJournalRevalidatesMarkerAfterDeleteHookBeforeTempUnlink(t *test
 }
 
 func TestRootTempJournalFinalTempIdentityCheckFollowsMarkerGuardRead(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	name := fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xa9a))
@@ -3193,6 +3252,7 @@ func TestRootTempJournalFinalTempIdentityCheckFollowsMarkerGuardRead(t *testing.
 }
 
 func TestRootTempJournalMarkerRetirementRevalidatesContentAfterDeleteHook(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	name := fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xa9b))
@@ -3240,6 +3300,7 @@ func TestRootTempJournalMarkerRetirementRevalidatesContentAfterDeleteHook(t *tes
 }
 
 func TestRootTempJournalMarkerRetirementRequiresDurableTempAbsenceAfterHook(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	name := fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xa9c))
@@ -3290,6 +3351,7 @@ func TestRootTempJournalMarkerRetirementRequiresDurableTempAbsenceAfterHook(t *t
 }
 
 func TestRootTempJournalFixedProofAcceptsExactlyMaximumMarkers(t *testing.T) {
+	t.Parallel()
 	for _, count := range []int{maximumStorageTempAttempts, maximumStorageTempAttempts + 1} {
 		t.Run(fmt.Sprintf("markers-%d", count), func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -3340,6 +3402,7 @@ func TestRootTempJournalFixedProofAcceptsExactlyMaximumMarkers(t *testing.T) {
 }
 
 func TestPurgeSpoolCapsAggregateRootTempMarkerRetirementAtMaximum(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, disabledState(7, 2, cleanupDisable))
 	root := mustOpenMutableRoot(t, home)
@@ -3392,6 +3455,7 @@ func TestPurgeSpoolCapsAggregateRootTempMarkerRetirementAtMaximum(t *testing.T) 
 }
 
 func TestRootTempJournalOversizedMarkerChargesOnlyMaximumPlusOnePhysicalBytes(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	backend, ok := plainRoot.backend.(*unixStorageDirectory)
@@ -3457,6 +3521,7 @@ func TestRootTempJournalOversizedMarkerChargesOnlyMaximumPlusOnePhysicalBytes(t 
 }
 
 func TestRootTempJournalStatKnownOversizedSparseMarkerReadsNoBytes(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	backend, ok := plainRoot.backend.(*unixStorageDirectory)
@@ -3514,6 +3579,7 @@ func TestRootTempJournalStatKnownOversizedSparseMarkerReadsNoBytes(t *testing.T)
 }
 
 func TestRootTempJournalDoesNotCertifyReplacedNamedDirectory(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	journalPath := filepath.Join(home.Root(), rootTempJournalDirectoryName)
 	replacedPath := filepath.Join(home.Root(), ".replaced-root-temp-journal")
@@ -3574,6 +3640,7 @@ func TestRootTempJournalDoesNotCertifyReplacedNamedDirectory(t *testing.T) {
 }
 
 func TestPurgeExactRootCleanupDeletesOnlyCanonicalAtomicTempRegularFiles(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	if err := persistSpoolQuota(plainRoot, spoolQuota{}); err != nil {
@@ -3739,6 +3806,7 @@ func TestPurgeExactRootCleanupDeletesOnlyCanonicalAtomicTempRegularFiles(t *test
 }
 
 func TestExactRootTempUnlinkSyncFailureRequiresLaterRootSync(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	canonicalTemp := filepath.Join(home.Root(), fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xac5)))
 	injected := errors.New("injected root sync failure after canonical temp unlink")
@@ -3792,6 +3860,7 @@ func TestExactRootTempUnlinkSyncFailureRequiresLaterRootSync(t *testing.T) {
 }
 
 func TestPurgeSpoolPreservesCrossDeviceDescendantsAtEveryDepth(t *testing.T) {
+	t.Parallel()
 	for _, boundary := range []string{
 		"queue", "inflight", "generation", "nested", "active-control", "retired-control",
 	} {
@@ -3879,6 +3948,7 @@ func TestPurgeSpoolPreservesCrossDeviceDescendantsAtEveryDepth(t *testing.T) {
 }
 
 func TestPurgeExactRootProofReservesDirectoryTraversalEnvelope(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -3912,6 +3982,7 @@ func TestPurgeExactRootProofReservesDirectoryTraversalEnvelope(t *testing.T) {
 }
 
 func TestPurgeLaxTopLevelSpoolTreesUsesOneMeterAndRequiresMutationFreeZeroProof(t *testing.T) {
+	t.Parallel()
 	for _, treeName := range []string{queueDirectoryName, inflightDirectoryName} {
 		for _, shape := range []string{"empty", "deep"} {
 			t.Run(treeName+"/"+shape, func(t *testing.T) {
@@ -3999,6 +4070,7 @@ func TestPurgeLaxTopLevelSpoolTreesUsesOneMeterAndRequiresMutationFreeZeroProof(
 }
 
 func TestPurgeMalformedSpoolControlConvergesWithoutFollowingEntries(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"leaf", "symlink", "fifo", "lax-empty", "lax-deep"} {
 		t.Run(shape, func(t *testing.T) {
 			home, _, _ := newRecordServiceFixture(t, testEventIDThree)
@@ -4076,6 +4148,7 @@ func TestPurgeMalformedSpoolControlConvergesWithoutFollowingEntries(t *testing.T
 }
 
 func TestControlCleanupDoesNotReportUserEventRemoval(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	retired := filepath.Join(home.Root(), retiredControlDirectoryName)
 	if err := os.MkdirAll(filepath.Join(retired, "nested"), 0o700); err != nil {
@@ -4109,6 +4182,7 @@ func TestControlCleanupDoesNotReportUserEventRemoval(t *testing.T) {
 }
 
 func TestRetiredControlMetadataDoesNotConsumeEventCapOrRemovalCounters(t *testing.T) {
+	t.Parallel()
 	home, _, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -4186,6 +4260,7 @@ func TestRetiredControlMetadataDoesNotConsumeEventCapOrRemovalCounters(t *testin
 }
 
 func TestSweepDoesNotStartFixedQuotaPersistenceWithoutSharedBudget(t *testing.T) {
+	t.Parallel()
 	encodedZero, err := encodeSpoolQuota(spoolQuota{})
 	if err != nil {
 		t.Fatal(err)
@@ -4289,6 +4364,7 @@ func TestFixedQuotaEnvelopeCoversSixtyThreeTempCollisionsAtSharedCaps(t *testing
 }
 
 func TestSpoolSweepCapsSuccessfulPhysicalDirectoryOpenatCalls(t *testing.T) {
+	t.Parallel()
 	const helperModeEnv = "GC_PM_DIRECTORY_OPEN_HELPER"
 	if mode := os.Getenv(helperModeEnv); mode != "" {
 		home, err := gchome.InspectProductUsageHome(gchome.ResolveReadOnly())
@@ -4367,6 +4443,7 @@ func TestSpoolSweepCapsSuccessfulPhysicalDirectoryOpenatCalls(t *testing.T) {
 }
 
 func TestSpoolSweepMakesProgressWithOneOrTwoOrdinaryDirectorySlotsLeft(t *testing.T) {
+	t.Parallel()
 	for _, remaining := range []uint64{1, 2} {
 		t.Run(fmt.Sprintf("remaining-%d", remaining), func(t *testing.T) {
 			home, _, _ := newRecordServiceFixture(t, testEventIDThree)
@@ -4412,6 +4489,7 @@ func TestSpoolSweepMakesProgressWithOneOrTwoOrdinaryDirectorySlotsLeft(t *testin
 }
 
 func TestPurgeMutationPassCannotCertifyEmptyAndMutationFreePassConverges(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -4468,6 +4546,7 @@ func TestPurgeMutationPassCannotCertifyEmptyAndMutationFreePassConverges(t *test
 }
 
 func TestPurgeMalformedKnownTreeDoesNotEnumerateOrStarveBehindRootSiblings(t *testing.T) {
+	t.Parallel()
 	for _, malformed := range []string{"leaf", "symlink"} {
 		t.Run(malformed, func(t *testing.T) {
 			home, _, _ := newRecordServiceFixture(t, testEventIDThree)
@@ -4587,6 +4666,7 @@ func TestPurgeMalformedKnownTreeDoesNotEnumerateOrStarveBehindRootSiblings(t *te
 }
 
 func TestExactChildLookupCleanupRejectsInodeReplacement(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	queuePath := filepath.Join(home.Root(), queueDirectoryName)
 	if err := os.WriteFile(queuePath, []byte("original"), 0o600); err != nil {
@@ -4613,6 +4693,7 @@ func TestExactChildLookupCleanupRejectsInodeReplacement(t *testing.T) {
 }
 
 func TestPurgeSpoolReportsSaturatingMetadataSizedRemovalWithoutReadingContent(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	generation := "99999999-9999-4999-8999-999999999999"
@@ -4692,6 +4773,7 @@ func TestPurgeSpoolReportsSaturatingMetadataSizedRemovalWithoutReadingContent(t 
 }
 
 func TestPurgeSpoolConvergesWhenMalformedNestingExceedsDirectoryBudget(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -4751,6 +4833,7 @@ func deepSpoolFixturePath(base string, depth int) string {
 }
 
 func TestDeepSpoolFixtureGeometryFitsMacOSPathBudget(t *testing.T) {
+	t.Parallel()
 	if lowNOFILESpoolFixtureDepth <= 128 {
 		t.Fatalf("low-NOFILE fixture depth = %d, must exceed the descriptor limit", lowNOFILESpoolFixtureDepth)
 	}
@@ -4775,6 +4858,7 @@ func TestDeepSpoolFixtureGeometryFitsMacOSPathBudget(t *testing.T) {
 }
 
 func TestPurgeQuarantineCollisionChainMakesBoundedMonotonicProgress(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"leaf", "empty-directory", "lax-empty-directory", "deep-directory", "lax-deep-directory", "directory-chain"} {
 		t.Run(kind, func(t *testing.T) {
 			fixture := newQuarantineCollisionFixture(t, kind)
@@ -4828,6 +4912,7 @@ func TestPurgeQuarantineCollisionChainMakesBoundedMonotonicProgress(t *testing.T
 }
 
 func TestUnsupportedDirectoryExchangeFallsBackToDurableCollisionProgress(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		err  error
@@ -4863,6 +4948,7 @@ func TestUnsupportedDirectoryExchangeFallsBackToDurableCollisionProgress(t *test
 }
 
 func TestUnsupportedDirectoryExchangeFallsBackThroughAncestorCollision(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		err  error
@@ -4995,6 +5081,7 @@ func TestUnsupportedDirectoryExchangeFallsBackThroughAncestorCollision(t *testin
 }
 
 func TestRelocationCursorCrashReplaySkipsReservedSlotsAndReconverges(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	hooks := fixture.unsupportedExchangeHooks(unix.ENOSYS)
@@ -5042,6 +5129,7 @@ func TestRelocationCursorCrashReplaySkipsReservedSlotsAndReconverges(t *testing.
 }
 
 func TestRelocationCursorReservesExactlyEightSlotsOrNone(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	hooks := fixture.unsupportedExchangeHooks(unix.ENOSYS)
@@ -5073,6 +5161,7 @@ func TestRelocationCursorReservesExactlyEightSlotsOrNone(t *testing.T) {
 }
 
 func TestFallbackRelocationSyncUncertaintyReplaysFromExactNamespace(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	exchangeAttempted := false
@@ -5130,6 +5219,7 @@ func TestFallbackRelocationSyncUncertaintyReplaysFromExactNamespace(t *testing.T
 }
 
 func TestFallbackControlHandleConsumesReservedDirectorySlot(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	controlOpens := 0
@@ -5159,6 +5249,7 @@ func TestFallbackControlHandleConsumesReservedDirectorySlot(t *testing.T) {
 }
 
 func TestRelocationCursorCorruptionAndExhaustionRetiresThenReconverges(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		data func(*testing.T) []byte
@@ -5215,6 +5306,7 @@ func TestRelocationCursorCorruptionAndExhaustionRetiresThenReconverges(t *testin
 }
 
 func TestRelocationCursorSurvivesConservativeQuotaRewriteUntilEmptyProof(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	hooks := fixture.unsupportedExchangeHooks(unix.ENOSYS)
@@ -5245,6 +5337,7 @@ func TestRelocationCursorSurvivesConservativeQuotaRewriteUntilEmptyProof(t *test
 }
 
 func TestUnsupportedExchangePoisonedFixedControlConverges(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name             string
 		forceQuotaAbsent bool
@@ -5398,6 +5491,7 @@ func TestUnsupportedExchangePoisonedFixedControlConverges(t *testing.T) {
 }
 
 func TestUnsupportedExchangeRetiresPoisonedActiveControlBeforeRetry(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name             string
 		forceQuotaAbsent bool
@@ -5496,6 +5590,7 @@ func TestUnsupportedExchangeRetiresPoisonedActiveControlBeforeRetry(t *testing.T
 }
 
 func TestUnsupportedExchangeConvergesWithPoisonedActiveAndRetiredControl(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	active := filepath.Join(fixture.home.Root(), spoolControlDirectoryName)
 	if err := os.MkdirAll(filepath.Join(active, relocationCursorFileName, "deep"), 0o700); err != nil {
@@ -5551,6 +5646,7 @@ func TestUnsupportedExchangeConvergesWithPoisonedActiveAndRetiredControl(t *test
 }
 
 func TestAncestorQuarantineCollisionRelocatesBlockerAndConverges(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	treePath := filepath.Join(home.Root(), queueDirectoryName)
 	temporaryAncestor := filepath.Join(treePath, "!ancestor")
@@ -6021,6 +6117,7 @@ func requireMissingStorageEntry(t *testing.T, directory *storageDir, name string
 }
 
 func TestMalformedSubtreeQuarantineRejectsEnumeratedInodeReplacement(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -6058,6 +6155,7 @@ func TestMalformedSubtreeQuarantineRejectsEnumeratedInodeReplacement(t *testing.
 }
 
 func TestMalformedSubtreeQuarantineReportsAppliedButUnsyncedRename(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	plainRoot := mustOpenMutableRoot(t, home)
 	plainTree, err := plainRoot.openDir([]string{queueDirectoryName}, true)
@@ -6112,6 +6210,7 @@ func TestMalformedSubtreeQuarantineReportsAppliedButUnsyncedRename(t *testing.T)
 }
 
 func TestDirectoryExchangeRejectsMutationBoundaryReplacementOfEitherEndpoint(t *testing.T) {
+	t.Parallel()
 	for _, replacedEndpoint := range []string{"source", "target"} {
 		t.Run(replacedEndpoint, func(t *testing.T) {
 			var replacementPath, displacedPath string
@@ -6150,6 +6249,7 @@ func TestDirectoryExchangeRejectsMutationBoundaryReplacementOfEitherEndpoint(t *
 }
 
 func TestDirectoryExchangeMandatoryPostcheckRejectsEitherEndpointReplacement(t *testing.T) {
+	t.Parallel()
 	for _, replacedEndpoint := range []string{"source", "target"} {
 		t.Run(replacedEndpoint, func(t *testing.T) {
 			var replacementPath, displacedPath string
@@ -6188,6 +6288,7 @@ func TestDirectoryExchangeMandatoryPostcheckRejectsEitherEndpointReplacement(t *
 }
 
 func TestDirectoryExchangePostApplicationErrorsAreAlwaysAppliedSyncPending(t *testing.T) {
+	t.Parallel()
 	for _, direction := range []string{"forward", "reverse"} {
 		for _, injected := range []error{unix.EIO, unix.EINVAL, unix.ENOSYS, unix.EXDEV} {
 			t.Run(direction+" "+injected.Error(), func(t *testing.T) {
@@ -6237,6 +6338,7 @@ func TestDirectoryExchangePostApplicationErrorsAreAlwaysAppliedSyncPending(t *te
 }
 
 func TestDirectoryExchangeRevalidatesBothEntriesAndReportsSyncUncertainty(t *testing.T) {
+	t.Parallel()
 	for _, replaced := range []string{"source", "target"} {
 		for _, replacement := range []string{"file", "symlink", "fifo"} {
 			t.Run("rejects "+replacement+" replacement of "+replaced, func(t *testing.T) {
@@ -6438,6 +6540,7 @@ func TestDirectoryExchangeRevalidatesBothEntriesAndReportsSyncUncertainty(t *tes
 }
 
 func TestEntryExchangeAtomicallySwapsMixedKinds(t *testing.T) {
+	t.Parallel()
 	postCalls := 0
 	hooks := storageTestHooks{afterExchange: func() error {
 		postCalls++
@@ -6472,6 +6575,7 @@ func TestEntryExchangeAtomicallySwapsMixedKinds(t *testing.T) {
 }
 
 func TestDirectoryExchangeSameParentSyncsOnceAndRejectsSameEntry(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	treePath := filepath.Join(home.Root(), queueDirectoryName)
 	for _, name := range []string{"source", "target"} {
@@ -6579,6 +6683,7 @@ func newDirectoryExchangeFixture(t *testing.T, hooks storageTestHooks) (gchome.P
 }
 
 func TestEventRetentionArithmeticFailsClosedAtBoundaries(t *testing.T) {
+	t.Parallel()
 	now := testRecordHour
 	if !eventWithinRetention(now.Add(-maximumEventAgeHours*time.Hour), now) {
 		t.Fatal("exact seven-day boundary rejected")
@@ -6596,6 +6701,7 @@ func TestEventRetentionArithmeticFailsClosedAtBoundaries(t *testing.T) {
 }
 
 func TestReconcileIncompleteMutationRetainsFailClosedQuotaEvidence(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	nonCurrentGeneration := "99999999-9999-4999-8999-999999999999"
 	nested := filepath.Join(home.Root(), queueDirectoryName, nonCurrentGeneration, "nested")
@@ -6713,6 +6819,7 @@ func TestRecordOnceDecisionExpiryStopsTempCollisionRetries(t *testing.T) {
 }
 
 func TestCleanupOnlyCurrentTreeNeverProducesRecords(t *testing.T) {
+	t.Parallel()
 	for _, treeName := range []string{queueDirectoryName, inflightDirectoryName} {
 		for _, laxAt := range []string{"tree", "generation"} {
 			t.Run(treeName+"/"+laxAt, func(t *testing.T) {
@@ -6784,6 +6891,7 @@ func TestCleanupOnlyCurrentTreeNeverProducesRecords(t *testing.T) {
 }
 
 func TestCapBoundaryUnsupportedExchangeRetainsRelocationCapacity(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	physicalOpens := 0
@@ -6828,6 +6936,7 @@ func TestCapBoundaryUnsupportedExchangeRetainsRelocationCapacity(t *testing.T) {
 }
 
 func TestGrowingEventReadChargesMaximumPlusOneAndStopsNextOpen(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	plainRoot := mustOpenMutableRoot(t, home)
 	first := testSpoolEvent(testEventIDTwo, "1.0.0", testRecordHour, CommandHelp)
@@ -6926,6 +7035,7 @@ func TestGrowingEventReadChargesMaximumPlusOneAndStopsNextOpen(t *testing.T) {
 }
 
 func TestNoReplaceAppliedThenEINTRClassifiesWithoutRetry(t *testing.T) {
+	t.Parallel()
 	t.Run("rename", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		sourcePath := filepath.Join(inspection.Root(), "event.json")
@@ -7223,6 +7333,7 @@ func TestNoReplaceAppliedThenEINTRClassifiesWithoutRetry(t *testing.T) {
 }
 
 func TestStorageReplaceRenameDecisionGateCoversEveryCallsite(t *testing.T) {
+	t.Parallel()
 	t.Run("replaceFile", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		sourcePath := filepath.Join(inspection.Root(), "source")
@@ -7381,6 +7492,7 @@ func TestStorageReplaceRenameDecisionGateCoversEveryCallsite(t *testing.T) {
 }
 
 func TestStorageReplaceRenameEINTRClassificationCoversEveryCallsite(t *testing.T) {
+	t.Parallel()
 	t.Run("replaceFile unchanged retries", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		if err := os.Mkdir(filepath.Join(inspection.Root(), inflightDirectoryName), 0o700); err != nil {
@@ -7680,6 +7792,7 @@ func TestRecordOnceDecisionExpiryStopsQuotaStageTempCollisionRetries(t *testing.
 }
 
 func TestRecordOnceDecisionGatesStorageSafeBoundaries(t *testing.T) {
+	t.Parallel()
 	t.Run("root components before state lock", func(t *testing.T) {
 		home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 		nowCalls := 0
@@ -7812,6 +7925,7 @@ func TestRecordOnceDecisionGatesStorageSafeBoundaries(t *testing.T) {
 }
 
 func TestStorageDecisionExpiryAfterRevalidationPreventsMutation(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"rename", "remove"} {
 		t.Run(operation, func(t *testing.T) {
 			inspection := inspectStorageTestHome(t, true)
@@ -7873,6 +7987,7 @@ func TestStorageDecisionExpiryAfterRevalidationPreventsMutation(t *testing.T) {
 }
 
 func TestRecordOnceDecisionExpiryStopsUnchangedNoReplaceRetry(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	current := testRecordHour
 	service.deps.now = func() time.Time { return current }
@@ -7910,6 +8025,7 @@ func TestRecordOnceDecisionExpiryStopsUnchangedNoReplaceRetry(t *testing.T) {
 }
 
 func TestRecordOnceDecisionExpiryDuringNoReplacePrestatePreventsInstall(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	current := testRecordHour
 	service.deps.now = func() time.Time { return current }
@@ -7951,6 +8067,7 @@ func TestRecordOnceDecisionExpiryDuringNoReplacePrestatePreventsInstall(t *testi
 }
 
 func TestDirectoryOpenatInstrumentationHasSingleStructuralGateway(t *testing.T) {
+	t.Parallel()
 	fileSet := token.NewFileSet()
 	parsed, err := parser.ParseFile(fileSet, "storage_unix.go", nil, 0)
 	if err != nil {
@@ -8007,6 +8124,7 @@ func TestDirectoryOpenatInstrumentationHasSingleStructuralGateway(t *testing.T) 
 }
 
 func TestDualControlCleanupPreemptsDeepTreeStarvation(t *testing.T) {
+	t.Parallel()
 	for _, activeShape := range []string{"directory", "leaf", "fifo", "symlink"} {
 		t.Run(activeShape, func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -8147,6 +8265,7 @@ func TestDualControlCleanupPreemptsDeepTreeStarvation(t *testing.T) {
 }
 
 func TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit(t *testing.T) {
+	t.Parallel()
 	const helperEnvironment = "GC_PRODUCTMETRICS_LOW_NOFILE_HELPER"
 	if os.Getenv(helperEnvironment) != "1" {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*testutil.ExecRaceTimeout)
@@ -8225,6 +8344,7 @@ func TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit(t *testing.T) {
 }
 
 func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
+	t.Parallel()
 	const helperEnvironment = "GC_PRODUCTMETRICS_MIN_NOFILE_HELPER"
 	if os.Getenv(helperEnvironment) != "1" {
 		ctx, cancel := context.WithTimeout(context.Background(), 4*testutil.ExecRaceTimeout)
@@ -8324,6 +8444,7 @@ func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
 }
 
 func TestSpoolDirectoryBudgetDerivedFromSoftLimit(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		requested uint64
@@ -8348,6 +8469,7 @@ func TestSpoolDirectoryBudgetDerivedFromSoftLimit(t *testing.T) {
 }
 
 func TestSpoolPurgePreservesDescriptorExhaustionError(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	queuePath := filepath.Join(home.Root(), queueDirectoryName)
@@ -8389,6 +8511,7 @@ func TestSpoolPurgePreservesDescriptorExhaustionError(t *testing.T) {
 }
 
 func TestLoneRetiredDeepControlPreemptsEventTraversalAtENOSYSCap(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	plainRoot := mustOpenMutableRoot(t, home)
@@ -8569,6 +8692,7 @@ func TestLoneRetiredDeepControlPreemptsEventTraversalAtENOSYSCap(t *testing.T) {
 }
 
 func TestNestedRetiredControlAncestorCollisionRotatesBlockerWithoutExchange(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	plainRoot := mustOpenMutableRoot(t, home)
 	markers := spoolQuota{Events: maximumQuotaEventMarker, Bytes: maximumQuotaByteMarker}
@@ -8649,6 +8773,7 @@ func TestNestedRetiredControlAncestorCollisionRotatesBlockerWithoutExchange(t *t
 }
 
 func TestRetiredControlCollisionRotationBreaksCanonicalTerminalGraphs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		nodes           int
@@ -8798,6 +8923,7 @@ func TestRetiredControlCollisionRotationBreaksCanonicalTerminalGraphs(t *testing
 }
 
 func TestRetiredControlFullBreakerWithActiveControlMakesRepeatedProgress(t *testing.T) {
+	t.Parallel()
 	shapes := []struct {
 		name  string
 		setup func(*testing.T, string)
@@ -8990,6 +9116,7 @@ func TestRetiredControlFullBreakerWithActiveControlMakesRepeatedProgress(t *test
 }
 
 func TestDualControlFullBreakerExchangeMakesBoundedPurgeProgress(t *testing.T) {
+	t.Parallel()
 	shapes := []struct {
 		name              string
 		alwaysUnsupported bool
@@ -9401,6 +9528,7 @@ func TestDualControlFullBreakerExchangeMakesBoundedPurgeProgress(t *testing.T) {
 }
 
 func TestFallbackRelocationCursorCorruptionExhaustionAndCrashReplayReserveDisjointBlocks(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		data func(*testing.T) []byte
@@ -9470,6 +9598,7 @@ func TestFallbackRelocationCursorCorruptionExhaustionAndCrashReplayReserveDisjoi
 }
 
 func TestFallbackRelocationCursorReservesCompleteLogicalBlockOrNothing(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -9491,6 +9620,7 @@ func TestFallbackRelocationCursorReservesCompleteLogicalBlockOrNothing(t *testin
 }
 
 func TestFallbackRelocationParksExactAnyKindActiveEntry(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []struct {
 		name  string
 		setup func(*testing.T, string)
@@ -9590,6 +9720,7 @@ func TestFallbackRelocationParksExactAnyKindActiveEntry(t *testing.T) {
 }
 
 func TestFallbackRelocationReservationCrashReplaySkipsReservedBlockAndConverges(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	root := mustOpenMutableRoot(t, home)
 	activePath := filepath.Join(home.Root(), spoolControlDirectoryName)
@@ -9702,6 +9833,7 @@ func TestFallbackRelocationReservationCrashReplaySkipsReservedBlockAndConverges(
 }
 
 func TestFallbackCursorCleanupCrashWindowKeepsForegroundFailClosed(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	if got := service.RecordOnce(permit, CommandHelp); got != RecordStored {
 		t.Fatalf("fixture RecordOnce = %v", got)
@@ -9803,6 +9935,7 @@ func TestFallbackCursorCleanupCrashWindowKeepsForegroundFailClosed(t *testing.T)
 }
 
 func TestDualControlCollisionPassMakesMonotonicProgress(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	activePath := filepath.Join(fixture.home.Root(), spoolControlDirectoryName)
@@ -9882,6 +10015,7 @@ func TestDualControlCollisionPassMakesMonotonicProgress(t *testing.T) {
 }
 
 func TestUnsafeQuotaShapesConvergeWithoutFollowingEntries(t *testing.T) {
+	t.Parallel()
 	type quotaShape struct {
 		name            string
 		unsafe          bool
@@ -10121,6 +10255,7 @@ func TestUnsafeQuotaShapesConvergeWithoutFollowingEntries(t *testing.T) {
 }
 
 func TestEventInstallCrashWindowCannotLeaveTwoNamesForOneReservation(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 	generationPath := filepath.Join(home.Root(), queueDirectoryName, testSpoolGeneration)
 	targetPath := filepath.Join(generationPath, eventFileName(testEventIDOne))
@@ -10204,6 +10339,7 @@ func countDuplicateStorageNames(t *testing.T, entries []os.DirEntry) int {
 }
 
 func TestLoneRetiredControlCannotBeRemovedWithoutReplacementEvidence(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	retiredPath := filepath.Join(fixture.home.Root(), retiredControlDirectoryName)
@@ -10243,6 +10379,7 @@ func TestLoneRetiredControlCannotBeRemovedWithoutReplacementEvidence(t *testing.
 }
 
 func TestLoneRetiredDirectoryCannotBeRemovedWithoutReplacementEvidence(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	retiredPath := filepath.Join(fixture.home.Root(), retiredControlDirectoryName)
@@ -10277,6 +10414,7 @@ func TestLoneRetiredDirectoryCannotBeRemovedWithoutReplacementEvidence(t *testin
 }
 
 func TestUnsafeLoneActiveControlMakesExhaustedUnsupportedProgress(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []string{"file", "fifo", "symlink"} {
 		t.Run(shape, func(t *testing.T) {
 			fixture := newQuarantineCollisionFixture(t, "directory-chain")
@@ -10366,6 +10504,7 @@ func TestUnsafeLoneActiveControlMakesExhaustedUnsupportedProgress(t *testing.T) 
 }
 
 func TestSelfCanonicalRetiredChildMakesRealProgressAtCollisionBoundary(t *testing.T) {
+	t.Parallel()
 	fixture := newQuarantineCollisionFixture(t, "directory-chain")
 	defer func() { _ = fixture.root.Close() }()
 	activePath := filepath.Join(fixture.home.Root(), spoolControlDirectoryName)
@@ -10421,6 +10560,7 @@ func TestSelfCanonicalRetiredChildMakesRealProgressAtCollisionBoundary(t *testin
 }
 
 func TestReadExhaustionDeletionArmsEvidenceBeforeUnlinkFailure(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	plainRoot := mustOpenMutableRoot(t, home)
 	totalBytes := uint64(0)
@@ -10477,6 +10617,7 @@ func TestReadExhaustionDeletionArmsEvidenceBeforeUnlinkFailure(t *testing.T) {
 }
 
 func TestReopenedCleanupGenerationMustRecoverySyncBeforeExactQuotaCertification(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	plainRoot := mustOpenMutableRoot(t, home)
 	expired := testSpoolEvent(testEventIDOne, "1.0.0",
@@ -10577,6 +10718,7 @@ func TestReopenedCleanupGenerationMustRecoverySyncBeforeExactQuotaCertification(
 }
 
 func TestMetadataAtEINTRRetryStructurallyRechecksDecisionGate(t *testing.T) {
+	t.Parallel()
 	fileSet := token.NewFileSet()
 	parsed, err := parser.ParseFile(fileSet, "storage_unix.go", nil, 0)
 	if err != nil {
@@ -10653,6 +10795,7 @@ func TestMetadataAtEINTRRetryStructurallyRechecksDecisionGate(t *testing.T) {
 }
 
 func TestPostMutationRenameClassificationAndSyncStayClockFree(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	sourcePath := filepath.Join(inspection.Root(), "event.json")
 	targetPath := filepath.Join(inspection.Root(), inflightDirectoryName, "event.json")
@@ -10696,6 +10839,7 @@ func TestPostMutationRenameClassificationAndSyncStayClockFree(t *testing.T) {
 }
 
 func TestDirectoryOpenExpiryStopsSafeValidationAndRecoverySync(t *testing.T) {
+	t.Parallel()
 	t.Run("existing product root", func(t *testing.T) {
 		home, service, permit := newRecordServiceFixture(t, testEventIDOne)
 		current := testRecordHour
@@ -10815,6 +10959,7 @@ func TestDirectoryOpenExpiryStopsSafeValidationAndRecoverySync(t *testing.T) {
 }
 
 func TestFixedControlReadEnvelopeIncludesLimitProbeAndInventoriesCallsites(t *testing.T) {
+	t.Parallel()
 	wantEntryEnvelope := uint64(9*maximumStorageTempAttempts + 32*maximumRelocationSlots + 64 + 1 + 2 + 2)
 	if spoolFixedEntryEnvelope != wantEntryEnvelope ||
 		spoolFixedNameEnvelope != wantEntryEnvelope*maximumStorageNameBytes {
@@ -10877,6 +11022,7 @@ func TestFixedControlReadEnvelopeIncludesLimitProbeAndInventoriesCallsites(t *te
 }
 
 func TestFixedControlReadsCannotExceedPhysicalFiveMiBAllowance(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	plainRoot := mustOpenMutableRoot(t, home)
 	control, err := plainRoot.openDir([]string{spoolControlDirectoryName}, true)
@@ -11101,22 +11247,11 @@ func BenchmarkRecordOnceEnqueue(b *testing.B) {
 
 func newMetricsBenchmarkHome(b *testing.B) gchome.ProductUsageHome {
 	b.Helper()
-	trustedTempRoot := "/tmp"
-	if runtime.GOOS == "darwin" {
-		trustedTempRoot = "/private/tmp"
-	}
-	b.Setenv("GOTMPDIR", trustedTempRoot)
-	b.Setenv("TMPDIR", trustedTempRoot)
-	privateAncestor := b.TempDir()
-	if err := os.Chmod(privateAncestor, 0o700); err != nil {
-		b.Fatal(err)
-	}
-	homePath := filepath.Join(privateAncestor, ".gc")
+	homePath := filepath.Join(trustedTestTempDir(b), ".gc")
 	if err := os.Mkdir(homePath, 0o700); err != nil {
 		b.Fatal(err)
 	}
-	b.Setenv("GC_HOME", homePath)
-	home, err := gchome.InspectProductUsageHome(gchome.ResolveReadOnly())
+	home, err := gchome.InspectProductUsageHome(explicitTestHome(homePath))
 	if err != nil {
 		b.Fatal(err)
 	}

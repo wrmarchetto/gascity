@@ -7,6 +7,7 @@ import (
 )
 
 func TestStoragePlatformBuildSelection(t *testing.T) {
+	t.Parallel()
 	dir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)

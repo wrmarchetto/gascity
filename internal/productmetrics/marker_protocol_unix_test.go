@@ -31,6 +31,7 @@ type rootTempProofObservation struct {
 }
 
 func TestRootTempJournalMainAndPeerProofModesAreEquivalent(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name          string
 		fixture       string
@@ -228,6 +229,7 @@ type rootTempCrashArtifacts struct {
 }
 
 func TestRootAtomicWriterCrashReplayAtEveryProtocolOrdinal(t *testing.T) {
+	t.Parallel()
 	const payload = "sensitive crash payload"
 	tests := []rootTempCrashCase{
 		{name: "new journal directory sync", point: "step-01"},

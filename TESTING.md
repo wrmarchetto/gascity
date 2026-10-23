@@ -632,6 +632,19 @@ across processes, so six shards land the long pole at 115s (individual shards
 A package whose cost had been a fixed sleep would have slept six times over and
 reported success, which is why the syscall evidence came before the split.
 
+The same overlap works across goroutines, so the package's tests also run in
+parallel inside each process. Every top-level test calls `t.Parallel()` first
+unless it reaches state the whole process shares -- the environment, the
+temp-name counter, the descriptor table, or a raw close of a descriptor
+number production still owns -- directly or through a helper.
+`parallel_unix_test.go` derives that serial set from the source against its
+`processWideHazards` list and refuses any other split. The shared fixture
+resolves its home through `gchome.ResolveReadOnlyFrom` instead of `t.Setenv`,
+which cannot run in a parallel test. Measured 2026-10-23, whole package in one
+process: 629s serial at load average 31-34, and 124-162s parallel over five
+runs at load average 100-133. The long pole is now two tests that each purge
+a 5001-event directory one fsync at a time, 106-137s apiece in those runs.
+
 The tmpfs row is a diagnostic probe, not a proposal. Running these fixtures on
 tmpfs permanently would be a 32x win and would stop testing the storage layer
 against the filesystem semantics it exists to get right — `RENAME_EXCHANGE`

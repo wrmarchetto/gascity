@@ -173,6 +173,31 @@ func TestPublicResolversUseExplicitGCHome(t *testing.T) {
 	}
 }
 
+func TestResolveReadOnlyFromReadsGCHomeOnlyThroughGetenv(t *testing.T) {
+	processHome := filepath.Join(t.TempDir(), "process-gc-home")
+	injectedHome := filepath.Join(t.TempDir(), "injected-gc-home")
+	t.Setenv("GC_HOME", processHome)
+
+	got := ResolveReadOnlyFrom(func(key string) string {
+		if key == "GC_HOME" {
+			return "  " + injectedHome + "  "
+		}
+		return ""
+	})
+	if got.Path() != injectedHome || got.Provenance() != ProvenanceExplicit {
+		t.Fatalf("ResolveReadOnlyFrom = (%q, %v), want (%q, %v)", got.Path(), got.Provenance(), injectedHome, ProvenanceExplicit)
+	}
+
+	userHome, err := os.UserHomeDir()
+	if err != nil || userHome == "" {
+		t.Skipf("user home unavailable: %v", err)
+	}
+	got = ResolveReadOnlyFrom(func(string) string { return "" })
+	if want := filepath.Join(userHome, ".gc"); got.Path() != want || got.Provenance() != ProvenanceUserHome {
+		t.Fatalf("ResolveReadOnlyFrom(empty) = (%q, %v), want (%q, %v)", got.Path(), got.Provenance(), want, ProvenanceUserHome)
+	}
+}
+
 func TestResolveReadOnlyPublicNeverCreatesTemporaryFallback(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skip("controlled os.TempDir and os.UserHomeDir environment applies to Unix")

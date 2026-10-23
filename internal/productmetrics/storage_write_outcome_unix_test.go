@@ -8,6 +8,7 @@ import (
 )
 
 func TestStorageAtomicWriteReportsNotAppliedAppliedSyncPendingAndDurable(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		hooks storageTestHooks
 		want  storageWriteState

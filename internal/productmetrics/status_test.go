@@ -84,6 +84,7 @@ func TestDiagnosticStatusCodecAcceptsEmptyOptionalDiagnostics(t *testing.T) {
 }
 
 func TestStatusAndDisclosureKeepInstallationIDSeparated(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	service := mustOpenTestService(t, defaultTestServiceDependencies(home, 2))
@@ -112,6 +113,7 @@ func TestStatusAndDisclosureKeepInstallationIDSeparated(t *testing.T) {
 }
 
 func TestPolicyMetadataExposesOnlyHostnameAndFixedRetention(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	deps := defaultTestServiceDependencies(home, 2)
 	deps.release.endpointHostname = "metrics.gascity.example"
@@ -134,6 +136,7 @@ func TestPolicyMetadataExposesOnlyHostnameAndFixedRetention(t *testing.T) {
 }
 
 func TestStatusDiagnosticDurationsAreNonnegative(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -145,6 +148,7 @@ func TestStatusDiagnosticDurationsAreNonnegative(t *testing.T) {
 }
 
 func TestStatusReportsHomeStabilityIndependentlyOfEffectiveReason(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	deps := defaultTestServiceDependencies(home, 2)
 	deps.release.platformSupported = false

@@ -14,6 +14,7 @@ const (
 )
 
 func TestPersistedStateCanonicalRoundTrip(t *testing.T) {
+	t.Parallel()
 	want := persistedState{
 		StateSchema:               currentStateSchema,
 		CounterNamespace:          initialCounterNamespace,
@@ -57,6 +58,7 @@ func TestPersistedStateCanonicalRoundTrip(t *testing.T) {
 }
 
 func TestPersistedStateOmitsOnlyOptionalIdentityFields(t *testing.T) {
+	t.Parallel()
 	state := pendingState(4)
 	encoded, err := encodePersistedState(state)
 	if err != nil {
@@ -71,6 +73,7 @@ func TestPersistedStateOmitsOnlyOptionalIdentityFields(t *testing.T) {
 }
 
 func TestPersistedStateStrictSchemaRejectsMalformedUnknownAndIncompleteInput(t *testing.T) {
+	t.Parallel()
 	valid, err := encodePersistedState(enabledState(1, 1, testInstallationID, testSpoolGeneration))
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +103,7 @@ func TestPersistedStateStrictSchemaRejectsMalformedUnknownAndIncompleteInput(t *
 }
 
 func TestPersistedStateRejectsUnknownEnumsVersionsAndExhaustedCounters(t *testing.T) {
+	t.Parallel()
 	valid := enabledState(1, 1, testInstallationID, testSpoolGeneration)
 	cases := map[string]persistedState{
 		"zero schema":                  withState(valid, func(s *persistedState) { s.StateSchema = 0 }),
@@ -135,6 +139,7 @@ func TestPersistedStateRejectsUnknownEnumsVersionsAndExhaustedCounters(t *testin
 }
 
 func TestPersistedStateCounterTerminalBoundaryIsExclusive(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		mutate func(*persistedState, uint64)
 	}{
@@ -167,6 +172,7 @@ func TestPersistedStateCounterTerminalBoundaryIsExclusive(t *testing.T) {
 }
 
 func TestCounterIncrementReservesTerminalValue(t *testing.T) {
+	t.Parallel()
 	state := enabledState(maximumStateCounter-2, 1, testInstallationID, testSpoolGeneration)
 	if err := incrementStateGeneration(&state); err != nil || state.StateGeneration != maximumStateCounter-1 {
 		t.Fatalf("increment lower mutable neighbor = (%d, %v), want (%d, nil)", state.StateGeneration, err, maximumStateCounter-1)
@@ -186,6 +192,7 @@ func TestCounterIncrementReservesTerminalValue(t *testing.T) {
 }
 
 func TestCounterNamespaceRecoveryIsMonotonicAndTerminatesWithoutWrapping(t *testing.T) {
+	t.Parallel()
 	valid := enabledState(7, 1, testInstallationID, testSpoolGeneration)
 	valid.CounterNamespace = 41
 	data := append(encodeUncheckedState(t, valid), []byte("unknown = true\n")...)
@@ -215,6 +222,7 @@ func TestCounterNamespaceRecoveryIsMonotonicAndTerminatesWithoutWrapping(t *test
 }
 
 func TestTerminalCounterNamespaceAllowsOnlyInactiveDurableFallback(t *testing.T) {
+	t.Parallel()
 	inactive := enabledState(1, 2, testInstallationID, "")
 	inactive.CounterNamespace = terminalCounterNamespace
 	inactive.AcceptedNoticeVersion = 1
@@ -234,6 +242,7 @@ func TestTerminalCounterNamespaceAllowsOnlyInactiveDurableFallback(t *testing.T)
 }
 
 func TestStatusDTOHasOnlyApprovedRedactedFields(t *testing.T) {
+	t.Parallel()
 	want := []string{
 		"State",
 		"Reason",
@@ -275,6 +284,7 @@ func TestStatusDTOHasOnlyApprovedRedactedFields(t *testing.T) {
 }
 
 func TestPersistedStateAcceptsEachClosedStateShape(t *testing.T) {
+	t.Parallel()
 	states := []persistedState{
 		pendingState(1),
 		enabledState(2, 1, "10101010-1010-4010-8010-101010101010", testSpoolGeneration),

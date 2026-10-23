@@ -15,6 +15,7 @@ import (
 )
 
 func TestRecordOnceAuthorizedDropUpdatesBoundedDiagnostics(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	defer func() { _ = permit.Close() }()
 	root := mustOpenMutableRoot(t, home)
@@ -35,6 +36,7 @@ func TestRecordOnceAuthorizedDropUpdatesBoundedDiagnostics(t *testing.T) {
 }
 
 func TestRecordOnceFailClosedQuotaAndControlEvidenceSuppressDiagnostics(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		quota       spoolQuota
@@ -90,6 +92,7 @@ func TestRecordOnceFailClosedQuotaAndControlEvidenceSuppressDiagnostics(t *testi
 }
 
 func TestRecordOnceQuotaPersistenceUncertaintySuppressesDiagnostics(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	defer func() { _ = permit.Close() }()
 	installingQuota := false
@@ -129,6 +132,7 @@ func TestRecordOnceQuotaPersistenceUncertaintySuppressesDiagnostics(t *testing.T
 }
 
 func TestRecordOncePostReservationQueueFailurePersistsDiagnostics(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	defer func() { _ = permit.Close() }()
 	root := mustOpenMutableRoot(t, home)
@@ -160,6 +164,7 @@ func TestRecordOncePostReservationQueueFailurePersistsDiagnostics(t *testing.T) 
 }
 
 func TestRecordOnceIneligibleDropDoesNotCreateDiagnostics(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	service := mustOpenTestService(t, defaultTestServiceDependencies(home, 2))
 	if result := service.RecordOnce(RecordingPermit{}, CommandHelp); result != RecordDropped {
@@ -171,6 +176,7 @@ func TestRecordOnceIneligibleDropDoesNotCreateDiagnostics(t *testing.T) {
 }
 
 func TestUploaderPersistsAttemptAndClosedSettlementDiagnostics(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		response    uploadResponse
 		waitErr     error

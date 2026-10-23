@@ -17,6 +17,7 @@ import (
 )
 
 func TestCompleteVerifiedTTYNoticeCommitsIdentityAtomicallyAndExcludesFirstInvocation(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	installationID := "66666666-6666-4666-8666-666666666666"
 	spool := "77777777-7777-4777-8777-777777777777"
@@ -65,6 +66,7 @@ func TestCompleteVerifiedTTYNoticeCommitsIdentityAtomicallyAndExcludesFirstInvoc
 }
 
 func TestNoticeRequiresEligibilityCompleteWriteAndAvailableApprovedTestDependency(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		invocation InvocationContext
 		writer     io.Writer
@@ -107,6 +109,7 @@ func TestNoticeRequiresEligibilityCompleteWriteAndAvailableApprovedTestDependenc
 }
 
 func TestNotAppliedNoticePersistenceRetainsPriorRecordAtEveryPreInstallStep(t *testing.T) {
+	t.Parallel()
 	steps := []storageStep{storageStepWrite, storageStepFileSync, storageStepRename}
 	for _, target := range steps {
 		t.Run(string(target), func(t *testing.T) {
@@ -148,6 +151,7 @@ func TestNotAppliedNoticePersistenceRetainsPriorRecordAtEveryPreInstallStep(t *t
 }
 
 func TestAppliedSyncPendingNoticeIsLogicalActivationForSeparatelyOpenedPeer(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	prior := pendingState(4)
 	prior.RequiredNoticeVersion = 2
@@ -193,6 +197,7 @@ func TestAppliedSyncPendingNoticeIsLogicalActivationForSeparatelyOpenedPeer(t *t
 }
 
 func TestFailedFirstPersistenceLeavesNoConfigOrIdentityArtifact(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	ensureMetricsRoot(t, home)
 	precreateStateLock(t, home)
@@ -220,6 +225,7 @@ func TestFailedFirstPersistenceLeavesNoConfigOrIdentityArtifact(t *testing.T) {
 }
 
 func TestConcurrentFirstActivationPrintsAndCommitsAtMostOnce(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	deps := defaultTestServiceDependencies(home, 2)
 	deps.newUUID = uuidSequence(t,
@@ -275,6 +281,7 @@ func TestConcurrentFirstActivationPrintsAndCommitsAtMostOnce(t *testing.T) {
 }
 
 func TestEnableIsTTYOnlyIdempotentAndRotatesOnlyAfterDisable(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -320,6 +327,7 @@ func TestEnableIsTTYOnlyIdempotentAndRotatesOnlyAfterDisable(t *testing.T) {
 }
 
 func TestEnableBlockedByTTYEnvironmentBuildCleanupAndPauseGates(t *testing.T) {
+	t.Parallel()
 	paused := enabledState(4, 2, testInstallationID, "")
 	paused.PausedThroughMetricsEpoch = 2
 	cleanup := disabledState(4, 1, cleanupDisable)
@@ -362,6 +370,7 @@ func TestEnableBlockedByTTYEnvironmentBuildCleanupAndPauseGates(t *testing.T) {
 }
 
 func TestStaleNoticeCannotCrossPauseCleanupOrCoveredPauseBarrier(t *testing.T) {
+	t.Parallel()
 	cleanupPending := enabledState(4, 1, testInstallationID, "")
 	cleanupPending.RequiredNoticeVersion = 2
 	cleanupPending.CleanupKind = cleanupPause
@@ -410,6 +419,7 @@ func TestStaleNoticeCannotCrossPauseCleanupOrCoveredPauseBarrier(t *testing.T) {
 }
 
 func TestEnableEntropyFailureLeavesPriorStateAndNoIdentity(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := pendingState(2)
 	state.RequiredNoticeVersion = 2
@@ -431,6 +441,7 @@ func TestEnableEntropyFailureLeavesPriorStateAndNoIdentity(t *testing.T) {
 }
 
 func TestEveryActivationUUIDFailureLeavesPriorRecordAndNoIdentityArtifact(t *testing.T) {
+	t.Parallel()
 	validID := "89898989-8989-4989-8989-898989898989"
 	tests := map[string]func() (string, error){
 		"installation entropy": func() (string, error) { return "", errors.New("installation entropy failed") },
@@ -482,6 +493,7 @@ func TestEveryActivationUUIDFailureLeavesPriorRecordAndNoIdentityArtifact(t *tes
 }
 
 func TestConcurrentEnableAndDisableHaveOneStateGenerationWinner(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := pendingState(4)
 	state.RequiredNoticeVersion = 2

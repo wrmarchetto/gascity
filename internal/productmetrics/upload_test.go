@@ -27,6 +27,7 @@ func encodedEventForUpload(t *testing.T, event Event) []byte {
 }
 
 func TestBuildUploadBatchPreservesCanonicalQueueEvents(t *testing.T) {
+	t.Parallel()
 	first := encodedEventForUpload(t, fixedEvent())
 	secondEvent := secondFixedEvent()
 	second := encodedEventForUpload(t, secondEvent)
@@ -66,6 +67,7 @@ func TestBuildUploadBatchPreservesCanonicalQueueEvents(t *testing.T) {
 }
 
 func TestBuildUploadBatchRejectsPoisonAndIdentityMismatch(t *testing.T) {
+	t.Parallel()
 	event := fixedEvent()
 	canonical := encodedEventForUpload(t, event)
 	identity := uploadBatchIdentity{
@@ -119,6 +121,7 @@ func TestBuildUploadBatchRejectsPoisonAndIdentityMismatch(t *testing.T) {
 }
 
 func TestDecodeUploadAcknowledgementRequiresExactCompleteSet(t *testing.T) {
+	t.Parallel()
 	first := fixedEvent().EventID
 	second := secondFixedEvent().EventID
 	for _, test := range []struct {
@@ -145,6 +148,7 @@ func TestDecodeUploadAcknowledgementRequiresExactCompleteSet(t *testing.T) {
 }
 
 func TestDecodeUploadAcknowledgementFailsClosed(t *testing.T) {
+	t.Parallel()
 	first := fixedEvent().EventID
 	second := secondFixedEvent().EventID
 	accepted := `{"schema_version":1,"app":"gascity","action":"accepted","event_ids":["` + first + `","` + second + `"]}`
@@ -210,6 +214,7 @@ func equalStrings(got, want []string) bool {
 }
 
 func TestUploadCodecDTOsHaveClosedShapes(t *testing.T) {
+	t.Parallel()
 	for typ, want := range map[reflect.Type][]string{
 		reflect.TypeOf(acknowledgementWire{}): {"SchemaVersion", "App", "Action", "EventIDs"},
 		reflect.TypeOf(claimedEventFile{}):    {"name", "body"},
