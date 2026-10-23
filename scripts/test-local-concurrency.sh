@@ -177,86 +177,13 @@ else
     record_fail "wiring.full_case_calls_selftest" "could not locate the full) case block in $LOCAL_PARALLEL"
 fi
 
-# --- part c: job priority, read from the running jobs ---
-
-# The real runner and its libs in a scratch repo. Every job it starts in a
-# cmd/gc-only scoped fast run is a stub that appends its own niceness and I/O
-# class, read from the process table, to <dir>/priority.log. The log path is
-# baked in because the runner's env -i strips the environment.
-PRIO_JOBS="test-go-test-shard test-local-concurrency.sh test-push-gate-lock.sh test-push-gate-select.sh"
-new_priority_fixture() {
-    local dir job
-    dir="$(mktemp -d -p /var/tmp)"
-    mkdir -p "$dir/scripts/lib" "$dir/bin"
-    cp -f "$LOCAL_PARALLEL" "$dir/scripts/test-local-parallel"
-    cp -f "$TEST_DIR/lib/test-slice.sh" "$INNER_LIB" "$dir/scripts/lib/"
-    cp -f "$TEST_DIR/push-gate-lock-lib.sh" "$dir/scripts/"
-    printf '#!/usr/bin/env bash\necho 2\n' >"$dir/scripts/test-local-job-count"
-    for job in $PRIO_JOBS; do
-        cat >"$dir/scripts/$job" <<STUB
-#!/usr/bin/env bash
-ni="\$(ps -o ni= -p \$\$ | tr -d ' ')"
-io="\$(ionice -p \$\$ 2>/dev/null | cut -d: -f1)"
-echo "$job ni=\$ni io=\$io" >>"$dir/priority.log"
-STUB
-    done
-    printf '#!/usr/bin/env bash\nexit 0\n' >"$dir/bin/go"
-    chmod +x "$dir"/scripts/test-* "$dir/bin/go"
-    printf '%s' "$dir"
-}
-
-# run_priority_fixture <dir> <env args...>: one fast run, cap and slice off.
-run_priority_fixture() {
-    local dir="$1"
-    shift
-    (cd "$dir" && env "$@" PATH="$dir/bin:$PATH" GC_TEST_NO_SLICE=1 \
-        GC_PUSH_GATE_NO_CAP=1 GC_SCOPED_TEST_PACKAGES=./cmd/gc \
-        CMD_GC_PROCESS_TOTAL=1 LOCAL_TEST_JOBS=2 \
-        ./scripts/test-local-parallel fast) >"$dir/run.log" 2>&1
-}
-
-# check_priority_arm <name> <dir> <want "ni=N io=CLASS">: every job, once each.
-check_priority_arm() {
-    local name="$1" dir="$2" want="$3" job got expected=""
-    for job in $PRIO_JOBS; do
-        expected+="$job $want"$'\n'
-    done
-    got="$(sort "$dir/priority.log" 2>/dev/null)"
-    if [[ "$got"$'\n' != "$expected" ]]; then
-        record_fail "$name" "want: ${expected} got: ${got:-no job ran: $(tail -3 "$dir/run.log")}"
-        return
-    fi
-    record_pass "$name"
-}
-
-# A merge-path run keeps the caller's priority, and a development run lowers
-# it, so both are measured against this shell's own.
-base_ni="$(ps -o ni= -p $$ | tr -d ' ')"
-base_io="$(ionice -p $$ 2>/dev/null | cut -d: -f1)"
-dev_ni=$((base_ni + 10 > 19 ? 19 : base_ni + 10))
-dev_io="$(command -v ionice >/dev/null 2>&1 && echo idle)"
-if [[ "$dev_ni" -eq "$base_ni" ]]; then
-    record_fail "priority.observable" "this shell runs at nice ${base_ni}, so +10 is not observable"
+# A separate file so the upstream-probe close gate, which knows test paths by
+# suffix (cmd/gc/upstream_probe_close_gate.go), keeps it as one.
+if bash "$TEST_DIR/local-test-yield.test.sh"; then
+    record_pass "priority.local_test_yield_suite"
 else
-    PRIO_DIR="$(new_priority_fixture)"
-    run_priority_fixture "$PRIO_DIR" -u LOCAL_TEST_YIELD
-    check_priority_arm "priority.development_run_yields" "$PRIO_DIR" "ni=${dev_ni} io=${dev_io}"
-    rm -rf "$PRIO_DIR"
-
-    PRIO_DIR="$(new_priority_fixture)"
-    run_priority_fixture "$PRIO_DIR" LOCAL_TEST_YIELD=0
-    check_priority_arm "priority.merge_path_run_does_not_yield" "$PRIO_DIR" "ni=${base_ni} io=${base_io}"
-    rm -rf "$PRIO_DIR"
+    record_fail "priority.local_test_yield_suite" "scripts/local-test-yield.test.sh failed"
 fi
-
-# not a word: set -u arithmetic refuses one with or without the guard
-PRIO_DIR="$(new_priority_fixture)"
-run_priority_fixture "$PRIO_DIR" LOCAL_TEST_YIELD=2
-PRIO_RC=$?
-assert_true "priority.malformed_nonzero_exit" test "$PRIO_RC" -ne 0
-assert_contains "priority.malformed_names_var" "$(cat "$PRIO_DIR/run.log")" "LOCAL_TEST_YIELD"
-assert_true "priority.malformed_runs_no_job" test ! -e "$PRIO_DIR/priority.log"
-rm -rf "$PRIO_DIR"
 
 echo
 echo "local-concurrency tests: $pass passed, $fail failed"
