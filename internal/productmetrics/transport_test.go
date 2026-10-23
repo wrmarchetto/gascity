@@ -56,6 +56,7 @@ func acceptedBody(eventIDs []string, action string) string {
 }
 
 func TestUploadTransportSendsExactOneShotRequest(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	var calls atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -106,6 +107,7 @@ func TestUploadTransportSendsExactOneShotRequest(t *testing.T) {
 }
 
 func TestUploadTransportSnapshotsPreparedBatchAtEntry(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	originalBody := append([]byte(nil), prepared.body...)
 	originalEventID := prepared.eventIDs[0]
@@ -159,6 +161,7 @@ func TestUploadTransportSnapshotsPreparedBatchAtEntry(t *testing.T) {
 }
 
 func TestUploadTransportSnapshotsPauseKeysBeforeNetwork(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	firstPublic, _ := deterministicPauseKey()
 	secondSeed := bytes.Repeat([]byte{0xff}, ed25519.SeedSize)
@@ -211,6 +214,7 @@ func TestUploadTransportSnapshotsPauseKeysBeforeNetwork(t *testing.T) {
 }
 
 func TestUploadTransportClassifiesDuplicateAndSignedPause(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	publicKey, privateKey := deterministicPauseKey()
 
@@ -249,6 +253,7 @@ func TestUploadTransportClassifiesDuplicateAndSignedPause(t *testing.T) {
 }
 
 func TestUploadTransportRestoresOnEveryUntrustedResponse(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	publicKey, privateKey := deterministicPauseKey()
 	validPause := signedPauseEnvelope(prepared.releaseVersion, testPauseEpoch, testPauseKeyID, privateKey)
@@ -309,6 +314,7 @@ func TestUploadTransportRestoresOnEveryUntrustedResponse(t *testing.T) {
 }
 
 func TestStrictUploadClientRejectsRedirectsCookiesAndCompression(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	var redirected atomic.Int32
 	destination := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -503,6 +509,7 @@ func TestProductionUploadCustomCAEnvironmentPredicate(t *testing.T) {
 }
 
 func TestProductionUploadHTTPClientValidatorRejectsPolicyDrift(t *testing.T) {
+	t.Parallel()
 	mutations := map[string]func(*http.Client){
 		"default transport": func(client *http.Client) {
 			client.Transport = http.DefaultTransport
@@ -712,6 +719,7 @@ func TestProductionUploadPolicyDoesNotUseRegisteredHTTPSProtocol(t *testing.T) {
 }
 
 func TestUploadTransportDoesNotEchoHostileNetworkMaterial(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	const secret = "response-secret-must-not-escape"
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -741,6 +749,7 @@ func TestUploadTransportDoesNotEchoHostileNetworkMaterial(t *testing.T) {
 }
 
 func TestUploadTransportHonorsEarlierCancellationWithoutRetry(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	var calls atomic.Int32
 	transport := strictTestUploadTransport(t, "https://metrics.invalid/v1", roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -764,6 +773,7 @@ func TestUploadTransportHonorsEarlierCancellationWithoutRetry(t *testing.T) {
 }
 
 func TestUploadTransportBoundsAndClosesEveryResponseBody(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	const secret = "hostile-body-error-material"
 	tests := map[string]struct {
@@ -813,6 +823,7 @@ func TestUploadTransportBoundsAndClosesEveryResponseBody(t *testing.T) {
 }
 
 func TestUploadTransportAppliesTotalDeadlineAndRejectsInvalidPreparedValues(t *testing.T) {
+	t.Parallel()
 	prepared := preparedFixedUpload(t)
 	var calls atomic.Int32
 	roundTripper := roundTripFunc(func(request *http.Request) (*http.Response, error) {

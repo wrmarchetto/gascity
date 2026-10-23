@@ -27,6 +27,7 @@ func fixedEvent() Event {
 }
 
 func TestEncodeExactEventAndBatchBytes(t *testing.T) {
+	t.Parallel()
 	eventBytes, err := EncodeEvent(fixedEvent())
 	if err != nil {
 		t.Fatalf("EncodeEvent: %v", err)
@@ -59,6 +60,7 @@ func TestEncodeExactEventAndBatchBytes(t *testing.T) {
 }
 
 func TestDecodeRoundTripsCanonicalBytes(t *testing.T) {
+	t.Parallel()
 	event, err := DecodeEvent([]byte(fixedEventJSON))
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
@@ -88,6 +90,7 @@ func TestDecodeRoundTripsCanonicalBytes(t *testing.T) {
 }
 
 func TestStrictDecodeRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
+	t.Parallel()
 	eventUnknown := strings.TrimSuffix(fixedEventJSON, "}") + `,"extra":true}`
 	eventDuplicate := strings.Replace(fixedEventJSON, `"event_id":`, `"event_id":"8c4f4128-a6e8-4f66-bd1b-1fcf1298b124","event_id":`, 1)
 	escapedDuplicate := strings.Replace(fixedEventJSON, `"event_id":`, `"\u0065vent_id":"8c4f4128-a6e8-4f66-bd1b-1fcf1298b124","event_id":`, 1)
@@ -124,6 +127,7 @@ func TestStrictDecodeRejectsUnknownDuplicateAndTrailingJSON(t *testing.T) {
 }
 
 func TestStrictDecodeRejectsCaseFoldedFieldAliasesInEitherOrder(t *testing.T) {
+	t.Parallel()
 	eventIDPair := `"event_id":"8c4f4128-a6e8-4f66-bd1b-1fcf1298b124"`
 	upperEventIDPair := `"EVENT_ID":"8c4f4128-a6e8-4f66-bd1b-1fcf1298b124"`
 	upperEventID := strings.Replace(fixedEventJSON, eventIDPair, upperEventIDPair, 1)
@@ -165,6 +169,7 @@ func TestStrictDecodeRejectsCaseFoldedFieldAliasesInEitherOrder(t *testing.T) {
 }
 
 func TestUnmarshalJSONNilReceiversReturnErrors(t *testing.T) {
+	t.Parallel()
 	assertErrorWithoutPanic := func(name string, call func() error) {
 		t.Helper()
 		t.Run(name, func(t *testing.T) {
@@ -187,6 +192,7 @@ func TestUnmarshalJSONNilReceiversReturnErrors(t *testing.T) {
 }
 
 func TestUnmarshalJSONFailuresLeaveReceiversUnchanged(t *testing.T) {
+	t.Parallel()
 	eventSeed := fixedEvent()
 	eventSeed.CommandID = CommandVersion
 	for name, raw := range map[string]string{
@@ -247,6 +253,7 @@ func TestUnmarshalJSONFailuresLeaveReceiversUnchanged(t *testing.T) {
 }
 
 func TestDecodeRejectsInvalidValuesAndBatchBounds(t *testing.T) {
+	t.Parallel()
 	twentyFiveEvents := make([]string, MaxBatchEvents)
 	for i := range twentyFiveEvents {
 		twentyFiveEvents[i] = fixedEventJSON
@@ -283,6 +290,7 @@ func TestDecodeRejectsInvalidValuesAndBatchBounds(t *testing.T) {
 }
 
 func TestValidationRejectsValuesOutsideClosedContract(t *testing.T) {
+	t.Parallel()
 	tests := map[string]func(*Event){
 		"event UUID noncanonical":         func(e *Event) { e.EventID = strings.ToUpper(e.EventID) },
 		"event UUID wrong version":        func(e *Event) { e.EventID = "8c4f4128-a6e8-3f66-bd1b-1fcf1298b124" },
@@ -319,6 +327,7 @@ func TestValidationRejectsValuesOutsideClosedContract(t *testing.T) {
 }
 
 func TestPermanentCommandSentinels(t *testing.T) {
+	t.Parallel()
 	want := map[CommandID]string{
 		CommandHelp:        "help",
 		CommandVersion:     "version",
@@ -341,6 +350,7 @@ func TestPermanentCommandSentinels(t *testing.T) {
 }
 
 func TestInjectedImmutableCommandCatalogRoundTripsWithoutExpandingProduction(t *testing.T) {
+	t.Parallel()
 	const injectedID CommandID = 1000
 	event := fixedEvent()
 	event.CommandID = injectedID
@@ -399,6 +409,7 @@ func TestExampleMatchesGoldenWithoutAmbientInputs(t *testing.T) {
 }
 
 func TestDTOsHaveExactClosedShape(t *testing.T) {
+	t.Parallel()
 	assertFields := func(typ reflect.Type, want []string) {
 		t.Helper()
 		if typ.NumField() != len(want) {

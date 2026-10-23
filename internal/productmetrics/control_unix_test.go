@@ -33,6 +33,7 @@ type uploadCallResult struct {
 }
 
 func TestDisableAndPurgeInvalidAbsentAndUnavailableState(t *testing.T) {
+	t.Parallel()
 	t.Run("nil service", func(t *testing.T) {
 		var service *Service
 		result, err := service.DisableAndPurge(context.Background())
@@ -75,6 +76,7 @@ func TestDisableAndPurgeInvalidAbsentAndUnavailableState(t *testing.T) {
 }
 
 func TestDisableAndPurgeCommitsBeforeUploaderWaitWithoutHoldingStateLock(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -137,6 +139,7 @@ func TestDisableAndPurgeCommitsBeforeUploaderWaitWithoutHoldingStateLock(t *test
 }
 
 func TestDisableAndPurgeBoundsInitialAndPostUploaderStateLocks(t *testing.T) {
+	t.Parallel()
 	t.Run("initial state lock", func(t *testing.T) {
 		home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 		before := readStateFixture(t, home)
@@ -207,6 +210,7 @@ func TestDisableAndPurgeBoundsInitialAndPostUploaderStateLocks(t *testing.T) {
 }
 
 func TestDisableAndPurgeBlockedUploaderConvergesAndCleanDisabledCrossesBarrier(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -277,6 +281,7 @@ func TestDisableAndPurgeBlockedUploaderConvergesAndCleanDisabledCrossesBarrier(t
 }
 
 func TestDisableAndPurgeIncompleteBudgetRetainsOwnerAndLaterRetryReusesIt(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -328,6 +333,7 @@ func TestDisableAndPurgeIncompleteBudgetRetainsOwnerAndLaterRetryReusesIt(t *tes
 }
 
 func TestDisableAndPurgeUnknownRootResidueStaysPendingUntilManualRemoval(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	if err := persistSpoolQuota(root, spoolQuota{}); err != nil {
@@ -396,6 +402,7 @@ func TestDisableAndPurgeUnknownRootResidueStaysPendingUntilManualRemoval(t *test
 }
 
 func TestDisableAndPurgeUnsafeKnownControlShapeRequiresManualCleanup(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		controlName string
@@ -531,6 +538,7 @@ func TestDisableAndPurgeUnsafeKnownControlShapeRequiresManualCleanup(t *testing.
 }
 
 func TestDisableAndPurgeTransientDiagnosticStatusFailureRemainsRetryable(t *testing.T) {
+	t.Parallel()
 	home, _, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	if err := persistSpoolQuota(root, spoolQuota{}); err != nil {
@@ -580,6 +588,7 @@ func TestDisableAndPurgeTransientDiagnosticStatusFailureRemainsRetryable(t *test
 }
 
 func TestDisableAndPurgeIntentWithMappedTempRequiresManualCleanup(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	if err := persistSpoolQuota(root, spoolQuota{}); err != nil {
@@ -618,6 +627,7 @@ func TestDisableAndPurgeIntentWithMappedTempRequiresManualCleanup(t *testing.T) 
 }
 
 func TestDisableAndPurgeJournalPreemptsOverBudgetUnknownRootStarvation(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	priorQuota := spoolQuota{Events: 1, Bytes: 1}
@@ -679,6 +689,7 @@ func TestDisableAndPurgeJournalPreemptsOverBudgetUnknownRootStarvation(t *testin
 }
 
 func TestDisableAndPurgeCanonicalRootTempUnlinkUncertainty(t *testing.T) {
+	t.Parallel()
 	for _, uncertainty := range []string{"not-applied", "applied-sync-pending"} {
 		t.Run(uncertainty, func(t *testing.T) {
 			home, service, _ := newRecordServiceFixture(t, testEventIDThree)
@@ -742,6 +753,7 @@ func TestDisableAndPurgeCanonicalRootTempUnlinkUncertainty(t *testing.T) {
 }
 
 func TestDisableAndPurgeCanonicalRootTempRevalidatesBeforeUnlink(t *testing.T) {
+	t.Parallel()
 	for _, drift := range []string{"replacement", "mode", "link-count"} {
 		t.Run(drift, func(t *testing.T) {
 			home, service, _ := newRecordServiceFixture(t, testEventIDThree)
@@ -803,6 +815,7 @@ func TestDisableAndPurgeCanonicalRootTempRevalidatesBeforeUnlink(t *testing.T) {
 }
 
 func TestTwoConcurrentDisableAndPurgeCallsReuseOwnerAndCrossUploaderBarrier(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -851,6 +864,7 @@ func TestTwoConcurrentDisableAndPurgeCallsReuseOwnerAndCrossUploaderBarrier(t *t
 }
 
 func TestConcurrentOffPendingObserverAcceptsPeerCompletionBeforeInitialStateLock(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -908,6 +922,7 @@ func TestConcurrentOffPendingObserverAcceptsPeerCompletionBeforeInitialStateLock
 }
 
 func TestConcurrentOffPendingObserverDoesNotClaimDurabilityAfterPeerEnable(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -968,6 +983,7 @@ func TestConcurrentOffPendingObserverDoesNotClaimDurabilityAfterPeerEnable(t *te
 }
 
 func TestConcurrentOffNonPendingCASLoserIsStateConflictWithoutDurabilityClaim(t *testing.T) {
+	t.Parallel()
 	for _, initial := range []struct {
 		name  string
 		state persistedState
@@ -1026,6 +1042,7 @@ func TestConcurrentOffNonPendingCASLoserIsStateConflictWithoutDurabilityClaim(t 
 }
 
 func TestDisableAndPurgeMakesBlockedUploadResponseStaleWithoutSettlement(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		kind uploadResponseKind
@@ -1102,6 +1119,7 @@ func TestDisableAndPurgeMakesBlockedUploadResponseStaleWithoutSettlement(t *test
 }
 
 func TestDisableAndPurgeFailureAndRecoveryMatrix(t *testing.T) {
+	t.Parallel()
 	t.Run("disable write not applied", func(t *testing.T) {
 		home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 		before := readStateFixture(t, home)
@@ -1195,6 +1213,7 @@ func TestDisableAndPurgeFailureAndRecoveryMatrix(t *testing.T) {
 }
 
 func TestDisableAndPurgeCleanupCompletionFailureRequiresRetry(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"not-applied", "applied-sync-pending"} {
 		t.Run(failure, func(t *testing.T) {
 			home, service, _ := newRecordServiceFixture(t, testEventIDThree)
@@ -1256,6 +1275,7 @@ func TestDisableAndPurgeCleanupCompletionFailureRequiresRetry(t *testing.T) {
 }
 
 func TestDisableAndPurgeFilesystemFailureKeepsExactOwnerForRetry(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1308,6 +1328,7 @@ func TestDisableAndPurgeFilesystemFailureKeepsExactOwnerForRetry(t *testing.T) {
 // holders revalidate successfully against the same inode — the exact hole the
 // same-numeric-ABA case guards at revalidation time, one step earlier.
 func TestDisableAndPurgeDetectsByteIdenticalRecordSwapAtAuthorityMint(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	configPath := filepath.Join(home.Root(), configFileName)
 	var swapped atomic.Bool
@@ -1347,6 +1368,7 @@ func TestDisableAndPurgeDetectsByteIdenticalRecordSwapAtAuthorityMint(t *testing
 // hits nondeterministically when its unlocked successor write lands before
 // authority is minted.
 func TestDisableAndPurgeClassifiesMutatedRecordSwapAtAuthorityMint(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	configPath := filepath.Join(home.Root(), configFileName)
 	var swapped atomic.Bool
@@ -1386,6 +1408,7 @@ func TestDisableAndPurgeClassifiesMutatedRecordSwapAtAuthorityMint(t *testing.T)
 }
 
 func TestDisableAndPurgeExactTokenConflictAndPeerCleanRecovery(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		peer      string
@@ -1486,6 +1509,7 @@ func TestDisableAndPurgeExactTokenConflictAndPeerCleanRecovery(t *testing.T) {
 }
 
 func TestDisableAndPurgeNeverCrossesUploaderBarrierOnReplacementRoot(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1564,6 +1588,7 @@ func TestDisableAndPurgeNeverCrossesUploaderBarrierOnReplacementRoot(t *testing.
 }
 
 func TestDisableAndPurgeBindsInitialObservationToRetainedRoot(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -1682,6 +1707,7 @@ func TestDisableAndPurgeBindsInitialObservationToRetainedRoot(t *testing.T) {
 }
 
 func TestDisableAndPurgeRejectsUnprovenPeerSuccessor(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		change    func(*persistedState)
@@ -1785,6 +1811,7 @@ func TestDisableAndPurgeRejectsUnprovenPeerSuccessor(t *testing.T) {
 }
 
 func TestDisableAndPurgeRejectsPeerSuccessorReplacedDuringCleanProof(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -1864,6 +1891,7 @@ func TestDisableAndPurgeRejectsPeerSuccessorReplacedDuringCleanProof(t *testing.
 }
 
 func TestDisableAndPurgeAcceptsExactPeerCleanupSuccessorAcrossCounterRollover(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name  string
 		state persistedState
@@ -1941,6 +1969,7 @@ func TestDisableAndPurgeAcceptsExactPeerCleanupSuccessorAcrossCounterRollover(t 
 }
 
 func TestPeerCleanProofDoesNotDrainLiveJournaledRootTemp(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	root := mustOpenMutableRoot(t, home)
 	defer func() { _ = root.Close() }()
@@ -1964,6 +1993,7 @@ func TestPeerCleanProofDoesNotDrainLiveJournaledRootTemp(t *testing.T) {
 }
 
 func TestPeerCleanProofTreatsFutureControlFilesAsUnrecognizedResidue(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"status.toml", "spawn-throttle"} {
 		t.Run(name, func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -2006,6 +2036,7 @@ func TestPeerCleanProofTreatsFutureControlFilesAsUnrecognizedResidue(t *testing.
 }
 
 func TestPeerCleanProofPreservesFutureControlResidueShapesWithoutDescent(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"status.toml", "spawn-throttle"} {
 		for _, shape := range []string{"regular", "symlink", "cross-device"} {
 			t.Run(name+"/"+shape, func(t *testing.T) {
@@ -2075,6 +2106,7 @@ func TestPeerCleanProofPreservesFutureControlResidueShapesWithoutDescent(t *test
 }
 
 func TestPeerCleanProofRejectsMarkerReplacementAfterTempAbsence(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	name := fmt.Sprintf(".pm-tmp-%x-%x", os.Getpid(), uint64(0xd32))
 	tempPath := filepath.Join(home.Root(), name)
@@ -2139,6 +2171,7 @@ func TestPeerCleanProofRejectsMarkerReplacementAfterTempAbsence(t *testing.T) {
 }
 
 func TestDisableAndPurgeSurfacesBarrierCloseFailures(t *testing.T) {
+	t.Parallel()
 	for _, target := range []controlCloseTarget{controlCloseFinalState, controlCloseUploader, controlCloseRoot} {
 		t.Run(string(target), func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -2162,6 +2195,7 @@ func TestDisableAndPurgeSurfacesBarrierCloseFailures(t *testing.T) {
 }
 
 func TestDisableAndPurgeFinalConfigMarkerRetirementFailureDoesNotExitZero(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	if err := persistSpoolQuota(root, spoolQuota{}); err != nil {
@@ -2217,6 +2251,7 @@ func TestDisableAndPurgeFinalConfigMarkerRetirementFailureDoesNotExitZero(t *tes
 }
 
 func TestDisableAndPurgeFinalConfigMarkerRetirementFailureSucceedsAfterDurableAbsenceProof(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	if err := persistSpoolQuota(root, spoolQuota{}); err != nil {

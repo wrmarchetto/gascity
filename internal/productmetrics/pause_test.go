@@ -47,6 +47,7 @@ func signedPauseEnvelope(releaseVersion string, metricsEpoch uint64, keyID strin
 }
 
 func TestCanonicalPauseMessageMatchesRestrictedRFC8785Vector(t *testing.T) {
+	t.Parallel()
 	message, err := canonicalPauseMessage(pauseUnsigned{
 		SchemaVersion:  SchemaVersionV1,
 		App:            AppGasCity,
@@ -64,6 +65,7 @@ func TestCanonicalPauseMessageMatchesRestrictedRFC8785Vector(t *testing.T) {
 }
 
 func TestVerifySignedPauseAcceptsReorderedExactEnvelope(t *testing.T) {
+	t.Parallel()
 	publicKey, privateKey := deterministicPauseKey()
 	body := signedPauseEnvelope(testPauseRelease, testPauseEpoch, testPauseKeyID, privateKey)
 
@@ -90,6 +92,7 @@ func TestVerifySignedPauseAcceptsReorderedExactEnvelope(t *testing.T) {
 }
 
 func TestVerifySignedPauseRejectsHostileEnvelopes(t *testing.T) {
+	t.Parallel()
 	publicKey, privateKey := deterministicPauseKey()
 	valid := signedPauseEnvelope(testPauseRelease, testPauseEpoch, testPauseKeyID, privateKey)
 	otherSeed := bytes.Repeat([]byte{0xff}, ed25519.SeedSize)
@@ -151,6 +154,7 @@ func TestVerifySignedPauseRejectsHostileEnvelopes(t *testing.T) {
 }
 
 func TestPauseKeyCatalogFailsClosedAndProductionSetHasOneApprovedKey(t *testing.T) {
+	t.Parallel()
 	publicKey, privateKey := deterministicPauseKey()
 	valid := []byte(signedPauseEnvelope(testPauseRelease, testPauseEpoch, testPauseKeyID, privateKey))
 	expectation := pauseExpectation{releaseVersion: testPauseRelease, metricsEpoch: testPauseEpoch}
@@ -200,6 +204,7 @@ func TestPauseKeyCatalogFailsClosedAndProductionSetHasOneApprovedKey(t *testing.
 }
 
 func TestSignedPauseSharedValidVector(t *testing.T) {
+	t.Parallel()
 	publicKey, privateKey := deterministicPauseKey()
 	wantEnvelope := signedPauseEnvelope(testPauseRelease, testPauseEpoch, testPauseKeyID, privateKey) + "\n"
 	wantPublicKey := base64.RawURLEncoding.EncodeToString(publicKey) + "\n"
@@ -221,6 +226,7 @@ func TestSignedPauseSharedValidVector(t *testing.T) {
 }
 
 func TestSignedPauseSharedInvalidVectors(t *testing.T) {
+	t.Parallel()
 	publicKey, _ := deterministicPauseKey()
 	for _, name := range []string{"bit-flipped.json", "duplicate-key.json", "unknown-key.json", "padded-signature.json"} {
 		t.Run(name, func(t *testing.T) {
@@ -251,6 +257,7 @@ func extractPauseSignatureForTest(t *testing.T, envelope string) string {
 }
 
 func TestPauseDTOsHaveClosedShapes(t *testing.T) {
+	t.Parallel()
 	for typ, want := range map[reflect.Type][]string{
 		reflect.TypeOf(pauseUnsigned{}):     {"SchemaVersion", "App", "Action", "ReleaseVersion", "MetricsEpoch", "KeyID"},
 		reflect.TypeOf(pauseEnvelopeWire{}): {"SchemaVersion", "App", "Action", "ReleaseVersion", "MetricsEpoch", "KeyID", "Signature"},

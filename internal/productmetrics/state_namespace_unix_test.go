@@ -13,6 +13,7 @@ import (
 )
 
 func TestStaleEnableCannotRegainAuthorityAcrossFreshCounterNamespace(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	initial := disabledState(2, 1, cleanupNone)
 	initial.RequiredNoticeVersion = 2
@@ -88,6 +89,7 @@ func TestStaleEnableCannotRegainAuthorityAcrossFreshCounterNamespace(t *testing.
 }
 
 func TestStaleCleanupTokenCannotRegainAuthorityAcrossFreshCounterNamespace(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	service := mustOpenTestService(t, defaultTestServiceDependencies(home, 2))
 	oldToken, err := service.beginDisable(context.Background(), stateVersion{})
@@ -125,6 +127,7 @@ func TestStaleCleanupTokenCannotRegainAuthorityAcrossFreshCounterNamespace(t *te
 }
 
 func TestTerminalAdjacentNoticeBumpPersistsFloorAgainstOlderBinary(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	terminalAdjacent := enabledState(maximumStateCounter-1, 1, testInstallationID, testSpoolGeneration)
 	writeStateFixture(t, home, terminalAdjacent)
@@ -148,6 +151,7 @@ func TestTerminalAdjacentNoticeBumpPersistsFloorAgainstOlderBinary(t *testing.T)
 }
 
 func TestTerminalAdjacentNoticeBumpReissuesPauseCleanupOwnershipInFreshNamespace(t *testing.T) {
+	t.Parallel()
 	for _, order := range []string{"notice-first", "cleanup-first"} {
 		t.Run(order, func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -198,6 +202,7 @@ func TestTerminalAdjacentNoticeBumpReissuesPauseCleanupOwnershipInFreshNamespace
 }
 
 func TestTerminalCounterNamespaceIsDurableNonRecordableFallback(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := enabledState(maximumStateCounter-1, 2, testInstallationID, testSpoolGeneration)
 	state.CounterNamespace = terminalCounterNamespace - 1
@@ -256,6 +261,7 @@ func TestTerminalCounterNamespaceIsDurableNonRecordableFallback(t *testing.T) {
 }
 
 func TestNamespaceParticipatesInPermitAndMutationCAS(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	oldState := enabledState(7, 2, testInstallationID, testSpoolGeneration)
 	writeStateFixture(t, home, oldState)
@@ -283,6 +289,7 @@ func TestNamespaceParticipatesInPermitAndMutationCAS(t *testing.T) {
 }
 
 func TestTerminalNoticeInvalidationAndPauseCleanupBothWinnerOrders(t *testing.T) {
+	t.Parallel()
 	for _, winner := range []string{"notice", "cleanup"} {
 		t.Run(winner+"-wins", func(t *testing.T) {
 			home := newMetricsTestHome(t)

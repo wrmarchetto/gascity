@@ -42,6 +42,7 @@ func TestCurrentReleaseIdentityIgnoresEnvAndDerivesDevelopmentWithoutReleaseTag(
 }
 
 func TestClassifyBuildTaxonomy(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name        string
 		tag         string
@@ -69,6 +70,7 @@ func TestClassifyBuildTaxonomy(t *testing.T) {
 }
 
 func TestCompiledReleaseInputsAreConstantsNotLinkerVariables(t *testing.T) {
+	t.Parallel()
 	file, err := parser.ParseFile(token.NewFileSet(), "release.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)

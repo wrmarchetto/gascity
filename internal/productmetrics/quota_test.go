@@ -7,6 +7,7 @@ import (
 )
 
 func TestQuotaCodecIsStrictAndBounded(t *testing.T) {
+	t.Parallel()
 	quota := spoolQuota{Events: 17, Bytes: 4096}
 	encoded, err := encodeSpoolQuota(quota)
 	if err != nil {
@@ -38,6 +39,7 @@ func TestQuotaCodecIsStrictAndBounded(t *testing.T) {
 }
 
 func TestRelocationCursorCodecIsStrictAndBounded(t *testing.T) {
+	t.Parallel()
 	cursor := relocationCursor{Next: 17}
 	encoded, err := encodeRelocationCursor(cursor)
 	if err != nil {
@@ -63,6 +65,7 @@ func TestRelocationCursorCodecIsStrictAndBounded(t *testing.T) {
 }
 
 func TestQuotaReservationCapsAndOverflowFailClosed(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		quota   spoolQuota
@@ -90,6 +93,7 @@ func TestQuotaReservationCapsAndOverflowFailClosed(t *testing.T) {
 }
 
 func TestQuotaReleaseNeverUnderflows(t *testing.T) {
+	t.Parallel()
 	quota := spoolQuota{Events: 2, Bytes: 300}
 	got, err := quota.release(1, 100)
 	if err != nil {
@@ -106,6 +110,7 @@ func TestQuotaReleaseNeverUnderflows(t *testing.T) {
 }
 
 func TestSpoolLimitsMatchApprovedContract(t *testing.T) {
+	t.Parallel()
 	if maximumSpoolBytes != 4*1024*1024 || maximumSpoolEvents != 5000 {
 		t.Fatalf("root quota = (%d bytes, %d events)", maximumSpoolBytes, maximumSpoolEvents)
 	}

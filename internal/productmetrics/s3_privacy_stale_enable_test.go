@@ -13,6 +13,7 @@ import (
 )
 
 func TestCouncilStaleExplicitEnableCannotCrossCompletedDisable(t *testing.T) {
+	t.Parallel()
 	for iteration := range 8 {
 		t.Run(fmt.Sprintf("iteration-%02d", iteration), func(t *testing.T) {
 			home := newMetricsTestHome(t)
@@ -111,6 +112,7 @@ func TestCouncilStaleExplicitEnableCannotCrossCompletedDisable(t *testing.T) {
 }
 
 func TestExplicitEnableIsIdempotentWhenPeerWinsAfterObservation(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := pendingState(4)
 	state.RequiredNoticeVersion = 2

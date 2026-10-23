@@ -16,6 +16,7 @@ import (
 )
 
 func TestStatusReadsBoundedDiagnosticsWithoutMutatingStorage(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -78,6 +79,7 @@ func TestStatusReadsBoundedDiagnosticsWithoutMutatingStorage(t *testing.T) {
 }
 
 func TestStatusQueueScanHonorsReadAndDirectoryBudgets(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -133,6 +135,7 @@ func TestStatusQueueScanHonorsReadAndDirectoryBudgets(t *testing.T) {
 }
 
 func TestStatusQueueScanSurfacesTraversalErrorAfterPartialDiagnostics(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -176,6 +179,7 @@ func TestStatusQueueScanSurfacesTraversalErrorAfterPartialDiagnostics(t *testing
 }
 
 func TestStatusMissingRootIsKnownEmptyAndDoesNotCreate(t *testing.T) {
+	t.Parallel()
 	home := inspectStorageTestHome(t, false)
 	if _, err := os.Lstat(home.Root()); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("metrics root exists before Status: %v", err)
@@ -192,6 +196,7 @@ func TestStatusMissingRootIsKnownEmptyAndDoesNotCreate(t *testing.T) {
 }
 
 func TestStatusFailsEachDiagnosticProjectionClosed(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		prepare func(*testing.T, *storageRoot, gchome.ProductUsageHome)
 		check   func(Status) bool
@@ -251,6 +256,7 @@ func writeDiagnosticStatusToRoot(t *testing.T, root *storageRoot, status diagnos
 }
 
 func TestPurgeAndCleanProofRequireDiagnosticStatusAbsent(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		body []byte
@@ -299,6 +305,7 @@ func mustEncodeDiagnosticStatus(t *testing.T, status diagnosticStatus) []byte {
 }
 
 func TestPurgeDiagnosticStatusPreservesReplacementAtDeleteBoundary(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, disabledState(7, 2, cleanupDisable))
 	plain := mustOpenMutableRoot(t, home)
@@ -342,6 +349,7 @@ func TestPurgeDiagnosticStatusPreservesReplacementAtDeleteBoundary(t *testing.T)
 }
 
 func TestCleanSpoolProofAllowsOnlyValidOwnedStatusForPauseResume(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(7, 2, testInstallationID, "")
 	paused.PausedThroughMetricsEpoch = 2

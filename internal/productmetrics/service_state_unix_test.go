@@ -11,7 +11,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +23,7 @@ import (
 const testNotice = "TEST-ONLY product metrics notice\n"
 
 func TestEnvironmentDisableTruthSets(t *testing.T) {
+	t.Parallel()
 	for _, value := range []string{"1", "true", "yes", "on", "TRUE", " Yes ", "\ton\n"} {
 		t.Run("gc-true-"+fmt.Sprintf("%q", value), func(t *testing.T) {
 			if !gcDisableTruthy(value) {
@@ -56,6 +56,7 @@ func TestEnvironmentDisableTruthSets(t *testing.T) {
 }
 
 func TestEffectiveStateCompletePrecedenceMatrix(t *testing.T) {
+	t.Parallel()
 	type stateFixture struct {
 		state  *persistedState
 		raw    []byte
@@ -121,6 +122,7 @@ func TestEffectiveStateCompletePrecedenceMatrix(t *testing.T) {
 }
 
 func TestConfigUnreadablePrecedesEnvironmentDisable(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	if err := os.Chmod(filepath.Join(home.Root(), configFileName), 0o644); err != nil {
@@ -139,6 +141,7 @@ func TestConfigUnreadablePrecedesEnvironmentDisable(t *testing.T) {
 }
 
 func TestFalseEnvironmentValuesNeverForceCollection(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, disabledState(2, 0, cleanupNone))
 	deps := defaultTestServiceDependencies(home, 1)
@@ -150,6 +153,7 @@ func TestFalseEnvironmentValuesNeverForceCollection(t *testing.T) {
 }
 
 func TestStatusIsByteForByteReadOnlyAcrossAbsentCorruptAndUnsafeStates(t *testing.T) {
+	t.Parallel()
 	tests := map[string]func(*testing.T, gchome.ProductUsageHome){
 		"absent config": func(_ *testing.T, _ gchome.ProductUsageHome) {},
 		"corrupt config": func(t *testing.T, home gchome.ProductUsageHome) {
@@ -186,19 +190,9 @@ func TestStatusIsByteForByteReadOnlyAcrossAbsentCorruptAndUnsafeStates(t *testin
 }
 
 func TestOpenProductionAndPreparationAreLazyAndNonCreating(t *testing.T) {
-	trustedTempRoot := "/tmp"
-	if runtime.GOOS == "darwin" {
-		trustedTempRoot = "/private/tmp"
-	}
-	t.Setenv("GOTMPDIR", trustedTempRoot)
-	t.Setenv("TMPDIR", trustedTempRoot)
-	parent := t.TempDir()
-	if err := os.Chmod(parent, 0o700); err != nil {
-		t.Fatalf("Chmod private parent: %v", err)
-	}
-	homePath := filepath.Join(parent, "not-created")
-	t.Setenv("GC_HOME", homePath)
-	service, err := OpenProduction(ProductionOptions{Home: gchome.ResolveReadOnly(), Release: CurrentReleaseIdentity()})
+	t.Parallel()
+	homePath := filepath.Join(trustedTestTempDir(t), "not-created")
+	service, err := OpenProduction(ProductionOptions{Home: explicitTestHome(homePath), Release: CurrentReleaseIdentity()})
 	if err != nil {
 		t.Fatalf("OpenProduction() error = %v", err)
 	}
@@ -220,6 +214,7 @@ func TestOpenProductionAndPreparationAreLazyAndNonCreating(t *testing.T) {
 }
 
 func TestStatusReportsBoundedProjectionWithoutExposingIdentity(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := enabledState(9, 1, testInstallationID, testSpoolGeneration)
 	state.CleanupEpoch = 4
@@ -251,6 +246,7 @@ func TestStatusReportsBoundedProjectionWithoutExposingIdentity(t *testing.T) {
 }
 
 func TestRecordingPermitIsImmutableAndCapturesExactState(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := enabledState(3, 1, testInstallationID, testSpoolGeneration)
 	writeStateFixture(t, home, state)
@@ -276,6 +272,7 @@ func TestRecordingPermitIsImmutableAndCapturesExactState(t *testing.T) {
 }
 
 func TestRecordingPermitConjunctiveEnvironmentAndAutomationGates(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(1, 1, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 1)
@@ -297,6 +294,7 @@ func TestRecordingPermitConjunctiveEnvironmentAndAutomationGates(t *testing.T) {
 }
 
 func TestNoticeInvalidationIsAtomicAndFirstReacceptingInvocationHasNoPermit(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	oldID := testInstallationID
 	writeStateFixture(t, home, enabledState(10, 1, oldID, testSpoolGeneration))
@@ -344,6 +342,7 @@ func TestNoticeInvalidationIsAtomicAndFirstReacceptingInvocationHasNoPermit(t *t
 }
 
 func TestPauseCleanupAndGreaterEpochResumeAreMonotonic(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(5, 1, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -403,6 +402,7 @@ func TestPauseCleanupAndGreaterEpochResumeAreMonotonic(t *testing.T) {
 }
 
 func TestGreaterEpochResumeEntropyFailureLeavesPauseStateUnchanged(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(7, 1, testInstallationID, "")
 	paused.PausedThroughMetricsEpoch = 1
@@ -430,6 +430,7 @@ func TestGreaterEpochResumeEntropyFailureLeavesPauseStateUnchanged(t *testing.T)
 }
 
 func TestPauseAndDisableDoNotDependOnEntropyAndRejectStaleCAS(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(3, 1, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 1)
@@ -453,6 +454,7 @@ func TestPauseAndDisableDoNotDependOnEntropyAndRejectStaleCAS(t *testing.T) {
 }
 
 func TestPauseRejectsPermitFromDifferentReleaseOrMetricsEpoch(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(3, 1, testInstallationID, testSpoolGeneration))
 	originalDeps := defaultTestServiceDependencies(home, 1)
@@ -475,6 +477,7 @@ func TestPauseRejectsPermitFromDifferentReleaseOrMetricsEpoch(t *testing.T) {
 }
 
 func TestDisableRecoversSafelyWritableCorruptAndNewerStateWithoutReleaseOrEntropy(t *testing.T) {
+	t.Parallel()
 	tests := map[string][]byte{
 		"corrupt": []byte("state_schema = [\n"),
 		"newer": replaceStateField(t,
@@ -510,6 +513,7 @@ func TestDisableRecoversSafelyWritableCorruptAndNewerStateWithoutReleaseOrEntrop
 }
 
 func TestMutationTerminalCountersFailClosedAndRemainDurablyOptOutRecoverable(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		neighbor persistedState
 		terminal persistedState
@@ -598,6 +602,7 @@ func TestMutationTerminalCountersFailClosedAndRemainDurablyOptOutRecoverable(t *
 }
 
 func TestMutationCounterLowerNeighborsCanDurablyApplyPause(t *testing.T) {
+	t.Parallel()
 	tests := map[string]persistedState{
 		"state generation": enabledState(maximumStateCounter-1, 1, testInstallationID, testSpoolGeneration),
 		"cleanup epoch": withState(enabledState(7, 1, testInstallationID, testSpoolGeneration), func(state *persistedState) {
@@ -645,6 +650,7 @@ func TestMutationCounterLowerNeighborsCanDurablyApplyPause(t *testing.T) {
 }
 
 func TestTerminalAdjacentDisableCleanupReusesExactOwnerAndCompletionRollsNamespace(t *testing.T) {
+	t.Parallel()
 	tests := map[string]persistedState{
 		"state generation": disabledState(maximumStateCounter-1, 1, cleanupDisable),
 		"cleanup epoch":    disabledState(7, maximumStateCounter-1, cleanupDisable),
@@ -682,6 +688,7 @@ func TestTerminalAdjacentDisableCleanupReusesExactOwnerAndCompletionRollsNamespa
 }
 
 func TestTerminalAdjacentPauseCleanupMovesToFreshCompletableNamespace(t *testing.T) {
+	t.Parallel()
 	base := enabledState(7, 1, testInstallationID, "")
 	base.CleanupKind = cleanupPause
 	base.CleanupEpoch = 1
@@ -718,6 +725,7 @@ func TestTerminalAdjacentPauseCleanupMovesToFreshCompletableNamespace(t *testing
 }
 
 func TestCurrentEndpointEmptyProductionServiceCanPersistAbsentAndCorruptOptOutWithoutEntropy(t *testing.T) {
+	t.Parallel()
 	tests := map[string][]byte{
 		"absent":  nil,
 		"corrupt": []byte("invalid = [\n"),
@@ -760,6 +768,7 @@ func TestCurrentEndpointEmptyProductionServiceCanPersistAbsentAndCorruptOptOutWi
 }
 
 func TestAppliedSyncPendingDisableAndPauseReturnNonSuccessWhilePeersFailClosed(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		transition func(*testing.T, *Service) error
@@ -822,6 +831,7 @@ func TestAppliedSyncPendingDisableAndPauseReturnNonSuccessWhilePeersFailClosed(t
 }
 
 func TestCallerHeldStateMutationDoesNotReacquireStateLock(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, disabledState(8, 3, cleanupDisable))
 
@@ -881,6 +891,7 @@ func TestCallerHeldStateMutationDoesNotReacquireStateLock(t *testing.T) {
 }
 
 func TestCallerHeldPermitRevalidationIncludesRecordReleaseAndEpoch(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := enabledState(7, 2, testInstallationID, testSpoolGeneration)
 	writeStateFixture(t, home, state)
@@ -941,6 +952,7 @@ func TestCallerHeldPermitRevalidationIncludesRecordReleaseAndEpoch(t *testing.T)
 }
 
 func TestConcurrentGreaterEpochResumeAndDisableHaveOneCASWinner(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(7, 1, testInstallationID, "")
 	paused.PausedThroughMetricsEpoch = 1
@@ -992,6 +1004,7 @@ func TestConcurrentGreaterEpochResumeAndDisableHaveOneCASWinner(t *testing.T) {
 }
 
 func TestConcurrentDisablePauseAndResumeHaveOneCASWinner(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(20, 1, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 1)
@@ -1035,6 +1048,7 @@ func TestConcurrentDisablePauseAndResumeHaveOneCASWinner(t *testing.T) {
 }
 
 func TestConfigModesAndBoundedReadsFailClosedWithoutRepair(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(1, 1, testInstallationID, testSpoolGeneration))
 	path := filepath.Join(home.Root(), configFileName)
@@ -1257,6 +1271,7 @@ func snapshotTree(t *testing.T, root string) string {
 }
 
 func TestUUIDFactoryUsedOnlyForEnablement(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(1, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)

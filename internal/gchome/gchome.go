@@ -109,6 +109,15 @@ func ResolveReadOnly() ResolvedHome {
 	return resolveHome(systemHomeResolverDeps(), false)
 }
 
+// ResolveReadOnlyFrom is ResolveReadOnly reading GC_HOME through getenv
+// instead of the process environment, so a caller can select a home without
+// mutating process-wide state.
+func ResolveReadOnlyFrom(getenv func(string) string) ResolvedHome {
+	deps := systemHomeResolverDeps()
+	deps.getenv = getenv
+	return resolveHome(deps, false)
+}
+
 // Default returns the Gas City machine-local state directory.
 //
 // Resolution order: GC_HOME, user home/.gc, process-unique temp fallback.

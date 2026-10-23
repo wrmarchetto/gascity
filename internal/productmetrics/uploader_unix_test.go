@@ -64,6 +64,7 @@ func (ctx *deterministicDeadlineContext) expire() {
 }
 
 func TestUploaderAcceptedClaimsOldestReleaseAndDeletesDurably(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	oldRelease := testSpoolEvent(testEventIDOne, "0.9.0", testRecordHour, CommandHelp)
@@ -123,6 +124,7 @@ func TestUploaderAcceptedClaimsOldestReleaseAndDeletesDurably(t *testing.T) {
 }
 
 func TestUploaderRetryRestoreCrashReplaysInflightOnNextAttempt(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -179,6 +181,7 @@ func TestUploaderRetryRestoreCrashReplaysInflightOnNextAttempt(t *testing.T) {
 }
 
 func TestUploaderStaleBeforeSendDoesNotNetworkOrRestore(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -217,6 +220,7 @@ func TestUploaderStaleBeforeSendDoesNotNetworkOrRestore(t *testing.T) {
 }
 
 func TestUploaderDisableInPostRevalidationGapSuppressesSendStart(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -262,6 +266,7 @@ func TestUploaderDisableInPostRevalidationGapSuppressesSendStart(t *testing.T) {
 }
 
 func TestUploaderSendStartRunsUnderFinalStateLockAndWaitRunsOutside(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -323,6 +328,7 @@ func TestUploaderSendStartRunsUnderFinalStateLockAndWaitRunsOutside(t *testing.T
 }
 
 func TestUploaderTerminalCallerContextDoesNotSkipSettlement(t *testing.T) {
+	t.Parallel()
 	waitFailure := errors.New("injected upload wait failure")
 	contextCases := []struct {
 		name        string
@@ -465,6 +471,7 @@ func TestUploaderTerminalCallerContextDoesNotSkipSettlement(t *testing.T) {
 }
 
 func TestUploaderStartFailureRestoresWithoutWaiting(t *testing.T) {
+	t.Parallel()
 	startFailure := errors.New("injected upload start failure")
 	for _, testCase := range []struct {
 		name      string
@@ -521,6 +528,7 @@ func TestUploaderStartFailureRestoresWithoutWaiting(t *testing.T) {
 }
 
 func TestUploaderStaleAcceptedResponseDoesNotDeleteOrRestore(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -559,6 +567,7 @@ func TestUploaderStaleAcceptedResponseDoesNotDeleteOrRestore(t *testing.T) {
 }
 
 func TestUploaderEnvironmentDisableBeforeSendSuppressesNetwork(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, permit.releaseVersion, testRecordHour, CommandHelp)
@@ -597,6 +606,7 @@ func TestUploaderEnvironmentDisableBeforeSendSuppressesNetwork(t *testing.T) {
 }
 
 func TestUploaderSenderErrorAlwaysRestoresContradictoryDestructiveResponse(t *testing.T) {
+	t.Parallel()
 	for _, response := range []uploadResponse{
 		{kind: uploadResponseAccepted, statusCode: 200},
 		{kind: uploadResponseDuplicate, statusCode: 409},
@@ -645,6 +655,7 @@ func TestUploaderSenderErrorAlwaysRestoresContradictoryDestructiveResponse(t *te
 }
 
 func TestUploaderIneligibleAbsentStateDoesNotCreateMetricsRoot(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	service := mustOpenTestService(t, defaultTestServiceDependencies(home, 2))
 	if _, err := os.Lstat(home.Root()); !errors.Is(err, fs.ErrNotExist) {
@@ -667,6 +678,7 @@ func TestUploaderIneligibleAbsentStateDoesNotCreateMetricsRoot(t *testing.T) {
 }
 
 func TestUploaderSignedPausePersistsBarrierAndCompletesBoundedLocalCleanup(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "0.9.0", testRecordHour, CommandHelp)
@@ -735,6 +747,7 @@ func TestUploaderSignedPausePersistsBarrierAndCompletesBoundedLocalCleanup(t *te
 }
 
 func TestSignedPauseDiagnosticWritePrecedesCleanupSuccessor(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	defer func() { _ = permit.Close() }()
 	root := mustOpenMutableRoot(t, home)
@@ -793,6 +806,7 @@ func TestSignedPauseDiagnosticWritePrecedesCleanupSuccessor(t *testing.T) {
 }
 
 func TestUploaderSignedPauseBudgetExhaustionReplaysLocallyWithoutNetwork(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "1.0.0", testRecordHour, CommandHelp)
@@ -869,6 +883,7 @@ func TestUploaderSignedPauseBudgetExhaustionReplaysLocallyWithoutNetwork(t *test
 }
 
 func TestGreaterEpochResumeFinishesPauseCleanupBeforeTransitionPermit(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(9, 2, testInstallationID, "")
 	paused.CleanupKind = cleanupPause
@@ -980,6 +995,7 @@ func closeOpenFileMatchingPath(path string) error {
 }
 
 func TestGreaterEpochResumeReprovesJournalAfterPauseSuccessorProofFailure(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(9, 2, testInstallationID, "")
 	paused.CleanupKind = cleanupPause
@@ -1057,6 +1073,7 @@ func TestGreaterEpochResumeReprovesJournalAfterPauseSuccessorProofFailure(t *tes
 }
 
 func TestGreaterEpochResumeRejectsUnprovenPauseSuccessorTree(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(10, 2, testInstallationID, "")
 	paused.PausedThroughMetricsEpoch = 1
@@ -1087,6 +1104,7 @@ func TestGreaterEpochResumeRejectsUnprovenPauseSuccessorTree(t *testing.T) {
 }
 
 func TestUploaderRejectsMismatchedSignedPauseWithoutStateMutation(t *testing.T) {
+	t.Parallel()
 	for _, mismatch := range []string{"release", "epoch"} {
 		t.Run(mismatch, func(t *testing.T) {
 			home, service, permit := newRecordServiceFixture(t, testEventIDThree)
@@ -1126,6 +1144,7 @@ func TestUploaderRejectsMismatchedSignedPauseWithoutStateMutation(t *testing.T) 
 }
 
 func TestUploaderPauseCommitFailureDoesNotStartSpoolPurge(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []string{"not-applied", "applied-sync-pending"} {
 		t.Run(failure, func(t *testing.T) {
 			home, service, permit := newRecordServiceFixture(t, testEventIDThree)
@@ -1233,6 +1252,7 @@ func TestUploaderPauseCommitFailureDoesNotStartSpoolPurge(t *testing.T) {
 }
 
 func TestUploaderStaleSignedPauseResponseDoesNotMutateOrSettle(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	root := mustOpenMutableRoot(t, home)
 	event := testSpoolEvent(testEventIDOne, "0.9.0", testRecordHour, CommandHelp)
@@ -1275,6 +1295,7 @@ func TestUploaderStaleSignedPauseResponseDoesNotMutateOrSettle(t *testing.T) {
 }
 
 func TestPauseCleanupCallerHeldBarrierSyncFailurePreventsDeletion(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(9, 2, testInstallationID, "")
 	paused.CleanupKind = cleanupPause
@@ -1348,6 +1369,7 @@ func TestPauseCleanupCallerHeldBarrierSyncFailurePreventsDeletion(t *testing.T) 
 }
 
 func TestPauseCleanupPurgesSpawnThrottleBeforeCompleting(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(9, 2, testInstallationID, "")
 	paused.CleanupKind = cleanupPause
@@ -1405,6 +1427,7 @@ func TestPauseCleanupPurgesSpawnThrottleBeforeCompleting(t *testing.T) {
 }
 
 func TestGreaterEpochResumeWaitsForUploaderLockBeforeCleanup(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(9, 2, testInstallationID, "")
 	paused.CleanupKind = cleanupPause

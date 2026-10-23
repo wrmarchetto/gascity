@@ -14,6 +14,7 @@ import (
 )
 
 func TestConfigRecordLeaseDistinguishesAtomicReplacementAndCloses(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	root, err := openStorageRootMutable(home)
@@ -90,6 +91,7 @@ func TestReadOnlyStatusAndRejectedPermitCloseConfigRecordLeases(t *testing.T) {
 }
 
 func TestRecordingPermitCloseInvalidatesAllCopies(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 2, testInstallationID, testSpoolGeneration))
 	service := mustOpenTestService(t, defaultTestServiceDependencies(home, 2))
@@ -110,6 +112,7 @@ func TestRecordingPermitCloseInvalidatesAllCopies(t *testing.T) {
 }
 
 func TestTerminalNamespaceOptOutDeletesRetainedIdentity(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	state := enabledState(maximumStateCounter-1, 2, testInstallationID, "")
 	state.CounterNamespace = terminalCounterNamespace
@@ -144,6 +147,7 @@ func TestTerminalNamespaceOptOutDeletesRetainedIdentity(t *testing.T) {
 }
 
 func TestCorruptRollbackCannotReviveStaleCleanupOwner(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	oldBarrier := disabledState(1, 1, cleanupDisable)
 	oldBarrier.CounterNamespace = 2
@@ -175,6 +179,7 @@ func TestCorruptRollbackCannotReviveStaleCleanupOwner(t *testing.T) {
 }
 
 func TestCorruptRecoveryCannotReuseFinalNamespaceCleanupAuthority(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	late := enabledState(maximumStateCounter-1, 2, testInstallationID, testSpoolGeneration)
 	late.CounterNamespace = terminalCounterNamespace - 1
@@ -215,6 +220,7 @@ func TestCorruptRecoveryCannotReuseFinalNamespaceCleanupAuthority(t *testing.T) 
 }
 
 func TestCleanupWinnerCannotLeaveNoticeFloorResumeWindow(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	paused := enabledState(maximumStateCounter-1, 1, testInstallationID, "")
 	paused.CleanupKind = cleanupPause
@@ -280,6 +286,7 @@ func TestCleanupWinnerCannotLeaveNoticeFloorResumeWindow(t *testing.T) {
 }
 
 func TestExplicitStaleEnableFailurePersistsNoticeFloorFirst(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	prior := enabledState(4, 1, testInstallationID, testSpoolGeneration)
 	writeStateFixture(t, home, prior)
@@ -321,6 +328,7 @@ func TestExplicitStaleEnableFailurePersistsNoticeFloorFirst(t *testing.T) {
 }
 
 func TestExplicitStaleEnableWriterFailureKeepsNoticeFloorInvalidated(t *testing.T) {
+	t.Parallel()
 	tests := map[string]io.Writer{
 		"short":  shortNoticeWriter{},
 		"failed": failingNoticeWriter{},
@@ -359,6 +367,7 @@ func TestExplicitStaleEnableWriterFailureKeepsNoticeFloorInvalidated(t *testing.
 }
 
 func TestExplicitStaleEnableEntropyFailureKeepsNoticeFloorInvalidated(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(4, 1, testInstallationID, testSpoolGeneration))
 	precreateStateLock(t, home)

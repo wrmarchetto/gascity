@@ -24,25 +24,42 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func inspectStorageTestHome(t *testing.T, createRoot bool) gchome.ProductUsageHome {
-	t.Helper()
-	// The shared workspace lives below a deliberately group-writable /data.
-	// Put this trust-boundary fixture below the supported root-owned sticky
-	// ancestor instead.
+// trustedTestTempDir returns a fresh 0700 directory below the root-owned
+// sticky temporary root, whatever TMPDIR and GOTMPDIR name. The shared
+// workspace lives below a deliberately group-writable /data, which the
+// product-usage trust walk rejects as an ancestor.
+func trustedTestTempDir(tb testing.TB) string {
+	tb.Helper()
 	trustedTempRoot := "/tmp"
 	if runtime.GOOS == "darwin" {
 		trustedTempRoot = "/private/tmp"
 	}
-	// Go 1.26's testing.T.TempDir prefers GOTMPDIR over TMPDIR. Set both so
-	// repository test runners may keep their build scratch space below /data
-	// without moving this trust-boundary fixture below that unsafe ancestor.
-	t.Setenv("GOTMPDIR", trustedTempRoot)
-	t.Setenv("TMPDIR", trustedTempRoot)
-	privateAncestor := t.TempDir()
-	if err := os.Chmod(privateAncestor, 0o700); err != nil {
-		t.Fatalf("Chmod private ancestor: %v", err)
+	dir, err := os.MkdirTemp(trustedTempRoot, "gc-productmetrics-")
+	if err != nil {
+		tb.Fatalf("MkdirTemp below %s: %v", trustedTempRoot, err)
 	}
-	homePath := filepath.Join(privateAncestor, ".gc")
+	tb.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			tb.Errorf("remove trusted temp dir: %v", err)
+		}
+	})
+	return dir
+}
+
+// explicitTestHome resolves homePath as GC_HOME=homePath would, without
+// setting the variable, so its caller can run in parallel.
+func explicitTestHome(homePath string) gchome.ResolvedHome {
+	return gchome.ResolveReadOnlyFrom(func(key string) string {
+		if key == "GC_HOME" {
+			return homePath
+		}
+		return ""
+	})
+}
+
+func inspectStorageTestHome(t *testing.T, createRoot bool) gchome.ProductUsageHome {
+	t.Helper()
+	homePath := filepath.Join(trustedTestTempDir(t), ".gc")
 	if err := os.Mkdir(homePath, 0o700); err != nil {
 		t.Fatalf("Mkdir home: %v", err)
 	}
@@ -51,8 +68,7 @@ func inspectStorageTestHome(t *testing.T, createRoot bool) gchome.ProductUsageHo
 			t.Fatalf("Mkdir product root: %v", err)
 		}
 	}
-	t.Setenv("GC_HOME", homePath)
-	inspection, err := gchome.InspectProductUsageHome(gchome.ResolveReadOnly())
+	inspection, err := gchome.InspectProductUsageHome(explicitTestHome(homePath))
 	if err != nil {
 		t.Fatalf("InspectProductUsageHome: %v", err)
 	}
@@ -60,6 +76,7 @@ func inspectStorageTestHome(t *testing.T, createRoot bool) gchome.ProductUsageHo
 }
 
 func TestStorageAtomicWriteUsesPrivateModesAndDurabilitySteps(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var steps []storageStep
 	hooks := storageTestHooks{beforeStep: func(step storageStep) error {
@@ -114,6 +131,7 @@ func TestStorageAtomicWriteUsesPrivateModesAndDurabilitySteps(t *testing.T) {
 }
 
 func TestStorageRejectsRelativeAndUnboundedNamesBeforeSyscalls(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -135,13 +153,13 @@ func TestStorageRejectsRelativeAndUnboundedNamesBeforeSyscalls(t *testing.T) {
 }
 
 func TestStorageAllowsTrustedHomeComponentsOutsideMetadataAlphabet(t *testing.T) {
+	t.Parallel()
 	base := inspectStorageTestHome(t, false)
 	homePath := filepath.Join(filepath.Dir(base.Home().Path()), "gc home-é")
 	if err := os.Mkdir(homePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("GC_HOME", homePath)
-	inspection, err := gchome.InspectProductUsageHome(gchome.ResolveReadOnly())
+	inspection, err := gchome.InspectProductUsageHome(explicitTestHome(homePath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,6 +173,7 @@ func TestStorageAllowsTrustedHomeComponentsOutsideMetadataAlphabet(t *testing.T)
 }
 
 func TestStorageOpenDirRejectsCrossDeviceDescendantsBeforeDescending(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name          string
 		crossOnLookup int
@@ -213,6 +232,7 @@ func TestStorageOpenDirRejectsCrossDeviceDescendantsBeforeDescending(t *testing.
 }
 
 func TestStorageReadOnlyOpenNeverCreatesOrRepairs(t *testing.T) {
+	t.Parallel()
 	t.Run("missing root", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, false)
 		if _, err := openStorageRootReadOnly(inspection); !errors.Is(err, fs.ErrNotExist) {
@@ -308,6 +328,7 @@ func TestStorageReadOnlyOpenNeverCreatesOrRepairs(t *testing.T) {
 }
 
 func TestStorageRejectsUnsafeFilesWithoutFollowingThem(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -355,6 +376,7 @@ func TestStorageRejectsUnsafeFilesWithoutFollowingThem(t *testing.T) {
 }
 
 func TestStorageMutationsRejectUnsafeEntriesWithoutChangingTargets(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -417,6 +439,7 @@ func TestStorageMutationsRejectUnsafeEntriesWithoutChangingTargets(t *testing.T)
 }
 
 func TestStorageRejectsOwnerModeAndComponentIdentityDrift(t *testing.T) {
+	t.Parallel()
 	t.Run("injected owner drift", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		hooks := storageTestHooks{metadata: func(path string, metadata storageMetadata) storageMetadata {
@@ -474,6 +497,7 @@ func TestStorageRejectsOwnerModeAndComponentIdentityDrift(t *testing.T) {
 }
 
 func TestStorageRetainedDescriptorsPreventPostOpenComponentRedirection(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -540,6 +564,7 @@ func TestStorageRetainedDescriptorsPreventPostOpenComponentRedirection(t *testin
 }
 
 func TestStorageOperationsRevalidateRetainedDirectoryTrust(t *testing.T) {
+	t.Parallel()
 	t.Run("root mode drift after open", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		root, err := openStorageRootMutable(inspection)
@@ -624,6 +649,7 @@ func TestStorageOperationsRevalidateRetainedDirectoryTrust(t *testing.T) {
 }
 
 func TestStorageAtomicWriteCleansTempsAtEveryFailure(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name            string
 		step            storageStep
@@ -702,6 +728,7 @@ func TestStorageAtomicWriteCleansTempsAtEveryFailure(t *testing.T) {
 }
 
 func TestStorageAtomicNoReplaceAndWriteFailureSeams(t *testing.T) {
+	t.Parallel()
 	t.Run("no-replace creation preserves existing event", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		var steps []storageStep
@@ -807,6 +834,7 @@ func TestStorageAtomicNoReplaceAndWriteFailureSeams(t *testing.T) {
 }
 
 func TestStorageDeleteRetriesDirectorySyncAfterUncertainFailure(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	failNextDirectorySync := false
 	hooks := storageTestHooks{beforeStep: func(step storageStep) error {
@@ -843,6 +871,7 @@ func TestStorageDeleteRetriesDirectorySyncAfterUncertainFailure(t *testing.T) {
 }
 
 func TestStorageRemoveFileRejectsIdentityReplacementAtMutationBoundary(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	victimPath := filepath.Join(inspection.Root(), "event.json")
 	displacedPath := victimPath + ".displaced"
@@ -880,6 +909,7 @@ func TestStorageRemoveFileRejectsIdentityReplacementAtMutationBoundary(t *testin
 }
 
 func TestStorageDirectoryCreationRetryRecoversFailedParentSync(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name       string
 		failOnSync int
@@ -930,6 +960,7 @@ func TestStorageDirectoryCreationRetryRecoversFailedParentSync(t *testing.T) {
 }
 
 func TestS2bFinalMutableOpenExistingRecoversUncertainDirectoryCreation(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	armed := false
 	failed := false
@@ -975,6 +1006,7 @@ func TestS2bFinalMutableOpenExistingRecoversUncertainDirectoryCreation(t *testin
 }
 
 func TestStorageReadOnlyExistingDescendantOpenDoesNotRepair(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	if err := os.Mkdir(filepath.Join(inspection.Root(), "queue"), 0o700); err != nil {
 		t.Fatal(err)
@@ -1002,20 +1034,10 @@ func TestStorageReadOnlyExistingDescendantOpenDoesNotRepair(t *testing.T) {
 }
 
 func TestStorageRootCreationRetryRecoversMissingIntermediateParentSync(t *testing.T) {
-	trustedTempRoot := "/tmp"
-	if runtime.GOOS == "darwin" {
-		trustedTempRoot = "/private/tmp"
-	}
-	t.Setenv("GOTMPDIR", trustedTempRoot)
-	t.Setenv("TMPDIR", trustedTempRoot)
-	privateAncestor := t.TempDir()
-	if err := os.Chmod(privateAncestor, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	intermediate := filepath.Join(privateAncestor, "created-intermediate")
+	t.Parallel()
+	intermediate := filepath.Join(trustedTestTempDir(t), "created-intermediate")
 	homePath := filepath.Join(intermediate, ".gc")
-	t.Setenv("GC_HOME", homePath)
-	inspection, err := gchome.InspectProductUsageHome(gchome.ResolveReadOnly())
+	inspection, err := gchome.InspectProductUsageHome(explicitTestHome(homePath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1071,6 +1093,7 @@ func TestStorageRootCreationRetryRecoversMissingIntermediateParentSync(t *testin
 }
 
 func TestStorageRenameDeleteAndNestedDirectoriesAreDescriptorRelativeAndDurable(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	var steps []storageStep
 	hooks := storageTestHooks{beforeStep: func(step storageStep) error {
@@ -1155,6 +1178,7 @@ func setStorageDirectoryStepHook(t *testing.T, directory *storageDir, hook func(
 }
 
 func TestStorageCrossDirectoryOneWayRenamesSyncDestinationBeforeSource(t *testing.T) {
+	t.Parallel()
 	openRoot := func(t *testing.T) (*storageRoot, gchome.ProductUsageHome) {
 		t.Helper()
 		inspection := inspectStorageTestHome(t, true)
@@ -1321,6 +1345,7 @@ func TestStorageCrossDirectoryOneWayRenamesSyncDestinationBeforeSource(t *testin
 }
 
 func TestStorageSameDirectoryOneWayRenamesSyncOnce(t *testing.T) {
+	t.Parallel()
 	operations := []struct {
 		name  string
 		setup func(*testing.T, *storageRoot) (func() (storageRenameResult, error), string, string)
@@ -1395,6 +1420,7 @@ func TestStorageSameDirectoryOneWayRenamesSyncOnce(t *testing.T) {
 }
 
 func TestStorageRenameOutcomesAreTypedAndRecoverable(t *testing.T) {
+	t.Parallel()
 	t.Run("rename syscall failure is not applied", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		armed := false
@@ -1547,6 +1573,7 @@ func TestStorageRenameOutcomesAreTypedAndRecoverable(t *testing.T) {
 }
 
 func TestStorageNoReplaceRenameUnsupportedErrorsFailClosed(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name string
 		err  error
@@ -1599,6 +1626,7 @@ func openRenameTestDirectories(t *testing.T, inspection gchome.ProductUsageHome,
 }
 
 func TestS2bRedTeamRenameCollisionIsAtomicNoReplace(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	armed := false
 	var collisionErr error
@@ -1626,6 +1654,7 @@ func TestS2bRedTeamRenameCollisionIsAtomicNoReplace(t *testing.T) {
 }
 
 func TestS2bRedTeamEnumeratedCleanupCannotSplitStableLockInode(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	firstRoot, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -1660,6 +1689,7 @@ func TestS2bRedTeamEnumeratedCleanupCannotSplitStableLockInode(t *testing.T) {
 }
 
 func TestStorageEnumeratedCleanupProtectsBothHeldRootLocks(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"state.lock", "uploader.lock"} {
 		t.Run(name, func(t *testing.T) {
 			inspection := inspectStorageTestHome(t, true)
@@ -1705,6 +1735,7 @@ func TestStorageEnumeratedCleanupProtectsBothHeldRootLocks(t *testing.T) {
 }
 
 func TestStorageEnumeratedDirectoryCleanupProtectsRootLockNames(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"state.lock", "uploader.lock"} {
 		t.Run(name, func(t *testing.T) {
 			inspection := inspectStorageTestHome(t, true)
@@ -1729,6 +1760,7 @@ func TestStorageEnumeratedDirectoryCleanupProtectsRootLockNames(t *testing.T) {
 }
 
 func TestStorageRootLockProtectionSurvivesEmptyComponentAlias(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -1752,6 +1784,7 @@ func TestStorageRootLockProtectionSurvivesEmptyComponentAlias(t *testing.T) {
 }
 
 func TestStorageNestedLockNamedPoisonRemainsCleanable(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -1794,6 +1827,7 @@ func TestStorageNestedLockNamedPoisonRemainsCleanable(t *testing.T) {
 }
 
 func TestStorageIteratorYieldsBoundedNoFollowMetadata(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -1867,6 +1901,7 @@ func TestStorageIteratorYieldsBoundedNoFollowMetadata(t *testing.T) {
 }
 
 func TestStorageIteratorCloseAndFailureSeams(t *testing.T) {
+	t.Parallel()
 	t.Run("fresh cursor", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		root, err := openStorageRootMutable(inspection)
@@ -2068,6 +2103,7 @@ func TestStorageIteratorCloseAndFailureSeams(t *testing.T) {
 }
 
 func TestStorageEnumeratedEntryRenameMovesExactAnyKindAndSyncsParents(t *testing.T) {
+	t.Parallel()
 	for _, shape := range []struct {
 		name  string
 		setup func(*testing.T, string, string)
@@ -2169,6 +2205,7 @@ func TestStorageEnumeratedEntryRenameMovesExactAnyKindAndSyncsParents(t *testing
 }
 
 func TestStorageEnumeratedEntryRenameCollisionPreservesBothEntries(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -2216,6 +2253,7 @@ func TestStorageEnumeratedEntryRenameCollisionPreservesBothEntries(t *testing.T)
 }
 
 func TestStorageEnumeratedEntryRenameRejectsSourceReplacementAtMutationBoundary(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	armed := false
 	replaced := false
@@ -2263,6 +2301,7 @@ func TestStorageEnumeratedEntryRenameRejectsSourceReplacementAtMutationBoundary(
 }
 
 func TestStorageEnumeratedEntryRenameSyncFailureIsAppliedPending(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	armed := false
 	failed := false
@@ -2303,6 +2342,7 @@ func TestStorageEnumeratedEntryRenameSyncFailureIsAppliedPending(t *testing.T) {
 }
 
 func TestStorageEnumeratedEntryRenameProtectsStableRootLockNames(t *testing.T) {
+	t.Parallel()
 	for _, lockName := range []string{stateLockName, "uploader.lock"} {
 		t.Run(lockName+" source", func(t *testing.T) {
 			inspection := inspectStorageTestHome(t, true)
@@ -2357,6 +2397,7 @@ func TestStorageEnumeratedEntryRenameProtectsStableRootLockNames(t *testing.T) {
 }
 
 func TestStorageEnumeratedUnlinkRejectsReplacementAtMutationBoundary(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	victimPath := filepath.Join(inspection.Root(), "victim")
 	displacedPath := victimPath + "-enumerated"
@@ -2395,6 +2436,7 @@ func TestStorageEnumeratedUnlinkRejectsReplacementAtMutationBoundary(t *testing.
 }
 
 func TestStorageEnumeratedRmdirRejectsReplacementAtMutationBoundary(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	victimPath := filepath.Join(inspection.Root(), "victim")
 	displacedPath := victimPath + "-enumerated"
@@ -2433,6 +2475,7 @@ func TestStorageEnumeratedRmdirRejectsReplacementAtMutationBoundary(t *testing.T
 }
 
 func TestStorageEnumeratedExchangeProtectsBothStableRootLockEndpoints(t *testing.T) {
+	t.Parallel()
 	for _, lockName := range []string{stateLockName, "uploader.lock"} {
 		for _, lockEndpoint := range []string{"source", "target"} {
 			t.Run(lockName+" "+lockEndpoint, func(t *testing.T) {
@@ -2476,6 +2519,7 @@ func TestStorageEnumeratedExchangeProtectsBothStableRootLockEndpoints(t *testing
 }
 
 func TestStorageIdentityCheckedUnsafeCleanup(t *testing.T) {
+	t.Parallel()
 	t.Run("symlink FIFO sparse and hard-link poison", func(t *testing.T) {
 		inspection := inspectStorageTestHome(t, true)
 		root, err := openStorageRootMutable(inspection)
@@ -2581,6 +2625,7 @@ func TestStorageIdentityCheckedUnsafeCleanup(t *testing.T) {
 }
 
 func TestStorageIdentityCheckedEmptyDirectoryRemoval(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -2600,6 +2645,7 @@ func TestStorageIdentityCheckedEmptyDirectoryRemoval(t *testing.T) {
 }
 
 func TestStorageCleanupDirectoryRejectsCrossDeviceDescentBeforeOpen(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	childPath := filepath.Join(inspection.Root(), "child")
 	sentinelPath := filepath.Join(childPath, "keep")
@@ -2645,6 +2691,7 @@ func TestStorageCleanupDirectoryRejectsCrossDeviceDescentBeforeOpen(t *testing.T
 }
 
 func TestStorageCleanupDirectoryAllowsSameDeviceDescent(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	childPath := filepath.Join(inspection.Root(), "child")
 	if err := os.Mkdir(childPath, 0o700); err != nil {
@@ -2669,6 +2716,7 @@ func TestStorageCleanupDirectoryAllowsSameDeviceDescent(t *testing.T) {
 }
 
 func TestStorageCleanupBoundaryBeginsAtRetainedMetricsRoot(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	childPath := filepath.Join(inspection.Root(), "child")
 	if err := os.Mkdir(childPath, 0o700); err != nil {
@@ -2705,6 +2753,7 @@ func TestStorageCleanupBoundaryBeginsAtRetainedMetricsRoot(t *testing.T) {
 }
 
 func TestRootAtomicWritesJournalMarkerBeforeCreatingTemp(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"replace", "outcome", "no-replace"} {
 		t.Run(operation, func(t *testing.T) {
 			inspection := inspectStorageTestHome(t, false)
@@ -2749,6 +2798,7 @@ func TestRootAtomicWritesJournalMarkerBeforeCreatingTemp(t *testing.T) {
 }
 
 func TestRootTempJournalMarkerCodecIsStrictAndExact(t *testing.T) {
+	t.Parallel()
 	name := ".pm-tmp-1-2"
 	temp := recordIncarnation{dev: 3, ino: 4}
 	bound, err := encodeBoundRootTempJournalMarker(name, temp)
@@ -2888,6 +2938,7 @@ func TestRootAtomicWriteCounterWrapDoesNotConsumeCollisionAttempt(t *testing.T) 
 }
 
 func TestRootAtomicWriteRejectsRetainedMarkerReplacementBeforeTempCreation(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var markerPath, displacedPath string
 	replaced := false
@@ -2943,6 +2994,7 @@ func TestRootAtomicWriteRejectsRetainedMarkerReplacementBeforeTempCreation(t *te
 }
 
 func TestRootAtomicWriteRevalidatesTempAfterBindHookBeforeBoundBytes(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var tempPath, displacedTemp, markerPath string
 	swapped := false
@@ -2991,6 +3043,7 @@ func TestRootAtomicWriteRevalidatesTempAfterBindHookBeforeBoundBytes(t *testing.
 }
 
 func TestRootAtomicWriteRevalidatesIntentMarkerAfterTempMetadataBeforeBoundBytes(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var tempPath, markerPath, displacedMarker string
 	armed := false
@@ -3047,6 +3100,7 @@ func TestRootAtomicWriteRevalidatesIntentMarkerAfterTempMetadataBeforeBoundBytes
 }
 
 func TestRootAtomicWritePreBindCrashLeavesOnlyIntentAndEmptyTemp(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var tempPath, markerPath string
 	injected := false
@@ -3100,6 +3154,7 @@ func TestRootAtomicWritePreBindCrashLeavesOnlyIntentAndEmptyTemp(t *testing.T) {
 }
 
 func TestRootAtomicWriteRevalidatesMarkerAfterPayloadHookBeforeFirstByte(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var tempPath, markerPath, displacedMarker string
 	swapped := false
@@ -3148,6 +3203,7 @@ func TestRootAtomicWriteRevalidatesMarkerAfterPayloadHookBeforeFirstByte(t *test
 }
 
 func TestRootAtomicWriteFailureCleanupRevalidatesMarkerAfterDeleteHook(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var tempPath, markerPath, displacedMarker string
 	payloadStarted := false
@@ -3204,6 +3260,7 @@ func TestRootAtomicWriteFailureCleanupRevalidatesMarkerAfterDeleteHook(t *testin
 }
 
 func TestRootAtomicWriteMarkerRetirementRequiresTempAbsenceAfterDeleteHook(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var tempPath, markerPath string
 	created := false
@@ -3245,6 +3302,7 @@ func TestRootAtomicWriteMarkerRetirementRequiresTempAbsenceAfterDeleteHook(t *te
 }
 
 func TestRootAtomicWritePreservesTempNameReplacementDuringValidationFailure(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var tempPath, displacedTemp, markerPath string
 	swapped := false
@@ -3286,6 +3344,7 @@ func TestRootAtomicWritePreservesTempNameReplacementDuringValidationFailure(t *t
 }
 
 func TestRootAtomicWriteRevalidatesMarkerAfterRenameHookBeforeInstall(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	var markerPath, displacedMarker string
 	swapped := false
@@ -3332,6 +3391,7 @@ func TestRootAtomicWriteRevalidatesMarkerAfterRenameHookBeforeInstall(t *testing
 }
 
 func TestRootAtomicWriteRejectsJournalPathReplacementBeforeTempCreation(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, false)
 	journalPath := filepath.Join(inspection.Root(), rootTempJournalDirectoryName)
 	displacedPath := filepath.Join(inspection.Root(), ".displaced-root-temp-journal")
@@ -3380,6 +3440,7 @@ func TestRootAtomicWriteRejectsJournalPathReplacementBeforeTempCreation(t *testi
 }
 
 func TestStorageEnumeratedCleanupMutationsRejectCrossDeviceBoundary(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"unlink", "rmdir", "rename", "exchange"} {
 		t.Run(operation, func(t *testing.T) {
 			inspection := inspectStorageTestHome(t, true)
@@ -3450,6 +3511,7 @@ func TestStorageEnumeratedCleanupMutationsRejectCrossDeviceBoundary(t *testing.T
 }
 
 func TestStorageDirectoryRemovalRejectsPostEnumerationTrustDrift(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -3476,6 +3538,7 @@ func TestStorageDirectoryRemovalRejectsPostEnumerationTrustDrift(t *testing.T) {
 }
 
 func TestStorageCleanupFailureSeamsAndDirectorySyncRecovery(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name      string
 		step      storageStep
@@ -3604,6 +3667,7 @@ func requireOnlyPersistentRootTempJournal(t *testing.T, rootPath string) []os.Di
 }
 
 func TestStorageAdvisoryLockUsesStableInodeAndHonorsContext(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	firstRoot, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -3679,6 +3743,7 @@ func TestStorageAdvisoryLockUsesStableInodeAndHonorsContext(t *testing.T) {
 }
 
 func TestStorageTryUploaderLockDistinguishesFreeAndContended(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	firstRoot, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -3712,6 +3777,7 @@ func TestStorageTryUploaderLockDistinguishesFreeAndContended(t *testing.T) {
 }
 
 func TestStorageCloseRacesOperationsWithTypedClosedResult(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	seed, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -3758,6 +3824,7 @@ func TestStorageCloseRacesOperationsWithTypedClosedResult(t *testing.T) {
 }
 
 func TestStorageAdvisoryLockConcurrentReleaseIsIdempotent(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	root, err := openStorageRootMutable(inspection)
 	if err != nil {
@@ -3794,6 +3861,7 @@ func TestStorageAdvisoryLockConcurrentReleaseIsIdempotent(t *testing.T) {
 }
 
 func TestStorageAdvisoryLockRejectsHardlinkAndSymlink(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"hardlink", "symlink"} {
 		t.Run(kind, func(t *testing.T) {
 			inspection := inspectStorageTestHome(t, true)
@@ -3828,6 +3896,7 @@ func TestStorageAdvisoryLockRejectsHardlinkAndSymlink(t *testing.T) {
 }
 
 func TestStorageAdvisoryLockIsReleasedWhenProcessDies(t *testing.T) {
+	t.Parallel()
 	inspection := inspectStorageTestHome(t, true)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestStorageLockHolderHelper$", "--", "--productmetrics-lock-holder", inspection.Home().Path())
 	stdout, err := cmd.StdoutPipe()
@@ -3937,6 +4006,7 @@ func parseStorageLockHolderArgs(args []string) (string, bool) {
 }
 
 func TestParseStorageLockHolderArgsRequiresExactSuffix(t *testing.T) {
+	t.Parallel()
 	for _, test := range []struct {
 		name     string
 		args     []string

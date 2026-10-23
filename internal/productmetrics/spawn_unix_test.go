@@ -25,6 +25,7 @@ import (
 )
 
 func TestSpawnUploaderUsesAbsoluteExactSpecAndWaitsAsynchronously(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	service := mustOpenTestService(t, spawnTestDependencies(
 		home,
@@ -78,6 +79,7 @@ func TestSpawnUploaderUsesAbsoluteExactSpecAndWaitsAsynchronously(t *testing.T) 
 }
 
 func TestSpawnUploaderEntropyFailureSkipsProcessOnly(t *testing.T) {
+	t.Parallel()
 	sentinel := errors.New("entropy failed")
 	home := newMetricsTestHome(t)
 	service := mustOpenTestService(t, spawnTestDependencies(
@@ -114,6 +116,7 @@ func activeEnabledStateForSpawnTest() persistedState {
 }
 
 func TestStartedPrivateUploaderIsReapedWhenParentDescriptorCloseFails(t *testing.T) {
+	t.Parallel()
 	closeFailure := errors.New("close failed")
 	waitCalled := make(chan struct{})
 	var waits atomic.Int32
@@ -141,6 +144,7 @@ func TestStartedPrivateUploaderIsReapedWhenParentDescriptorCloseFails(t *testing
 }
 
 func TestPlatformPrivateUploaderCommandSnapshot(t *testing.T) {
+	t.Parallel()
 	spec := privateUploaderProcessSpec{
 		executable: "/opt/gascity/bin/gc",
 		args:       []string{privateUploaderSentinel, testSpawnTokenOne},
@@ -174,6 +178,7 @@ func TestPlatformPrivateUploaderCommandSnapshot(t *testing.T) {
 }
 
 func TestRecordOnceReservesAndStartsAfterReleasingStateTransaction(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	deps := defaultTestServiceDependencies(home, 2)
@@ -218,6 +223,7 @@ func TestRecordOnceReservesAndStartsAfterReleasingStateTransaction(t *testing.T)
 }
 
 func TestRecordOnceKeepsStoredEventWhenSpawnWindowExpires(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	current := testRecordHour
@@ -251,6 +257,7 @@ func TestRecordOnceKeepsStoredEventWhenSpawnWindowExpires(t *testing.T) {
 }
 
 func TestRecordOnceRejectsRegeneratedPriorSpawnToken(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	root := mustOpenMutableRoot(t, home)
@@ -328,6 +335,7 @@ func TestRecordOnceDoesNotStartWhenRetainedThrottleLeaseCloseFails(t *testing.T)
 }
 
 func TestUploadStartWaitsForActualRoundTripEntry(t *testing.T) {
+	t.Parallel()
 	allowEntry := make(chan struct{})
 	var releaseEntry sync.Once
 	releaseValidation := func() { releaseEntry.Do(func() { close(allowEntry) }) }
@@ -407,6 +415,7 @@ func TestUploadStartWaitsForActualRoundTripEntry(t *testing.T) {
 }
 
 func TestUploadStartReturnsPreEntryValidationErrorWithoutDeadlock(t *testing.T) {
+	t.Parallel()
 	returned := make(chan error, 1)
 	go func() {
 		wait, err := asynchronousUploadStart(&uploadTransport{})(context.Background(), preparedUploadBatch{}, 1)
@@ -426,6 +435,7 @@ func TestUploadStartReturnsPreEntryValidationErrorWithoutDeadlock(t *testing.T) 
 }
 
 func TestUploadStartCancellationAbortsBeforeRoundTripWithoutNetwork(t *testing.T) {
+	t.Parallel()
 	releaseValidation := make(chan struct{})
 	var releaseValidationOnce sync.Once
 	releaseBlockedValidation := func() { releaseValidationOnce.Do(func() { close(releaseValidation) }) }
@@ -495,6 +505,7 @@ func TestUploadStartCancellationAbortsBeforeRoundTripWithoutNetwork(t *testing.T
 }
 
 func TestAbortedRoundTripStartGatePermanentlyBlocksNetwork(t *testing.T) {
+	t.Parallel()
 	var roundTrips atomic.Int32
 	base := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		roundTrips.Add(1)
@@ -520,6 +531,7 @@ func TestAbortedRoundTripStartGatePermanentlyBlocksNetwork(t *testing.T) {
 }
 
 func TestReserveSpawnAttemptDurablyThrottlesForSixtySeconds(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	now := time.Date(2026, time.July, 12, 4, 0, 0, 0, time.UTC)
@@ -552,6 +564,7 @@ func TestReserveSpawnAttemptDurablyThrottlesForSixtySeconds(t *testing.T) {
 }
 
 func TestReserveSpawnAttemptReplacesCorruptAndFutureRecordsOnceWithoutABA(t *testing.T) {
+	t.Parallel()
 	for _, fixture := range []struct {
 		name string
 		body func(time.Time) []byte
@@ -590,6 +603,7 @@ func TestReserveSpawnAttemptReplacesCorruptAndFutureRecordsOnceWithoutABA(t *tes
 }
 
 func TestReserveSpawnAttemptRejectsRecoveredCorruptTokenABA(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	now := time.Date(2026, time.July, 12, 5, 30, 0, 0, time.UTC)
@@ -619,6 +633,7 @@ func TestReserveSpawnAttemptRejectsRecoveredCorruptTokenABA(t *testing.T) {
 }
 
 func TestReserveSpawnAttemptRecoversEveryTokenFromMalformedDuplicateKeys(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, time.July, 12, 5, 35, 0, 0, time.UTC)
 	duplicateBody := func(first, second string) []byte {
 		return []byte(fmt.Sprintf(
@@ -688,6 +703,7 @@ func TestReserveSpawnAttemptRecoversEveryTokenFromMalformedDuplicateKeys(t *test
 }
 
 func TestReserveSpawnAttemptDoesNotReplaceArbitraryRetainedLeaseReadError(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	now := time.Date(2026, time.July, 12, 5, 45, 0, 0, time.UTC)
@@ -718,6 +734,7 @@ func TestReserveSpawnAttemptDoesNotReplaceArbitraryRetainedLeaseReadError(t *tes
 }
 
 func TestReserveSpawnAttemptReplacesOversizedSafeRecord(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	path := filepath.Join(home.Root(), spawnThrottleFileName)
@@ -736,6 +753,7 @@ func TestReserveSpawnAttemptReplacesOversizedSafeRecord(t *testing.T) {
 }
 
 func TestSpawnUploaderDoesNotStartAfterReservationDirectorySyncFailure(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	syncFailure := errors.New("spawn throttle directory sync failed")
@@ -770,6 +788,7 @@ func TestSpawnUploaderDoesNotStartAfterReservationDirectorySyncFailure(t *testin
 }
 
 func TestReserveSpawnAttemptIsSingleWinnerAcrossConcurrentParents(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	now := time.Date(2026, time.July, 12, 6, 0, 0, 0, time.UTC)
@@ -806,6 +825,7 @@ func TestReserveSpawnAttemptIsSingleWinnerAcrossConcurrentParents(t *testing.T) 
 }
 
 func TestPrivateUploaderFinalTokenRecheckPreventsSupersededChildNetwork(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	service.deps.getenv = func(name string) string {
 		if name == privateUploaderMarkerEnvironment {
@@ -856,6 +876,7 @@ func TestPrivateUploaderFinalTokenRecheckPreventsSupersededChildNetwork(t *testi
 }
 
 func TestPrivateUploaderDoesNotHideRestoreFailureBehindStaleAttempt(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	service.deps.getenv = func(name string) string {
 		if name == privateUploaderMarkerEnvironment {
@@ -910,6 +931,7 @@ func TestPrivateUploaderDoesNotHideRestoreFailureBehindStaleAttempt(t *testing.T
 }
 
 func TestPrivateUploaderRetainsOneRootAcrossLexicalReplacement(t *testing.T) {
+	t.Parallel()
 	home, service, permit := newRecordServiceFixture(t, testEventIDThree)
 	service.deps.getenv = func(name string) string {
 		if name == privateUploaderMarkerEnvironment {
@@ -975,6 +997,7 @@ func TestPrivateUploaderRetainsOneRootAcrossLexicalReplacement(t *testing.T) {
 }
 
 func TestPrivateUploaderRequiresMarkerBeforeFilesystemOrNetwork(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	service := mustOpenTestService(t, spawnTestDependencies(home, time.Now, func() (string, error) { return testSpawnTokenOne, nil }))
 	service.deps.getenv = func(string) string { return "" }
@@ -1013,6 +1036,7 @@ func TestPrivateUploaderProductionNoWorkReturnsBeforeTransportConstruction(t *te
 }
 
 func TestPrivateUploaderEnabledEmptyQueueNeverConstructsProductionTransport(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	root := mustOpenMutableRoot(t, home)
@@ -1050,6 +1074,7 @@ func TestPrivateUploaderEnabledEmptyQueueNeverConstructsProductionTransport(t *t
 }
 
 func TestPrivateUploaderSupersededTokenIsSilentWithoutFactoryOrNetwork(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	root := mustOpenMutableRoot(t, home)
@@ -1090,6 +1115,7 @@ func TestPrivateUploaderSupersededTokenIsSilentWithoutFactoryOrNetwork(t *testin
 }
 
 func TestPrivateUploaderCorruptThrottleIsNotClassifiedAsOrdinaryStale(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	root := mustOpenMutableRoot(t, home)
@@ -1122,6 +1148,7 @@ func TestPrivateUploaderCorruptThrottleIsNotClassifiedAsOrdinaryStale(t *testing
 }
 
 func TestPrivateUploaderThrottleReadFailureIsNotClassifiedAsOrdinaryStale(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	root := mustOpenMutableRoot(t, home)
@@ -1160,6 +1187,7 @@ func TestPrivateUploaderThrottleReadFailureIsNotClassifiedAsOrdinaryStale(t *tes
 }
 
 func TestSpawnAttemptClassificationSeparatesSafeStaleFromCorruptUncertainty(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	service := mustOpenTestService(t, spawnTestDependencies(home, func() time.Time { return testRecordHour }, func() (string, error) {
@@ -1193,6 +1221,7 @@ func TestSpawnAttemptClassificationSeparatesSafeStaleFromCorruptUncertainty(t *t
 }
 
 func TestPrivateUploaderLosingUploaderLockPerformsZeroNetworkWork(t *testing.T) {
+	t.Parallel()
 	home, service, _ := newRecordServiceFixture(t, testEventIDThree)
 	service.deps.getenv = func(name string) string {
 		if name == privateUploaderMarkerEnvironment {
@@ -1221,6 +1250,7 @@ func TestPrivateUploaderLosingUploaderLockPerformsZeroNetworkWork(t *testing.T) 
 }
 
 func TestPrivateUploaderAttemptsFreeLockBeforeStartingContentionWait(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, activeEnabledStateForSpawnTest())
 	root := mustOpenMutableRoot(t, home)
@@ -1265,6 +1295,7 @@ func TestPrivateUploaderAttemptsFreeLockBeforeStartingContentionWait(t *testing.
 }
 
 func TestPurgeAndCleanProofRequireSpawnThrottleAbsent(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, disabledState(7, 2, cleanupDisable))
 	root := mustOpenMutableRoot(t, home)
@@ -1292,6 +1323,7 @@ func TestPurgeAndCleanProofRequireSpawnThrottleAbsent(t *testing.T) {
 }
 
 func TestPurgeSpawnThrottlePreservesReplacementAtDeleteBoundary(t *testing.T) {
+	t.Parallel()
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, disabledState(7, 2, cleanupDisable))
 	plain := mustOpenMutableRoot(t, home)
