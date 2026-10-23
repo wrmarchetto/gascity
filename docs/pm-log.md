@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-wk1w 2026-10-23T22:35:00Z
+last_seen: gs-qvuq 2026-10-23T23:20:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5455,3 +5455,38 @@ bead.
 
 Source: roadmap bead-cycle-time
 
+## 163. DECOMP bead-cycle-time (gs-qvuq): ACCEPT option (a), the suite gets faster (2026-10-23)
+
+The mayor holds city ci-ms847d (gascity's Go suite into its sweep gate)
+because the full selection does not fit the 1020 s gate: 1155, 1613, 2661,
+3472 and 3781 s in retained runs. It offered (a) a lab.engineer bead to
+finish gs-okl8's levers 2 and 3 (split unit-core, PRODUCTMETRICS_TOTAL)
+until the full selection fits the cap with headroom at today's load, or
+(b) re-ruling #153: an affected-only sweep selection, or a longer gascity
+lane under B's load gating.
+
+Ruling: (a).
+
+- (b)'s affected-only sweep removes the only full run on the landing path.
+  "Run once per landing" makes in-session and push runs affected-only and
+  puts the one full run in the sweep. Willie accepted that trade (#153).
+  The PM cannot withdraw it, and nobody has asked to.
+- A longer lane spends the Target. The interval runs from the last code
+  commit and the sweep gate sits inside it (#161), so a 3781 s gate alone
+  breaks the hour. The cap's value stays B's design (ci-ms65m7), as #162
+  bounded it. A longer cap is not the way to make this suite fit.
+- (a) is "Slow tests first" work, already ruled in scope with no further
+  PM ruling needed (#162). Its done measure must be the full selection
+  under the cap over several runs at ordinary host load, not one run on an
+  idle host. gs-okl8's 1157 s run at load 15-53 is the bar to beat.
+- Correction to the summons: gs-okl8 is on main (512d076c9, 22:59Z), so
+  the 1155 s figure is now main's figure. gs-r9ph (gate at nice 0, in
+  progress) targets the load-driven tail. Its effect counts toward the
+  headroom if it lands first. ci-ms847d waits on the new bead.
+- No hardware, no upstream rig.
+
+Rig store since last_seen: gs-okl8 and gs-9b18 closed and merged, gs-ywze
+and gs-galo closed, gs-r9ph in progress (from #162), gs-jqz2 hold:external,
+and this summons.
+
+Source: roadmap bead-cycle-time
