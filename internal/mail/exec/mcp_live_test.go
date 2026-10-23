@@ -67,8 +67,9 @@ func TestMCPMailConformanceLive(t *testing.T) {
 		wrapper := fmt.Sprintf("#!/usr/bin/env bash\n"+
 			"export GC_MCP_MAIL_URL=%q\n"+
 			"export GC_MCP_MAIL_PROJECT=%q\n"+
+			"export GC_MCP_MAIL_CACHE_DIR=%q\n"+
 			"exec %q \"$@\"\n",
-			serverURL, project, scriptPath)
+			serverURL, project, filepath.Join(dir, "bridge-cache"), scriptPath)
 		writeExecutable(t, wrapperPath, wrapper)
 
 		return NewProvider(wrapperPath)

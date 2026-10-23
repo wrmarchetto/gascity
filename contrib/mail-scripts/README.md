@@ -41,6 +41,7 @@ open http://127.0.0.1:8765/mail
 | `GC_MCP_MAIL_URL` | `http://127.0.0.1:8765` | mcp_agent_mail server URL |
 | `GC_MCP_MAIL_TOKEN` | (empty) | Bearer token for auth |
 | `GC_MCP_MAIL_PROJECT` | `$(pwd)` | project_key for mcp_agent_mail |
+| `GC_MCP_MAIL_CACHE_DIR` | `/tmp/gc-mcp-mail-cache` | Root of the pod-local message-state cache, which also holds the name and token maps when `GC_CITY` is unset |
 
 ### Operation mapping
 
