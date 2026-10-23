@@ -149,7 +149,11 @@ CLAUDE.md/AGENTS.md stack) and defeats prompt-cache reuse at every spawn,
 ~157 cold spawns per observed window; nearly every Claude agent runs
 effort=max; six-account rotation fragments what cache could exist; and
 ~200KB of per-account harness memory drift violates the accounts-identical
-principle (pm-log #135).
+principle (pm-log #135). The canary criterion -- a 1-2
+week per-agent comparison of the new levels against the baseline -- was
+dropped by Willie on 2026-10-12 (gate gs-3vdb): the fleet converged on
+Opus 5.5, so the per-agent level regime it was to evaluate no longer exists
+(pm-log #147).
 
 Acceptance:
 
@@ -164,17 +168,10 @@ Acceptance:
   account shows nonzero cache_read_input_tokens in its own session record.
   The criterion is the measured read, not the removal.
 - Explicit model+effort everywhere: every agent definition names model and
-  effort; nothing runs effort=max. Assignments of record (pm-log #136):
-  lab engineer and bench-engineer xhigh; mayor opus-5 xhigh; governor,
-  analyst-fable, adversarial-reader-claude fable at high; PM fable-5 at
-  high; technician class sonnet at high. An unrecognized model or effort
-  value fails config load loudly instead of silently degrading to the
-  provider default (today a typo degrades to max with no error).
-- Canary, not harness: no retrospective bead-replay rig is built (pm-log
-  #136). After the new levels land, a 1-2 week window compares per-bead
-  tokens, wall-clock, and rework signals (reopened beads, failure classes,
-  gate failures, skeptic rejections) against the baseline, with a named
-  revert criterion per agent; results recorded.
+  effort; nothing runs effort=max. An unrecognized model or effort value
+  fails config load loudly instead of silently degrading to the provider
+  default. The per-agent assignments of record in pm-log #136 are
+  superseded by the fleet's convergence on Opus 5.5 (pm-log #147).
 - Account affinity: a reshuffle script, run at initial setup and whenever
   an account hits its limit, reassigns agent-type-to-account affinity from
   available 5h/7d usage paired with tokens-by-role -- highest-usage type

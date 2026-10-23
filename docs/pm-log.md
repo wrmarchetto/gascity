@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-8fq0 2026-09-27T05:41:46Z
+last_seen: gs-otx1 2026-10-23T12:05:30Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5032,3 +5032,29 @@ Drift since last_seen (gs-3vdb 2026-09-27T05:13:05Z): gs-n3lh closed
 filed (this summons).
 
 Source: pm-log #145
+
+## 147. pm-chat gs-otx1: criterion 4 dropped, criterion 3 rewritten (2026-10-23)
+
+Willie confirmed in this sitting ("yes") that his gate gs-3vdb ruling stands:
+decision (c), drop agent-efficiency criterion 4, verbatim "Drop it; we've
+converged on Opus 5.5 now, so this is OBE." (closed 2026-10-12T02:31Z via the
+liaison, city row ci-efnkgw). The ruling never reached this PM: gs-78op, the
+bead the gate blocked, stayed BLOCKED and assigned with no wake for eleven
+days, and this sitting found it on the drift read.
+
+Applied to docs/roadmap.md: the canary criterion is removed from the
+Acceptance list and its drop recorded in the epic description. Criterion 3
+keeps its mechanical half (every agent names model and effort, nothing at
+effort=max, an unrecognized value fails config load loudly) and its #136
+assignments of record are marked superseded by the Opus 5.5 convergence,
+which also answers the gate's second half (#146).
+
+gascity is review-gated (city epic-review.toml gate_rigs), so this sitting
+does not set `done`: closure goes through the pm-epic-close review path once
+gs-78op closes. Recommendation (b) in #145 is withdrawn.
+
+Drift since last_seen (gs-8fq0 2026-09-27T05:41:46Z): gs-8fq0 closed;
+gs-yvxt touched; gs-otx1 filed (this sitting); gs-3vdb closed 2026-10-12.
+pm-open #9 is answered by this entry.
+
+Source: pm-log #145 (gate gs-3vdb close reason, confirmed by Willie in gs-otx1)
