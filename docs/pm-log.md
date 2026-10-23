@@ -5146,3 +5146,20 @@ what the new feature needs. Where the directive lives and what makes it
 mechanical is the next question in this sitting.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 152. pm-chat gs-otx1: test-growth directive lives in prompts and is backed by a close gate (2026-10-23)
+
+Willie accepted the PM's recommendation:
+
+- The extend-before-add directive goes into the city's engineer and
+  toolsmith prompts (city configuration, so every rig gets it; the mayor
+  mints it). The same line is PROPOSED to Willie for the Tests section of
+  his global ~/.claude/CLAUDE.md -- that file is his, so it is a proposal,
+  not a bead.
+- A close-time gate reports the bead's net-new test functions and the
+  suite-runtime change it caused. A bead that added new test functions
+  must carry one line in its close reason saying why no existing test
+  could be extended; the gate refuses the missing line, never the tests.
+- The suite time-budget report from #151 covers the runtime half.
+
+Source: Willie, pm-chat sitting gs-otx1
