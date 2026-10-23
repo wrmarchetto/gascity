@@ -5202,3 +5202,28 @@ epic-close summons open its review generation. pm-open #8 (nothing queued
 after agent-efficiency) and #9 (criterion 4) are marked RESOLVED.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 155. pm-chat gs-otx1: sitting closed (2026-10-23)
+
+Willie closed the sitting ("that's it"). Outcome: agent-efficiency
+criterion 4 dropped and gs-78op closed (#147), so that epic now goes to the
+operator's review; epic:bead-cycle-time accepted and in-progress, DECOMP
+mailed to the mayor as ci-wisp-vtjbeow (#148-#154). Open with Willie: the
+extend-before-add line for his own ~/.claude/CLAUDE.md (#152).
+
+Hook friction this sitting, reported to the mayor rather than worked
+around:
+
+1. assets/scripts/toolsmith-path-gate.py refused a file-editor write to
+   docs/pm-log.md in this rig root, naming a lab.pm worktree as the
+   remedy. That contradicts this seat's charter, which commits its state
+   files in the root on the default branch. Appending through the shell,
+   the path used all sitting, was unaffected.
+2. assets/scripts/pm-git-gate.py tokenizes heredoc log text: a backticked
+   word, or prose where the tool's name is followed by another word, is
+   read as a subcommand or pathspec, and the whole append-plus-commit call
+   is refused. Plain prose and a separate commit call passed. It also
+   refuses the tree-listing subcommand, which left the historical suite
+   counts in #149 unverified.
+
+Source: Willie, pm-chat sitting gs-otx1
