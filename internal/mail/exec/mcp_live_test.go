@@ -69,9 +69,7 @@ func TestMCPMailConformanceLive(t *testing.T) {
 			"export GC_MCP_MAIL_PROJECT=%q\n"+
 			"exec %q \"$@\"\n",
 			serverURL, project, scriptPath)
-		if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, wrapperPath, wrapper)
 
 		return NewProvider(wrapperPath)
 	})

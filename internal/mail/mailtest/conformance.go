@@ -12,13 +12,21 @@ import (
 )
 
 // RunProviderTests runs the full conformance suite against a Provider.
-// newProvider returns a fresh, empty provider per test.
+// newProvider returns a fresh, empty provider per test, and is called from
+// parallel subtests, so two providers it returns must share no state.
 func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider) {
 	t.Helper()
 
+	run := func(name string, fn func(t *testing.T)) {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fn(t)
+		})
+	}
+
 	// --- Group 1: Send ---
 
-	t.Run("Send_ReturnsMatchingFields", func(t *testing.T) {
+	run("Send_ReturnsMatchingFields", func(t *testing.T) {
 		p := newProvider(t)
 		m, err := p.Send("alice", "bob", "Greetings", "hello")
 		if err != nil {
@@ -41,7 +49,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Send_AssignsUniqueIDs", func(t *testing.T) {
+	run("Send_AssignsUniqueIDs", func(t *testing.T) {
 		p := newProvider(t)
 		m1, err := p.Send("alice", "bob", "", "first")
 		if err != nil {
@@ -56,7 +64,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Send_SetsRecentCreatedAt", func(t *testing.T) {
+	run("Send_SetsRecentCreatedAt", func(t *testing.T) {
 		p := newProvider(t)
 		before := time.Now().Add(-time.Minute)
 		m, err := p.Send("alice", "bob", "", "timestamped")
@@ -71,7 +79,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 2: Inbox ---
 
-	t.Run("Inbox_EmptyReturnsNil", func(t *testing.T) {
+	run("Inbox_EmptyReturnsNil", func(t *testing.T) {
 		p := newProvider(t)
 		msgs, err := p.Inbox("bob")
 		if err != nil {
@@ -82,7 +90,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Inbox_ReturnsMessagesSentToRecipient", func(t *testing.T) {
+	run("Inbox_ReturnsMessagesSentToRecipient", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "for bob")
 		if err != nil {
@@ -100,7 +108,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Inbox_FiltersByRecipient", func(t *testing.T) {
+	run("Inbox_FiltersByRecipient", func(t *testing.T) {
 		p := newProvider(t)
 		if _, err := p.Send("alice", "bob", "", "for bob"); err != nil {
 			t.Fatalf("Send to bob: %v", err)
@@ -120,7 +128,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Inbox_ExcludesReadMessages", func(t *testing.T) {
+	run("Inbox_ExcludesReadMessages", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "will be read")
 		if err != nil {
@@ -140,7 +148,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 3: Check ---
 
-	t.Run("Check_ReturnsUnreadMessages", func(t *testing.T) {
+	run("Check_ReturnsUnreadMessages", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "check me")
 		if err != nil {
@@ -158,7 +166,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Check_DoesNotMarkAsRead", func(t *testing.T) {
+	run("Check_DoesNotMarkAsRead", func(t *testing.T) {
 		p := newProvider(t)
 		if _, err := p.Send("alice", "bob", "", "peek"); err != nil {
 			t.Fatalf("Send: %v", err)
@@ -178,7 +186,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 4: Read ---
 
-	t.Run("Read_ReturnsCorrectMessage", func(t *testing.T) {
+	run("Read_ReturnsCorrectMessage", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "Sub", "read me")
 		if err != nil {
@@ -202,7 +210,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Read_MarksAsRead", func(t *testing.T) {
+	run("Read_MarksAsRead", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "once")
 		if err != nil {
@@ -220,7 +228,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Read_MessageStillAccessible", func(t *testing.T) {
+	run("Read_MessageStillAccessible", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "still here")
 		if err != nil {
@@ -239,7 +247,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Read_UnknownIDReturnsError", func(t *testing.T) {
+	run("Read_UnknownIDReturnsError", func(t *testing.T) {
 		p := newProvider(t)
 		_, err := p.Read("nonexistent")
 		if err == nil {
@@ -249,7 +257,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 5: Get ---
 
-	t.Run("Get_ReturnsMessage", func(t *testing.T) {
+	run("Get_ReturnsMessage", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "Hi", "body")
 		if err != nil {
@@ -267,7 +275,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Get_DoesNotMarkRead", func(t *testing.T) {
+	run("Get_DoesNotMarkRead", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "peek")
 		if err != nil {
@@ -286,7 +294,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Get_UnknownIDErrors", func(t *testing.T) {
+	run("Get_UnknownIDErrors", func(t *testing.T) {
 		p := newProvider(t)
 		_, err := p.Get("nonexistent")
 		if err == nil {
@@ -296,7 +304,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 6: MarkRead / MarkUnread ---
 
-	t.Run("MarkRead_FiltersFromInbox", func(t *testing.T) {
+	run("MarkRead_FiltersFromInbox", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "mark me")
 		if err != nil {
@@ -314,7 +322,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("MarkUnread_RestoresToInbox", func(t *testing.T) {
+	run("MarkUnread_RestoresToInbox", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "toggle")
 		if err != nil {
@@ -337,7 +345,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 7: Reply ---
 
-	t.Run("Reply_InheritsThreadID", func(t *testing.T) {
+	run("Reply_InheritsThreadID", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "Hello", "first")
 		if err != nil {
@@ -352,7 +360,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Reply_SetsReplyTo", func(t *testing.T) {
+	run("Reply_SetsReplyTo", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "Hello", "first")
 		if err != nil {
@@ -367,7 +375,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Reply_GoesToOriginalSender", func(t *testing.T) {
+	run("Reply_GoesToOriginalSender", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "Hello", "first")
 		if err != nil {
@@ -387,7 +395,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 8: Thread ---
 
-	t.Run("Thread_ReturnsAllInThread", func(t *testing.T) {
+	run("Thread_ReturnsAllInThread", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "Hello", "first")
 		if err != nil {
@@ -405,7 +413,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Thread_ReturnsAllForMessageID", func(t *testing.T) {
+	run("Thread_ReturnsAllForMessageID", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "Hello", "first")
 		if err != nil {
@@ -426,7 +434,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Thread_Empty", func(t *testing.T) {
+	run("Thread_Empty", func(t *testing.T) {
 		p := newProvider(t)
 		msgs, err := p.Thread("nonexistent-thread")
 		if err != nil {
@@ -439,7 +447,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 9: Count ---
 
-	t.Run("Count_TotalAndUnread", func(t *testing.T) {
+	run("Count_TotalAndUnread", func(t *testing.T) {
 		p := newProvider(t)
 		if _, err := p.Send("alice", "bob", "", "msg1"); err != nil {
 			t.Fatalf("Send 1: %v", err)
@@ -463,7 +471,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Count_EmptyInbox", func(t *testing.T) {
+	run("Count_EmptyInbox", func(t *testing.T) {
 		p := newProvider(t)
 		total, unread, err := p.Count("nobody")
 		if err != nil {
@@ -476,7 +484,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 10: Delete ---
 
-	t.Run("Delete_RemovesMessageFromEveryView", func(t *testing.T) {
+	run("Delete_RemovesMessageFromEveryView", func(t *testing.T) {
 		runRemovalVisibilityContract(t, newProvider(t), func(p mail.Provider, id string) error {
 			return p.Delete(id)
 		})
@@ -484,13 +492,13 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 11: Archive ---
 
-	t.Run("Archive_RemovesMessageFromEveryView", func(t *testing.T) {
+	run("Archive_RemovesMessageFromEveryView", func(t *testing.T) {
 		runRemovalVisibilityContract(t, newProvider(t), func(p mail.Provider, id string) error {
 			return p.Archive(id)
 		})
 	})
 
-	t.Run("Archive_AlreadyArchivedReturnsError", func(t *testing.T) {
+	run("Archive_AlreadyArchivedReturnsError", func(t *testing.T) {
 		p := newProvider(t)
 		sent, err := p.Send("alice", "bob", "", "double archive")
 		if err != nil {
@@ -505,7 +513,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Archive_UnknownIDReturnsError", func(t *testing.T) {
+	run("Archive_UnknownIDReturnsError", func(t *testing.T) {
 		p := newProvider(t)
 		err := p.Archive("nonexistent")
 		if err == nil {
@@ -513,7 +521,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("ArchiveMany_AllSucceed", func(t *testing.T) {
+	run("ArchiveMany_AllSucceed", func(t *testing.T) {
 		p := newProvider(t)
 		var ids []string
 		for i := 0; i < 3; i++ {
@@ -547,7 +555,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("ArchiveMany_EmptyReturnsNil", func(t *testing.T) {
+	run("ArchiveMany_EmptyReturnsNil", func(t *testing.T) {
 		p := newProvider(t)
 		results, err := p.ArchiveMany(nil)
 		if err != nil {
@@ -558,7 +566,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("ArchiveMany_PreservesInputOrder", func(t *testing.T) {
+	run("ArchiveMany_PreservesInputOrder", func(t *testing.T) {
 		p := newProvider(t)
 		var ids []string
 		for i := 0; i < 3; i++ {
@@ -580,7 +588,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("ArchiveMany_MixedOpenClosed", func(t *testing.T) {
+	run("ArchiveMany_MixedOpenClosed", func(t *testing.T) {
 		p := newProvider(t)
 		var ids []string
 		for i := 0; i < 3; i++ {
@@ -618,7 +626,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("DeleteMany_AllSucceed", func(t *testing.T) {
+	run("DeleteMany_AllSucceed", func(t *testing.T) {
 		p := newProvider(t)
 		var ids []string
 		for i := 0; i < 3; i++ {
@@ -652,7 +660,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("DeleteMany_MixedOpenClosed", func(t *testing.T) {
+	run("DeleteMany_MixedOpenClosed", func(t *testing.T) {
 		p := newProvider(t)
 		var ids []string
 		for i := 0; i < 3; i++ {
@@ -692,7 +700,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 
 	// --- Group 12: Lifecycle ---
 
-	t.Run("Lifecycle_SendInboxReadInboxEmpty", func(t *testing.T) {
+	run("Lifecycle_SendInboxReadInboxEmpty", func(t *testing.T) {
 		p := newProvider(t)
 
 		// Send.
@@ -738,7 +746,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Lifecycle_SendCheckArchiveInboxEmpty", func(t *testing.T) {
+	run("Lifecycle_SendCheckArchiveInboxEmpty", func(t *testing.T) {
 		p := newProvider(t)
 
 		// Send.
@@ -771,7 +779,7 @@ func RunProviderTests(t *testing.T, newProvider func(t *testing.T) mail.Provider
 		}
 	})
 
-	t.Run("Lifecycle_MarkReadUnreadToggle", func(t *testing.T) {
+	run("Lifecycle_MarkReadUnreadToggle", func(t *testing.T) {
 		p := newProvider(t)
 
 		sent, err := p.Send("alice", "bob", "", "toggle")

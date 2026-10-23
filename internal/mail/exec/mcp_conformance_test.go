@@ -45,15 +45,11 @@ func TestMCPMailConformance(t *testing.T) {
 		if err := os.MkdirAll(binDir, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(filepath.Join(binDir, "curl"), []byte(mcpMockCurl(stateDir)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, filepath.Join(binDir, "curl"), mcpMockCurl(stateDir))
 
 		// Write wrapper script that sets env and delegates to the real script.
 		wrapperPath := filepath.Join(dir, "mail-provider")
-		if err := os.WriteFile(wrapperPath, []byte(mcpWrapper(binDir, scriptPath, stateDir)), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writeExecutable(t, wrapperPath, mcpWrapper(binDir, scriptPath, stateDir))
 
 		return NewProvider(wrapperPath)
 	})
