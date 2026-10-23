@@ -1,49 +1,12 @@
 #!/usr/bin/env python3
-"""Decide how much of the fast suite a push has to run (bead ci-4w2t).
+"""Decide how much of the fast suite a change has to run.
 
-Reads git's pre-push stdin records and prints ONE decision line:
-
-    full                 run the whole fast suite
-    none                 no Go build input changed; run nothing
-    scoped ./a ./b ...   run only these packages
-
-Why this exists: .githooks/pre-push used to reduce the pushed range to a
-single boolean -- "did any *.go file change" -- and spend ~16 minutes of
-187-package fan-out on the answer, charged identically to a one-line fix and
-to a refactor. Measured 2026-08-09 on this repo, the unit sweep is the
-wall-clock long pole by a wide margin (a whole cmd/gc shard finishes in ~70s
-against it), so narrowing that sweep to the packages a change can actually
-reach is where the time goes.
-
-CONSERVATISM IS THE WHOLE CONTRACT. A gate that stops running a package it
-should have run is indistinguishable from a green build. Every uncertain
-input therefore decides `full`, never a subset: an unreadable graph, a base
-this clone does not have, a path shape the Go graph cannot account for, a
-manifest that will not load. The narrow answer is only ever produced from a
-complete inventory. Concretely, the rules that are easy to get backwards:
-
-  - Any changed path that is neither a Go build input owned by a package nor
-    an embedded file with a known owner decides `full`. Tests read testdata,
-    shell scripts, and the Makefile at run time, and no mechanical inventory
-    of that exists -- go list models imports and embeds, nothing more.
-  - The always-run manifest is REQUIRED, not best-effort. Its packages scan
-    the whole repository instead of their own imports, so no changed leaf
-    ever reaches them through the import closure. Failing to load it decides
-    `full` rather than dropping them.
-  - `none` is reachable only when no Go build input changed at all. That is
-    exactly the pre-existing hook's skip condition, kept byte-for-byte in
-    effect so this change can never run LESS than before.
-
-DELIBERATE ABSENCE: an embed-only change (a pack TOML, a prompt template,
-with no .go alongside) still decides `none`, because the old hook skipped it
-too and engaging on embeds would turn a free push into a full-suite push --
-the bootstrap packs are embedded by a package ~180 others import. Embedded
-files do contribute seeds once the gate is engaged by a Go change. Widening
-the trigger to embeds is a coverage improvement this bead did not ask for
-and would cost more than it saves; it needs its own measurement first.
-
-Verified by scripts/push_gate_select_test.go and, end to end through the
-hook, by scripts/test-push-gate-select.sh.
+Prints one line: `full`, `none` (no Go build input changed), or
+`scoped ./a ./b ...`, and decides `full` on every uncertainty. With no
+arguments it reads git's pre-push records from stdin. With --worktree it
+reads no stdin and selects for the working tree from its fork point off
+main, for `make test-affected`. Rules, and why a push still runs the full
+suite: TESTING.md, "Scoping the push gate".
 """
 
 from __future__ import annotations
@@ -68,6 +31,8 @@ from goaffected import (  # noqa: E402
 ZERO_SHA = "0" * 40
 
 DEFAULT_MANIFEST_RELATIVE_PATH = "scripts/push-gate-always-run.manifest"
+
+MAIN_REF = "refs/heads/main"
 
 
 def push_records(stream: str) -> list[tuple[str, str]]:
@@ -122,6 +87,25 @@ def changed_records(pushed: list[tuple[str, str]]) -> list[tuple[str, str]]:
         )
         changed.update(parse_name_status(output))
     return sorted(changed, key=lambda record: (record[1], record[0]))
+
+
+def worktree_records() -> list[tuple[str, str]]:
+    """Name-status records from HEAD's fork point off main to the working tree.
+
+    No --diff-filter, unlike changed_records: parse_name_status refuses a
+    status it does not know, which widens instead of dropping the path.
+    """
+    try:
+        base = os.fsdecode(command_output(["git", "merge-base", "HEAD", MAIN_REF])).strip()
+    except SelectionError as error:
+        raise SelectionError(f"no fork point from {MAIN_REF}: {error}") from error
+    tracked = parse_name_status(
+        command_output(["git", "diff", "--name-status", "-z", "--no-renames", base, "--"])
+    )
+    untracked = command_output(["git", "ls-files", "-z", "--others", "--exclude-standard"])
+    added = b"".join(b"A\0" + path + b"\0" for path in untracked.split(b"\0") if path)
+    records = set(tracked) | set(parse_name_status(added))
+    return sorted(records, key=lambda record: (record[1], record[0]))
 
 
 def classify_paths(records: list[tuple[str, str]], inventory: dict) -> bool:
@@ -201,14 +185,18 @@ def always_run_packages(inventory: dict) -> list[str]:
     return packages
 
 
-def decide() -> str:
+def decide(argv: list[str]) -> str:
     go_tool = os.environ.get("PUSH_GATE_GO", "go")
 
-    pushed = push_records(sys.stdin.read())
-    if not pushed:
-        return "none"
-
-    records = changed_records(pushed)
+    if argv == ["--worktree"]:
+        records = worktree_records()
+    elif not argv:
+        pushed = push_records(sys.stdin.read())
+        if not pushed:
+            return "none"
+        records = changed_records(pushed)
+    else:
+        raise SelectionError(f"unknown arguments {argv!r}, usage: push-gate-select [--worktree]")
     if not records:
         return "none"
 
@@ -228,7 +216,7 @@ def decide() -> str:
 
 def main() -> int:
     try:
-        decision = decide()
+        decision = decide(sys.argv[1:])
     except SelectionError as error:
         # Every uncertainty lands here, and every one of them widens.
         print(f"push-gate-select: running the full suite: {error}", file=sys.stderr)
