@@ -307,6 +307,7 @@ func TestTestFastParallelUsesSanitizedEnvironmentAndMachineAwareConcurrency(t *t
 			strings.HasPrefix(entry, "GC_TEST_LOCAL_PROC_CGROUP=") ||
 			strings.HasPrefix(entry, "GC_TEST_LOCAL_CGROUP_ROOT=") ||
 			strings.HasPrefix(entry, "GC_PUSH_GATE_NO_CAP=") ||
+			strings.HasPrefix(entry, "GC_SCOPED_TEST_PACKAGES=") ||
 			strings.HasPrefix(entry, "PUSH_GATE_MAX_CONCURRENT=") ||
 			strings.HasPrefix(entry, "PUSH_GATE_MAX_WAIT_SECONDS=") ||
 			strings.HasPrefix(entry, "PUSH_GATE_POLL_SECONDS=") ||
@@ -378,6 +379,7 @@ func TestTestFastParallelUsesSanitizedEnvironmentAndMachineAwareConcurrency(t *t
 				t.Fatalf("test-fast-parallel job count should be %s:\n%s", tt.wantJobs, command)
 			}
 			for _, key := range []string{
+				"GC_SCOPED_TEST_PACKAGES",
 				"GC_PUSH_GATE_NO_CAP",
 				"PUSH_GATE_MAX_CONCURRENT",
 				"PUSH_GATE_MAX_WAIT_SECONDS",

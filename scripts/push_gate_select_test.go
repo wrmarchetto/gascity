@@ -302,9 +302,9 @@ func TestPushGateSelectLeavesAnEmbedOnlyChangeUntestedAsBefore(t *testing.T) {
 }
 
 func TestPushGateSelectWidensToFullWhenNoBaseExistsToDiffAgainst(t *testing.T) {
-	// A brand-new remote branch has no cheap base. The pre-existing hook
-	// ran the full suite here and this must not quietly become a narrow
-	// run: there is no diff at all, so there is no evidence to narrow on.
+	// A push record carries no fork point for a brand-new remote branch.
+	// The push gate keeps the full run there while this repo's merge sweep
+	// runs no Go tests. --worktree is the mode that diffs from main.
 	f := newPushGateFixture(t, pushGateBaseFiles())
 	f.commit(t, "touch alpha", map[string]*string{
 		"alpha/alpha.go": ptr("package alpha\n\nfunc Value() int { return 2 }\n"),
@@ -471,5 +471,164 @@ func TestPushGateSelectIsNotReachedByAFakeGoOnPath(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "PUSH_GATE_GO") {
 		t.Fatal("push-gate-select must keep PUSH_GATE_GO as its go-tool injection seam")
+	}
+}
+
+// --- in-session selection, --worktree ---
+
+// selectWorktreeScope runs the selector in --worktree mode, which reads no
+// stdin and diffs the working tree against its fork point from main.
+func (f *pushGateFixture) selectWorktreeScope(t *testing.T) string {
+	t.Helper()
+	selector := filepath.Join(repoRoot(t), "scripts", "push-gate-select")
+	cmd := testCommand("python3", selector, "--worktree")
+	cmd.Dir = f.repoRoot
+	cmd.Stdin = strings.NewReader("")
+	cmd.Env = append(os.Environ(),
+		"PYTHONDONTWRITEBYTECODE=1",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"HOME="+f.repoRoot,
+		"PUSH_GATE_ALWAYS_RUN_MANIFEST="+f.manifest,
+	)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("push-gate-select --worktree: %v\nstderr: %s", err, stderr.String())
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// edit writes files without committing them. A nil value deletes the path.
+func (f *pushGateFixture) edit(t *testing.T, files map[string]*string) {
+	t.Helper()
+	for name, content := range files {
+		full := filepath.Join(f.repoRoot, name)
+		if content == nil {
+			if err := os.Remove(full); err != nil {
+				t.Fatalf("delete %s: %v", name, err)
+			}
+			continue
+		}
+		writeTestFile(t, full, *content)
+	}
+}
+
+func TestPushGateSelectWorktreeScopesAnUncommittedEdit(t *testing.T) {
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	f.git(t, "checkout", "-q", "-b", "work")
+	f.edit(t, map[string]*string{
+		"island/island.go": ptr("package island\n\nfunc Value() int { return 3 }\n"),
+	})
+
+	packages := decisionPackages(t, f.selectWorktreeScope(t))
+	requireContains(t, packages, "./island")
+	requireExcludes(t, packages, "./alpha")
+	requireExcludes(t, packages, "./consumer")
+}
+
+func TestPushGateSelectWorktreeDiffsFromTheForkPointNotFromMainsTip(t *testing.T) {
+	// main moves on after the branch is cut. Diffing against its tip would
+	// count main's island and docs edits as this branch's own, selecting
+	// island and widening on the docs path.
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	f.git(t, "checkout", "-q", "-b", "work")
+	f.commit(t, "touch alpha on the branch", map[string]*string{
+		"alpha/alpha.go": ptr("package alpha\n\nfunc Value() int { return 2 }\n"),
+	})
+	f.git(t, "checkout", "-q", "main")
+	f.commit(t, "main moves on", map[string]*string{
+		"island/island.go": ptr("package island\n\nfunc Value() int { return 3 }\n"),
+		"docs/guide.md":    ptr("revised on main\n"),
+	})
+	f.git(t, "checkout", "-q", "work")
+
+	packages := decisionPackages(t, f.selectWorktreeScope(t))
+	requireContains(t, packages, "./alpha")
+	requireContains(t, packages, "./consumer")
+	requireExcludes(t, packages, "./island")
+}
+
+func TestPushGateSelectWorktreeCountsCommittedAndUntrackedWorkTogether(t *testing.T) {
+	// The branch's commits, its edits and its new files are one change. An
+	// untracked file is invisible to git diff, so it needs its own listing.
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	f.git(t, "checkout", "-q", "-b", "work")
+	f.commit(t, "touch island on the branch", map[string]*string{
+		"island/island.go": ptr("package island\n\nfunc Value() int { return 3 }\n"),
+	})
+	f.edit(t, map[string]*string{
+		"alpha/extra.go": ptr("package alpha\n\nfunc Extra() int { return 4 }\n"),
+	})
+
+	packages := decisionPackages(t, f.selectWorktreeScope(t))
+	requireContains(t, packages, "./island")
+	requireContains(t, packages, "./alpha")
+	requireContains(t, packages, "./consumer")
+}
+
+func TestPushGateSelectWorktreeWidensOnAnUntrackedPathOutsideTheGoGraph(t *testing.T) {
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	f.git(t, "checkout", "-q", "-b", "work")
+	f.edit(t, map[string]*string{
+		"alpha/alpha.go":            ptr("package alpha\n\nfunc Value() int { return 2 }\n"),
+		"alpha/testdata/golden.txt": ptr("new fixture\n"),
+	})
+
+	if decision := f.selectWorktreeScope(t); decision != "full" {
+		t.Errorf("untracked testdata beside a Go edit decided %q, want full", decision)
+	}
+}
+
+func TestPushGateSelectWorktreeLeavesADocsOnlyChangeUntested(t *testing.T) {
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	f.git(t, "checkout", "-q", "-b", "work")
+	f.commit(t, "docs only", map[string]*string{
+		"docs/guide.md": ptr("revised\n"),
+	})
+
+	if decision := f.selectWorktreeScope(t); decision != "none" {
+		t.Errorf("docs-only branch decided %q, want none", decision)
+	}
+}
+
+func TestPushGateSelectWorktreeWidensToFullWithoutAMainBranch(t *testing.T) {
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	f.git(t, "branch", "-m", "main", "trunk")
+	f.edit(t, map[string]*string{
+		"alpha/alpha.go": ptr("package alpha\n\nfunc Value() int { return 2 }\n"),
+	})
+
+	if decision := f.selectWorktreeScope(t); decision != "full" {
+		t.Errorf("clone without main decided %q, want full", decision)
+	}
+}
+
+func TestPushGateSelectWorktreeWidensToFullWithNoHistoryShared(t *testing.T) {
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	f.git(t, "checkout", "-q", "--orphan", "unrelated")
+	f.commit(t, "unrelated root", map[string]*string{
+		"alpha/alpha.go": ptr("package alpha\n\nfunc Value() int { return 2 }\n"),
+	})
+
+	if decision := f.selectWorktreeScope(t); decision != "full" {
+		t.Errorf("history unrelated to main decided %q, want full", decision)
+	}
+}
+
+func TestPushGateSelectRefusesAnUnknownArgument(t *testing.T) {
+	f := newPushGateFixture(t, pushGateBaseFiles())
+	selector := filepath.Join(repoRoot(t), "scripts", "push-gate-select")
+	cmd := testCommand("python3", selector, "--worktre")
+	cmd.Dir = f.repoRoot
+	cmd.Stdin = strings.NewReader(f.pushRecord())
+	cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1",
+		"PUSH_GATE_ALWAYS_RUN_MANIFEST="+f.manifest)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("push-gate-select: %v", err)
+	}
+	if decision := strings.TrimSpace(string(out)); decision != "full" {
+		t.Errorf("misspelled mode decided %q, want full", decision)
 	}
 }

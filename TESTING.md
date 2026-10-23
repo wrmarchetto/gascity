@@ -1041,10 +1041,19 @@ so the win comes entirely from not sweeping packages a change cannot reach.
 `scripts/push-gate-select` turns the pushed range into that package set,
 using the same graph engine (`scripts/goaffected.py`) the CI lint gate
 selects with — one implementation, so the two cannot drift the way ci-c000's
-Go/shell copies did. The hook exports the result as
-`GC_SCOPED_TEST_PACKAGES`; `test-local-parallel` honors it in `fast` mode
-only, and skips the `cmd/gc` shards when `./cmd/gc` is not in the set, and
-the `internal/productmetrics` shards when that package is not in it either.
+Go/shell copies did. `make test-affected` (`scripts/test-affected`) exports
+the result as `GC_SCOPED_TEST_PACKAGES`, which `test-local-parallel` honors
+in `fast` mode only, skipping the `cmd/gc` shards when `./cmd/gc` is not in
+the set, and the `internal/productmetrics` shards when that package is not
+in it either. The push hook computes the same selection and prints it, but runs
+the full fast suite: see "The push gate keeps the full run" below.
+
+In-session, `scripts/push-gate-select --worktree` asks the same question of
+the working tree: the change is everything from its fork point off `main` --
+commits, staged and unstaged edits, untracked files -- and every widening
+rule above applies to it unchanged. `make test-affected` runs that
+selection, which is what to reach for instead of a whole-tree sweep while
+working.
 
 That `internal/productmetrics` row is what the wide-push half of the problem
 looked like, and it is the reason the package now runs as six shards of its
@@ -1063,7 +1072,11 @@ graph cannot account for widens the run rather than being assumed inert. The
 hook treats an unrecognized decision, a crash, and a missing selector the
 same way. `none` is reachable only when no Go build input changed at all,
 which is precisely the old hook's skip condition, kept so this can never run
-less than before.
+less than before. That includes an embed-only change -- a pack TOML or a
+prompt template with no `.go` beside it -- which the old hook skipped too:
+the bootstrap packs are embedded by a package about 180 others import, so
+engaging on embeds would turn a free push into a full one. Embedded files do
+seed the selection once a Go change has engaged it.
 
 The order of those two questions is load-bearing and worth stating because
 getting it backwards leaves every test green. "Did any Go source change" is
@@ -1116,6 +1129,86 @@ right and the conclusion wrong: `bd reclaim` only ever reaps leases on the
 node that granted them, so a node-local refresh is precisely what stops a
 local reclaim. The underlying claim-staleness concern is tracked separately
 under `ga-aw5356`, not here.
+
+**The push gate keeps the full run.** From ci-4w2t (2026-08-09) to gs-rvw5
+the hook's scoped branch never narrowed anything. `test-fast-parallel` runs
+the runner under `TEST_ENV`'s `env -i`, which dropped
+`GC_SCOPED_TEST_PACKAGES`, and the hook suite stubbed `make`, so it saw only
+what the hook exported. The recipe forwards the variable now, and the
+"through the real Makefile" cases in `scripts/test-push-gate-select.sh` run
+the real Makefile over a stub runner, which is the join that was missing.
+
+Forwarding it would make the push gate narrow for real, and the push is the
+only full run a gascity change gets: the merge sweep gates this repo with
+`go build`, `go vet` and `make dashboard-ci`, and runs no Go tests. So, by
+the mayor's ruling on city bead ci-cu1tu3, the hook prints the selection and
+runs the full fast suite, and a push of a brand-new remote branch still
+decides `full` instead of diffing from its fork point. Both lift once
+gascity's Go suite runs in its merge-sweep gate (city bead ci-ms847d, which
+waits on gs-zle6 to bring the suite under the 1020 s a pass gives one gate):
+the hook then passes the scope, and push mode takes the fork point the way
+`--worktree` does (gs-0y4d).
+
+**What the push gate's selection would save.** Before gs-rvw5, the city's
+cycle-time baseline (`docs/bead-cycle-time-baseline.md` in the city repo,
+2026-09-22 to 2026-10-23) found 17 gascity push attempts: 13 selected the
+full suite, 0 scoped, 0 none and 4 unknown, and every reason visible in a
+record was `new remote branch has no base to diff against`. A bead's branch
+is pushed new, so that trigger fired on essentially every push.
+
+`scripts/push-gate-replay.py replay` asks what the selector would run with a
+fork-point base: it checks out every sweep landing's branch tip and diffs it
+from its fork point off `main`. Over the 309 landings from ci-4w2t's own
+(2026-08-10 00:58 CDT) to 2026-10-23, 301 changed a Go build input, and of
+those 187 scoped and 114 went full (37.9%). The other 8 were none. Over
+the 38 landings from 2026-09-22, 33 changed a Go build input, 27 scoped and
+6 full (18.2%), and 5 were none.
+
+Every remaining full decision is a non-Go path beside a Go change. By the
+first path that widened: `docs/` 26, `TESTING.md` 19, `scripts/` 13, `cmd/`
+13 (mutation-sweep specs, a census JSON, a golden), `testdata/` 12,
+`engdocs/` 7, `Makefile` 6, and 18 others. The rule stays as it is. Tests
+read `docs/` and `TESTING.md` by relative path from `cmd/gc`, `test/docsync`,
+`test/acceptance` and more, so narrowing it needs an inventory of those
+reads, and the floor below caps what it could buy.
+
+The floor is the always-run manifest. Package times from the three
+`make test` runs in `/var/tmp/gascity-test.jsonl.*` (2026-10-16 twice,
+2026-10-20), averaged, sum to 2108 s over 195 packages. The manifest's 63
+packages are 1843 s of that, 87.4%, with `internal/productmetrics` at 718 s
+and `cmd/gc` at 360 s, and every scoped selection carries them. The closure
+reached `cmd/gc` in 185 of the 187 scoped landings. So the median scoped
+selection is 87.4% of summed package time (p10 87.4%, p90 100%), against
+17.1% for the closure alone. These are package times from a `-p=4` run
+under load, a measure of work rather than wall clock. They bound the
+saving: a scoped push would carry no less than about seven eighths of a
+full run's package time while `internal/productmetrics` stays on the
+manifest. It is there only because its tests `filepath.WalkDir` metrics
+homes they build under `t.TempDir()`, which the manifest's marker rule
+cannot tell from a repository walk. No scoped push has been timed against a
+full one, because none has run: that measurement is owed once the hold
+lifts (gs-0y4d).
+
+Re-run, from a gascity checkout whose `main` holds the window:
+
+```bash
+scripts/push-gate-replay.py replay --since 2026-08-10T00:00:00-05:00 \
+    --until 2026-10-23T00:00:00-05:00 --out /var/tmp/push-gate-replay.jsonl
+scripts/push-gate-replay.py summarize --since 2026-08-10T00:58:00-05:00 \
+    --rows /var/tmp/push-gate-replay.jsonl \
+    --manifest scripts/push-gate-always-run.manifest \
+    /var/tmp/gascity-test.jsonl.*
+```
+
+The 2026-09-22 figures are the same `summarize` with
+`--since 2026-09-22T00:00:00-05:00`. The summarize `--since` drops the one
+landing before ci-4w2t's, whose tip predates the selector's manifest.
+
+The replay reads git and `go list` only, in a detached worktree under
+`/var/tmp` that it removes. Its decisions come from the caller's selector
+over each tip's own package graph and manifest, and the time shares from the
+manifest named and whichever `make test` logs survive, so a later re-run
+reproduces the decisions but not necessarily the shares.
 
 ### 2. Testscript (`.txtar` files in `cmd/gc/testdata/`)
 
