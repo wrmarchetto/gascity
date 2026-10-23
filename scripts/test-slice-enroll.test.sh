@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# test-slice-enroll-test — self-test for scripts/lib/test-slice.sh.
+# test-slice-enroll.test.sh — self-test for scripts/lib/test-slice.sh.
 #
 # Exercises the gascity-test.slice auto-enrollment decision matrix with fake
 # systemd-run/systemctl binaries on a fully controlled PATH, including every
 # plain-execution fallback that must keep CI and non-systemd hosts unaffected.
 #
-# Run directly:    scripts/test-slice-enroll-test
+# Run directly:    scripts/test-slice-enroll.test.sh
 # Run via go test: go test ./scripts -run TestSliceEnroll
 
 set -euo pipefail
@@ -95,6 +95,24 @@ FAKE
   chmod +x "$path"
 }
 
+# The slice row leads more than a pipe buffer of further rows, so a writer
+# feeding a reader that stops at the match always meets a closed pipe.
+write_fake_systemctl_large() {
+  local path="$1" log="$2"
+  cat >"$path" <<FAKE
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>"$log"
+printf 'UNIT FILE          STATE  PRESET\n'
+printf 'gascity-test.slice static -\n'
+for ((i = 0; i < 18000; i++)); do
+  printf 'filler-%05d.service static -\n' "\$i"
+done
+printf '\n18001 unit files listed.\n'
+FAKE
+  chmod +x "$path"
+}
+
 write_fake_systemctl_down() {
   local path="$1" log="$2"
   cat >"$path" <<FAKE
@@ -115,6 +133,18 @@ set -euo pipefail
 printf '%s\n' "\$*" >>"$log"
 printf '0 unit files listed.\n'
 exit 1
+FAKE
+  chmod +x "$path"
+}
+
+write_fake_systemctl_unlisted() {
+  local path="$1" log="$2"
+  cat >"$path" <<FAKE
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "\$*" >>"$log"
+printf 'UNIT FILE STATE PRESET\n'
+printf '\n0 unit files listed.\n'
 FAKE
   chmod +x "$path"
 }
@@ -214,6 +244,15 @@ write_fake_systemd_run_ok "$scen_bin/systemd-run" "$sdr_log"
 run_entry no-unit "$cgroup_outside"
 expect_log_lines no-unit "$sdr_log" 0
 
+# Scenario: a listing that exits 0 but names no slice row runs plain. Only
+# this one reaches the row match, since the no-unit fake fails the capture.
+new_scenario unlisted-exit-zero
+write_fake_systemctl_unlisted "$scen_bin/systemctl" "$sct_log"
+write_fake_systemd_run_ok "$scen_bin/systemd-run" "$sdr_log"
+run_entry unlisted-exit-zero "$cgroup_outside"
+expect_log_lines unlisted-exit-zero "$sdr_log" 0
+expect_log_lines unlisted-exit-zero "$sct_log" 1
+
 # Scenario: scope allocation failing falls back to plain execution after the
 # pre-flight probe (containers can pass the unit check yet fail systemd-run).
 new_scenario probe-fails
@@ -258,8 +297,17 @@ if ! grep -qF -- "--user list-unit-files gascity-test.slice" "$sct_log"; then
   fail "wrap: expected a '--user list-unit-files gascity-test.slice' systemctl probe: $(tr '\n' ';' <"$sct_log")"
 fi
 
+# Scenario: a unit listing larger than a pipe buffer still wraps. A match
+# that pipes the listing into an early-exiting grep dies of SIGPIPE here on
+# every run, and pipefail turns that into a silent plain run.
+new_scenario wrap-large-listing
+write_fake_systemctl_large "$scen_bin/systemctl" "$sct_log"
+write_fake_systemd_run_ok "$scen_bin/systemd-run" "$sdr_log"
+run_entry wrap-large-listing "$cgroup_outside"
+expect_log_lines wrap-large-listing "$sdr_log" 2
+
 if [[ "$failures" -ne 0 ]]; then
-  echo "test-slice-enroll-test: $failures failure(s)" >&2
+  echo "test-slice-enroll.test.sh: $failures failure(s)" >&2
   exit 1
 fi
-echo "test-slice-enroll-test: all scenarios passed"
+echo "test-slice-enroll.test.sh: all scenarios passed"

@@ -946,7 +946,7 @@ scope allocation succeeds. Everywhere else (CI runners, macOS, containers)
 the entrypoints run unchanged. Nested runners detect existing slice
 membership through `/proc/self/cgroup` and never double-wrap. Set
 `GC_TEST_NO_SLICE=1` to opt out explicitly. The decision matrix is covered
-by `scripts/test-slice-enroll-test` (run by `go test ./scripts`).
+by `scripts/test-slice-enroll.test.sh` (run by `go test ./scripts`).
 
 Only the wrapped entrypoints listed above are enrolled. Makefile targets
 that invoke `go test` directly — `test-acceptance*`, `test-integration`,

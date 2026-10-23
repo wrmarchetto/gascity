@@ -13,7 +13,7 @@
 #   source "$repo_root/scripts/lib/test-slice.sh"
 #   gc_test_slice_reexec "$repo_root/scripts/<entrypoint>" "$@"
 #
-# Self-test: scripts/test-slice-enroll-test (run by go test ./scripts).
+# Self-test: scripts/test-slice-enroll.test.sh (run by go test ./scripts).
 
 GC_TEST_SLICE_UNIT="gascity-test.slice"
 
@@ -39,11 +39,11 @@ gc_test_slice_should_wrap() {
   fi
   # One probe covers both "the user manager responds" and "the slice unit
   # exists": systemctl fails when the manager is unreachable and prints no
-  # matching row when the unit file is absent. Capture instead of piping so
-  # pipefail callers cannot misread an early grep exit as a failure.
+  # matching row when the unit file is absent.
   local unit_files
   unit_files="$(systemctl --user list-unit-files "$GC_TEST_SLICE_UNIT" 2>/dev/null)" || return 1
-  printf '%s\n' "$unit_files" | grep -qsF "$GC_TEST_SLICE_UNIT" || return 1
+  # not printf | grep -q: grep's early exit SIGPIPEs printf, a pipefail failure
+  [[ "$unit_files" == *"$GC_TEST_SLICE_UNIT"* ]] || return 1
   # Pre-flight: prove scope allocation actually works before committing the
   # real command to it (containers and stale sessions can pass the checks
   # above yet fail systemd-run). Fall back to plain execution otherwise.
