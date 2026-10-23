@@ -14,6 +14,7 @@ import (
 )
 
 func TestGraphFenceReleaseRetainsCityClaimUntilComponentReleaseSucceeds(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, graphDirectoryName)
 	source := openGraphSource(t, graphDir)
@@ -95,6 +96,7 @@ func TestGraphFenceReleaseRetainsCityClaimUntilComponentReleaseSucceeds(t *testi
 }
 
 func TestLegacyCombinedFenceReleaseRetainsCityClaimUntilComponentReleaseSucceeds(t *testing.T) {
+	t.Parallel()
 	city := t.TempDir()
 	source := openLegacyCombinedWriter(t, city)
 	if _, err := source.Create(beads.Bead{Title: "legacy release ordering"}); err != nil {

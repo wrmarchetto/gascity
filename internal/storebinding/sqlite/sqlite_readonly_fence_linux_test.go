@@ -13,6 +13,7 @@ import (
 )
 
 func TestGraphFenceAcceptsRollbackSourceInNonWritableDirectory(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, graphDirectoryName)
 	writer := openGraphSource(t, graphDir)

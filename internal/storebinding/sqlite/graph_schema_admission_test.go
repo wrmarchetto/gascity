@@ -19,6 +19,7 @@ type graphSchemaMutationTestCase struct {
 }
 
 func TestGraphInspectorAdmitsOnlyCanonicalDeployedSchemaLayouts(t *testing.T) {
+	t.Parallel()
 	for _, revision := range []bool{false, true} {
 		for _, legacyDeps := range []bool{false, true} {
 			name := fmt.Sprintf("revision=%t/legacy-deps=%t", revision, legacyDeps)
@@ -39,6 +40,7 @@ func TestGraphInspectorAdmitsOnlyCanonicalDeployedSchemaLayouts(t *testing.T) {
 }
 
 func TestGraphInspectorRejectsSchemaDriftWithoutSourceMutation(t *testing.T) {
+	t.Parallel()
 	for _, test := range graphSchemaDriftTestCases() {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()

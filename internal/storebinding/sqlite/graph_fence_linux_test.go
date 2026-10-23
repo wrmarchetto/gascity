@@ -19,6 +19,7 @@ import (
 )
 
 func TestGraphAdmissionRejectsMalformedWALIndexStateWithoutSourceMutation(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, graphDirectoryName)
 	if err := os.MkdirAll(graphDir, 0o700); err != nil {

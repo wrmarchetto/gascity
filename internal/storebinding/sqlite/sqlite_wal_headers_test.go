@@ -219,6 +219,7 @@ func (s *sqliteWALSource) requirePlanRejection(t *testing.T, details ...string) 
 // salts and the frames it does not overwrite keep the previous salts forever.
 // SQLite stops reading at that discontinuity, so the fence must too.
 func TestSQLiteWriterReservationPlanAcceptsRestartedWAL(t *testing.T) {
+	t.Parallel()
 	store := newLiveSQLiteWALStoreForTest(t)
 	store.commit(t, 40)
 	store.checkpoint(t, "FULL")
@@ -247,6 +248,7 @@ func TestSQLiteWriterReservationPlanAcceptsRestartedWAL(t *testing.T) {
 // behind. Nothing advertises a committed prefix, so the plan falls back to the
 // pending byte and the stale tail stays out of the way.
 func TestSQLiteWriterReservationPlanAcceptsRestartedRecoveryWAL(t *testing.T) {
+	t.Parallel()
 	store := newLiveSQLiteWALStoreForTest(t)
 	store.commit(t, 40)
 	store.checkpoint(t, "FULL")
@@ -275,6 +277,7 @@ func TestSQLiteWriterReservationPlanAcceptsRestartedRecoveryWAL(t *testing.T) {
 // post-checkpoint shape: wal_checkpoint(TRUNCATE) empties the log file and
 // leaves a WAL-index that claims no frames.
 func TestSQLiteWriterReservationPlanAcceptsTruncatedWAL(t *testing.T) {
+	t.Parallel()
 	store := newLiveSQLiteWALStoreForTest(t)
 	store.commit(t, 10)
 	store.checkpoint(t, "TRUNCATE")
@@ -294,6 +297,7 @@ func TestSQLiteWriterReservationPlanAcceptsTruncatedWAL(t *testing.T) {
 // empty-log admission fail-closed: an index that still claims frames
 // contradicts the file it describes.
 func TestSQLiteWriterReservationPlanRejectsTruncatedWALWithClaimedFrames(t *testing.T) {
+	t.Parallel()
 	store := newLiveSQLiteWALStoreForTest(t)
 	store.commit(t, 10)
 	source := store.snapshot(t)
@@ -309,6 +313,7 @@ func TestSQLiteWriterReservationPlanRejectsTruncatedWALWithClaimedFrames(t *test
 // that reading a chain break as end-of-log does not weaken the committed
 // prefix: a frame the WAL-index vouches for must still validate completely.
 func TestSQLiteWriterReservationPlanRejectsCorruptionInsideCommittedPrefix(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name       string
 		corrupt    func(t *testing.T, source *sqliteWALSource, frameOffset int, wal []byte)
@@ -366,6 +371,7 @@ func TestSQLiteWriterReservationPlanRejectsCorruptionInsideCommittedPrefix(t *te
 // matching WAL header. SQLite handles the surviving mismatch benignly because
 // an index claiming no frames sends every reader to the database file.
 func TestSQLiteWriterReservationPlanAcceptsRestartHdrWindow(t *testing.T) {
+	t.Parallel()
 	store := newLiveSQLiteWALStoreForTest(t)
 	store.commit(t, 10)
 	store.checkpoint(t, "FULL")
@@ -387,6 +393,7 @@ func TestSQLiteWriterReservationPlanAcceptsRestartHdrWindow(t *testing.T) {
 // restart-window admission narrow: salts may disagree only while the WAL-index
 // claims nothing from the WAL file.
 func TestSQLiteWriterReservationPlanRejectsSaltMismatchWithClaimedFrames(t *testing.T) {
+	t.Parallel()
 	store := newLiveSQLiteWALStoreForTest(t)
 	store.commit(t, 10)
 	source := store.snapshot(t)

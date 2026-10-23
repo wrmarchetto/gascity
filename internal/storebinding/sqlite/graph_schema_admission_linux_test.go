@@ -12,6 +12,7 @@ import (
 )
 
 func TestGraphInspectorFencedAdmissionRejectsSchemaDriftWithoutSourceMutation(t *testing.T) {
+	t.Parallel()
 	for _, test := range graphSchemaDriftTestCases() {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()

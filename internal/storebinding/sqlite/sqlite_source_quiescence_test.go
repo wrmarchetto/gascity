@@ -279,6 +279,7 @@ func sourceSpellings() []sourceSpelling {
 // state under every spelling of it, and must leave the source byte-identical
 // whichever verdict it reaches.
 func TestSourceCensusesShareOneQuiescenceContract(t *testing.T) {
+	t.Parallel()
 	for _, census := range sourceCensuses() {
 		t.Run(census.scope, func(t *testing.T) {
 			for _, source := range sourceStates() {
@@ -334,6 +335,7 @@ func TestSourceCensusesShareOneQuiescenceContract(t *testing.T) {
 // answer is right, and the gate refuses anyway because through that spelling it
 // cannot tell those cells from the two it would get wrong.
 func TestNonQuiescentSourcesWouldFoolAnUngatedCensus(t *testing.T) {
+	t.Parallel()
 	for _, census := range sourceCensuses() {
 		t.Run(census.scope, func(t *testing.T) {
 			for _, source := range sourceStates() {
@@ -479,6 +481,7 @@ func TestQuiescenceGateRefusesASourceThatMovedUnderIt(t *testing.T) {
 // about a regular file, and a directory carries a link count of its own that
 // would otherwise read as a hard-linked alias.
 func TestQuiescenceGateRefusesANonDatabaseSource(t *testing.T) {
+	t.Parallel()
 	for _, census := range sourceCensuses() {
 		t.Run(census.scope, func(t *testing.T) {
 			err := census.inspect(t, t.TempDir())
@@ -587,6 +590,7 @@ func directoryListing(t *testing.T, directory string) string {
 // TestHotJournalSourceCarriesNoWAL pins why a WAL-only gate fails open on it:
 // there is no WAL to stat. The refusal has to come from the journal.
 func TestHotJournalSourceCarriesNoWAL(t *testing.T) {
+	t.Parallel()
 	for _, census := range sourceCensuses() {
 		t.Run(census.scope, func(t *testing.T) {
 			path := hotJournalSource(t, census.deployed(t, t.TempDir()))
@@ -601,6 +605,7 @@ func TestHotJournalSourceCarriesNoWAL(t *testing.T) {
 // TestSourceCensusesRejectAMissingSource keeps "no component" from reading as
 // "a component with nothing in it" on every class at once.
 func TestSourceCensusesRejectAMissingSource(t *testing.T) {
+	t.Parallel()
 	for _, census := range sourceCensuses() {
 		t.Run(census.scope, func(t *testing.T) {
 			if err := census.inspect(t, filepath.Join(t.TempDir(), "absent.db")); err == nil {
@@ -635,6 +640,7 @@ func censusFor(t *testing.T, scope string) sourceCensus {
 // crash-leftover fixture, one line apart, so neither can be changed on the
 // assumption that the other agrees with it.
 func TestActiveBeadsOpenStillAcceptsANonQuiescentSource(t *testing.T) {
+	t.Parallel()
 	census := censusFor(t, "Beads")
 	path := liveWALSource(t, census.deployed(t, t.TempDir()))
 

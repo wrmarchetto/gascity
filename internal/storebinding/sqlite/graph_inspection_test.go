@@ -18,6 +18,7 @@ import (
 )
 
 func TestInspectGraphEscapesURIAndDoesNotMutateStaticSource(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "source ? # % spaces")
 	graphDir := filepath.Join(root, "graph")
 	writer := openGraphSource(t, graphDir)
@@ -56,6 +57,7 @@ func TestInspectGraphEscapesURIAndDoesNotMutateStaticSource(t *testing.T) {
 }
 
 func TestInspectGraphLeavesAnyRollbackJournalForFencedInspection(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, graphDirectoryName)
 	writer := openGraphSource(t, graphDir)
@@ -90,6 +92,7 @@ func TestInspectGraphLeavesAnyRollbackJournalForFencedInspection(t *testing.T) {
 }
 
 func TestInspectGraphRefusesLiveSourceDescriptorWithoutOpeningWAL(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, "graph")
 	writer := openGraphSource(t, graphDir)
@@ -118,6 +121,7 @@ func TestInspectGraphRefusesLiveSourceDescriptorWithoutOpeningWAL(t *testing.T) 
 }
 
 func TestCopyGraphSnapshotRejectsReplacementAfterSourceCensus(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	sourceDir := filepath.Join(root, graphDirectoryName)
 	if err := os.MkdirAll(sourceDir, 0o700); err != nil {
@@ -149,6 +153,7 @@ func TestCopyGraphSnapshotRejectsReplacementAfterSourceCensus(t *testing.T) {
 }
 
 func TestCopyGraphSnapshotOmitsDerivedWALIndex(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	sourceDir := filepath.Join(root, graphDirectoryName)
 	source := openGraphSource(t, sourceDir)
@@ -178,6 +183,7 @@ func TestCopyGraphSnapshotOmitsDerivedWALIndex(t *testing.T) {
 }
 
 func TestGraphSourceFenceComparisonAllowsOnlyWALIndexReaderMarkChurn(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, graphDirectoryName)
 	if err := os.MkdirAll(graphDir, 0o700); err != nil {
@@ -237,6 +243,7 @@ func TestGraphSourceFenceComparisonAllowsOnlyWALIndexReaderMarkChurn(t *testing.
 }
 
 func TestGraphFenceCompletesInspectionFromTemporarySnapshot(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, "graph")
 	writer := openGraphSource(t, graphDir)
@@ -308,6 +315,7 @@ func TestGraphFenceCompletesInspectionFromTemporarySnapshot(t *testing.T) {
 }
 
 func TestAcquireGraphFenceRejectsTargetMovedAfterInspection(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, "graph")
 	writer := openGraphSource(t, graphDir)
@@ -346,6 +354,7 @@ func TestAcquireGraphFenceRejectsTargetMovedAfterInspection(t *testing.T) {
 }
 
 func TestGraphFenceSnapshotsSQLiteComponentsWithoutCopyingCloneLocalSidecars(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, "graph")
 	writer := openGraphSource(t, graphDir)
@@ -389,6 +398,7 @@ func TestGraphFenceSnapshotsSQLiteComponentsWithoutCopyingCloneLocalSidecars(t *
 }
 
 func TestGraphInspectorRetainsResolvedBindingPathAcrossFencedInspection(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writer := openGraphSource(t, filepath.Join(root, "graph"))
 	t.Cleanup(func() { _ = writer.CloseStore() })
@@ -437,6 +447,7 @@ func TestGraphInspectorRetainsResolvedBindingPathAcrossFencedInspection(t *testi
 }
 
 func TestGraphFenceRejectsComponentStateChangedDuringSnapshotCopy(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	graphDir := filepath.Join(root, "graph")
 	writer := openGraphSource(t, graphDir)
@@ -564,6 +575,7 @@ func TestGraphFencedInspectionCancellationJoinsSnapshotCleanupFailure(t *testing
 }
 
 func TestGraphFenceRejectsMarkerChangesDuringSnapshotCopy(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []struct {
 		name       string
 		initial    *string
@@ -641,6 +653,7 @@ func TestGraphFenceRejectsMarkerChangesDuringSnapshotCopy(t *testing.T) {
 }
 
 func TestGraphInspectionCanonicalizesEquivalentBindingRoots(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writer := openGraphSource(t, filepath.Join(root, "graph"))
 	if _, err := writer.Create(beads.Bead{Title: "canonical root"}); err != nil {
@@ -671,6 +684,7 @@ func TestGraphInspectionCanonicalizesEquivalentBindingRoots(t *testing.T) {
 }
 
 func TestInspectGraphFencedRejectsForeignWriterFence(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writer := openGraphSource(t, filepath.Join(root, "graph"))
 	if _, err := writer.Create(beads.Bead{Title: "static graph source"}); err != nil {
@@ -708,6 +722,7 @@ func TestInspectGraphFencedRejectsForeignWriterFence(t *testing.T) {
 }
 
 func TestGraphFenceInspectionOperationRetainsNoFenceOrCallbackCapability(t *testing.T) {
+	t.Parallel()
 	writerFenceType := reflect.TypeOf((*storebinding.WriterFence)(nil)).Elem()
 	visited := make(map[reflect.Type]bool)
 	var inspectType func(reflect.Type, string)
@@ -740,6 +755,7 @@ func TestGraphFenceInspectionOperationRetainsNoFenceOrCallbackCapability(t *test
 }
 
 func TestGraphFencedInspectionValidatesExactRequestBeforeSnapshot(t *testing.T) {
+	t.Parallel()
 	rootA := t.TempDir()
 	writerA := openGraphSource(t, filepath.Join(rootA, graphDirectoryName))
 	if _, err := writerA.Create(beads.Bead{Title: "graph A"}); err != nil {
