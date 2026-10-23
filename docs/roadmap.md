@@ -203,7 +203,7 @@ to him, not beads.
 
 ## epic:bead-cycle-time -- City bead cycle time: the non-development time to main
 
-status: open
+status: in-progress
 
 Work takes a very long time to land, and most of that time is not
 development. This epic measures where a bead's time goes between its last

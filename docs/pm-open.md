@@ -270,6 +270,10 @@ standing question (a maintenance epic, or a declared standalone-by-default
 policy for substrate fixes) is one candidate answer that sitting could fold
 in, as #5 noted before it.
 
+Update 2026-10-23 (pm-log #154): RESOLVED. Willie brought
+epic:bead-cycle-time to pm-chat sitting gs-otx1 and accepted it
+in-progress.
+
 ## 9. What epic:agent-efficiency criterion 4 becomes after the voided canary (2026-09-27)
 
 The gs-jbyc canary window read exit 3 (pm-log #145): mayor, lab.pm and
@@ -290,3 +294,8 @@ Update 2026-09-27 (pm-log #146): the level-confirmation half is answered
 from the record by the liaison's gs-3vdb comment (adversarial-reader-claude
 xhigh intended, city f8d28e40). Only the a/b/c choice is still open, queued
 to Willie as city ci-efnkgw.
+
+Update 2026-10-23 (pm-log #147): RESOLVED. Willie chose (c), criterion 4
+dropped, via gs-3vdb's close reason, and confirmed it in sitting gs-otx1.
+Criterion 3's assignments of record are superseded by the Opus 5.5
+convergence.

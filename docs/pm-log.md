@@ -5184,3 +5184,21 @@ Willie accepted the PM's recommendation:
   merge sweep, not at push.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 154. pm-chat gs-otx1: bead-cycle-time accepted and promoted in-progress (2026-10-23)
+
+Willie accepted epic:bead-cycle-time as written in the roadmap -- slug,
+description and its five criteria, each carried from #150-#153 -- and set
+it in-progress now ("yes" to the PM's recommendation). Reason: the only
+other in-progress epic, agent-efficiency, has nothing left but the
+operator's review, so without this the rig idles behind that review. Two
+epics read in-progress for that interval; only bead-cycle-time carries
+work.
+
+Follow-through in this turn, in this order: this entry and the status edit
+are committed; DECOMP mail to the mayor with the epic and its criteria;
+gs-78op closed with the #147 answer, which lets the agent-efficiency
+epic-close summons open its review generation. pm-open #8 (nothing queued
+after agent-efficiency) and #9 (criterion 4) are marked RESOLVED.
+
+Source: Willie, pm-chat sitting gs-otx1
