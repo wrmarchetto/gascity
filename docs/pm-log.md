@@ -5163,3 +5163,24 @@ Willie accepted the PM's recommendation:
 - The suite time-budget report from #151 covers the runtime half.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 153. pm-chat gs-otx1: city-efficiency run cadence and test selection (2026-10-23)
+
+Willie accepted the PM's recommendation:
+
+- The full suite runs once per landing, not once per bead: in the merge
+  sweep, over the combined result of every branch landing in that sweep,
+  with per-branch bisection on failure. The sweep runs no tests today, so
+  this moves the full run rather than adding one.
+- While working and at push, only affected tests run. The push gate's
+  full-suite fallback is measured and its common triggers fixed rather
+  than kept. gascity's AGENTS.md done-criterion "make test passes" becomes
+  "the push gate passed", which removes the probable double run (#149).
+- Keep the existing selector (goaffected.py over go list); adopt no new
+  build framework. Each non-Go rig gets the lightest change-to-test mapper
+  its toolchain allows, and only where the baseline shows its tests are a
+  material cost.
+- Accepted trade: a regression the affected subset misses is caught at the
+  merge sweep, not at push.
+
+Source: Willie, pm-chat sitting gs-otx1
