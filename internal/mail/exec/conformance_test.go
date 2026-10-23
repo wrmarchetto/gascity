@@ -4,10 +4,26 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/mail"
 	"github.com/gastownhall/gascity/internal/mail/mailtest"
 )
+
+// loadTolerantCallTimeout is a hang detector, not an assertion. The push gate
+// runs tests at nice 10, where nice-0 load starved one MCP Send of its ~80
+// processes past the provider's default per-call timeout. It stays inside the
+// gate's 20m per-package go test budget.
+const loadTolerantCallTimeout = 5 * time.Minute
+
+// newLoadTolerantProvider returns a provider whose per-call timeout is
+// loadTolerantCallTimeout. A passing call returns when its script exits, so
+// the wider bound only delays the report of a call that is truly wedged.
+func newLoadTolerantProvider(script string) *Provider {
+	p := NewProvider(script)
+	p.timeout = loadTolerantCallTimeout
+	return p
+}
 
 // statefulScript returns a shell script body that maintains message state
 // in a temp directory. Each message is stored as a file with line-based
@@ -268,6 +284,6 @@ func TestExecConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		return NewProvider(scriptPath)
+		return newLoadTolerantProvider(scriptPath)
 	})
 }
