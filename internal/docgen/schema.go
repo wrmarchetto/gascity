@@ -4,10 +4,12 @@ package docgen
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/git"
@@ -98,12 +100,29 @@ func addGoCommentsFiltered(r *jsonschema.Reflector, module, root string) error {
 
 // newReflector creates a jsonschema.Reflector configured for TOML field
 // names with Go doc comments extracted from the source tree.
+func newReflector() (*jsonschema.Reflector, error) {
+	comments, err := goComments()
+	if err != nil {
+		return nil, err
+	}
+	return &jsonschema.Reflector{
+		FieldNameTag: "toml",
+		CommentMap:   maps.Clone(comments),
+	}, nil
+}
+
+// goComments extracts the module's doc comments once per process: the walk
+// parses every package in the tree, and each schema reflected in one process
+// reads the same sources.
+var goComments = sync.OnceValues(extractGoComments)
+
+// extractGoComments maps the module's Go declarations to their doc comments.
 //
 // AddGoComments requires CWD to be set to the module root so that
 // filepath.Walk produces paths like "internal/config" which map to the
 // correct import paths. Hidden directories (names beginning with ".") are
 // excluded via addGoCommentsFiltered.
-func newReflector() (*jsonschema.Reflector, error) {
+func extractGoComments() (map[string]string, error) {
 	root, err := ModuleRoot()
 	if err != nil {
 		return nil, err
@@ -119,13 +138,11 @@ func newReflector() (*jsonschema.Reflector, error) {
 	}
 	defer func() { _ = os.Chdir(orig) }()
 
-	r := &jsonschema.Reflector{
-		FieldNameTag: "toml",
-	}
+	r := &jsonschema.Reflector{}
 	if err := addGoCommentsFiltered(r, "github.com/gastownhall/gascity", "."); err != nil {
 		return nil, fmt.Errorf("extracting Go comments: %w", err)
 	}
-	return r, nil
+	return r.CommentMap, nil
 }
 
 // GenerateCitySchema produces a JSON Schema for the city.toml config format.
