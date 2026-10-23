@@ -116,25 +116,30 @@ func beadsOverSQLiteTopology(tb storebindingtest.TB) storebinding.WorkTopology {
 // storage-class front doors of one SQLite-backed canonical Beads binding
 // answer the same corpus the deployed per-class stores answer.
 func TestBeadsOverSQLiteRunsTheClassCorpus(t *testing.T) {
+	t.Parallel()
 	t.Run("work", func(t *testing.T) {
+		t.Parallel()
 		storebindingtest.RunWorkTopologyTests(storebindingtest.Wrap(t), storebindingtest.WorkTopologySuite{
 			NewTopology:            beadsOverSQLiteTopology,
 			WantPhysicalWorkspaces: 2,
 		})
 	})
 	t.Run("graph", func(t *testing.T) {
+		t.Parallel()
 		storebindingtest.RunGraphStoreTests(storebindingtest.Wrap(t), storebindingtest.GraphSuite{
 			NewStore:   func(tb storebindingtest.TB) storebinding.GraphStore { return openBeadsOverSQLite(tb).Graph },
 			Capability: beadsOverSQLiteCapability,
 		})
 	})
 	t.Run("sessions", func(t *testing.T) {
+		t.Parallel()
 		storebindingtest.RunSessionsStoreTests(storebindingtest.Wrap(t), storebindingtest.SessionsSuite{
 			NewStore:   func(tb storebindingtest.TB) storebinding.SessionsStore { return openBeadsOverSQLite(tb).Sessions },
 			Capability: beadsOverSQLiteCapability,
 		})
 	})
 	t.Run("messaging", func(t *testing.T) {
+		t.Parallel()
 		storebindingtest.RunMessagingFrontDoorTests(storebindingtest.Wrap(t), storebindingtest.MessagingSuite{
 			NewFrontDoors: func(tb storebindingtest.TB) storebinding.MessagingFrontDoors {
 				return openBeadsOverSQLite(tb).Messaging
@@ -143,12 +148,14 @@ func TestBeadsOverSQLiteRunsTheClassCorpus(t *testing.T) {
 		})
 	})
 	t.Run("orders", func(t *testing.T) {
+		t.Parallel()
 		storebindingtest.RunOrdersStoreTests(storebindingtest.Wrap(t), storebindingtest.OrdersSuite{
 			NewStore:   func(tb storebindingtest.TB) storebinding.OrdersStore { return openBeadsOverSQLite(tb).Orders },
 			Capability: beadsOverSQLiteCapability,
 		})
 	})
 	t.Run("nudges", func(t *testing.T) {
+		t.Parallel()
 		storebindingtest.RunNudgeFrontDoorTests(storebindingtest.Wrap(t), storebindingtest.NudgesSuite{
 			NewFrontDoors: func(tb storebindingtest.TB) storebinding.NudgeFrontDoors { return openBeadsOverSQLite(tb).Nudges },
 			Capability:    beadsOverSQLiteCapability,
@@ -162,6 +169,7 @@ func TestBeadsOverSQLiteRunsTheClassCorpus(t *testing.T) {
 // without it the Messaging front door is the one class whose corpus pass is
 // only skin deep.
 func TestBeadsOverSQLiteRunsTheMailProviderTable(t *testing.T) {
+	t.Parallel()
 	storebindingtest.RunMailProviderTests(t, storebindingtest.MessagingSuite{
 		NewFrontDoors: func(tb storebindingtest.TB) storebinding.MessagingFrontDoors {
 			return openBeadsOverSQLite(tb).Messaging
