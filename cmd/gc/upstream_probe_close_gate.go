@@ -89,8 +89,9 @@ func isUpstreamProbeGatedBead(bead beads.Bead) bool {
 }
 
 // upstreamProbeCloseViolation returns an empty string when no upstream-probe
-// contract applies or when probe distinguishes the branch from its production
-// changes. A non-empty result is a close refusal explaining the failed
+// contract applies, when probe distinguishes the branch from its production
+// changes, or when a branch with no production changes has a probe that runs
+// its tests green. A non-empty result is a close refusal explaining the failed
 // experiment. The experiment runs in a worktree this function creates and
 // removes, never in the worker's checkout.
 func upstreamProbeCloseViolation(repoDir, probe string) string {
@@ -139,19 +140,23 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 		return ""
 	}
 	probe = strings.TrimSpace(probe)
+	if probe == "" && len(reverted) == 0 {
+		return fmt.Sprintf("edits only test paths, so no command can fail without this patch; set %s to the command that runs the edited tests, which the merge sweep still requires", upstreamProbeMetadataKey)
+	}
 	if probe == "" {
 		return fmt.Sprintf("edits upstream-owned code; set %s to the test command that fails without this patch", upstreamProbeMetadataKey)
 	}
 	if len(kept) == 0 {
 		return "edits upstream-owned code but adds no test path to keep for its retirement experiment"
 	}
-	if len(reverted) == 0 {
-		return "edits only test paths, so there is no production change to test for retirement"
-	}
 
 	return runUpstreamProbeExperiment(repoDir, probe, reverted)
 }
 
+// runUpstreamProbeExperiment requires probe to run a test and pass on the
+// branch tip, then to fail once reverted is undone. An empty reverted (a
+// test-only branch) stops after the first half: the city's upstream audit
+// reports such a patch inconclusive and leaves it to reading.
 func runUpstreamProbeExperiment(repoDir, probe string, reverted []string) string {
 	mergeBase, err := upstreamProbeGitOutput(repoDir, "merge-base", upstreamProbeBaseRef, "HEAD")
 	if err != nil {
@@ -171,9 +176,12 @@ func runUpstreamProbeExperiment(repoDir, probe string, reverted []string) string
 		return fmt.Sprintf("could not create isolated probe worktree: %v", err)
 	}
 	if output, err := upstreamProbeRun(worktree, probe); err != nil {
-		return fmt.Sprintf("%s fails before production changes are reverted (exit %d); correct the command before closing", upstreamProbeMetadataKey, exitCode(err))
+		return fmt.Sprintf("%s fails on the branch tip, before anything is reverted (exit %d); correct the command before closing", upstreamProbeMetadataKey, exitCode(err))
 	} else if upstreamProbeVacuous(output) {
-		return fmt.Sprintf("%s ran no test before production changes were reverted; point it at the regression test", upstreamProbeMetadataKey)
+		return fmt.Sprintf("%s ran no test on the branch tip, before anything is reverted; point it at the regression test", upstreamProbeMetadataKey)
+	}
+	if len(reverted) == 0 {
+		return ""
 	}
 
 	patch, err := upstreamProbeGitOutput(repoDir, append([]string{"diff", "--binary", "HEAD", strings.TrimSpace(mergeBase), "--"}, reverted...)...)
