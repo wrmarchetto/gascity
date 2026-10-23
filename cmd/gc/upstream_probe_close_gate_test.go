@@ -91,20 +91,72 @@ func TestEvaluateUpstreamProbeCloseGateUsesProbeSetByAtomicClose(t *testing.T) {
 	}
 }
 
-func TestEvaluateUpstreamProbeCloseGateDoesNotAskForkOnlyBranchForAProbe(t *testing.T) {
-	repoDir := newUpstreamProbeCloseGateRepo(t)
-	runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "main")
-	runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-b", "fix/fork-only")
-	if err := os.WriteFile(filepath.Join(repoDir, "fork_only.txt"), []byte("fork\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runUpstreamProbeCloseGateGit(t, repoDir, "add", "fork_only.txt")
-	runUpstreamProbeCloseGateGit(t, repoDir, "commit", "-q", "-m", "fork-only work")
+// TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape pins what each
+// branch shape owes. Fork-only owes no probe. Upstream code owes a kept test
+// and a probe that runs a test both before and after the revert. Only
+// upstream-owned tests owe a probe that runs them green, as the merge sweep does.
+func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		paths    []string // files the branch writes; upstream_owned.txt is upstream's
+		upstream bool     // paths are committed to upstream/main first
+		probe    string
+		wantMsg  string // empty when the close must be accepted
+	}{
+		{name: "fork-only/no-probe", paths: []string{"fork_only.txt"}},
+		// Green on upstream's tree too, as a flaky-test fix's own test run is.
+		{name: "upstream-test-only/passing-probe", paths: []string{"owned_test.go"}, upstream: true, probe: "test -f owned_test.go"},
+		{name: "upstream-test-only/no-probe", paths: []string{"owned_test.go"}, upstream: true, wantMsg: "edits only test paths"},
+		{name: "upstream-test-only/red-probe", paths: []string{"owned_test.go"}, upstream: true, probe: "grep -q never-written owned_test.go", wantMsg: "fails on the branch tip"},
+		{name: "upstream-test-only/vacuous-probe", paths: []string{"owned_test.go"}, upstream: true, probe: "echo 'ok pkg [no test files]'", wantMsg: "ran no test"},
+		{name: "upstream-code-without-test/probe", paths: []string{"upstream_owned.txt"}, probe: "true", wantMsg: "adds no test path"},
+		{
+			name:    "upstream-code-and-test/vacuous-after-revert",
+			paths:   []string{"upstream_owned.txt", "new_test.go"},
+			probe:   "grep -q branch-edit upstream_owned.txt && echo ok || echo 'ok pkg [no test files]'",
+			wantMsg: "ran no test after",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := newUpstreamProbeCloseGateRepo(t)
+			runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "main")
+			writeAndCommit := func(content, msg string) {
+				t.Helper()
+				for _, path := range tc.paths {
+					if err := os.WriteFile(filepath.Join(repoDir, path), []byte(content), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				runUpstreamProbeCloseGateGit(t, repoDir, append([]string{"add"}, tc.paths...)...)
+				runUpstreamProbeCloseGateGit(t, repoDir, "commit", "-q", "-m", msg)
+			}
+			if tc.upstream {
+				writeAndCommit("upstream\n", "upstream files")
+				runUpstreamProbeCloseGateGit(t, repoDir, "update-ref", "refs/remotes/upstream/main", "HEAD")
+			}
+			runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-b", "fix/shape")
+			writeAndCommit("branch-edit\n", "branch work")
 
-	store := beads.NewMemStoreFrom(1, []beads.Bead{{ID: "ci-probe"}}, nil)
-	var stderr strings.Builder
-	if blocked := evaluateUpstreamProbeCloseGate([]string{"close", "ci-probe"}, store, nil, repoDir, &stderr); blocked {
-		t.Fatalf("fork-only branch was blocked: %s", stderr.String())
+			bead := beads.Bead{ID: "ci-probe", Type: "bug"}
+			if tc.probe != "" {
+				bead.Metadata = map[string]string{upstreamProbeMetadataKey: tc.probe}
+			}
+			store := beads.NewMemStoreFrom(1, []beads.Bead{bead}, nil)
+			var stderr strings.Builder
+			blocked := evaluateUpstreamProbeCloseGate([]string{"close", "ci-probe"}, store, nil, repoDir, &stderr)
+			if tc.wantMsg == "" {
+				if blocked {
+					t.Fatalf("close was blocked: %s", stderr.String())
+				}
+				return
+			}
+			if !blocked {
+				t.Fatalf("close was accepted, want refusal containing %q", tc.wantMsg)
+			}
+			if got := stderr.String(); !strings.Contains(got, tc.wantMsg) {
+				t.Fatalf("refusal = %q, want it to contain %q", got, tc.wantMsg)
+			}
+		})
 	}
 }
 
