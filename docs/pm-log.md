@@ -5079,3 +5079,30 @@ entry is committed, so the agent-efficiency epic-close summons finds this
 epic to promote rather than an empty roadmap.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 149. pm-chat gs-otx1: city-efficiency scope is every rig, via city configuration (2026-10-23)
+
+Willie, verbatim: "Actually I want this for our own rigs. I opened this in
+the gascity rig because it affects all of our projects and is a city
+configuration." This overrides the PM's split recommendation (measure
+city-wide, fix only gascity's suite). The epic covers the bead lifecycle of
+every rig in the city, and its fixes land where that lifecycle is configured
+-- the city repo's hooks, gates, merge sweep and agent prompts, gc itself,
+and each rig's own test entry points. It lives in this roadmap because gc
+and the city configuration it reads are the shared substrate.
+
+Initial survey (Explore, read-only), recorded as leads, not measurements:
+gascity's pre-push hook runs make test-fast-parallel on every push, after
+AGENTS.md has already had the engineer run make test or
+make test-fast-parallel as a done criterion -- a plausible double run per
+bead, more per extra push. Affected-package selection already exists
+(scripts/push-gate-select over scripts/goaffected.py) but falls back to the
+full suite on any uncertainty. The merge sweep runs build, vet and
+dashboard-ci, not Go tests. Recorded figures: push gate ~16 min over 187
+packages; one package (productmetrics) 887 s of a 995 s unit run. Suite
+size at HEAD recounted by the PM from disk: 2,288 test files, 24,085 test
+functions. The search's historical counts (7,799 functions at 2026-04-22,
+3,187 at 2026-03-08) are UNVERIFIED: the PM's commit-safety hook does not
+allow the tree-listing subcommand, so the PM could not recount them.
+
+Source: Willie, pm-chat sitting gs-otx1
