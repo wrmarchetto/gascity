@@ -5106,3 +5106,22 @@ functions. The search's historical counts (7,799 functions at 2026-04-22,
 allow the tree-listing subcommand, so the PM could not recount them.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 150. pm-chat gs-otx1: city-efficiency success measure, baseline first (2026-10-23)
+
+Willie answered "yes" to the PM's recommendation, which the PM reads as
+accepting it rather than as naming a figure of his own:
+
+- Primary measure: per rig, median and p90 time from a bead's last code
+  commit to its landing on main, broken down by stage (test runs, push
+  gate, close gates, merge sweep, queue waits). Last code commit is the
+  start so development time is excluded, matching his "non-development
+  time".
+- First criterion is that baseline, over a representative window, built
+  from records that already exist (bead timestamps, merge-sweep run logs,
+  push-gate timings), recorded before any reduction lands.
+- No target is set now. Willie sets the reduction target at the baseline
+  review, and it is logged then; the roadmap criterion names that ruling
+  rather than a number.
+
+Source: Willie, pm-chat sitting gs-otx1
