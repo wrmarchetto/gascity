@@ -1,0 +1,71 @@
+# Proves the merge-path opt-out from the runner's yield is enforced end to end:
+# the runner honors LOCAL_TEST_YIELD, the push hook sets it, and the Makefile
+# carries it through env -i. docs/pm-log.md #162, bead gs-r9ph.
+#
+# Bound: the ionice row dies only where the sweep's own shell is not already
+# in the idle I/O class, because a merge-path job inherits its caller's class.
+
+[sweep]
+name = "merge-path gates run at the caller's priority, development runs yield"
+repo = ".."
+
+[sweep.gate]
+argv = ["bash", "scripts/test-local-concurrency.sh"]
+timeout_s = 300
+
+[[mutation]]
+id = "merge-path-run-still-yields"
+path = "scripts/test-local-parallel"
+find = '''if [[ "$local_test_yield" -eq 1 ]]; then'''
+replace = '''if true; then'''
+expect_output = ["FAIL priority.merge_path_run_does_not_yield"]
+
+[[mutation]]
+id = "development-run-stops-yielding"
+path = "scripts/test-local-parallel"
+find = '''if [[ "$local_test_yield" -eq 1 ]]; then'''
+replace = '''if false; then'''
+expect_output = ["FAIL priority.development_run_yields"]
+
+[[mutation]]
+id = "unset-means-no-yield"
+path = "scripts/test-local-parallel"
+find = '''local_test_yield="${LOCAL_TEST_YIELD:-1}"'''
+replace = '''local_test_yield="${LOCAL_TEST_YIELD:-0}"'''
+expect_output = ["FAIL priority.development_run_yields"]
+
+[[mutation]]
+id = "ionice-kept-on-merge-path"
+path = "scripts/test-local-parallel"
+find = '''    nice_prefix="nice -n 10"
+  fi
+  if command -v ionice >/dev/null 2>&1; then'''
+replace = '''    nice_prefix="nice -n 10"
+  fi
+fi
+if true; then
+  if command -v ionice >/dev/null 2>&1; then'''
+expect_output = ["FAIL priority.merge_path_run_does_not_yield"]
+
+[[mutation]]
+id = "malformed-value-accepted"
+path = "scripts/test-local-parallel"
+find = '''if ! [[ "$local_test_yield" =~ ^[01]$ ]]; then'''
+replace = '''if false; then'''
+expect_output = ["FAIL priority.malformed_nonzero_exit"]
+
+[[mutation]]
+id = "push-hook-does-not-opt-out"
+path = ".githooks/pre-push"
+find = '''export LOCAL_TEST_YIELD=0'''
+replace = '''export LOCAL_TEST_YIELD=1'''
+expect_output = ["the push gate reached the runner yielding"]
+gate = { argv = ["bash", "scripts/test-push-gate-select.sh"], timeout_s = 600 }
+
+[[mutation]]
+id = "makefile-drops-the-opt-out"
+path = "Makefile"
+find = ''' LOCAL_TEST_YIELD="$${LOCAL_TEST_YIELD-}" ./scripts/test-local-parallel fast'''
+replace = ''' ./scripts/test-local-parallel fast'''
+expect_output = ["the push gate reached the runner yielding"]
+gate = { argv = ["bash", "scripts/test-push-gate-select.sh"], timeout_s = 600 }
