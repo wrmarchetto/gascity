@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-otx1 2026-10-23T12:05:30Z
+last_seen: gs-c856 2026-10-23T13:10:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5227,3 +5227,31 @@ around:
    counts in #149 unverified.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 156. DECOMP bead-cycle-time (gs-c856): ACCEPT (2026-10-23)
+
+The mayor proposed four beads, baseline first. Checked against the epic's
+five criteria and its dependency line:
+
+- Criterion 1 (baseline): ci-npfgao, city store, analyst seat, measures
+  and stops, proposes no target -- matches #150.
+- Criterion 4 (extend before add): ci-ufxl74, prompt directive plus the
+  close gate seen to refuse -- matches #152.
+- Criterion 5: ci-cicsvc (merge sweep runs the full suite once over the
+  combined result, bisects per branch) and gs-rvw5 (gascity affected-only
+  in-session and push runs, fallback rate measured and triggers fixed,
+  AGENTS.md done-criterion) -- matches #153.
+- Criteria 2 and 3 carry no bead yet, by sequence rather than by gap: the
+  target is Willie's ruling at the baseline review (#150), and the per-rig
+  slow-test ranking and any non-Go mapper are filed from the baseline
+  report. The epic-close summons is the backstop: if the four beads close
+  with criteria 2 or 3 still unbeaded, that summons finds them unmet.
+- Every reduction bead waits on ci-npfgao (store edges for the two city
+  beads, an unrouted hold on gs-rvw5), so the baseline is recorded before
+  any reduction lands, as criterion 1 requires.
+- No hardware and no upstream rig, as the dependency line says.
+
+Verdict: ACCEPT bead-cycle-time. Rig store since last_seen moved by
+gs-78op and gs-otx1 closing (#154-#155), gs-rvw5 filed, and this summons.
+
+Source: roadmap bead-cycle-time
