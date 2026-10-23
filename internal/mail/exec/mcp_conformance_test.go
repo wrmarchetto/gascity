@@ -51,7 +51,7 @@ func TestMCPMailConformance(t *testing.T) {
 		wrapperPath := filepath.Join(dir, "mail-provider")
 		writeExecutable(t, wrapperPath, mcpWrapper(binDir, scriptPath, stateDir))
 
-		return NewProvider(wrapperPath)
+		return newLoadTolerantProvider(wrapperPath)
 	})
 }
 
@@ -100,7 +100,7 @@ func TestMCPMailReplyMissingOriginalIsNotFound(t *testing.T) {
 	if err := os.WriteFile(wrapperPath, []byte(mcpWrapper(binDir, scriptPath, stateDir)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	p := NewProvider(wrapperPath)
+	p := newLoadTolerantProvider(wrapperPath)
 
 	// Deliver a message so the bridge caches its recipient (msg-agent/<id>).
 	target, err := p.Send("alice", "bob", "original", "please reply later")
@@ -221,7 +221,7 @@ func TestMCPMailCrossPodNameResolution(t *testing.T) {
 	if err := os.WriteFile(wrapperA, []byte(mcpWrapperWithCity(binDir, scriptPath, stateDir, cityDir)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	podA := NewProvider(wrapperA)
+	podA := newLoadTolerantProvider(wrapperA)
 
 	msg, err := podA.Send("mayor", "clerk", "hello", "test message")
 	if err != nil {
@@ -237,7 +237,7 @@ func TestMCPMailCrossPodNameResolution(t *testing.T) {
 	if err := os.WriteFile(wrapperB, []byte(mcpWrapperWithCity(binDir, scriptPath, stateDir, cityDir)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	podB := NewProvider(wrapperB)
+	podB := newLoadTolerantProvider(wrapperB)
 
 	// Pod B reads the inbox for "clerk" — should resolve "mayor" from the
 	// shared cache, not fall back to the raw mcp name.
@@ -317,7 +317,7 @@ func TestMCPMailProjectKeyIsolation(t *testing.T) {
 	if err := os.WriteFile(wrapperA, []byte(mcpWrapperWithProject(binDir, scriptPath, stateDir, cityDir, projectA)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	podA := NewProvider(wrapperA)
+	podA := newLoadTolerantProvider(wrapperA)
 
 	if _, err := podA.Send("mayor", "clerk", "hello", "test message"); err != nil {
 		t.Fatalf("pod A Send: %v", err)
@@ -327,7 +327,7 @@ func TestMCPMailProjectKeyIsolation(t *testing.T) {
 	if err := os.WriteFile(wrapperB, []byte(mcpWrapperWithProject(binDir, scriptPath, stateDir, cityDir, projectB)), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	podB := NewProvider(wrapperB)
+	podB := newLoadTolerantProvider(wrapperB)
 
 	msgs, err := podB.Inbox("clerk")
 	if err != nil {
