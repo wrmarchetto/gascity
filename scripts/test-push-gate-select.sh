@@ -280,6 +280,7 @@ install_runner_stub() {
     cat >"$dir/scripts/test-local-parallel" <<RUNNER
 #!/usr/bin/env bash
 echo "ARGS: \$* SCOPE: [\${GC_SCOPED_TEST_PACKAGES-<unset>}]" >>"$dir/runner.log"
+echo "YIELD: [\${LOCAL_TEST_YIELD-<unset>}]" >>"$dir/runner.log"
 RUNNER
     chmod +x "$dir/scripts/test-local-job-count" "$dir/scripts/test-local-parallel"
     : >"$dir/runner.log"
@@ -315,6 +316,11 @@ test_push_scope_stays_full_through_make() {
         record_fail "$name" "runner saw: $(cat "$repo/runner.log")"
         return
     fi
+    # The push gate is on the merge path and must not yield (pm-log #162).
+    if ! grep -qx 'YIELD: \[0\]' "$repo/runner.log"; then
+        record_fail "$name" "the push gate reached the runner yielding: $(cat "$repo/runner.log")"
+        return
+    fi
     record_pass "$name"
 }
 
@@ -323,9 +329,14 @@ test_affected_scope_reaches_the_runner_through_make() {
     local dir
     dir="$(new_affected_fixture 'scoped ./alpha ./beta')"
 
-    (cd "$dir" && ./scripts/test-affected) >/dev/null 2>&1
+    (cd "$dir" && env -u LOCAL_TEST_YIELD ./scripts/test-affected) >/dev/null 2>&1
     if ! grep -qx 'ARGS: fast SCOPE: \[./alpha ./beta\]' "$dir/runner.log"; then
         record_fail "$name" "runner saw: $(cat "$dir/runner.log")"
+        return
+    fi
+    # A development run says nothing, so the runner keeps its yield.
+    if ! grep -qE '^YIELD: \[(<unset>)?\]$' "$dir/runner.log"; then
+        record_fail "$name" "a development run reached the runner not yielding: $(cat "$dir/runner.log")"
         return
     fi
     if ! grep -qx -- '--worktree' "$dir/selector.argv"; then

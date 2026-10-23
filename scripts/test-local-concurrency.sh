@@ -177,6 +177,14 @@ else
     record_fail "wiring.full_case_calls_selftest" "could not locate the full) case block in $LOCAL_PARALLEL"
 fi
 
+# A separate file so the upstream-probe close gate, which knows test paths by
+# suffix (cmd/gc/upstream_probe_close_gate.go), keeps it as one.
+if bash "$TEST_DIR/local-test-yield.test.sh"; then
+    record_pass "priority.local_test_yield_suite"
+else
+    record_fail "priority.local_test_yield_suite" "scripts/local-test-yield.test.sh failed"
+fi
+
 echo
 echo "local-concurrency tests: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
