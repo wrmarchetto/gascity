@@ -201,6 +201,55 @@ decomposition (pm-log #137). Edits to ~/.claude/CLAUDE.md are Willie's
 own (it lives outside every rig), so audit findings there are proposals
 to him, not beads.
 
+## epic:bead-cycle-time -- City bead cycle time: the non-development time to main
+
+status: open
+
+Work takes a very long time to land, and most of that time is not
+development. This epic measures where a bead's time goes between its last
+code commit and its landing on main, in every rig of the city, and cuts it.
+Willie's prior is testing: the full suite plausibly runs more than once per
+bead, and the gascity suite roughly tripled in six months (pm-log #148-#149).
+Scope is every rig's bead lifecycle, and fixes land where that lifecycle is
+configured -- the city repo's hooks, gates, merge sweep and agent prompts,
+gc itself, and each rig's own test entry points (pm-log #149).
+
+Acceptance:
+
+- Baseline: per rig, median and p90 time from a bead's last code commit to
+  its landing on main, broken down by stage (in-session test runs, push
+  gate, close gates, merge sweep, queue waits), with the number of
+  full-suite runs per bead and each suite's size and runtime. Built from
+  records that already exist over a representative window, and recorded
+  before any reduction lands (pm-log #150).
+- Target: Willie sets the reduction target at the baseline review and it
+  is logged then; a post-change window over the same measure meets it
+  (pm-log #150).
+- Slow tests first: each rig's tests ranked by time cost; slow ones get a
+  speed fix before any pruning; a test is removed or merged only on
+  redundancy evidence -- another test fails on the same broken code, or
+  near-duplicate cases collapse into one table-driven test -- never because
+  it has not failed. Suite runtime and size recorded before and after
+  (pm-log #151).
+- Extend before add: the directive is in the city's engineer and toolsmith
+  prompts, and a close gate reports a bead's net-new test functions and its
+  suite-runtime change, refusing a bead that added test functions without a
+  one-line reason no existing test could be extended. The gate is seen to
+  refuse before it is trusted (pm-log #152).
+- Run once per landing: the full suite runs once per merge sweep over the
+  combined result, bisecting per branch on failure; in-session and push
+  runs are affected-tests only; the push gate's full-suite fallback rate is
+  measured and its common triggers fixed; gascity's "make test passes"
+  done-criterion becomes "the push gate passed". No new build framework;
+  non-Go rigs get a change-to-test mapper only where the baseline shows
+  their tests are a material cost (pm-log #153).
+
+Depends on: no hardware and no upstream rig. Beads land in more than one
+store -- the city repo for hooks, gates, sweep and prompts, gascity for gc
+and its own suite, each rig for its test entry points -- placed by the
+mayor at decomposition. The same extend-before-add line for Willie's own
+~/.claude/CLAUDE.md is a proposal to him, not a bead (pm-log #152).
+
 ## Abandoned
 
 None yet.
