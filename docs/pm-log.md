@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-e6ld 2026-10-23T17:05:00Z
+last_seen: gs-wk1w 2026-10-23T22:35:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5412,4 +5412,46 @@ settling #10 without a sitting.
   Criterion 4 is already met (ci-ufxl74 closed). No roadmap edit.
 
 Source: pm-log #158
+
+## 162. gs-wk1w: merge-path gate runs stop yielding to development-time work (2026-10-23)
+
+lab.engineer-1, from gs-okl8, asked whether the push gate's jobs keep
+running at `ionice -c 3 nice -n 10` (scripts/test-local-parallel, #3628,
+"yield to interactive work"). Measured on gs-okl8: under nice-0 saturation
+pinned to two CPUs, nice 10 took 2.4-2.9x the nice-0 time. Unpinned at
+36-52% idle it made no difference. Not established: that the host was
+saturated during the slow logged runs.
+
+Answer: no. Gate runs on the merge path do not yield to development work.
+
+- The Target interval starts at a bead's last code commit. Ad-hoc test
+  runs before that commit are development time, outside the interval. The
+  push gate is inside it (#161). A gate that yields to them trades the
+  measured thing for an unmeasured one, the wrong way round for this epic.
+- `make test-fast-parallel` uses the same runner, so once ci-ms847d puts
+  it in gascity's sweep gate, the prefix would also slow a gate that has a
+  hard ceiling (1020 s). Under load, nice 10 there turns other sessions'
+  work into gate timeouts, the failure shape #160 recorded for zephyr.
+- Do not wait for the saturation experiment to decide this. It shows
+  whether nice explains the bimodal unit-core logs, not which work should
+  win. Record the before and after figures per #151, and D (ci-r81svr)
+  measures the effect in its window.
+- Bound: if merge-path gates at nice 0 push a capped gate past its
+  timeout, that conflict belongs to B's lane design (ci-ms65m7) and comes
+  back here. It is not a reason to yield to development work again.
+- HOW is the engineer's: the nice values, whether the ionice half stays
+  (it does nothing on this host), whether a plain `make test` run keeps any
+  prefix, and whether the change rides on gs-okl8's branch or a follow-on
+  bead (mayor's placement). Levers 2 and 3 are in scope under criterion 3
+  and need no PM ruling.
+
+Bounds from the bead: kernel 6.8, app.slice without the cpu controller, no
+gascity-test.slice. The ruling is about priority, so it holds even if
+those change. Only the size of the effect would change. gs-wk1w is an
+ordinary task, not a `pm-question`, so it blocks no asker. Rig store since
+last_seen: gs-e6ld closed (#160), gs-rvw5, gs-zle6 and gs-19hr closed,
+gs-okl8 in progress, gs-9b18, gs-jqz2, gs-ywze and gs-galo filed, and this
+bead.
+
+Source: roadmap bead-cycle-time
 
