@@ -12,6 +12,8 @@
 #   GC_MCP_MAIL_URL     — mcp_agent_mail server URL (default: http://127.0.0.1:8765)
 #   GC_MCP_MAIL_TOKEN   — Bearer token for auth (default: empty)
 #   GC_MCP_MAIL_PROJECT — project human_key for mcp_agent_mail (default: pwd)
+#   GC_MCP_MAIL_CACHE_DIR -- pod-local cache root
+#                            (default: /tmp/gc-mcp-mail-cache)
 #
 # Dependencies: curl, jq, bash
 
@@ -44,11 +46,12 @@
 # as its deterministic mcp identity.
 #
 # Message state (msg-agent, msg-read, msg-thread, msg-reply-to) stays
-# pod-local in /tmp even when GC_CITY is set. Each pod repopulates these
-# on demand from mcp_agent_mail (fetch_inbox populates msg-agent; send/
-# reply populate msg-thread/msg-reply-to). Keeping them pod-local
-# minimises the sharing surface to only what's needed for the fix, and
-# avoids leaking transient per-process state across pods.
+# pod-local under GC_MCP_MAIL_CACHE_DIR even when GC_CITY is set. Each
+# pod repopulates these on demand from mcp_agent_mail (fetch_inbox
+# populates msg-agent; send/reply populate msg-thread/msg-reply-to).
+# Keeping them pod-local minimizes the sharing surface to only what's
+# needed for the fix, and avoids leaking transient per-process state
+# across pods.
 #
 # Cross-pod sharing contract: both GC_CITY and GC_MCP_MAIL_PROJECT must
 # be identical across pods for the shared cache to actually be shared.
@@ -63,7 +66,7 @@ _init_config() {
   MCP_TOKEN="${GC_MCP_MAIL_TOKEN:-}"
   PROJECT="${GC_MCP_MAIL_PROJECT:-$(pwd)}"
   PROJECT_HASH="$(printf '%s' "$PROJECT" | md5sum | cut -d' ' -f1)"
-  CACHE_DIR="/tmp/gc-mcp-mail-cache/${PROJECT_HASH}"
+  CACHE_DIR="${GC_MCP_MAIL_CACHE_DIR:-/tmp/gc-mcp-mail-cache}/${PROJECT_HASH}"
   if [ -n "${GC_CITY:-}" ]; then
     NAME_MAP_DIR="${GC_CITY}/.gc/mail-cache/${PROJECT_HASH}/name-map"
     AGENT_TOKEN_DIR="${GC_CITY}/.gc/mail-cache/${PROJECT_HASH}/agent-token"

@@ -1,7 +1,10 @@
 package exec //nolint:revive // internal package, always imported with alias
 
 import (
+	"crypto/md5" //nolint:gosec // the bridge PROJECT_HASH is an md5sum.
+	"encoding/hex"
 	"errors"
+	"io/fs"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -54,6 +57,7 @@ func TestMCPMailConformance(t *testing.T) {
 		if err := os.WriteFile(wrapperPath, []byte(mcpWrapper(binDir, scriptPath, stateDir)), 0o755); err != nil {
 			t.Fatal(err)
 		}
+		requireNoLegacyBridgeCache(t, stateDir)
 
 		return NewProvider(wrapperPath)
 	})
@@ -270,6 +274,15 @@ func TestMCPMailCrossPodNameResolution(t *testing.T) {
 			t.Errorf("%s entries leaked into GC_CITY: %v (should be pod-local)", sub, leaked)
 		}
 	}
+
+	// Pod-local state lands under GC_MCP_MAIL_CACHE_DIR. This also proves
+	// bridgeCacheHash matches the script, so requireNoLegacyBridgeCache's
+	// absence check names the directory the bridge would have written.
+	podLocal := filepath.Join(bridgeCacheRoot(stateDir), bridgeCacheHash(stateDir), "msg-agent", msgs[0].ID)
+	if _, err := os.Stat(podLocal); err != nil {
+		t.Errorf("pod-local msg-agent entry not under GC_MCP_MAIL_CACHE_DIR: %v", err)
+	}
+	requireNoLegacyBridgeCache(t, stateDir)
 }
 
 // TestMCPMailProjectKeyIsolation verifies the cross-pod sharing contract:
@@ -375,6 +388,34 @@ func findMCPScript() (string, error) {
 	}
 }
 
+// legacyBridgeCacheRoot is the bridge's default cache root, on the
+// size-capped tmpfs the whole fleet shares.
+const legacyBridgeCacheRoot = "/tmp/gc-mcp-mail-cache"
+
+// bridgeCacheRoot is the GC_MCP_MAIL_CACHE_DIR every mock wrapper exports,
+// a sibling of stateDir inside the test's temp dir.
+func bridgeCacheRoot(stateDir string) string {
+	return filepath.Join(filepath.Dir(stateDir), "bridge-cache")
+}
+
+// bridgeCacheHash is the bridge's PROJECT_HASH for projectKey.
+func bridgeCacheHash(projectKey string) string {
+	sum := md5.Sum([]byte(projectKey))
+	return hex.EncodeToString(sum[:])
+}
+
+// requireNoLegacyBridgeCache fails t, when it ends, if the bridge created
+// the cache dir for project stateDir under legacyBridgeCacheRoot.
+func requireNoLegacyBridgeCache(t *testing.T, stateDir string) {
+	t.Helper()
+	legacy := filepath.Join(legacyBridgeCacheRoot, bridgeCacheHash(stateDir))
+	t.Cleanup(func() {
+		if _, err := os.Stat(legacy); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("bridge left %s on the shared tmpfs (stat: %v), want its cache under GC_MCP_MAIL_CACHE_DIR", legacy, err)
+		}
+	})
+}
+
 // mcpWrapper returns a shell script that sets up the mock environment and
 // delegates to the real gc-mail-mcp-agent-mail script.
 func mcpWrapper(binDir, scriptPath, stateDir string) string {
@@ -402,6 +443,7 @@ export PATH="` + binDir + `:$PATH"
 export GC_MOCK_STATE_DIR="` + stateDir + `"
 export GC_MCP_MAIL_URL="http://127.0.0.1:8765"
 export GC_MCP_MAIL_PROJECT="` + projectKey + `"
+export GC_MCP_MAIL_CACHE_DIR="` + bridgeCacheRoot(stateDir) + `"
 ` + cityExport + `exec "` + scriptPath + `" "$@"
 `
 }
