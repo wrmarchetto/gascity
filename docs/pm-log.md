@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-c856 2026-10-23T13:10:00Z
+last_seen: gs-kmgc 2026-10-23T15:38:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5253,5 +5253,43 @@ five criteria and its dependency line:
 
 Verdict: ACCEPT bead-cycle-time. Rig store since last_seen moved by
 gs-78op and gs-otx1 closing (#154-#155), gs-rvw5 filed, and this summons.
+
+Source: roadmap bead-cycle-time
+
+## 157. DECOMP bead-cycle-time (gs-kmgc): ACCEPT the baseline-gated beads (2026-10-23)
+
+The mayor's second summons for this epic proposes the beads held back until
+the baseline (ci-npfgao, closed, city main 659b7fd0 + 22b77062). Checked
+against the five criteria and the dependency line:
+
+- Criterion 3 (slow tests first): gs-zle6 gascity, az-r41s zephyr, as-hq04p
+  sel4, ci-p8kdpw city. Each carries the #151 rules verbatim -- speed fix
+  before pruning, remove or merge only on redundancy evidence, never on
+  not-having-failed, size and runtime before and after against the
+  baseline. dart is not filed: 8 s sweep gate, 57 s in-session. The PM
+  reads "each rig's tests ranked" as met for dart by the baseline itself,
+  since #151 targets the long-running tests and dart has none; its before
+  and after are the baseline figure unchanged.
+- Criterion 5, non-Go mappers: az-8ujz zephyr (11m median in-session) and
+  as-8384y sel4 (25m p90). City not filed at 5m median, 7m max -- matches
+  #153's material-cost condition.
+- Criterion 5, gascity sweep half (mayor addendum): ci-cu1tu3 found that
+  gascity's sweep gate runs no Go tests and a pass cannot hold a 12-18m
+  suite under its 1020 s ceiling. Mayor ruled keep the push-gate full run
+  (recorded on gs-rvw5), then ci-ms847d puts make test-fast-parallel in
+  gascity's sweep gate once gs-zle6 brings the suite under the ceiling.
+  That keeps #153's accepted trade intact at every moment -- the full suite
+  always runs somewhere -- and reaches the criterion as written. Option (b),
+  a longer lane, was rejected for adding the queue wait the baseline found
+  dominant. Accepted as part of this decomposition.
+- Criterion 2: the post-change window bead follows Willie's target ruling
+  at the baseline review, which the mayor is routing through the liaison.
+  Sequence, not gap. Criteria 1 and 4 and 5a are closed (ci-npfgao,
+  ci-ufxl74, ci-cicsvc).
+- No hardware, no upstream rig. Every bead sits in the store whose code it
+  changes, as the dependency line says.
+
+Verdict: ACCEPT bead-cycle-time. Rig store since last_seen moved by
+gs-rvw5 (routed, in progress), gs-zle6 filed, and this summons.
 
 Source: roadmap bead-cycle-time
