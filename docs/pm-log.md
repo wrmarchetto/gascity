@@ -5125,3 +5125,24 @@ accepting it rather than as naming a figure of his own:
   rather than a number.
 
 Source: Willie, pm-chat sitting gs-otx1
+
+## 151. pm-chat gs-otx1: city-efficiency pruning rule and growth directive (2026-10-23)
+
+Willie accepted the PM's pruning rule and set its priority: target the
+long-running tests primarily. Recorded rule:
+
+- The audit ranks tests by time cost first. A slow test gets a speed fix
+  (sharding, fake clock, shared fixture) before any pruning, and is pruned
+  only on redundancy evidence.
+- Removal or merging is allowed only on redundancy evidence: another test
+  already fails when the guarded code is broken (its mutant-kill set is
+  covered elsewhere), or near-duplicate cases collapse into one
+  table-driven test. "Never failed" is not evidence -- a guard that never
+  fires is doing its job.
+
+Growth control, Willie's direction: a directive that before writing a new
+test, an agent checks whether an existing test can be extended to cover
+what the new feature needs. Where the directive lives and what makes it
+mechanical is the next question in this sitting.
+
+Source: Willie, pm-chat sitting gs-otx1
