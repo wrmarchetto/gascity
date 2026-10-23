@@ -1,26 +1,16 @@
 #!/usr/bin/env bash
+# .githooks/pre-push -- re-checks the bead claim, then runs the fast suite.
+# The suite runs here rather than per commit (#3628). scripts/push-gate-select
+# says whether it runs at all: `none` when no Go build input changed. Any
+# other decision runs the full fast suite, a scoped one included, while this
+# repo's merge sweep runs no Go tests (TESTING.md, "The push gate keeps the
+# full run").
 set -euo pipefail
-
-# Heavy `go test` fan-out runs here, at push time, instead of on every commit
-# (#3628). pre-commit previously invoked `make test-fast-parallel` on every
-# commit. Its outer shard fan-out can compile ~2.8 GiB test binaries per job,
-# so the canonical runner now derives concurrency from both CPU and available
-# memory while preserving an explicit LOCAL_TEST_JOBS override.
-#
-# The suite is also SCOPED to what the push can affect (ci-4w2t). This hook
-# used to reduce the pushed range to one boolean -- "did any *.go file
-# change" -- and then spend ~16 minutes on 187 packages answering it, the
-# same price for a one-line fix as for a refactor. scripts/push-gate-select
-# turns the same range into the package set the change can actually reach.
-# It decides `full` on every uncertainty, so the failure mode of the whole
-# mechanism is a slow push, never a skipped test.
-#
-# git feeds "<local ref> <local sha> <remote ref> <remote sha>" per pushed ref
-# on stdin (see githooks(5)). Read it ONCE, here: the ownership guard and the
-# scope selector both need it, and stdin cannot be consumed twice.
 
 zero="0000000000000000000000000000000000000000"
 
+# One record per pushed ref (githooks(5)). The guard and the selector both
+# read it, and stdin cannot be read twice.
 push_records="$(cat)"
 
 any_non_deletion=0
@@ -69,13 +59,13 @@ case "$decision" in
     exit 0
     ;;
   scoped\ *)
+    # Not GC_SCOPED_TEST_PACKAGES: this push is the only full run a change
+    # gets while the merge sweep runs no Go tests. The city's
+    # assets/scripts/bead-cycle-time.py classifies pushes by the line below.
     scope="${decision#scoped }"
     package_count="$(printf '%s\n' "$scope" | wc -w | tr -d ' ')"
-    echo "pre-push: scoped fast suite to ${package_count} package(s)"
-    # The Makefile and direct sharded runner share scripts/test-local-job-count
-    # as their default policy. Do not shadow it here; an explicit override
-    # still wins.
-    GC_SCOPED_TEST_PACKAGES="$scope" exec make test-fast-parallel
+    echo "pre-push: the change reaches ${package_count} package(s), but the full fast suite runs while the merge sweep runs no Go tests for this repo"
+    exec make test-fast-parallel
     ;;
   full)
     exec make test-fast-parallel

@@ -117,20 +117,27 @@ do_push() {
 
 # --- tests -----------------------------------------------------------------
 
-test_scoped_decision_reaches_make() {
-    local name="a scoped decision reaches make as GC_SCOPED_TEST_PACKAGES"
+test_scoped_push_runs_the_full_suite() {
+    # The push is the only full run a change gets while the merge sweep runs
+    # no Go tests, so a scoped selection is reported and not applied.
+    local name="a scoped push decision still runs the full suite"
     read -r repo bindir <<<"$(new_push_fixture 'scoped ./alpha ./beta')"
     export PGS_MAKE_LOG="$bindir/make.log" PGS_GUARD_LOG="$bindir/guard.log"
     export PGS_SELECTOR_STDIN="$bindir/selector.stdin"
     : >"$PGS_MAKE_LOG"
 
-    do_push "$repo" "$bindir" >/dev/null
+    local out
+    out="$(do_push "$repo" "$bindir")"
     if ! grep -q 'ARGS: test-fast-parallel' "$PGS_MAKE_LOG"; then
         record_fail "$name" "make was not invoked with test-fast-parallel: $(cat "$PGS_MAKE_LOG")"
         return
     fi
-    if ! grep -qx 'SCOPE: ./alpha ./beta' "$PGS_MAKE_LOG"; then
-        record_fail "$name" "scope not forwarded: $(cat "$PGS_MAKE_LOG")"
+    if ! grep -qx 'SCOPE: <unset>' "$PGS_MAKE_LOG"; then
+        record_fail "$name" "the push narrowed the suite: $(cat "$PGS_MAKE_LOG")"
+        return
+    fi
+    if ! grep -q 'reaches 2 package(s), but the full fast suite runs' <<<"$out"; then
+        record_fail "$name" "the push did not report the selection it overrode: $out"
         return
     fi
     record_pass "$name"
@@ -252,6 +259,128 @@ test_selector_receives_the_pre_push_records() {
     do_push "$repo" "$bindir" >/dev/null
     if ! grep -qE 'refs/heads/main [0-9a-f]{40} refs/heads/main [0-9a-f]{40}' "$PGS_SELECTOR_STDIN"; then
         record_fail "$name" "selector stdin was not a pre-push record: $(cat "$PGS_SELECTOR_STDIN")"
+        return
+    fi
+    record_pass "$name"
+}
+
+# --- through the real Makefile ---------------------------------------------
+
+# A make stub records what the caller exported, not what the recipe's env -i
+# hands the runner, and the scope was dropped at exactly that join. These
+# cases run the real Makefile over a stub runner instead.
+
+# install_runner_stub <dir>: the real Makefile, plus a runner stub logging to
+# <dir>/runner.log by absolute path, since env -i strips every PGS_ variable.
+install_runner_stub() {
+    local dir="$1"
+    mkdir -p "$dir/scripts"
+    cp -f "$REPO_ROOT/Makefile" "$dir/Makefile"
+    printf '#!/usr/bin/env bash\necho 1\n' >"$dir/scripts/test-local-job-count"
+    cat >"$dir/scripts/test-local-parallel" <<RUNNER
+#!/usr/bin/env bash
+echo "ARGS: \$* SCOPE: [\${GC_SCOPED_TEST_PACKAGES-<unset>}]" >>"$dir/runner.log"
+RUNNER
+    chmod +x "$dir/scripts/test-local-job-count" "$dir/scripts/test-local-parallel"
+    : >"$dir/runner.log"
+}
+
+# new_affected_fixture <scope-decision>: scripts/test-affected over a stub
+# selector that logs its argv, the real Makefile and a stub runner. Prints
+# the fixture directory.
+new_affected_fixture() {
+    local decision="$1" dir
+    dir="$(mktemp -d "${TMPDIR:-/tmp}/gc-pgs-affected.XXXXXX")"
+    install_runner_stub "$dir"
+    cp -f "$REPO_ROOT/scripts/test-affected" "$dir/scripts/test-affected"
+    cat >"$dir/scripts/push-gate-select" <<SELECT
+#!/usr/bin/env bash
+echo "\$*" >"$dir/selector.argv"
+printf '%s\n' '${decision}'
+SELECT
+    chmod +x "$dir/scripts/test-affected" "$dir/scripts/push-gate-select"
+    printf '%s' "$dir"
+}
+
+test_push_scope_stays_full_through_make() {
+    local name="a scoped push reaches the runner with no scope through the real Makefile"
+    read -r repo bindir <<<"$(new_push_fixture 'scoped ./alpha ./beta')"
+    rm -f "$bindir/make"
+    install_runner_stub "$repo"
+    export PGS_MAKE_LOG="$bindir/make.log" PGS_GUARD_LOG="$bindir/guard.log"
+    export PGS_SELECTOR_STDIN="$bindir/selector.stdin"
+
+    do_push "$repo" "$bindir" >/dev/null
+    if ! grep -qE '^ARGS: fast SCOPE: \[(<unset>)?\]$' "$repo/runner.log"; then
+        record_fail "$name" "runner saw: $(cat "$repo/runner.log")"
+        return
+    fi
+    record_pass "$name"
+}
+
+test_affected_scope_reaches_the_runner_through_make() {
+    local name="a scoped test-affected run reaches the runner as GC_SCOPED_TEST_PACKAGES"
+    local dir
+    dir="$(new_affected_fixture 'scoped ./alpha ./beta')"
+
+    (cd "$dir" && ./scripts/test-affected) >/dev/null 2>&1
+    if ! grep -qx 'ARGS: fast SCOPE: \[./alpha ./beta\]' "$dir/runner.log"; then
+        record_fail "$name" "runner saw: $(cat "$dir/runner.log")"
+        return
+    fi
+    if ! grep -qx -- '--worktree' "$dir/selector.argv"; then
+        record_fail "$name" "selector was not asked in --worktree mode: $(cat "$dir/selector.argv")"
+        return
+    fi
+    record_pass "$name"
+}
+
+test_affected_full_decision_runs_unscoped() {
+    # Empty and unset both mean the whole tree to test-local-parallel.
+    local name="a full test-affected decision reaches the runner unscoped"
+    local dir
+    dir="$(new_affected_fixture 'full')"
+
+    (cd "$dir" && ./scripts/test-affected) >/dev/null 2>&1
+    if ! grep -qE '^ARGS: fast SCOPE: \[(<unset>)?\]$' "$dir/runner.log"; then
+        record_fail "$name" "runner saw: $(cat "$dir/runner.log")"
+        return
+    fi
+    record_pass "$name"
+}
+
+test_affected_unrecognized_decision_runs_unscoped() {
+    local name="an unrecognized test-affected decision runs the full suite"
+    local dir
+    dir="$(new_affected_fixture 'perhaps-later')"
+
+    (cd "$dir" && ./scripts/test-affected) >/dev/null 2>&1
+    if ! grep -qE '^ARGS: fast SCOPE: \[(<unset>)?\]$' "$dir/runner.log"; then
+        record_fail "$name" "runner saw: $(cat "$dir/runner.log")"
+        return
+    fi
+    record_pass "$name"
+}
+
+test_affected_none_decision_runs_nothing() {
+    # An empty runner log is also what a script that died early leaves, so
+    # the exit status and the selector's argv log prove it got that far.
+    local name="a none test-affected decision runs no suite"
+    local dir status
+    dir="$(new_affected_fixture 'none')"
+
+    (cd "$dir" && ./scripts/test-affected) >/dev/null 2>&1
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        record_fail "$name" "test-affected exited $status"
+        return
+    fi
+    if ! [ -s "$dir/selector.argv" ]; then
+        record_fail "$name" "the selector never ran"
+        return
+    fi
+    if [ -s "$dir/runner.log" ]; then
+        record_fail "$name" "the runner ran anyway: $(cat "$dir/runner.log")"
         return
     fi
     record_pass "$name"
@@ -397,13 +526,21 @@ test_manifest_is_sorted_and_unique() {
 }
 
 echo "push-gate scope wiring"
-test_scoped_decision_reaches_make
+test_scoped_push_runs_the_full_suite
 test_full_decision_leaves_scope_unset
 test_none_decision_runs_no_suite
 test_unrecognized_decision_runs_full_suite
 test_missing_selector_runs_full_suite
 test_ownership_guard_still_runs_on_a_scoped_push
 test_selector_receives_the_pre_push_records
+
+echo
+echo "through the real Makefile"
+test_push_scope_stays_full_through_make
+test_affected_scope_reaches_the_runner_through_make
+test_affected_full_decision_runs_unscoped
+test_affected_unrecognized_decision_runs_unscoped
+test_affected_none_decision_runs_nothing
 
 echo
 echo "always-run manifest"

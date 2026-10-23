@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# scripts/test-affected -- the fast suite over the packages in-session work
+# can reach: commits since the fork point off main, edits and untracked files.
+# The selection is scripts/push-gate-select --worktree, so it widens to the
+# full suite on every uncertainty the push gate widens on. TESTING.md,
+# "Scoping the push gate".
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+# A selector that crashes or prints something unrecognized reads as full.
+decision="$("$repo_root/scripts/push-gate-select" --worktree || true)"
+
+case "$decision" in
+  none)
+    echo "test-affected: no Go build input changed since the fork point off main, so nothing runs"
+    exit 0
+    ;;
+  scoped\ *)
+    scope="${decision#scoped }"
+    package_count="$(printf '%s\n' "$scope" | wc -w | tr -d ' ')"
+    echo "test-affected: running the fast suite over ${package_count} package(s)"
+    GC_SCOPED_TEST_PACKAGES="$scope" exec make test-fast-parallel
+    ;;
+  full)
+    exec make test-fast-parallel
+    ;;
+  *)
+    echo "test-affected: unrecognized scope decision, so the full fast suite runs" >&2
+    exec make test-fast-parallel
+    ;;
+esac
