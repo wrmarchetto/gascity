@@ -13,6 +13,9 @@ Environment:
   GC_TEST_INNER_P        override the per-job GOFLAGS=-p= value (default:
                          outer job budget divided across concurrent jobs)
   GO_TEST_TIMEOUT       per-package go test budget, <n>s|m|h (default: 20m)
+  LOCAL_TEST_YIELD      1 runs every job at ionice -c 3 nice -n 10, 0 at the
+                        caller's own priority (default: 1). Merge-path gates
+                        set 0, development runs leave it alone.
   GC_SCOPED_TEST_PACKAGES
                         fast mode only: run just these package args instead
                         of the whole tree. Set by .githooks/pre-push from
@@ -129,6 +132,11 @@ if ! [[ "$productmetrics_total" =~ ^[0-9]+$ && "$productmetrics_total" -gt 0 ]];
 fi
 if ! [[ "$go_test_timeout" =~ ^[0-9]+[smh]$ ]]; then
   echo "GO_TEST_TIMEOUT must be a Go duration of the form <n>s, <n>m, or <n>h" >&2
+  exit 1
+fi
+local_test_yield="${LOCAL_TEST_YIELD:-1}"
+if ! [[ "$local_test_yield" =~ ^[01]$ ]]; then
+  echo "LOCAL_TEST_YIELD must be 1 (yield to other work) or 0 (merge-path gate), got '${LOCAL_TEST_YIELD}'" >&2
   exit 1
 fi
 
@@ -366,21 +374,22 @@ export TEST_LOCAL_GOMODCACHE="$gomodcache_val"
 export TEST_LOCAL_GOTMPDIR="$gotmpdir_val"
 export TEST_LOCAL_GOROOT="${GOROOT:-$goroot_val}"
 
-# Lower each shard's CPU and I/O priority (best-effort) so the parallel fan-out
-# yields to interactive work and does not livelock constrained hosts during the
-# heavy test-binary compiles (#3628). Both tools are optional: ionice is
-# Linux-only and nice may be absent in minimal images, so each is added only
-# when present and the runner works unchanged without them.
+# Development runs yield CPU and I/O to other work so the fan-out cannot
+# livelock a constrained host (#3628). Merge-path gates opt out with
+# LOCAL_TEST_YIELD=0 (docs/pm-log.md #162). nice and ionice are each optional,
+# being absent from minimal images and non-Linux hosts.
 nice_prefix=""
-if command -v nice >/dev/null 2>&1; then
-  nice_prefix="nice -n 10"
-fi
-if command -v ionice >/dev/null 2>&1; then
-  nice_prefix="ionice -c 3 ${nice_prefix}"
+if [[ "$local_test_yield" -eq 1 ]]; then
+  if command -v nice >/dev/null 2>&1; then
+    nice_prefix="nice -n 10"
+  fi
+  if command -v ionice >/dev/null 2>&1; then
+    nice_prefix="ionice -c 3 ${nice_prefix}"
+  fi
 fi
 export TEST_LOCAL_NICE="$nice_prefix"
 
-echo "Running ${#jobspecs[@]} ${mode} job(s) with LOCAL_TEST_JOBS=${local_jobs} inner_p=${inner_p}"
+echo "Running ${#jobspecs[@]} ${mode} job(s) with LOCAL_TEST_JOBS=${local_jobs} inner_p=${inner_p} LOCAL_TEST_YIELD=${local_test_yield}"
 
 set +e
 # Sever gate-FD inheritance at the fan-out boundary (ga-owh20p): the slot FD

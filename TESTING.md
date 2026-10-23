@@ -608,6 +608,12 @@ inherits Go's 10m. Raise it on a slow or heavily shared host:
 GO_TEST_TIMEOUT=30m make test-fast-parallel
 ```
 
+Every job runs at `ionice -c 3 nice -n 10` so a development run yields to
+other work on the host (#3628). Merge-path gates do not yield
+(docs/pm-log.md #162): `.githooks/pre-push` exports `LOCAL_TEST_YIELD=0`, and
+the jobs then run at the caller's own priority. Any other merge-path caller of
+`scripts/test-local-parallel` sets it the same way. Nothing infers it.
+
 #### Why `internal/productmetrics` is sharded
 
 Because it was, on its own, 887s of the 995s unit sweep — 89% of the sweep and
