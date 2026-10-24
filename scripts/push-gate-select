@@ -3,10 +3,10 @@
 
 Prints one line: `full`, `none` (no Go build input changed), or
 `scoped ./a ./b ...`, and decides `full` on every uncertainty. With no
-arguments it reads git's pre-push records from stdin. With --worktree it
-reads no stdin and selects for the working tree from its fork point off
-main, for `make test-affected`. Rules, and why a push still runs the full
-suite: TESTING.md, "Scoping the push gate".
+arguments it reads git's pre-push records from stdin, and diffs a new remote
+branch from its fork point off main. With --worktree it reads no stdin and
+selects for the working tree from that fork point, for `make test-affected`.
+Rules: TESTING.md, "Scoping the push gate to what a change can reach".
 """
 
 from __future__ import annotations
@@ -70,8 +70,7 @@ def changed_records(pushed: list[tuple[str, str]]) -> list[tuple[str, str]]:
     """
     changed: set[tuple[str, str]] = set()
     for local_sha, remote_sha in pushed:
-        if remote_sha == ZERO_SHA:
-            raise SelectionError("new remote branch has no base to diff against")
+        base = fork_point(local_sha) if remote_sha == ZERO_SHA else remote_sha
         output = command_output(
             [
                 "git",
@@ -80,7 +79,7 @@ def changed_records(pushed: list[tuple[str, str]]) -> list[tuple[str, str]]:
                 "-z",
                 "--no-renames",
                 "--diff-filter=ACDMRT",
-                remote_sha,
+                base,
                 local_sha,
                 "--",
             ]
@@ -89,16 +88,21 @@ def changed_records(pushed: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return sorted(changed, key=lambda record: (record[1], record[0]))
 
 
+def fork_point(revision: str) -> str:
+    """The merge base of revision and main, raising when there is none."""
+    try:
+        return os.fsdecode(command_output(["git", "merge-base", revision, MAIN_REF])).strip()
+    except SelectionError as error:
+        raise SelectionError(f"no fork point from {MAIN_REF}: {error}") from error
+
+
 def worktree_records() -> list[tuple[str, str]]:
     """Name-status records from HEAD's fork point off main to the working tree.
 
     No --diff-filter, unlike changed_records: parse_name_status refuses a
     status it does not know, which widens instead of dropping the path.
     """
-    try:
-        base = os.fsdecode(command_output(["git", "merge-base", "HEAD", MAIN_REF])).strip()
-    except SelectionError as error:
-        raise SelectionError(f"no fork point from {MAIN_REF}: {error}") from error
+    base = fork_point("HEAD")
     tracked = parse_name_status(
         command_output(["git", "diff", "--name-status", "-z", "--no-renames", base, "--"])
     )

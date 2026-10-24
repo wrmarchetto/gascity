@@ -1,0 +1,86 @@
+# Proves the push gate narrows for real and stays full where it must: the hook
+# hands make the selection, the Makefile carries it through env -i, a caller's
+# own scope never narrows a full decision, and a new remote branch diffs from
+# its fork point off main. Bead gs-0y4d.
+
+[sweep]
+name = "the push gate runs its scoped selection and widens on every unknown"
+repo = ".."
+
+[sweep.gate]
+argv = ["bash", "scripts/test-push-gate-select.sh"]
+timeout_s = 300
+
+[[mutation]]
+id = "hook-drops-the-selection"
+path = ".githooks/pre-push"
+find = '''GC_SCOPED_TEST_PACKAGES="$scope" exec make test-fast-parallel'''
+replace = '''exec make test-fast-parallel'''
+expect_output = [
+  "FAIL a scoped push decision runs the fast suite over the selection",
+  "FAIL a scoped push reaches the runner as GC_SCOPED_TEST_PACKAGES through the real Makefile",
+]
+
+[[mutation]]
+id = "hook-report-line-leaves-the-classifier"
+path = ".githooks/pre-push"
+find = '''echo "pre-push: scoped fast suite to ${package_count} package(s)"'''
+replace = '''echo "pre-push: running ${package_count} package(s)"'''
+expect_output = ["FAIL a scoped push decision runs the fast suite over the selection"]
+
+[[mutation]]
+id = "hook-keeps-the-pushers-scope"
+path = ".githooks/pre-push"
+find = '''unset GC_SCOPED_TEST_PACKAGES'''
+replace = ''':'''
+expect_output = ["FAIL a full decision leaves GC_SCOPED_TEST_PACKAGES unset"]
+
+[[mutation]]
+id = "test-affected-keeps-the-callers-scope"
+path = "scripts/test-affected"
+find = '''unset GC_SCOPED_TEST_PACKAGES'''
+replace = ''':'''
+expect_output = ["FAIL a full test-affected decision reaches the runner unscoped"]
+
+[[mutation]]
+id = "makefile-drops-the-scope"
+path = "Makefile"
+find = '''GC_SCOPED_TEST_PACKAGES="$${GC_SCOPED_TEST_PACKAGES-}" '''
+replace = ''''''
+expect_output = [
+  "FAIL a scoped push reaches the runner as GC_SCOPED_TEST_PACKAGES through the real Makefile",
+]
+
+[[mutation]]
+id = "new-branch-forks-from-head"
+path = "scripts/push-gate-select"
+find = '''base = fork_point(local_sha) if remote_sha == ZERO_SHA else remote_sha'''
+replace = '''base = fork_point("HEAD") if remote_sha == ZERO_SHA else remote_sha'''
+gate = { argv = ["go", "test", "./scripts", "-count=1", "-run", "TestPushGateSelect"] }
+expect_output = ["--- FAIL: TestPushGateSelectDiffsANewRemoteBranchFromItsForkPoint"]
+
+[[mutation]]
+id = "new-branch-diffs-from-mains-tip"
+path = "scripts/push-gate-select"
+find = '''base = fork_point(local_sha) if remote_sha == ZERO_SHA else remote_sha'''
+replace = '''base = MAIN_REF if remote_sha == ZERO_SHA else remote_sha'''
+gate = { argv = ["go", "test", "./scripts", "-count=1", "-run", "TestPushGateSelect"] }
+expect_output = ["--- FAIL: TestPushGateSelectDiffsANewRemoteBranchFromItsForkPoint"]
+
+[[mutation]]
+id = "new-branch-widens-again"
+path = "scripts/push-gate-select"
+revert_to = "d05486a38"
+gate = { argv = ["go", "test", "./scripts", "-count=1", "-run", "TestPushGateSelect"] }
+expect_output = ["--- FAIL: TestPushGateSelectDiffsANewRemoteBranchFromItsForkPoint"]
+
+[[mutation]]
+id = "missing-fork-point-reads-as-no-change"
+path = "scripts/push-gate-select"
+find = '''raise SelectionError(f"no fork point from {MAIN_REF}: {error}") from error'''
+replace = '''return revision'''
+gate = { argv = ["go", "test", "./scripts", "-count=1", "-run", "TestPushGateSelect"] }
+expect_output = [
+  "new remote branch in a clone without main decided",
+  "new remote branch unrelated to main decided",
+]

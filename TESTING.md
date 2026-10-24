@@ -1086,8 +1086,9 @@ Go/shell copies did. `make test-affected` (`scripts/test-affected`) exports
 the result as `GC_SCOPED_TEST_PACKAGES`, which `test-local-parallel` honors
 in `fast` mode only, skipping the `cmd/gc` shards when `./cmd/gc` is not in
 the set, and the `internal/productmetrics` shards when that package is not
-in it either. The push hook computes the same selection and prints it, but runs
-the full fast suite: see "The push gate keeps the full run" below.
+in it either. The push hook runs the same selection. A pushed ref diffs
+from the sha the remote holds, and a new remote branch, which has none, from
+its fork point off `main`: see "The push gate runs the selection" below.
 
 In-session, `scripts/push-gate-select --worktree` asks the same question of
 the working tree: the change is everything from its fork point off `main` --
@@ -1106,7 +1107,8 @@ for the fsync measurement behind the split and the numbers since.
 test**, because a gate that stops running a package it should have run looks
 exactly like a green build. The selector prints `full` — the whole suite —
 on every uncertainty: an unreadable graph, a base the clone does not have, a
-malformed hook hand-off, and, critically, **any changed path outside the Go
+new branch with no fork point off `main`, a malformed hook hand-off, and,
+critically, **any changed path outside the Go
 import-and-embed graph**. A test may open testdata, a shell script, or the
 Makefile at run time and nothing enumerates that, so a changed path the
 graph cannot account for widens the run rather than being assumed inert. The
@@ -1171,26 +1173,33 @@ node that granted them, so a node-local refresh is precisely what stops a
 local reclaim. The underlying claim-staleness concern is tracked separately
 under `ga-aw5356`, not here.
 
-**The push gate keeps the full run.** From ci-4w2t (2026-08-09) to gs-rvw5
+**The push gate runs the selection.** From ci-4w2t (2026-08-09) to gs-0y4d
 the hook's scoped branch never narrowed anything. `test-fast-parallel` runs
 the runner under `TEST_ENV`'s `env -i`, which dropped
-`GC_SCOPED_TEST_PACKAGES`, and the hook suite stubbed `make`, so it saw only
-what the hook exported. The recipe forwards the variable now, and the
-"through the real Makefile" cases in `scripts/test-push-gate-select.sh` run
-the real Makefile over a stub runner, which is the join that was missing.
+`GC_SCOPED_TEST_PACKAGES` until gs-rvw5, and the hook suite stubbed `make`,
+so it saw only what the hook exported. gs-rvw5 made the recipe forward the
+variable, and the "through the real Makefile" cases in
+`scripts/test-push-gate-select.sh` run the real Makefile over a stub runner,
+which is the join that was missing. The hook then kept the full run, by the
+mayor's ruling on city bead ci-cu1tu3, while the push was the only full run a
+gascity change got.
 
-Forwarding it would make the push gate narrow for real, and the push is the
-only full run a gascity change gets: the merge sweep gates this repo with
-`go build`, `go vet` and `make dashboard-ci`, and runs no Go tests. So, by
-the mayor's ruling on city bead ci-cu1tu3, the hook prints the selection and
-runs the full fast suite, and a push of a brand-new remote branch still
-decides `full` instead of diffing from its fork point. Both lift once
-gascity's Go suite runs in its merge-sweep gate (city bead ci-ms847d, which
-waits on gs-zle6 to bring the suite under the 1020 s a pass gives one gate):
-the hook then passes the scope, and push mode takes the fork point the way
-`--worktree` does (gs-0y4d).
+That premise ended when the merge sweep began gating this repo with
+`make test-fast-parallel` after `go build`, `go vet` and `make dashboard-ci`
+(city bead ci-ms847d): the full suite runs once per sweep pass, over the
+combined result. So the hook passes the scope, and a new remote branch diffs
+from its fork point off `main` instead of deciding `full` (gs-0y4d). The
+trade is pm-log #153's, the full run moved to the sweep. A commit made
+directly on `main` skips the sweep gate, so the scoped run of its push is
+now the only run ahead of it.
 
-**What the push gate's selection would save.** Before gs-rvw5, the city's
+The forward cuts both ways. The recipe passes on whatever scope its caller's
+environment holds, so a scope exported in the pushing shell would narrow a
+`full` decision. The hook and `scripts/test-affected` unset
+`GC_SCOPED_TEST_PACKAGES` before deciding, and the `full` cases in
+`scripts/test-push-gate-select.sh` push from a shell exporting one.
+
+**What the push gate's selection saves.** Before gs-rvw5, the city's
 cycle-time baseline (`docs/bead-cycle-time-baseline.md` in the city repo,
 2026-09-22 to 2026-10-23) found 17 gascity push attempts: 13 selected the
 full suite, 0 scoped, 0 none and 4 unknown, and every reason visible in a
@@ -1222,13 +1231,23 @@ reached `cmd/gc` in 185 of the 187 scoped landings. So the median scoped
 selection is 87.4% of summed package time (p10 87.4%, p90 100%), against
 17.1% for the closure alone. These are package times from a `-p=4` run
 under load, a measure of work rather than wall clock. They bound the
-saving: a scoped push would carry no less than about seven eighths of a
+saving: a scoped push carries no less than about seven eighths of a
 full run's package time while `internal/productmetrics` stays on the
 manifest. It is there only because its tests `filepath.WalkDir` metrics
 homes they build under `t.TempDir()`, which the manifest's marker rule
-cannot tell from a repository walk. No scoped push has been timed against a
-full one, because none has run: that measurement is owed once the hold
-lifts (gs-0y4d).
+cannot tell from a repository walk.
+
+Timed through the real `.githooks/pre-push` once the hold lifted (gs-0y4d,
+2026-10-24), one run each, warm build cache. A push of gs-jqz2's one-file
+`cmd/gc` change selects 63 packages, the manifest alone since it already
+holds `cmd/gc`, and deals the same 19 jobs a full run does, because the
+manifest keeps every `cmd/gc` shard and `internal/productmetrics`. With
+`LOCAL_TEST_JOBS=4` pinned for both, back to back, the scoped push took
+233 s (load 10 at start, median 14) and the full one 280 s (load 9, median
+12), 17% less. Unpinned, the job count is set from load at start and swamps
+the selection: a scoped push started at load 145 ran 2 jobs in 477 s, and a
+full one started at load 8 ran 7 jobs in 174 s. One pair is an indication,
+not a distribution.
 
 Re-run, from a gascity checkout whose `main` holds the window:
 

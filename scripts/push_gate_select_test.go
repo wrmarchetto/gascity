@@ -301,19 +301,27 @@ func TestPushGateSelectLeavesAnEmbedOnlyChangeUntestedAsBefore(t *testing.T) {
 	}
 }
 
-func TestPushGateSelectWidensToFullWhenNoBaseExistsToDiffAgainst(t *testing.T) {
-	// A push record carries no fork point for a brand-new remote branch.
-	// The push gate keeps the full run there while this repo's merge sweep
-	// runs no Go tests. --worktree is the mode that diffs from main.
+func TestPushGateSelectDiffsANewRemoteBranchFromItsForkPoint(t *testing.T) {
+	// A new remote branch's record has a zero remote sha. HEAD is left on
+	// main, which has moved on, so a diff from HEAD or from main's tip counts
+	// main's island and docs edits as the branch's own and widens.
 	f := newPushGateFixture(t, pushGateBaseFiles())
-	f.commit(t, "touch alpha", map[string]*string{
+	f.git(t, "checkout", "-q", "-b", "work")
+	f.commit(t, "touch alpha on the branch", map[string]*string{
 		"alpha/alpha.go": ptr("package alpha\n\nfunc Value() int { return 2 }\n"),
 	})
+	work := f.headSHA
+	f.git(t, "checkout", "-q", "main")
+	f.commit(t, "main moves on", map[string]*string{
+		"island/island.go": ptr("package island\n\nfunc Value() int { return 3 }\n"),
+		"docs/guide.md":    ptr("revised on main\n"),
+	})
 
-	record := "refs/heads/main " + f.headSHA + " refs/heads/main " + pushGateZeroSHA + "\n"
-	if decision := f.selectScope(t, record); decision != "full" {
-		t.Errorf("new remote branch decided %q, want full", decision)
-	}
+	record := "refs/heads/work " + work + " refs/heads/work " + pushGateZeroSHA + "\n"
+	packages := decisionPackages(t, f.selectScope(t, record))
+	requireContains(t, packages, "./alpha")
+	requireContains(t, packages, "./consumer")
+	requireExcludes(t, packages, "./island")
 }
 
 func TestPushGateSelectReportsNothingToTestForABranchDeletion(t *testing.T) {
@@ -474,7 +482,8 @@ func TestPushGateSelectIsNotReachedByAFakeGoOnPath(t *testing.T) {
 	}
 }
 
-// --- in-session selection, --worktree ---
+// --- in-session selection, --worktree, and the fork point it shares with a
+// new remote branch's push ---
 
 // selectWorktreeScope runs the selector in --worktree mode, which reads no
 // stdin and diffs the working tree against its fork point from main.
@@ -592,7 +601,13 @@ func TestPushGateSelectWorktreeLeavesADocsOnlyChangeUntested(t *testing.T) {
 	}
 }
 
-func TestPushGateSelectWorktreeWidensToFullWithoutAMainBranch(t *testing.T) {
+// newBranchRecord is the pre-push record for pushing HEAD as a new remote
+// branch, which is the push mode that diffs from the fork point off main.
+func (f *pushGateFixture) newBranchRecord(branch string) string {
+	return "refs/heads/" + branch + " " + f.headSHA + " refs/heads/" + branch + " " + pushGateZeroSHA + "\n"
+}
+
+func TestPushGateSelectWidensToFullWithoutAMainBranchToForkFrom(t *testing.T) {
 	f := newPushGateFixture(t, pushGateBaseFiles())
 	f.git(t, "branch", "-m", "main", "trunk")
 	f.edit(t, map[string]*string{
@@ -600,11 +615,15 @@ func TestPushGateSelectWorktreeWidensToFullWithoutAMainBranch(t *testing.T) {
 	})
 
 	if decision := f.selectWorktreeScope(t); decision != "full" {
-		t.Errorf("clone without main decided %q, want full", decision)
+		t.Errorf("clone without main decided %q in --worktree mode, want full", decision)
+	}
+	f.commit(t, "touch alpha", nil)
+	if decision := f.selectScope(t, f.newBranchRecord("trunk")); decision != "full" {
+		t.Errorf("new remote branch in a clone without main decided %q, want full", decision)
 	}
 }
 
-func TestPushGateSelectWorktreeWidensToFullWithNoHistoryShared(t *testing.T) {
+func TestPushGateSelectWidensToFullWithNoHistorySharedWithMain(t *testing.T) {
 	f := newPushGateFixture(t, pushGateBaseFiles())
 	f.git(t, "checkout", "-q", "--orphan", "unrelated")
 	f.commit(t, "unrelated root", map[string]*string{
@@ -612,7 +631,10 @@ func TestPushGateSelectWorktreeWidensToFullWithNoHistoryShared(t *testing.T) {
 	})
 
 	if decision := f.selectWorktreeScope(t); decision != "full" {
-		t.Errorf("history unrelated to main decided %q, want full", decision)
+		t.Errorf("history unrelated to main decided %q in --worktree mode, want full", decision)
+	}
+	if decision := f.selectScope(t, f.newBranchRecord("unrelated")); decision != "full" {
+		t.Errorf("new remote branch unrelated to main decided %q, want full", decision)
 	}
 }
 

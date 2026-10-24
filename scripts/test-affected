@@ -13,6 +13,9 @@ cd "$repo_root"
 # A selector that crashes or prints something unrecognized reads as full.
 decision="$("$repo_root/scripts/push-gate-select" --worktree || true)"
 
+# The Makefile forwards this, so the caller's own would narrow a full run.
+unset GC_SCOPED_TEST_PACKAGES
+
 case "$decision" in
   none)
     echo "test-affected: no Go build input changed since the fork point off main, so nothing runs"
