@@ -17,6 +17,7 @@ import (
 	gcapi "github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/api/genclient"
 	"github.com/gastownhall/gascity/internal/events"
+	"github.com/gastownhall/gascity/internal/testutil"
 )
 
 func TestDoEventsCityDefaultUsesJSONLItems(t *testing.T) {
@@ -647,7 +648,7 @@ func TestDoEventsWatchStoppedCityRequiresRunningAPI(t *testing.T) {
 		apiURL:   server.URL,
 		cityName: "mc-city",
 		cityPath: cityDir,
-	}, "", nil, 0, "", 50*time.Millisecond, &stdout, &stderr)
+	}, "", nil, 0, "", testutil.GoroutineRaceTimeout, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("doEventsWatch = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -674,7 +675,7 @@ func TestDoEventsWatchStoppedCityAfterSeqRequiresRunningAPI(t *testing.T) {
 		apiURL:   server.URL,
 		cityName: "mc-city",
 		cityPath: cityDir,
-	}, "", nil, 5, "", 50*time.Millisecond, &stdout, &stderr)
+	}, "", nil, 5, "", testutil.GoroutineRaceTimeout, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("doEventsWatch = %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
@@ -697,7 +698,7 @@ func TestDoEventsWatchCityBufferedReplayUsesEnvelopeSchema(t *testing.T) {
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := doEventsWatch(eventsAPIScope{apiURL: server.URL, cityName: "mc-city"}, "", nil, 1, "", 50*time.Millisecond, &stdout, &stderr)
+	code := doEventsWatch(eventsAPIScope{apiURL: server.URL, cityName: "mc-city"}, "", nil, 1, "", testutil.GoroutineRaceTimeout, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doEventsWatch = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -730,7 +731,7 @@ func TestDoEventsWatchCityBufferedReplayAfterSeqSkipsHeadProbe(t *testing.T) {
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := doEventsWatch(eventsAPIScope{apiURL: server.URL, cityName: "mc-city"}, "", nil, 1, "", 50*time.Millisecond, &stdout, &stderr)
+	code := doEventsWatch(eventsAPIScope{apiURL: server.URL, cityName: "mc-city"}, "", nil, 1, "", testutil.GoroutineRaceTimeout, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doEventsWatch = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -761,7 +762,7 @@ func TestDoEventsWatchSupervisorBufferedReplayUsesTaggedEnvelopeSchema(t *testin
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := doEventsWatch(eventsAPIScope{apiURL: server.URL}, "", nil, 0, "alpha:2", 50*time.Millisecond, &stdout, &stderr)
+	code := doEventsWatch(eventsAPIScope{apiURL: server.URL}, "", nil, 0, "alpha:2", testutil.GoroutineRaceTimeout, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doEventsWatch = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -882,7 +883,7 @@ func TestDoEventsWatchCityBufferedReplayForwardsCorrelationFields(t *testing.T) 
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := doEventsWatch(eventsAPIScope{apiURL: server.URL, cityName: "mc-city"}, "", nil, 1, "", 50*time.Millisecond, &stdout, &stderr)
+	code := doEventsWatch(eventsAPIScope{apiURL: server.URL, cityName: "mc-city"}, "", nil, 1, "", testutil.GoroutineRaceTimeout, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doEventsWatch = %d, want 0; stderr=%s", code, stderr.String())
 	}
@@ -902,7 +903,7 @@ func TestDoEventsWatchSupervisorBufferedReplayForwardsCorrelationFields(t *testi
 	defer server.Close()
 
 	var stdout, stderr bytes.Buffer
-	code := doEventsWatch(eventsAPIScope{apiURL: server.URL}, "", nil, 0, "alpha:2", 50*time.Millisecond, &stdout, &stderr)
+	code := doEventsWatch(eventsAPIScope{apiURL: server.URL}, "", nil, 0, "alpha:2", testutil.GoroutineRaceTimeout, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doEventsWatch = %d, want 0; stderr=%s", code, stderr.String())
 	}
