@@ -39,25 +39,24 @@ import (
 
 const productmetricsPackage = "internal/productmetrics"
 
-// TestUnitSweepExcludesProductmetricsFromItsPackageList is the gate that keeps
-// the sharding from being silently defeated. The unit-core job sweeps every
-// non-cmd/gc package in one `go test`; leaving productmetrics in that list
-// while also sharding it runs the package twice, once at full serial cost, so
-// the fan-out's wall clock never improves and the shards look like pure waste.
+// TestUnitSweepExcludesProductmetricsFromItsPackageList keeps the package
+// from running twice. The unit-core jobs deal out every package the cmd/gc
+// and productmetrics jobs do not own, so leaving productmetrics in that list
+// runs it a second time inside a unit-core job, at -p=1 beside its own job.
 //
 // This checks both precise exclusions and the complete `go list ./...` input.
 // Together they prevent a duplicate serial run without letting an over-broad
 // replacement silently shrink the sweep.
 func TestUnitSweepExcludesProductmetricsFromItsPackageList(t *testing.T) {
-	command := unitCoreJobCommand(t)
+	list := shellFunctionBody(t, localParallelScript(t), "unit_core_packages")
 	for _, excluded := range []string{"cmd/gc", productmetricsPackage} {
-		needle := "'^github.com/gastownhall/gascity/" + excluded + "\\$'"
-		if !strings.Contains(command, needle) {
-			t.Errorf("unit-core package expression does not exclude %s; it is sharded separately and would run twice, once unsharded at full serial cost:\n%s", excluded, command)
+		needle := "'^github.com/gastownhall/gascity/" + excluded + "$'"
+		if !strings.Contains(list, needle) {
+			t.Errorf("unit-core package list does not exclude %s; it runs in its own jobs and would run twice:\n%s", excluded, list)
 		}
 	}
-	if !strings.Contains(command, "go list ./...") {
-		t.Fatalf("unit-core job no longer starts from the complete package list, so its exclusions could silently become a partial sweep:\n%s", command)
+	if !strings.Contains(list, "go list ./...") {
+		t.Fatalf("unit-core no longer starts from the complete package list, so its exclusions could silently become a partial sweep:\n%s", list)
 	}
 }
 
@@ -69,10 +68,6 @@ func TestProductmetricsShardsCoverEveryShardIndex(t *testing.T) {
 
 	if !strings.Contains(body, "./scripts/test-go-test-shard ./"+productmetricsPackage+" ") {
 		t.Fatalf("add_productmetrics_shards does not shard ./%s:\n%s", productmetricsPackage, body)
-	}
-	total := shardTotalDefault(t)
-	if total < 2 {
-		t.Fatalf("productmetrics shard total = %d, want at least 2; one shard is the serial run this exists to replace", total)
 	}
 	if !strings.Contains(body, `seq 1 "$productmetrics_total"`) {
 		t.Fatalf("add_productmetrics_shards does not iterate 1..$productmetrics_total:\n%s", body)
@@ -92,6 +87,9 @@ func TestProductmetricsShardsRunUnderTheUnitLaneGate(t *testing.T) {
 	if !strings.Contains(body, "GO_TEST_COUNT=1") {
 		t.Fatalf("productmetrics shards omit GO_TEST_COUNT=1 and may report a cached result instead of a real run:\n%s", body)
 	}
+	if got := goTestFlagValue(t, body, "count"); got != "1" {
+		t.Fatalf("the unsharded productmetrics job passes -count=%q, want \"1\", and may report a cached result:\n%s", got, body)
+	}
 }
 
 // TestProductmetricsShardsShareTheFanOutTimeoutBudget extends the ga-9au
@@ -110,6 +108,9 @@ func TestProductmetricsShardsShareTheFanOutTimeoutBudget(t *testing.T) {
 	shard := resolveShellVars(t, script, match[1])
 	if unitCore := goTestFlagValue(t, unitCoreJobCommand(t), "timeout"); unitCore != shard {
 		t.Fatalf("unit-core -timeout = %q but productmetrics shards use GO_TEST_TIMEOUT=%q; the fan-out must share one budget", unitCore, shard)
+	}
+	if unsharded := goTestFlagValue(t, resolveShellVars(t, script, body), "timeout"); unsharded != shard {
+		t.Fatalf("the unsharded productmetrics job uses -timeout %q but its shards use GO_TEST_TIMEOUT=%q; the fan-out must share one budget", unsharded, shard)
 	}
 }
 
@@ -188,22 +189,6 @@ func TestScopedFastRunRoutesProductmetricsToItsShards(t *testing.T) {
 	if !strings.Contains(arm, "scoped_has_productmetrics") {
 		t.Fatalf("the fast arm ignores scoped_has_productmetrics:\n%s", arm)
 	}
-}
-
-// shardTotalDefault reads the productmetrics shard count the runner uses when
-// no operator override is present.
-func shardTotalDefault(t *testing.T) int {
-	t.Helper()
-	script := localParallelScript(t)
-	match := regexp.MustCompile(`productmetrics_total="\$\{PRODUCTMETRICS_TOTAL:-(\d+)\}"`).FindStringSubmatch(script)
-	if match == nil {
-		t.Fatal("scripts/test-local-parallel defines no PRODUCTMETRICS_TOTAL-defaulted shard count")
-	}
-	total := 0
-	for _, digit := range match[1] {
-		total = total*10 + int(digit-'0')
-	}
-	return total
 }
 
 // shellCaseArmBody extracts the body of a `case "$mode"` arm, from the

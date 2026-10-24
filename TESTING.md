@@ -555,13 +555,13 @@ Codecov flags.
 
 For broad local runs, prefer the repo's sharded wrappers over raw `go test`
 commands. They use the same buckets as CI, run under a scrubbed environment,
-and split single-package bottlenecks such as `cmd/gc` and
-`internal/productmetrics` across multiple processes.
+split the `cmd/gc` single-package bottleneck across multiple processes, and
+deal the rest of the package sweep into several jobs.
 
 Use these as the default entry points:
 
 ```bash
-# Fast unit baseline, with cmd/gc and internal/productmetrics split into shards.
+# Fast unit baseline: cmd/gc sharded, the other packages dealt into jobs.
 make test-fast-parallel
 
 # Full process-backed cmd/gc suite, sharded.
@@ -586,14 +586,20 @@ wins:
 LOCAL_TEST_JOBS=48 CMD_GC_PROCESS_TOTAL=12 make test-local-full-parallel
 ```
 
-`PRODUCTMETRICS_TOTAL` is the same knob for the `internal/productmetrics`
-shards, defaulting to 6. Lower it on a host with little I/O concurrency to
-spend: those shards are bound by fsync latency rather than CPU, so they are
-cheap to run in parallel and expensive to run in sequence — see
-[why that package is sharded](#why-internalproductmetrics-is-sharded) below.
+`UNIT_CORE_TOTAL` (default 8) is how many `unit-core` jobs the sweep over
+every other package is dealt into, round-robin over `go list ./...`. A job's
+`go test` runs at the `-p` the fan-out leaves it, which is 1 whenever there
+are more jobs than slots, so one sweep job tests its packages one at a time
+-- that single job was the gate's whole wall clock, see
+[why the sweep is dealt into jobs](#why-the-unit-sweep-is-dealt-into-jobs).
+`PRODUCTMETRICS_TOTAL` shards `internal/productmetrics` the same way as
+`CMD_GC_PROCESS_TOTAL` does `cmd/gc`, and defaults to 1, one unsharded job:
+see [why that package runs as its own job](#why-internalproductmetrics-runs-as-its-own-job).
+`make test-fast-parallel` starts its jobs longest first: productmetrics, the
+`unit-core` jobs, the `cmd/gc` shards, then the seconds-long self-tests.
 
-Every `go test` job in `make test-fast-parallel` — the `unit-core` package
-sweep, the `cmd/gc` shards, and the `internal/productmetrics` shards — shares
+Every `go test` job in `make test-fast-parallel` -- the `unit-core` jobs,
+the `cmd/gc` shards, and the `internal/productmetrics` job -- shares
 one 20m per-package budget. A package's wall
 time under the fan-out is well above its runtime in isolation, so with Go's
 built-in 10m default (which the unit sweep alone used to inherit) contention
@@ -614,7 +620,27 @@ other work on the host (#3628). Merge-path gates do not yield
 the jobs then run at the caller's own priority. Any other merge-path caller of
 `scripts/test-local-parallel` sets it the same way. Nothing infers it.
 
-#### Why `internal/productmetrics` is sharded
+#### Why the unit sweep is dealt into jobs
+
+`unit-core` was one job: `go test` over every package except `cmd/gc` and
+`internal/productmetrics`. At the `-p=1` the fan-out leaves each job on this
+host, it ran about 190 packages one at a time, building each test binary in
+turn, and it held the gate open however early everything else finished: 58
+minutes of a 3474 s gate at `LOCAL_TEST_JOBS=2`, and at least the 816 s of
+package time it summed in a 1157 s gate at 7. Dealt into eight jobs, its
+packages balance against the shards like any other work.
+
+Round-robin over the sorted list is not a balanced split. In one gate run
+seven packages (`internal/api`, `internal/beads`, `scripts`,
+`examples/bd/dolt`, `internal/storebinding/sqlite`, `internal/runtime`,
+`examples/gastown`) were 366 s of the sweep's 558 s of package time, and
+which of them share a job moves as packages are added. It needs no weights
+file to go stale, and at eight jobs two heavy packages in one job still make
+a job of a few minutes. The list is taken once, before any job starts, so a
+`go list` that fails or lists nothing stops the run instead of handing a job
+no packages.
+
+#### Why `internal/productmetrics` runs as its own job
 
 Because it was, on its own, 887s of the 995s unit sweep — 89% of the sweep and
 5.6x the next slowest package. The scoped push gate below cannot help there:
@@ -650,6 +676,15 @@ which cannot run in a parallel test. Measured 2026-10-23, whole package in one
 process: 629s serial at load average 31-34, and 124-162s parallel over five
 runs at load average 100-133. The long pole is now two tests that each purge
 a 5001-event directory one fsync at a time, 106-137s apiece in those runs.
+
+With the tests parallel inside one process the shards stopped paying for
+themselves, and `PRODUCTMETRICS_TOTAL` defaults to 1. A shard cannot finish
+before the long-pole test it holds, and each one builds the test binary and
+runs a `-list` pass first. Three retained two-slot gate logs show the six
+shards at 92-272 s apiece and 758-1116 s back to back, against 88 s for the
+whole package as one job in the same lane. The one job also runs the
+package's five `Fuzz` seed corpora, which a shard's `-run` over `^Test` names
+never matched, so the fast suite skipped them while the package was sharded.
 
 The tmpfs row is a diagnostic probe, not a proposal. Running these fixtures on
 tmpfs permanently would be a 32x win and would stop testing the storage layer
@@ -1062,10 +1097,10 @@ selection, which is what to reach for instead of a whole-tree sweep while
 working.
 
 That `internal/productmetrics` row is what the wide-push half of the problem
-looked like, and it is the reason the package now runs as six shards of its
-own rather than inside the sweep — the scope selector was never going to
-reach it. See [why that package is sharded](#why-internalproductmetrics-is-sharded)
-for the fsync measurement behind the split and the post-split numbers.
+looked like, and it is the reason the package runs as a job of its own rather
+than inside the sweep -- the scope selector was never going to reach it. See
+[why that package runs as its own job](#why-internalproductmetrics-runs-as-its-own-job)
+for the fsync measurement behind the split and the numbers since.
 
 **Everything about this is built to fail toward a slow push, never a skipped
 test**, because a gate that stops running a package it should have run looks

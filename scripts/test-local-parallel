@@ -9,7 +9,10 @@ usage: scripts/test-local-parallel <fast|cmd-gc-process|integration|full>
 Environment:
   LOCAL_TEST_JOBS        max concurrent jobs (default: CPU-and-memory-aware)
   CMD_GC_PROCESS_TOTAL  cmd/gc shard count (default: 6)
-  PRODUCTMETRICS_TOTAL  internal/productmetrics shard count (default: 6)
+  PRODUCTMETRICS_TOTAL  internal/productmetrics shard count (default: 1,
+                        one unsharded job)
+  UNIT_CORE_TOTAL       jobs the unit-core package sweep is dealt into
+                        (default: 8)
   GC_TEST_INNER_P        override the per-job GOFLAGS=-p= value (default:
                          outer job budget divided across concurrent jobs)
   GO_TEST_TIMEOUT       per-package go test budget, <n>s|m|h (default: 20m)
@@ -88,21 +91,14 @@ unset GC_DOLT_PORT BEADS_DOLT_SERVER_PORT
 
 local_jobs="${LOCAL_TEST_JOBS:-$("$repo_root/scripts/test-local-job-count")}"
 cmd_gc_total="${CMD_GC_PROCESS_TOTAL:-6}"
-# internal/productmetrics is sharded for a different reason than cmd/gc, and
-# the count is chosen against a different floor (ci-qst5). Its 459 tests are
-# bound by filesystem sync latency, not CPU and not sleeps: the storage layer
-# fsyncs after every create, rename, and unlink, and one test alone spends 38s
-# across 5046 fsync calls. Moving the fixtures to tmpfs takes the package from
-# 254s to 8s, which is how the cost was attributed. So 887s of the 995s unit
-# sweep was one package waiting on a disk, and that wait overlaps across
-# processes -- a package whose cost had been a fixed sleep would only sleep six
-# times over, which is why the fsync measurement gated this rather than the
-# runtime alone.
-#
-# Six lands the long pole at 115s (shards ran 74-115s), just under the 158s
-# storebinding/sqlite the sweep then waits on anyway. Splitting finer buys
-# nothing until that one moves.
-productmetrics_total="${PRODUCTMETRICS_TOTAL:-6}"
+# internal/productmetrics runs its fsync-bound tests in parallel in one
+# process and its long pole is one test, so a shard is barely shorter than the
+# whole package and each pays a test listing: TESTING.md, "Why
+# internal/productmetrics runs as its own job".
+productmetrics_total="${PRODUCTMETRICS_TOTAL:-1}"
+# A job's go test at -p=1 runs its packages one at a time, so the sweep is
+# dealt into several jobs that the fan-out balances against the shards.
+unit_core_total="${UNIT_CORE_TOTAL:-8}"
 
 # One per-package go test budget for the unit sweep and the cmd/gc shards. The
 # fan-out runs LOCAL_TEST_JOBS heavyweight test binaries at once, so a package's
@@ -130,6 +126,10 @@ if ! [[ "$productmetrics_total" =~ ^[0-9]+$ && "$productmetrics_total" -gt 0 ]];
   echo "PRODUCTMETRICS_TOTAL must be a positive integer" >&2
   exit 1
 fi
+if ! [[ "$unit_core_total" =~ ^[0-9]+$ && "$unit_core_total" -gt 0 ]]; then
+  echo "UNIT_CORE_TOTAL must be a positive integer" >&2
+  exit 1
+fi
 if ! [[ "$go_test_timeout" =~ ^[0-9]+[smh]$ ]]; then
   echo "GO_TEST_TIMEOUT must be a Go duration of the form <n>s, <n>m, or <n>h" >&2
   exit 1
@@ -140,22 +140,10 @@ if ! [[ "$local_test_yield" =~ ^[01]$ ]]; then
   exit 1
 fi
 
-# Scoped fast suite (ci-4w2t). .githooks/pre-push sets
-# GC_SCOPED_TEST_PACKAGES to the package args a push can actually affect, as
-# decided by scripts/push-gate-select, so a one-line fix stops paying for a
-# 187-package sweep. Two rules make the narrowing safe to read here:
-#
-#   1. Only `fast` honors it. The merge-baseline targets (full, integration,
-#      cmd-gc-process) must stay complete no matter what the environment
-#      carries, so a stale export in a shell cannot quietly shrink them.
-#   2. ./cmd/gc and ./internal/productmetrics are split out rather than passed
-#      to the unit sweep, because the sharded jobs below own them. Leaving one
-#      in both would run it twice -- once unsharded, at full serial cost,
-#      defeating the sharding.
-#
-# An empty scope after the split is a real answer, not a failure: a push that
-# only touched cmd/gc has no unit-sweep work left, and add_unit_core_job
-# adds no job at all.
+# GC_SCOPED_TEST_PACKAGES, from scripts/push-gate-select, narrows fast mode
+# alone so the merge-baseline modes stay complete. ./cmd/gc and
+# ./internal/productmetrics leave it for their own jobs, and an empty remainder
+# adds no unit-core job: TESTING.md, "Scoping the push gate".
 scoped_unit_packages=""
 scoped_has_cmd_gc=0
 scoped_has_productmetrics=0
@@ -199,23 +187,47 @@ add_fsys_compile_job() {
     'tmp=$(mktemp -d); trap '"'"'rm -rf "$tmp"'"'"' EXIT; GOOS=darwin GOARCH=arm64 go test -c -o "$tmp/fsys.test" ./internal/fsys'
 }
 
-# The unit sweep runs with -count=1, mirroring the cmd/gc shards' GO_TEST_COUNT=1
-# so it is a real run rather than a cached-result stall, and shares the shards'
-# timeout budget. Package parallelism is bounded separately for every job by the
-# GOFLAGS -p export below (ga-04m84s), so it is not pinned on this command.
-add_unit_core_job() {
-  local package_expr="\$(go list ./... | grep -v -e '^github.com/gastownhall/gascity/cmd/gc\$' -e '^github.com/gastownhall/gascity/internal/productmetrics\$')"
+# Prints the unit-core packages, one per line: every package except the two
+# that run in jobs of their own, or the scoped run's list, which the caller
+# has already stripped of both.
+unit_core_packages() {
+  local listed scoped=()
   if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then
-    # Already excludes ./cmd/gc and ./internal/productmetrics: the caller
-    # strips both, because each runs through the sharded jobs below and would
-    # otherwise be tested twice.
-    package_expr="${scoped_unit_packages}"
-    if [[ -z "$package_expr" ]]; then
-      return 0
+    read -ra scoped <<<"$scoped_unit_packages"
+    if [[ ${#scoped[@]} -gt 0 ]]; then
+      printf '%s\n' "${scoped[@]}"
     fi
+    return 0
   fi
-  add_job "unit-core" \
-    "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ${package_expr}"
+  listed="$(go list ./...)" && [[ -n "$listed" ]] || return 1
+  grep -v -e '^github.com/gastownhall/gascity/cmd/gc$' \
+    -e '^github.com/gastownhall/gascity/internal/productmetrics$' <<<"$listed" || true
+}
+
+# Deals the packages round-robin into at most UNIT_CORE_TOTAL jobs. -count=1
+# mirrors the cmd/gc shards' GO_TEST_COUNT=1 so the sweep is a real run rather
+# than a cached-result stall, and -p comes from the GOFLAGS export below
+# (ga-04m84s).
+add_unit_core_jobs() {
+  local listed packages=() total i j shard
+  if ! listed="$(unit_core_packages)"; then
+    echo "unit-core: \`go list ./...\` failed or listed nothing in ${repo_root}, so the sweep has no packages; run it there to see why" >&2
+    exit 1
+  fi
+  [[ -n "$listed" ]] || return 0
+  mapfile -t packages <<<"$listed"
+  total="$unit_core_total"
+  if (( ${#packages[@]} < total )); then
+    total="${#packages[@]}"
+  fi
+  for ((i = 0; i < total; i++)); do
+    shard=""
+    for ((j = i; j < ${#packages[@]}; j += total)); do
+      shard+="${shard:+ }${packages[j]}"
+    done
+    add_job "unit-core-$((i + 1))-of-${total}" \
+      "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ${shard}"
+  done
 }
 
 # Runs as a direct shell job rather than through a `go test` wrapper because a
@@ -271,6 +283,13 @@ add_productmetrics_testhook_job() {
 # tagged process contracts live in ./cmd/gc and run as their own job.
 add_productmetrics_shards() {
   local i command
+  # not test-go-test-shard 1 1: it runs only what -list '^Test' names, so the
+  # package's Fuzz seed corpora would never run.
+  if [[ "$productmetrics_total" -eq 1 ]]; then
+    add_job "unit-productmetrics" \
+      "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ./internal/productmetrics"
+    return 0
+  fi
   for i in $(seq 1 "$productmetrics_total"); do
     command="GC_FAST_UNIT=1 GO_TEST_COUNT=1 GO_TEST_TIMEOUT=${go_test_timeout}"
     command+=" ./scripts/test-go-test-shard ./internal/productmetrics ${i} ${productmetrics_total}"
@@ -307,21 +326,21 @@ add_integration_jobs() {
 
 case "$mode" in
   fast)
-    # The three jobs below the sweep stay unconditional under a scoped run.
-    # They are self-tests of this harness and of the cross-compile, they cost
-    # seconds rather than minutes, and making their inclusion depend on the
-    # selection would put the gate's own correctness behind the gate.
-    add_fsys_compile_job
-    add_unit_core_job
-    add_push_gate_lock_selftest_job
-    add_local_concurrency_selftest_job
-    add_push_gate_select_selftest_job
+    # Jobs start in this order, so the minute-long ones go first and the
+    # seconds-long ones fill the tail. Those last four stay unconditional
+    # under a scoped run: they self-test this harness and the cross-compile,
+    # and the gate's own correctness must not sit behind the selection.
     if [[ -z "${GC_SCOPED_TEST_PACKAGES:-}" || "$scoped_has_productmetrics" -eq 1 ]]; then
       add_productmetrics_shards
     fi
+    add_unit_core_jobs
     if [[ -z "${GC_SCOPED_TEST_PACKAGES:-}" || "$scoped_has_cmd_gc" -eq 1 ]]; then
       add_cmd_gc_shards "unit-cmd-gc" "1" ""
     fi
+    add_fsys_compile_job
+    add_push_gate_lock_selftest_job
+    add_local_concurrency_selftest_job
+    add_push_gate_select_selftest_job
     ;;
   cmd-gc-process)
     add_cmd_gc_shards "cmd-gc-process" "0" ""
@@ -332,7 +351,7 @@ case "$mode" in
     ;;
   full)
     add_fsys_compile_job
-    add_unit_core_job
+    add_unit_core_jobs
     add_push_gate_lock_selftest_job
     add_local_concurrency_selftest_job
     add_push_gate_select_selftest_job

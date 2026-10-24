@@ -70,24 +70,25 @@ func TestLocalParallelUnitCoreDisablesTestResultCaching(t *testing.T) {
 	}
 }
 
-// TestFastParallelForwardsTimeoutOverridePastEnvScrub proves the documented
-// `GO_TEST_TIMEOUT=30m make test-fast-parallel` escape hatch actually reaches
-// the runner. The target wraps the script in TEST_ENV's `env -i`, which drops
-// every variable not named explicitly, so an override that is not forwarded is
-// silently ignored — the operator raises the budget on a slow host, watches
-// the same 10m-class timeouts, and has no way to tell the knob did nothing.
-func TestFastParallelForwardsTimeoutOverridePastEnvScrub(t *testing.T) {
-	const override = "37m"
+// TestFastParallelForwardsOverridesPastEnvScrub proves the documented
+// `GO_TEST_TIMEOUT=30m make test-fast-parallel` escape hatch, and the two job
+// counts beside it, actually reach the runner. The target wraps the script in
+// TEST_ENV's `env -i`, which drops every variable not named explicitly, so an
+// override that is not forwarded is silently ignored.
+func TestFastParallelForwardsOverridesPastEnvScrub(t *testing.T) {
+	overrides := []string{"GO_TEST_TIMEOUT=37m", "PRODUCTMETRICS_TOTAL=3", "UNIT_CORE_TOTAL=5"}
 	cmd := makeCommand("-n", "test-fast-parallel")
 	cmd.Dir = repoRoot(t)
-	cmd.Env = append(os.Environ(), "GO_TEST_TIMEOUT="+override)
+	cmd.Env = append(os.Environ(), overrides...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("make -n test-fast-parallel failed: %v\n%s", err, out)
 	}
 	recipe := string(out)
-	if !strings.Contains(recipe, "GO_TEST_TIMEOUT="+override+" ") {
-		t.Fatalf("test-fast-parallel drops GO_TEST_TIMEOUT=%s before invoking the runner:\n%s", override, recipe)
+	for _, override := range overrides {
+		if !strings.Contains(recipe, override+" ") {
+			t.Errorf("test-fast-parallel drops %s before invoking the runner:\n%s", override, recipe)
+		}
 	}
 }
 
@@ -154,14 +155,15 @@ func TestLocalParallelOwnsGoTempDirCleanup(t *testing.T) {
 // through `env -i` before invoking each jobspec.
 var perJobEnvAllowlist = regexp.MustCompile(`(?s)env -i \\(.*?)bash -lc`)
 
-// unitCoreJobCommand returns the `go test` command line the unit-core jobspec
-// hands to each worker shell, with the script's own shell variables resolved.
+// unitCoreJobCommand returns the `go test` command line every unit-core
+// jobspec hands to its worker shell, with the script's own shell variables
+// resolved.
 func unitCoreJobCommand(t *testing.T) string {
 	t.Helper()
 	script := localParallelScript(t)
-	body := shellFunctionBody(t, script, "add_unit_core_job")
-	if !strings.Contains(body, `add_job "unit-core"`) {
-		t.Fatalf("add_unit_core_job no longer registers a \"unit-core\" jobspec:\n%s", body)
+	body := shellFunctionBody(t, script, "add_unit_core_jobs")
+	if !strings.Contains(body, `add_job "unit-core-`) {
+		t.Fatalf("add_unit_core_jobs no longer registers \"unit-core-<i>-of-<n>\" jobspecs:\n%s", body)
 	}
 	return resolveShellVars(t, script, body)
 }
