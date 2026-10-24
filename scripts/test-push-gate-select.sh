@@ -47,13 +47,18 @@ unset GIT_DIR GIT_WORK_TREE 2>/dev/null || true
 
 # --- harness ---------------------------------------------------------------
 
+# Every fixture lands in this one dir, removed on exit. Fixtures are built
+# inside $(...) subshells, where a trap of their own would fire at once.
+PGS_SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/gc-pgs-run.XXXXXX")"
+trap 'rm -rf "$PGS_SCRATCH"' EXIT
+
 # new_push_fixture <scope-decision>: a repo wired to the real pre-push hook,
 # pushing to a real bare remote, with `make` and the selector stubbed. Prints
 # "<repo> <bindir>"; the make stub writes its invocation to <bindir>/make.log.
 new_push_fixture() {
     local decision="$1"
     local root repo remote bindir
-    root="$(mktemp -d "${TMPDIR:-/tmp}/gc-pgs-test.XXXXXX")"
+    root="$(mktemp -d "$PGS_SCRATCH/test.XXXXXX")"
     repo="$root/repo"
     remote="$root/remote.git"
     bindir="$root/bin"
@@ -292,7 +297,7 @@ RUNNER
 # the fixture directory.
 new_affected_fixture() {
     local decision="$1" dir
-    dir="$(mktemp -d "${TMPDIR:-/tmp}/gc-pgs-affected.XXXXXX")"
+    dir="$(mktemp -d "$PGS_SCRATCH/affected.XXXXXX")"
     install_runner_stub "$dir"
     cp -f "$REPO_ROOT/scripts/test-affected" "$dir/scripts/test-affected"
     cat >"$dir/scripts/push-gate-select" <<SELECT
