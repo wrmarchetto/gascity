@@ -1199,7 +1199,7 @@ environment holds, so a scope exported in the pushing shell would narrow a
 `GC_SCOPED_TEST_PACKAGES` before deciding, and the `full` cases in
 `scripts/test-push-gate-select.sh` push from a shell exporting one.
 
-**What the push gate's selection would save.** Before gs-rvw5, the city's
+**What the push gate's selection saves.** Before gs-rvw5, the city's
 cycle-time baseline (`docs/bead-cycle-time-baseline.md` in the city repo,
 2026-09-22 to 2026-10-23) found 17 gascity push attempts: 13 selected the
 full suite, 0 scoped, 0 none and 4 unknown, and every reason visible in a
@@ -1231,13 +1231,23 @@ reached `cmd/gc` in 185 of the 187 scoped landings. So the median scoped
 selection is 87.4% of summed package time (p10 87.4%, p90 100%), against
 17.1% for the closure alone. These are package times from a `-p=4` run
 under load, a measure of work rather than wall clock. They bound the
-saving: a scoped push would carry no less than about seven eighths of a
+saving: a scoped push carries no less than about seven eighths of a
 full run's package time while `internal/productmetrics` stays on the
 manifest. It is there only because its tests `filepath.WalkDir` metrics
 homes they build under `t.TempDir()`, which the manifest's marker rule
-cannot tell from a repository walk. No scoped push has been timed against a
-full one, because none has run: that measurement is owed once the hold
-lifts (gs-0y4d).
+cannot tell from a repository walk.
+
+Timed through the real `.githooks/pre-push` once the hold lifted (gs-0y4d,
+2026-10-24), one run each, warm build cache. A push of gs-jqz2's one-file
+`cmd/gc` change selects 63 packages, the manifest alone since it already
+holds `cmd/gc`, and deals the same 19 jobs a full run does, because the
+manifest keeps every `cmd/gc` shard and `internal/productmetrics`. With
+`LOCAL_TEST_JOBS=4` pinned for both, back to back, the scoped push took
+233 s (load 10 at start, median 14) and the full one 280 s (load 9, median
+12), 17% less. Unpinned, the job count is set from load at start and swamps
+the selection: a scoped push started at load 145 ran 2 jobs in 477 s, and a
+full one started at load 8 ran 7 jobs in 174 s. One pair is an indication,
+not a distribution.
 
 Re-run, from a gascity checkout whose `main` holds the window:
 
