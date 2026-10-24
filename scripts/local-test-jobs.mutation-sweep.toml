@@ -1,0 +1,144 @@
+# Proves the fast suite's job layout is enforced: unit-core is dealt into
+# several jobs that run every package exactly once, productmetrics runs as one
+# unsharded job with its Fuzz seed corpora, and a missing package list or a
+# malformed job count stops the run before any job starts.
+
+[sweep]
+name = "unit-core is dealt into several jobs and productmetrics runs unsharded"
+repo = ".."
+
+[sweep.gate]
+argv = ["bash", "scripts/test-local-concurrency.sh"]
+timeout_s = 300
+
+[[mutation]]
+id = "unit-pool-drops-a-package"
+path = "scripts/test-local-parallel"
+find = '''<<<"$listed" || true'''
+replace = '''<<<"$listed" | sed 1d || true'''
+expect_output = ["FAIL layout.default_unit_pool_runs_each_package_once"]
+
+[[mutation]]
+id = "unit-pool-keeps-productmetrics"
+path = "scripts/test-local-parallel"
+find = '''  grep -v -e '^github.com/gastownhall/gascity/cmd/gc$' \
+    -e '^github.com/gastownhall/gascity/internal/productmetrics$' <<<"$listed" || true'''
+replace = '''  grep -v -e '^github.com/gastownhall/gascity/cmd/gc$' <<<"$listed" || true'''
+expect_output = ["FAIL layout.default_unit_pool_runs_each_package_once"]
+
+[[mutation]]
+id = "dealing-overlaps-shards"
+path = "scripts/test-local-parallel"
+find = '''for ((j = i; j < ${#packages[@]}; j += total)); do'''
+replace = '''for ((j = i; j < ${#packages[@]}; j += 1)); do'''
+expect_output = ["FAIL layout.dealt_unit_pool_runs_each_package_once"]
+
+[[mutation]]
+id = "unit-core-default-one-job"
+path = "scripts/test-local-parallel"
+find = '''unit_core_total="${UNIT_CORE_TOTAL:-8}"'''
+replace = '''unit_core_total="${UNIT_CORE_TOTAL:-1}"'''
+expect_output = ["FAIL layout.default_unit_pool_spans_several_jobs"]
+
+[[mutation]]
+id = "job-count-not-capped-at-packages"
+path = "scripts/test-local-parallel"
+find = '''  if (( ${#packages[@]} < total )); then
+    total="${#packages[@]}"
+  fi'''
+replace = ''''''
+expect_output = ["FAIL layout.scoped_unit_pool_never_exceeds_its_packages"]
+
+[[mutation]]
+id = "scoped-run-ignores-its-list"
+path = "scripts/test-local-parallel"
+find = '''  if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then
+    read -ra scoped <<<"$scoped_unit_packages"'''
+replace = '''  if false; then
+    read -ra scoped <<<"$scoped_unit_packages"'''
+expect_output = ["FAIL layout.scoped_unit_pool_leaves_sharded_packages_out"]
+
+[[mutation]]
+id = "failed-go-list-accepted"
+path = "scripts/test-local-parallel"
+find = '''listed="$(go list ./...)" && [[ -n "$listed" ]] || return 1'''
+replace = '''listed="$(go list ./...)" || true'''
+expect_output = ["FAIL layout.failed_go_list_nonzero_exit"]
+
+[[mutation]]
+id = "empty-go-list-accepted"
+path = "scripts/test-local-parallel"
+find = '''listed="$(go list ./...)" && [[ -n "$listed" ]] || return 1'''
+replace = '''listed="$(go list ./...)" || return 1'''
+expect_output = ["FAIL layout.empty_go_list_nonzero_exit"]
+
+[[mutation]]
+id = "list-failure-does-not-stop-the-run"
+path = "scripts/test-local-parallel"
+find = '''failed or listed nothing in ${repo_root}, so the sweep has no packages; run it there to see why" >&2
+    exit 1'''
+replace = '''failed or listed nothing in ${repo_root}, so the sweep has no packages; run it there to see why" >&2
+    return 0'''
+expect_output = ["FAIL layout.failed_go_list_nonzero_exit"]
+
+[[mutation]]
+id = "malformed-unit-core-total-accepted"
+path = "scripts/test-local-parallel"
+find = '''if ! [[ "$unit_core_total" =~ ^[0-9]+$ && "$unit_core_total" -gt 0 ]]; then'''
+replace = '''if false; then'''
+expect_output = ["FAIL layout.malformed_total_nonzero_exit"]
+
+[[mutation]]
+id = "productmetrics-default-sharded"
+path = "scripts/test-local-parallel"
+find = '''productmetrics_total="${PRODUCTMETRICS_TOTAL:-1}"'''
+replace = '''productmetrics_total="${PRODUCTMETRICS_TOTAL:-6}"'''
+expect_output = ["FAIL layout.default_productmetrics_runs_unsharded"]
+
+[[mutation]]
+id = "unsharded-productmetrics-through-the-shard-script"
+path = "scripts/test-local-parallel"
+find = '''      "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ./internal/productmetrics"'''
+replace = '''      "GC_FAST_UNIT=1 GO_TEST_COUNT=1 GO_TEST_TIMEOUT=${go_test_timeout} ./scripts/test-go-test-shard ./internal/productmetrics 1 1"'''
+expect_output = ["FAIL layout.default_productmetrics_runs_its_fuzz_seeds"]
+
+[[mutation]]
+id = "sharded-productmetrics-loses-an-index"
+path = "scripts/test-local-parallel"
+find = '''  for i in $(seq 1 "$productmetrics_total"); do
+    command="GC_FAST_UNIT=1 GO_TEST_COUNT=1 GO_TEST_TIMEOUT=${go_test_timeout}"'''
+replace = '''  for i in $(seq 2 "$productmetrics_total"); do
+    command="GC_FAST_UNIT=1 GO_TEST_COUNT=1 GO_TEST_TIMEOUT=${go_test_timeout}"'''
+expect_output = ["FAIL layout.sharded_productmetrics_covers_every_index"]
+
+[[mutation]]
+id = "unsharded-productmetrics-cached"
+path = "scripts/test-local-parallel"
+find = '''      "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ./internal/productmetrics"'''
+replace = '''      "GC_FAST_UNIT=1 go test -timeout ${go_test_timeout} ./internal/productmetrics"'''
+expect_output = ["the unsharded productmetrics job passes -count"]
+gate = { argv = ["go", "test", "-count=1", "./scripts", "-run", "TestProductmetricsShardsRunUnderTheUnitLaneGate"] }
+
+[[mutation]]
+id = "unsharded-productmetrics-own-timeout"
+path = "scripts/test-local-parallel"
+find = '''      "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ./internal/productmetrics"'''
+replace = '''      "GC_FAST_UNIT=1 go test -count=1 -timeout 10m ./internal/productmetrics"'''
+expect_output = ["the unsharded productmetrics job uses -timeout"]
+gate = { argv = ["go", "test", "-count=1", "./scripts", "-run", "TestProductmetricsShardsShareTheFanOutTimeoutBudget"] }
+
+[[mutation]]
+id = "unit-core-cached"
+path = "scripts/test-local-parallel"
+find = '''      "GC_FAST_UNIT=1 go test -count=1 -timeout ${go_test_timeout} ${shard}"'''
+replace = '''      "GC_FAST_UNIT=1 go test -timeout ${go_test_timeout} ${shard}"'''
+expect_output = ["unit-core -count"]
+gate = { argv = ["go", "test", "-count=1", "./scripts", "-run", "TestLocalParallelUnitCoreDisablesTestResultCaching"] }
+
+[[mutation]]
+id = "makefile-drops-unit-core-total"
+path = "Makefile"
+find = ''' UNIT_CORE_TOTAL=$(UNIT_CORE_TOTAL)'''
+replace = ''''''
+expect_output = ["drops UNIT_CORE_TOTAL=5"]
+gate = { argv = ["go", "test", "-count=1", "./scripts", "-run", "TestFastParallelForwardsOverridesPastEnvScrub"] }
