@@ -317,3 +317,27 @@ Update 2026-10-23 (pm-log #161): RESOLVED. The liaison read Willie's words
 as delegating the measure, so p90 stands as the PM's ruling, and criteria
 3-5 stay because every one cuts time inside the Target interval.
 
+
+## 11. Rig idle behind bead-cycle-time's measurement, nothing queued after it (2026-10-24)
+
+Every gascity bead labeled epic:bead-cycle-time is closed, the last being
+gs-0y4d (scoped push gate, 08:54Z). The epic stays in-progress because its
+Target criterion closes on a measurement, not on landed changes: city
+ci-r81svr (D, analyst-fable) measures a post-change window against the
+1 h p90 target in every rig. It is date-parked in the city store until
+2026-10-25T18:24Z, waiting for the queue changes to be on city main and a
+representative span after the last landing. City-store deferrals are
+returned by orders/deferred-undefer-sweep.toml, so that park has a wake.
+Not verified from here: whether those commits are on city main yet (the
+PM git gate refuses reads of another repository's history), and the state
+of the zephyr and sel4 beads under the epic.
+
+No epic has status: open, so when bead-cycle-time closes this rig has
+nothing to promote -- the gap #2(b), #5 and #8 recorded, one epic later.
+
+Question: (a) does D's window meet the Target in every rig, and (b) what
+does gascity build after bead-cycle-time?
+
+Would settle it: (a) ci-r81svr's report, which the epic-close or idle
+summons that follows reads, and a miss names the stage that carries it
+and gets a bead. (b) a `gc city pm plan gascity '<epic>'` sitting.

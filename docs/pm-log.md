@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-qvuq 2026-10-23T23:20:00Z
+last_seen: gs-c05b 2026-10-24T08:59:06Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5488,5 +5488,34 @@ Ruling: (a).
 Rig store since last_seen: gs-okl8 and gs-9b18 closed and merged, gs-ywze
 and gs-galo closed, gs-r9ph in progress (from #162), gs-jqz2 hold:external,
 and this summons.
+
+Source: roadmap bead-cycle-time
+
+## 164. pm-idle gs-c05b: rig waits on bead-cycle-time's post-change window (2026-10-24)
+
+Summons: gascity has no queued work while epic:bead-cycle-time is
+in-progress. Of the three dispositions it offers, this is the third: the
+rig waits on something outside it.
+
+- Verified from close reasons: every gascity bead under the epic is
+  closed. gs-r9ph put merge-path gates at the caller's priority. gs-sch3
+  dealt unit-core into eight jobs and ran the full fast selection at
+  172-668 s across seven runs at load up to 238, every one under the
+  1020 s cap and under #163's 1157 s bar, warm cache, so lower bounds.
+  gs-0y4d scoped the push gate to its selection after city ci-ms847d
+  landed. In the city store A, B, C, E, 5a, 5d, ci-p8kdpw and ci-ufxl74
+  are closed.
+- Not met yet: Target. It closes on D (city ci-r81svr), the post-change
+  window, date-parked to 2026-10-25T18:24Z for the queue changes to be on
+  city main plus a representative span. That bead is what keeps the epic
+  alive, so no new bead is filed here. Status stays in-progress.
+- No promotion and no DECOMP: no epic has status: open, and
+  agent-efficiency is in the operator's review, which an idle summons
+  does not ask about.
+- Recorded as pm-open #11, with the question of what this rig builds
+  after bead-cycle-time.
+
+Rig store since last_seen: gs-r9ph, gs-jqz2, gs-sch3 and gs-0y4d closed
+(with the hold children gs-jqz2.2 and gs-0y4d.2), and this summons.
 
 Source: roadmap bead-cycle-time
