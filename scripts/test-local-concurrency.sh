@@ -177,6 +177,140 @@ else
     record_fail "wiring.full_case_calls_selftest" "could not locate the full) case block in $LOCAL_PARALLEL"
 fi
 
+# --- job layout, read from the jobs a real fast run starts ---
+
+# The runner in a scratch repo with every job stubbed. Its go answers
+# `go list ./...` from list.txt, failing when the file is absent, and echoes
+# each `go test` call, so a job's log holds exactly the packages it ran.
+new_layout_fixture() {
+    local dir job
+    dir="$(mktemp -d -p /var/tmp)"
+    mkdir -p "$dir/scripts/lib" "$dir/bin" "$dir/logs"
+    cp -f "$LOCAL_PARALLEL" "$dir/scripts/test-local-parallel"
+    cp -f "$TEST_DIR/lib/test-slice.sh" "$INNER_LIB" "$dir/scripts/lib/"
+    cp -f "$TEST_DIR/push-gate-lock-lib.sh" "$dir/scripts/"
+    for job in test-go-test-shard test-local-concurrency.sh \
+        test-push-gate-lock.sh test-push-gate-select.sh; do
+        printf '#!/usr/bin/env bash\necho "%s $*"\n' "$job" >"$dir/scripts/$job"
+    done
+    cat >"$dir/bin/go" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  env) echo "$dir/goenv" ;;
+  list) [[ -f "$dir/list.txt" ]] && cat "$dir/list.txt" ;;
+  test) echo "go \$*" ;;
+esac
+STUB
+    chmod +x "$dir"/scripts/test-* "$dir/bin/go"
+    printf '%s' "$dir"
+}
+
+# run_layout_fixture <dir> <env args...>: one fast run, logs kept in <dir>/logs.
+run_layout_fixture() {
+    local dir="$1"
+    shift
+    (cd "$dir" && env "$@" PATH="$dir/bin:$PATH" GC_TEST_NO_SLICE=1 \
+        GC_PUSH_GATE_NO_CAP=1 LOCAL_TEST_JOBS=3 LOCAL_TEST_LOG_DIR="$dir/logs" \
+        ./scripts/test-local-parallel fast) >"$dir/run.log" 2>&1
+}
+
+# go_test_packages <log...>: the package args of every `go test` line.
+go_test_packages() {
+    cat "$@" 2>/dev/null | awk '$1 == "go" && $2 == "test" {
+        for (i = 3; i <= NF; i++) {
+            if ($i == "-timeout") { i++; continue }
+            if ($i !~ /^-/) print $i
+        }
+    }'
+}
+
+# check_unit_pool <name> <dir> <want packages, space-separated>: the unit-core
+# jobs ran exactly that set, each package once.
+check_unit_pool() {
+    local name="$1" dir="$2" want got packages
+    read -ra packages <<<"$3"
+    want="$(printf '%s\n' "${packages[@]}" | sort)"
+    got="$(go_test_packages "$dir"/logs/unit-core-*.log | sort)"
+    if [[ "$got" != "$want" ]]; then
+        record_fail "$name" "want: ${want//$'\n'/ } got: ${got//$'\n'/ } ($(tail -2 "$dir/run.log"))"
+        return
+    fi
+    record_pass "$name"
+}
+
+unit_core_jobs() {
+    find "$1/logs" -name 'unit-core-*.log' | wc -l | tr -d ' '
+}
+
+# The bash -lc each job runs in must still find the stub go first.
+LAYOUT_DIR="$(new_layout_fixture)"
+login_go="$(env -i PATH="$LAYOUT_DIR/bin:$PATH" HOME="${HOME:-}" bash -lc 'command -v go')"
+assert_eq "layout.login_shell_finds_stub_go" "$login_go" "$LAYOUT_DIR/bin/go"
+rm -rf "$LAYOUT_DIR"
+
+salt="$RANDOM$RANDOM"
+pool=()
+for i in 1 2 3 4 5 6 7 8 9 10 11; do
+    pool+=("example.com/fx${salt}/p${i}")
+done
+
+LAYOUT_DIR="$(new_layout_fixture)"
+printf '%s\n' github.com/gastownhall/gascity/cmd/gc "${pool[@]}" \
+    github.com/gastownhall/gascity/internal/productmetrics >"$LAYOUT_DIR/list.txt"
+run_layout_fixture "$LAYOUT_DIR" -u UNIT_CORE_TOTAL -u PRODUCTMETRICS_TOTAL
+check_unit_pool "layout.default_unit_pool_runs_each_package_once" "$LAYOUT_DIR" "${pool[*]}"
+assert_true "layout.default_unit_pool_spans_several_jobs" \
+    test "$(unit_core_jobs "$LAYOUT_DIR")" -ge 2
+assert_eq "layout.default_productmetrics_runs_unsharded" \
+    "$(go_test_packages "$LAYOUT_DIR"/logs/*.log | grep -c '^./internal/productmetrics$')" "1"
+assert_true "layout.default_productmetrics_runs_its_fuzz_seeds" \
+    test -z "$(grep -h -e '-run' -e 'test-go-test-shard ./internal/productmetrics' \
+        "$LAYOUT_DIR"/logs/*productmetrics*.log)"
+rm -rf "$LAYOUT_DIR"
+
+LAYOUT_DIR="$(new_layout_fixture)"
+printf '%s\n' "${pool[@]}" >"$LAYOUT_DIR/list.txt"
+run_layout_fixture "$LAYOUT_DIR" UNIT_CORE_TOTAL=3 PRODUCTMETRICS_TOTAL=3
+check_unit_pool "layout.dealt_unit_pool_runs_each_package_once" "$LAYOUT_DIR" "${pool[*]}"
+assert_eq "layout.dealt_unit_pool_job_count" "$(unit_core_jobs "$LAYOUT_DIR")" "3"
+assert_eq "layout.sharded_productmetrics_covers_every_index" \
+    "$(cat "$LAYOUT_DIR"/logs/*.log | grep -c '^test-go-test-shard ./internal/productmetrics [123] 3$')" "3"
+rm -rf "$LAYOUT_DIR"
+
+LAYOUT_DIR="$(new_layout_fixture)"
+run_layout_fixture "$LAYOUT_DIR" UNIT_CORE_TOTAL=5 \
+    GC_SCOPED_TEST_PACKAGES="./a${salt} ./cmd/gc ./internal/productmetrics ./b${salt}"
+check_unit_pool "layout.scoped_unit_pool_leaves_sharded_packages_out" "$LAYOUT_DIR" "./a${salt} ./b${salt}"
+assert_eq "layout.scoped_unit_pool_never_exceeds_its_packages" "$(unit_core_jobs "$LAYOUT_DIR")" "2"
+rm -rf "$LAYOUT_DIR"
+
+# No list.txt: go list prints nothing and fails, which must stop the run.
+LAYOUT_DIR="$(new_layout_fixture)"
+run_layout_fixture "$LAYOUT_DIR"
+LAYOUT_RC=$?
+assert_true "layout.failed_go_list_nonzero_exit" test "$LAYOUT_RC" -ne 0
+assert_contains "layout.failed_go_list_names_command" "$(cat "$LAYOUT_DIR/run.log")" "go list ./..."
+assert_eq "layout.failed_go_list_runs_no_job" "$(find "$LAYOUT_DIR/logs" -type f | wc -l | tr -d ' ')" "0"
+rm -rf "$LAYOUT_DIR"
+
+# An empty list.txt: go list exits 0 having listed nothing.
+LAYOUT_DIR="$(new_layout_fixture)"
+: >"$LAYOUT_DIR/list.txt"
+run_layout_fixture "$LAYOUT_DIR"
+LAYOUT_RC=$?
+assert_true "layout.empty_go_list_nonzero_exit" test "$LAYOUT_RC" -ne 0
+assert_eq "layout.empty_go_list_runs_no_job" "$(find "$LAYOUT_DIR/logs" -type f | wc -l | tr -d ' ')" "0"
+rm -rf "$LAYOUT_DIR"
+
+LAYOUT_DIR="$(new_layout_fixture)"
+printf '%s\n' "${pool[@]}" >"$LAYOUT_DIR/list.txt"
+run_layout_fixture "$LAYOUT_DIR" UNIT_CORE_TOTAL=0
+LAYOUT_RC=$?
+assert_true "layout.malformed_total_nonzero_exit" test "$LAYOUT_RC" -ne 0
+assert_contains "layout.malformed_total_names_var" "$(cat "$LAYOUT_DIR/run.log")" "UNIT_CORE_TOTAL"
+assert_eq "layout.malformed_total_runs_no_job" "$(find "$LAYOUT_DIR/logs" -type f | wc -l | tr -d ' ')" "0"
+rm -rf "$LAYOUT_DIR"
+
 # A separate file so the upstream-probe close gate, which knows test paths by
 # suffix (cmd/gc/upstream_probe_close_gate.go), keeps it as one.
 if bash "$TEST_DIR/local-test-yield.test.sh"; then
