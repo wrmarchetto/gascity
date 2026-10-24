@@ -117,10 +117,10 @@ do_push() {
 
 # --- tests -----------------------------------------------------------------
 
-test_scoped_push_runs_the_full_suite() {
-    # The push is the only full run a change gets while the merge sweep runs
-    # no Go tests, so a scoped selection is reported and not applied.
-    local name="a scoped push decision still runs the full suite"
+test_scoped_push_runs_the_fast_suite_over_the_selection() {
+    # The report line is what the city's assets/scripts/bead-cycle-time.py
+    # PUSH_SELECT classifies a push by, so its prefix is pinned too.
+    local name="a scoped push decision runs the fast suite over the selection"
     read -r repo bindir <<<"$(new_push_fixture 'scoped ./alpha ./beta')"
     export PGS_MAKE_LOG="$bindir/make.log" PGS_GUARD_LOG="$bindir/guard.log"
     export PGS_SELECTOR_STDIN="$bindir/selector.stdin"
@@ -132,12 +132,12 @@ test_scoped_push_runs_the_full_suite() {
         record_fail "$name" "make was not invoked with test-fast-parallel: $(cat "$PGS_MAKE_LOG")"
         return
     fi
-    if ! grep -qx 'SCOPE: <unset>' "$PGS_MAKE_LOG"; then
-        record_fail "$name" "the push narrowed the suite: $(cat "$PGS_MAKE_LOG")"
+    if ! grep -qx 'SCOPE: ./alpha ./beta' "$PGS_MAKE_LOG"; then
+        record_fail "$name" "the push did not hand make the selection: $(cat "$PGS_MAKE_LOG")"
         return
     fi
-    if ! grep -q 'reaches 2 package(s), but the full fast suite runs' <<<"$out"; then
-        record_fail "$name" "the push did not report the selection it overrode: $out"
+    if ! grep -q 'pre-push: scoped fast suite to 2 package(s)' <<<"$out"; then
+        record_fail "$name" "the push did not report the selection: $out"
         return
     fi
     record_pass "$name"
@@ -146,14 +146,15 @@ test_scoped_push_runs_the_full_suite() {
 test_full_decision_leaves_scope_unset() {
     # An unset scope is what makes test-local-parallel run the whole tree. A
     # `full` decision that leaked an empty-string scope would still take the
-    # narrowing branch and run nothing.
+    # narrowing branch and run nothing. The Makefile forwards the pusher's own
+    # scope, so one exported in the pushing shell must not survive either.
     local name="a full decision leaves GC_SCOPED_TEST_PACKAGES unset"
     read -r repo bindir <<<"$(new_push_fixture 'full')"
     export PGS_MAKE_LOG="$bindir/make.log" PGS_GUARD_LOG="$bindir/guard.log"
     export PGS_SELECTOR_STDIN="$bindir/selector.stdin"
     : >"$PGS_MAKE_LOG"
 
-    do_push "$repo" "$bindir" >/dev/null
+    GC_SCOPED_TEST_PACKAGES=./stale do_push "$repo" "$bindir" >/dev/null
     if ! grep -qx 'SCOPE: <unset>' "$PGS_MAKE_LOG"; then
         record_fail "$name" "expected an unset scope, got: $(cat "$PGS_MAKE_LOG")"
         return
@@ -303,8 +304,8 @@ SELECT
     printf '%s' "$dir"
 }
 
-test_push_scope_stays_full_through_make() {
-    local name="a scoped push reaches the runner with no scope through the real Makefile"
+test_push_scope_reaches_the_runner_through_make() {
+    local name="a scoped push reaches the runner as GC_SCOPED_TEST_PACKAGES through the real Makefile"
     read -r repo bindir <<<"$(new_push_fixture 'scoped ./alpha ./beta')"
     rm -f "$bindir/make"
     install_runner_stub "$repo"
@@ -312,7 +313,7 @@ test_push_scope_stays_full_through_make() {
     export PGS_SELECTOR_STDIN="$bindir/selector.stdin"
 
     do_push "$repo" "$bindir" >/dev/null
-    if ! grep -qE '^ARGS: fast SCOPE: \[(<unset>)?\]$' "$repo/runner.log"; then
+    if ! grep -qx 'ARGS: fast SCOPE: \[./alpha ./beta\]' "$repo/runner.log"; then
         record_fail "$name" "runner saw: $(cat "$repo/runner.log")"
         return
     fi
@@ -347,12 +348,13 @@ test_affected_scope_reaches_the_runner_through_make() {
 }
 
 test_affected_full_decision_runs_unscoped() {
-    # Empty and unset both mean the whole tree to test-local-parallel.
+    # Empty and unset both mean the whole tree to test-local-parallel. The
+    # caller's own scope is forwarded by the Makefile, so it must not survive.
     local name="a full test-affected decision reaches the runner unscoped"
     local dir
     dir="$(new_affected_fixture 'full')"
 
-    (cd "$dir" && ./scripts/test-affected) >/dev/null 2>&1
+    (cd "$dir" && GC_SCOPED_TEST_PACKAGES=./stale ./scripts/test-affected) >/dev/null 2>&1
     if ! grep -qE '^ARGS: fast SCOPE: \[(<unset>)?\]$' "$dir/runner.log"; then
         record_fail "$name" "runner saw: $(cat "$dir/runner.log")"
         return
@@ -537,7 +539,7 @@ test_manifest_is_sorted_and_unique() {
 }
 
 echo "push-gate scope wiring"
-test_scoped_push_runs_the_full_suite
+test_scoped_push_runs_the_fast_suite_over_the_selection
 test_full_decision_leaves_scope_unset
 test_none_decision_runs_no_suite
 test_unrecognized_decision_runs_full_suite
@@ -547,7 +549,7 @@ test_selector_receives_the_pre_push_records
 
 echo
 echo "through the real Makefile"
-test_push_scope_stays_full_through_make
+test_push_scope_reaches_the_runner_through_make
 test_affected_scope_reaches_the_runner_through_make
 test_affected_full_decision_runs_unscoped
 test_affected_unrecognized_decision_runs_unscoped

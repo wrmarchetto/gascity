@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # .githooks/pre-push -- re-checks the bead claim, then runs the fast suite.
-# The suite runs here rather than per commit (#3628). scripts/push-gate-select
-# says whether it runs at all: `none` when no Go build input changed. Any
-# other decision runs the full fast suite, a scoped one included, while this
-# repo's merge sweep runs no Go tests (TESTING.md, "The push gate keeps the
-# full run").
+# The suite runs here rather than per commit (#3628), over the packages
+# scripts/push-gate-select says the change can reach: TESTING.md, "Scoping the
+# push gate to what a change can reach".
 set -euo pipefail
 
 zero="0000000000000000000000000000000000000000"
@@ -57,19 +55,22 @@ decision="$(printf '%s\n' "$push_records" | "$repo_root/scripts/push-gate-select
 # runs (docs/pm-log.md #162, scripts/test-local-parallel).
 export LOCAL_TEST_YIELD=0
 
+# The Makefile forwards this, so a scope exported in the pushing shell would
+# narrow a `full` decision.
+unset GC_SCOPED_TEST_PACKAGES
+
 case "$decision" in
   none)
     echo "pre-push: no Go build inputs changed; skipping the fast suite"
     exit 0
     ;;
   scoped\ *)
-    # Not GC_SCOPED_TEST_PACKAGES: this push is the only full run a change
-    # gets while the merge sweep runs no Go tests. The city's
-    # assets/scripts/bead-cycle-time.py classifies pushes by the line below.
+    # The city's assets/scripts/bead-cycle-time.py classifies pushes by the
+    # line below.
     scope="${decision#scoped }"
     package_count="$(printf '%s\n' "$scope" | wc -w | tr -d ' ')"
-    echo "pre-push: the change reaches ${package_count} package(s), but the full fast suite runs while the merge sweep runs no Go tests for this repo"
-    exec make test-fast-parallel
+    echo "pre-push: scoped fast suite to ${package_count} package(s)"
+    GC_SCOPED_TEST_PACKAGES="$scope" exec make test-fast-parallel
     ;;
   full)
     exec make test-fast-parallel
