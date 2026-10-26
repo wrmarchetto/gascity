@@ -17,6 +17,10 @@ INNER_LIB="$TEST_DIR/lib/inner-parallelism.sh"
 pass=0; fail=0
 record_pass() { echo "  ok   $1"; pass=$((pass + 1)); }
 record_fail() { echo "  FAIL $1 -- $2"; fail=$((fail + 1)); }
+assert_eq() {
+    if [[ "$2" == "$3" ]]; then record_pass "$1"
+    else record_fail "$1" "got '$2', want '$3'"; fi
+}
 assert_true() { if "${@:2}"; then record_pass "$1"; else record_fail "$1" "expected true"; fi; }
 assert_contains() {
     local name="$1" haystack="$2" needle="$3"
@@ -102,6 +106,40 @@ assert_true "priority.malformed_nonzero_exit" test "$PRIO_RC" -ne 0
 assert_contains "priority.malformed_names_var" "$(cat "$PRIO_DIR/run.log")" "LOCAL_TEST_YIELD"
 assert_true "priority.malformed_runs_no_job" test ! -e "$PRIO_DIR/priority.log"
 rm -rf "$PRIO_DIR"
+
+# --- job count ---
+
+# Shrinking for host load is a yield too, so a merge-path run keeps the cpu
+# and memory budget alone. Load 28 on 16 cpus is the 2-job floor otherwise.
+JOB_COUNT="$TEST_DIR/test-local-job-count"
+HUGE_MEM_KIB=$((64 * 1024 * 1024))
+FIVE_JOBS_KIB=$((5 * 4 * 1024 * 1024))
+# job_count <memory KiB> <env args...>
+job_count() {
+    local mem="$1"
+    shift
+    env "$@" GC_TEST_LOCAL_CPUS=16 GC_TEST_LOCAL_LOADAVG=28 \
+        GC_TEST_LOCAL_MEMORY_KIB="$mem" "$JOB_COUNT"
+}
+assert_eq "jobs.development_run_shrinks_for_load" \
+    "$(job_count "$HUGE_MEM_KIB" -u LOCAL_TEST_YIELD)" 2
+assert_eq "jobs.merge_path_run_ignores_load" \
+    "$(job_count "$HUGE_MEM_KIB" LOCAL_TEST_YIELD=0)" 16
+assert_eq "jobs.merge_path_run_keeps_the_memory_budget" \
+    "$(job_count "$FIVE_JOBS_KIB" LOCAL_TEST_YIELD=0)" 5
+
+# The gates reach the count through the Makefile's $(shell), which sees only
+# the environment make was started with.
+make_jobs() {
+    (cd "$TEST_DIR/.." && env "$@" GC_TEST_LOCAL_CPUS=16 \
+        GC_TEST_LOCAL_MEMORY_KIB="$HUGE_MEM_KIB" GC_TEST_LOCAL_LOADAVG=28 \
+        make -n test-fast-parallel 2>&1 |
+        grep -o 'LOCAL_TEST_JOBS=[0-9]*' | head -1)
+}
+assert_eq "jobs.make_carries_the_opt_out_to_the_count" \
+    "$(make_jobs -u LOCAL_TEST_JOBS LOCAL_TEST_YIELD=0)" "LOCAL_TEST_JOBS=16"
+assert_eq "jobs.make_development_run_shrinks_for_load" \
+    "$(make_jobs -u LOCAL_TEST_JOBS -u LOCAL_TEST_YIELD)" "LOCAL_TEST_JOBS=2"
 
 echo
 echo "local-test-yield tests: $pass passed, $fail failed"

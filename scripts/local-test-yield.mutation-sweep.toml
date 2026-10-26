@@ -1,6 +1,7 @@
 # Proves the merge-path opt-out from the runner's yield is enforced end to end:
-# the runner honors LOCAL_TEST_YIELD, the push hook sets it, and the Makefile
-# carries it through env -i. docs/pm-log.md #162, bead gs-r9ph.
+# the runner honors LOCAL_TEST_YIELD, the job count stops shrinking for load
+# under it, the push hook sets it, and the Makefile carries it through env -i
+# and into the count. docs/pm-log.md #162 and #167, bead gs-r9ph.
 #
 # Bound: the ionice row dies only where the sweep's own shell is not already
 # in the idle I/O class, because a merge-path job inherits its caller's class.
@@ -69,3 +70,31 @@ find = ''' LOCAL_TEST_YIELD="$${LOCAL_TEST_YIELD-}" ./scripts/test-local-paralle
 replace = ''' ./scripts/test-local-parallel fast'''
 expect_output = ["the push gate reached the runner yielding"]
 gate = { argv = ["bash", "scripts/test-push-gate-select.sh"], timeout_s = 600 }
+
+[[mutation]]
+id = "merge-path-run-shrinks-for-load"
+path = "scripts/test-local-job-count"
+find = '''&& "$yield" != 0 ]]; then'''
+replace = ''']]; then'''
+expect_output = ["FAIL jobs.merge_path_run_ignores_load"]
+
+[[mutation]]
+id = "development-run-stops-shrinking-for-load"
+path = "scripts/test-local-job-count"
+find = '''yield="${LOCAL_TEST_YIELD:-1}"'''
+replace = '''yield="${LOCAL_TEST_YIELD:-0}"'''
+expect_output = ["FAIL jobs.development_run_shrinks_for_load"]
+
+[[mutation]]
+id = "opt-out-skips-the-memory-budget"
+path = "scripts/test-local-job-count"
+find = '''if [[ -n "$memory_kib" ]]; then'''
+replace = '''if [[ -n "$memory_kib" && -z "${LOCAL_TEST_YIELD+x}" ]]; then'''
+expect_output = ["FAIL jobs.merge_path_run_keeps_the_memory_budget"]
+
+[[mutation]]
+id = "makefile-hides-the-opt-out-from-the-count"
+path = "Makefile"
+find = '''LOCAL_TEST_JOBS ?= $(shell ./scripts/test-local-job-count)'''
+replace = '''LOCAL_TEST_JOBS ?= $(shell env -u LOCAL_TEST_YIELD ./scripts/test-local-job-count)'''
+expect_output = ["FAIL jobs.make_carries_the_opt_out_to_the_count"]

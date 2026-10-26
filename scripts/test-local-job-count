@@ -168,8 +168,11 @@ elif [[ "$jobs" -gt "$unknown_memory_jobs" ]]; then
 fi
 
 # A small machine has no meaningful headroom to trade away for load
-# awareness — skip it outright and let the raw cpu/memory budget stand.
-if [[ "$cpus" -gt $((min_auto_jobs * 2)) ]]; then
+# awareness -- skip it outright and let the raw cpu/memory budget stand.
+# A merge-path gate (LOCAL_TEST_YIELD=0) skips it too: shrinking for load
+# is a yield, and those gates do not yield (docs/pm-log.md #162, #167).
+yield="${LOCAL_TEST_YIELD:-1}"
+if [[ "$cpus" -gt $((min_auto_jobs * 2)) && "$yield" != 0 ]]; then
   loadavg="$(detect_loadavg || true)"
   if [[ -n "$loadavg" ]]; then
     load_int="${loadavg%%.*}"

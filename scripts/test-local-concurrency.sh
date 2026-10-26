@@ -55,6 +55,10 @@ assert_contains() {
 # /proc/meminfo or cgroup budget.
 HUGE_MEM_KIB=$((64 * 1024 * 1024))
 
+# A merge-path caller's LOCAL_TEST_YIELD=0 turns load-awareness off, and the
+# pre-push hook exports it.
+unset LOCAL_TEST_YIELD
+
 # ============================================================
 # Part A — scripts/test-local-job-count (real subprocess, pinned cpus/memory)
 # ============================================================
