@@ -55,6 +55,10 @@ assert_contains() {
 # /proc/meminfo or cgroup budget.
 HUGE_MEM_KIB=$((64 * 1024 * 1024))
 
+# A merge-path caller's LOCAL_TEST_YIELD=0 turns load-awareness off, and the
+# pre-push hook exports it.
+unset LOCAL_TEST_YIELD
+
 # ============================================================
 # Part A — scripts/test-local-job-count (real subprocess, pinned cpus/memory)
 # ============================================================
@@ -317,6 +321,12 @@ if bash "$TEST_DIR/local-test-yield.test.sh"; then
     record_pass "priority.local_test_yield_suite"
 else
     record_fail "priority.local_test_yield_suite" "scripts/local-test-yield.test.sh failed"
+fi
+
+if bash "$TEST_DIR/merge-gate.test.sh"; then
+    record_pass "merge_gate.suite"
+else
+    record_fail "merge_gate.suite" "scripts/merge-gate.test.sh failed"
 fi
 
 echo

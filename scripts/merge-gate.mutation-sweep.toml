@@ -1,0 +1,40 @@
+# Proves make merge-gate keeps the gate's coverage and its one ordering rule:
+# dist/ is rebuilt once before any Go step, and the dashboard checks run
+# beside the Go side. docs/pm-log.md #167.
+
+[sweep]
+name = "the merge gate rebuilds dist once, first, then runs both sides at once"
+repo = ".."
+
+[sweep.gate]
+argv = ["bash", "scripts/merge-gate.test.sh"]
+timeout_s = 300
+
+[[mutation]]
+id = "sides-run-in-turn"
+path = "Makefile"
+find = '''$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci'''
+replace = '''$(MAKE) --no-print-directory merge-gate-go dashboard-ci'''
+expect_output = ["never ran beside the other side"]
+
+[[mutation]]
+id = "go-side-skips-the-dist-rebuild"
+path = "Makefile"
+find = '''merge-gate-go: dashboard-build'''
+replace = '''merge-gate-go:'''
+expect_output = ["ran before dist was rebuilt"]
+
+[[mutation]]
+id = "go-side-drops-vet"
+path = "Makefile"
+find = '''	go vet ./...
+	$(MAKE) --no-print-directory test-fast-parallel'''
+replace = '''	$(MAKE) --no-print-directory test-fast-parallel'''
+expect_output = ["made a different call set"]
+
+[[mutation]]
+id = "sides-run-as-two-makes"
+path = "Makefile"
+find = '''$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci'''
+replace = '''$(MAKE) --no-print-directory merge-gate-go & $(MAKE) --no-print-directory dashboard-ci; wait'''
+expect_output = ["made a different call set"]

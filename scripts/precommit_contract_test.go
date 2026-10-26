@@ -574,7 +574,7 @@ func TestPreCommitFailsClosedWhenGoBlockStagesSpecAsSideEffectAndNpmAbsent(t *te
 	const formatStagedGo = "scripts/precommit-format-staged-go"
 	tmpRepo := newPreCommitFixtureRepo(t, map[string]string{
 		"main.go":                                "package main\n\nfunc main() {}\n",
-		formatStagedGo:                           "#!/usr/bin/env bash\nexit 0\n",
+		formatStagedGo:                           "#!/usr/bin/env bash\nwhile read -r _; do :; done\n",
 		"internal/api/openapi.json":              "{}\n",
 		"docs/reference/schema/openapi.json":     "{}\n",
 		"docs/reference/schema/openapi.txt":      "{}\n",
@@ -622,7 +622,8 @@ exit 0
 	}
 	if !strings.Contains(string(out), "npm ci") || !strings.Contains(string(out), "generate:client") {
 		t.Fatalf("pre-commit hook's npm-absent+spec-staged-as-side-effect failure must name the exact "+
-			"recovery command (cd internal/api/dashboardspa/web && npm ci && npm run generate:client), got:\n%s", out)
+			"recovery command (cd internal/api/dashboardspa/web && npm ci && npm run generate:client), "+
+			"got (%v):\n%s", err, out)
 	}
 }
 
