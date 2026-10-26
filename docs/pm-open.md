@@ -349,3 +349,8 @@ does gascity build after bead-cycle-time?
 Would settle it: (a) ci-r81svr's report, which the epic-close or idle
 summons that follows reads, and a miss names the stage that carries it
 and gets a bead. (b) a `gc city pm plan gascity '<epic>'` sitting.
+
+Update 2026-10-25 (pm-log #166): (b) RESOLVED. The operator answered city
+ci-3hywso "nothing for now": no new gascity epic after bead-cycle-time.
+(a) stays open on ci-r81svr's report. A follow-up raised by that
+measurement comes back as a new pm-open entry, not under (b).

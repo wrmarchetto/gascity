@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-gciv 2026-10-26T01:31:36Z
+last_seen: gs-338t 2026-10-26T01:36:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5541,3 +5541,26 @@ Rig store since last_seen: gs-c05b closed (#164), gs-338t filed, and
 this summons.
 
 Source: pm-log #3
+
+## 166. gs-338t: operator ruling recorded, nothing new after bead-cycle-time (2026-10-25)
+
+The operator answered city ci-3hywso at the liaison pane, 01:29Z,
+verbatim "nithing fir now": plan no new gascity epic after
+bead-cycle-time, for now.
+
+- bead-cycle-time finishes on its measurement as planned. Its Target
+  criterion closes on city ci-r81svr's post-change window. Status stays
+  in-progress until that report reaches an epic-close or idle summons.
+- pm-open #11(b) is resolved by this ruling. #11(a) stays open on
+  ci-r81svr's report.
+- When bead-cycle-time closes with no epic open, the close or idle
+  summons records "nothing queued, by ruling" rather than re-asking
+  what comes next. A miss in the measurement names its stage, gets a
+  bead under the epic, and raises a new pm-open entry if it calls for
+  work outside the epic.
+- agent-efficiency is unaffected: it sits in the operator's review.
+
+Rig store since last_seen: gs-338t in progress (this entry), gs-gciv
+closed (#165).
+
+Source: pm-log #166
