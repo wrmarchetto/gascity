@@ -350,12 +350,13 @@ func ReconcileCompletedStores(recorder events.Provider, graphStores []beads.Grap
 	return NewCompletedReconciler().Reconcile(recorder, graphStores, actor)
 }
 
-// completedFacts returns the retained completion journal, including a
-// FileRecorder segment that is temporarily awaiting archive compression. A
-// reconciliation pass must see that segment before deciding a close needs a
-// recovery fact; otherwise an event rotation can create a duplicate fact.
-func completedFacts(recorder events.Provider) ([]events.Event, error) {
-	filter := events.Filter{Type: events.ExecutionStepCompleted}
+// completedFacts returns the retained completion journal past afterSeq,
+// including a FileRecorder segment that is temporarily awaiting archive
+// compression. A reconciliation pass must see that segment before deciding a
+// close needs a recovery fact; otherwise an event rotation can create a
+// duplicate fact.
+func completedFacts(recorder events.Provider, afterSeq uint64) ([]events.Event, error) {
+	filter := events.Filter{Type: events.ExecutionStepCompleted, AfterSeq: afterSeq}
 	if inFlight, ok := recorder.(events.InFlightProvider); ok {
 		return inFlight.ListInFlight(filter)
 	}

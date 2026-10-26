@@ -1,6 +1,9 @@
 package executionevent
 
 import (
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beadmeta"
@@ -237,3 +240,104 @@ func TestReconcileCompletedStoresStaysStatelessAcrossCalls(t *testing.T) {
 			"it must not inherit another call's memo", walked)
 	}
 }
+
+func TestReconcilerReadsNoArchiveAfterItsFirstPass(t *testing.T) {
+	// The fact set is held across passes and topped up from the journal head
+	// the previous pass saw, so an archive behind that head is never decoded
+	// again. Measured on the live city (ci-yswwg1): 5 archives re-decoded per
+	// tick, 10.6-11.3s, for a fixed 342 facts.
+	graph := beads.NewMemStore()
+	root := mustCreateProjectionRoot(t, graph, "")
+	archived := mustCreateProjectionStep(t, graph, "gcg-archived", root.ID, "build", "[]")
+	later := mustCreateProjectionStep(t, graph, "gcg-later", root.ID, "test", `["build"]`)
+	closeStep := func(id string) beads.Bead {
+		t.Helper()
+		closed := "closed"
+		if err := graph.Update(id, beads.UpdateOpts{
+			Status:   &closed,
+			Metadata: map[string]string{beadmeta.SessionIDMetadataKey: "gcs-session"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		step, err := graph.Get(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return step
+	}
+	fact, ok := LifecycleEvent(events.ExecutionStepCompleted, root, closeStep(archived.ID), "close-hook")
+	if !ok {
+		t.Fatal("LifecycleEvent(completed) = false")
+	}
+
+	path := filepath.Join(t.TempDir(), "events.jsonl")
+	recorder, err := events.NewFileRecorder(path, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = recorder.Close() })
+	recorder.Record(fact)
+	rotation, err := recorder.ForceRotate()
+	if err != nil || !rotation.Rotated {
+		t.Fatalf("ForceRotate = %#v, %v, want an archive", rotation, err)
+	}
+	recorder.WaitForRotations()
+
+	reconciler := NewCompletedReconciler()
+	stores := []beads.GraphStore{{Store: graph}}
+	if got := reconciler.Reconcile(recorder, stores, "execution-reconcile"); got != 0 {
+		t.Fatalf("seeding pass emitted %d, want 0: the archived fact is present", got)
+	}
+
+	// Any later read of the archive now fails, and a failed journal read
+	// emits nothing, so the repair below is reachable only without one.
+	intact, err := os.ReadFile(rotation.ArchivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rotation.ArchivePath, []byte("not gzip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	closeStep(later.ID)
+	if got := reconciler.Reconcile(recorder, stores, "execution-reconcile"); got != 1 {
+		t.Fatalf("second pass emitted %d, want 1 without reading the archive", got)
+	}
+	if got := reconciler.Reconcile(recorder, stores, "execution-reconcile"); got != 0 {
+		t.Fatalf("third pass emitted %d, want 0: the second pass's fact is in the active file", got)
+	}
+
+	// An append the journal lost must be repaired again, so a fact this
+	// reconciler emits is held only once a read finds it.
+	dropped := mustCreateProjectionStep(t, graph, "gcg-dropped", root.ID, "ship", `["test"]`)
+	closeStep(dropped.ID)
+	lossy := &droppingProvider{Provider: recorder}
+	if got := reconciler.Reconcile(lossy, stores, "execution-reconcile"); got != 1 {
+		t.Fatalf("pass with a lost append emitted %d, want 1", got)
+	}
+	if got := reconciler.Reconcile(recorder, stores, "execution-reconcile"); got != 1 {
+		t.Fatalf("pass after a lost append emitted %d, want the fact repaired again", got)
+	}
+
+	// A restart holds no fact set, so it must seed from the archive again.
+	if err := os.WriteFile(rotation.ArchivePath, intact, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewCompletedReconciler().Reconcile(recorder, stores, "execution-reconcile"); got != 0 {
+		t.Fatalf("restarted pass emitted %d, want 0: both facts are retained", got)
+	}
+
+	// A journal whose head is behind the held cursor is a different journal,
+	// and topping up past its head would miss every fact it holds.
+	replaced := events.NewFake()
+	replaced.Record(fact)
+	if got := reconciler.Reconcile(replaced, stores, "execution-reconcile"); got != 2 {
+		t.Fatalf("pass over a replaced journal emitted %d, want 2: it holds only the archived fact", got)
+	}
+}
+
+// droppingProvider loses every append, as the optional tier may.
+type droppingProvider struct {
+	events.Provider
+}
+
+func (droppingProvider) Record(events.Event) {}
