@@ -144,12 +144,30 @@ func TestMeasureReconcileExecutionCompletionsCost(t *testing.T) {
 	journal := &measureSpan{label: "(b) completedFacts"}
 	for range 3 {
 		start := time.Now()
-		found, listErr := completedFacts(recorder)
+		found, listErr := completedFacts(recorder, 0)
 		elapsed := time.Since(start)
 		if listErr != nil {
 			t.Fatalf("reading completion journal: %v", listErr)
 		}
 		journal.add(elapsed, len(found))
+	}
+	// The controller's held reconciler pays the full read once, then reads
+	// only past the head the previous pass saw.
+	reconciler := NewCompletedReconciler()
+	seed := &measureSpan{label: "(b1) journalFacts seed"}
+	incremental := &measureSpan{label: "(b2) journalFacts after seed"}
+	for pass := range 3 {
+		start := time.Now()
+		found, listErr := reconciler.journalFacts(recorder)
+		elapsed := time.Since(start)
+		if listErr != nil {
+			t.Fatalf("reading completion journal: %v", listErr)
+		}
+		if pass == 0 {
+			seed.add(elapsed, len(found))
+		} else {
+			incremental.add(elapsed, len(found))
+		}
 	}
 
 	// --- (a1) the root scan ---
@@ -219,6 +237,8 @@ func TestMeasureReconcileExecutionCompletionsCost(t *testing.T) {
 
 	t.Log("--- reconcile_execution_completions, component costs ---")
 	journal.report(t)
+	seed.report(t)
+	incremental.report(t)
 	rootScan.report(t)
 	stepScan.report(t)
 	stepGet.report(t)

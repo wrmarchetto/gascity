@@ -558,9 +558,10 @@ func (cs *controllerState) startBeadEventWatcher(ctx context.Context) {
 // repeated passes do not duplicate lifecycle events.
 //
 // The reconciler is held on controllerState rather than built here, because
-// its settled-root memo is the whole reason a tick is cheap after the first
-// one. Reaching for executionevent.ReconcileCompletedStores here instead would
-// build a fresh empty memo per tick and silently restore the N+1 walk with
+// its settled-root memo and held completion facts are the whole reason a tick
+// is cheap after the first one. Reaching for
+// executionevent.ReconcileCompletedStores here instead would start both empty
+// per tick and silently restore the N+1 walk and the full journal read with
 // every test still green -- the emitted count is 0 either way.
 func (cs *controllerState) reconcileExecutionCompletions() {
 	ep := cs.EventProvider()

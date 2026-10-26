@@ -6,6 +6,7 @@
 package executionevent
 
 import (
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -64,12 +65,23 @@ import (
 //     because a threshold picked here would be a judgment in Go with no
 //     measurement behind it.
 //
+// THE JOURNAL READ IS INCREMENTAL for the same reason. The reconciler holds
+// the completion facts it has read and the journal head they are complete
+// through, and each later pass reads only past that head. Measured on the
+// live city (ci-yswwg1): the full read decoded 5 archives, 113.7MB gz, in
+// 10.6-11.3s every tick to return the same 342 facts. A fact this reconciler
+// appends is NOT added to the held set: it joins only once a later read finds
+// it in the journal, so a lost append is still retried. A restart, or a
+// journal whose head falls behind the held one, reads the whole journal again.
+//
 // Verified by internal/executionevent/reconciler_test.go. The live-store
 // measurements and the list-row/Get-row equivalence check behind dropping the
 // per-step Get are in reconcile_cost_measure_test.go, build tag `measure`.
 type CompletedReconciler struct {
-	mu      sync.Mutex
-	settled map[string]struct{}
+	mu           sync.Mutex
+	settled      map[string]struct{}
+	facts        map[completedFactKey]struct{}
+	factsThrough uint64 // journal seq the held facts are complete through
 }
 
 // NewCompletedReconciler returns a reconciler with an empty memo.
@@ -108,6 +120,42 @@ func isClosedStatus(status string) bool {
 	return strings.EqualFold(strings.TrimSpace(status), "closed")
 }
 
+// journalFacts tops the held completion facts up from the journal and returns
+// a copy the caller may extend with its own appends.
+//
+// The head is read BEFORE the list: every event at or below it is already
+// written, so the list cannot miss one, and an event the list returns past it
+// is merely read again next pass.
+func (r *CompletedReconciler) journalFacts(recorder events.Provider) (map[completedFactKey]struct{}, error) {
+	head, err := recorder.LatestSeq()
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	held, after := r.facts, r.factsThrough
+	r.mu.Unlock()
+	if head < after {
+		held, after = nil, 0
+	}
+	fresh, err := completedFacts(recorder, after)
+	if err != nil {
+		return nil, err
+	}
+	facts := make(map[completedFactKey]struct{}, len(held)+len(fresh))
+	for key := range held {
+		facts[key] = struct{}{}
+	}
+	for _, event := range fresh {
+		if event.Type == events.ExecutionStepCompleted {
+			facts[completedFactKeyFor(event)] = struct{}{}
+		}
+	}
+	r.mu.Lock()
+	r.facts, r.factsThrough = facts, head
+	r.mu.Unlock()
+	return maps.Clone(facts), nil
+}
+
 // Reconcile repairs completion facts across graphStores with one journal read,
 // skipping roots this reconciler has already settled. It returns the number of
 // facts emitted.
@@ -129,17 +177,11 @@ func (r *CompletedReconciler) Reconcile(recorder events.Provider, graphStores []
 		return 0
 	}
 
-	existing, err := completedFacts(recorder)
+	completed, err := r.journalFacts(recorder)
 	if err != nil {
 		// If the journal cannot be read, avoid generating duplicate recovery
 		// facts. A later reconciliation pass can safely retry.
 		return 0
-	}
-	completed := make(map[completedFactKey]struct{}, len(existing))
-	for _, event := range existing {
-		if event.Type == events.ExecutionStepCompleted {
-			completed[completedFactKeyFor(event)] = struct{}{}
-		}
 	}
 
 	emitted := 0
