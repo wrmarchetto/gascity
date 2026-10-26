@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-c05b 2026-10-24T08:59:06Z
+last_seen: gs-gciv 2026-10-26T01:31:36Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5519,3 +5519,25 @@ Rig store since last_seen: gs-r9ph, gs-jqz2, gs-sch3 and gs-0y4d closed
 (with the hold children gs-jqz2.2 and gs-0y4d.2), and this summons.
 
 Source: roadmap bead-cycle-time
+
+## 165. Sweep summons gs-gciv: gs-338t ruled standalone, tenth in the class (2026-10-25)
+
+gs-338t, filed by the mayor at 01:30Z and routed to gascity/lab.pm, asks
+the PM to record the operator's ruling on city ci-3hywso: "nothing for
+now" -- plan no new gascity epic after bead-cycle-time, and finish that
+epic on its measurement (city ci-r81svr). It carried no epic label.
+
+Ruling: standalone. It is a ruling-record bead, the gs-eep shape, and
+no acceptance criterion of bead-cycle-time or agent-efficiency closes over
+what this rig does after bead-cycle-time. Labeled with
+`gc bd update gs-338t --add-label standalone`. Recorded as an update to
+pm-open #3, its tenth member.
+
+Not done here: recording the ruling itself and closing gs-338t. That is
+gs-338t's own unit of work, and it stays open and routed to this seat, so
+it wakes the next session. Its content answers pm-open #11(b).
+
+Rig store since last_seen: gs-c05b closed (#164), gs-338t filed, and
+this summons.
+
+Source: pm-log #3

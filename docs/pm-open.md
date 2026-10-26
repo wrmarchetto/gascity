@@ -163,6 +163,14 @@ epic:agent-efficiency criterion, and three of its nine rows are prior
 class members' own commits. The class at nine members is itself further
 evidence for settling the standing question below.
 
+Update 2026-10-25 (pm-log #165): gs-338t (record the operator's ruling on
+city ci-3hywso, "nothing for now" after bead-cycle-time) joins the class,
+tenth after the nine above. Summons gs-gciv ruled it standalone: a PM
+bookkeeping bead routed to gascity/lab.pm, the gs-eep ruling-record
+shape, and neither epic's acceptance closes over what follows
+bead-cycle-time. Its content answers pm-open #11(b), which the session
+working gs-338t records. The standing question below is unchanged.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?
