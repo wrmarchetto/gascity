@@ -1031,6 +1031,20 @@ dashboard-ci: dashboard-check
 		--note 'Build under Node 22 (.nvmrc) before concluding anything --' \
 		--note 'vite refuses to run on the Node 18 some hosts default to.'
 
+# dashboard-build rewrites dist/, which internal/api embeds, so it runs once
+# ahead of both sides. -j2 is those two sides, the suite sizes its own jobs.
+## merge-gate: the merge sweep's gate -- build, vet and the fast suite, with
+## dashboard-ci beside them. The caller sets LOCAL_TEST_YIELD and the cap.
+merge-gate:
+	$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci
+
+merge-gate-go: dashboard-build
+	go build ./...
+	go vet ./...
+	$(MAKE) --no-print-directory test-fast-parallel
+
+.PHONY: merge-gate merge-gate-go
+
 ## spec-ci: regenerate the OpenAPI spec + generated Go client, fail on drift.
 ## Used by CI to enforce that internal/api/openapi.json, docs/reference/schema JSON
 ## artifacts, compatibility .txt mirrors, and internal/api/genclient/client_gen.go

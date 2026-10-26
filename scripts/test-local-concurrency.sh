@@ -323,6 +323,12 @@ else
     record_fail "priority.local_test_yield_suite" "scripts/local-test-yield.test.sh failed"
 fi
 
+if bash "$TEST_DIR/merge-gate.test.sh"; then
+    record_pass "merge_gate.suite"
+else
+    record_fail "merge_gate.suite" "scripts/merge-gate.test.sh failed"
+fi
+
 echo
 echo "local-concurrency tests: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]
