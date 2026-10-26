@@ -26,6 +26,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -82,9 +83,34 @@ func (s *cursorScanSpyStore) reset() {
 	s.scans = make(map[string]int)
 }
 
+// journalReadSpy counts event-journal reads. Every List against the
+// file-backed provider rescans the whole active events.jsonl, so the count is
+// the per-tick scan cost (ci-e4jp3a).
+type journalReadSpy struct {
+	events.Provider
+	mu    sync.Mutex
+	lists int
+}
+
+func (p *journalReadSpy) List(f events.Filter) ([]events.Event, error) {
+	p.mu.Lock()
+	p.lists++
+	p.mu.Unlock()
+	return p.Provider.List(f)
+}
+
+func (p *journalReadSpy) takeLists() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := p.lists
+	p.lists = 0
+	return n
+}
+
 // TestOrderDispatchEventCursorScanDoesNotScalePerOrder pins that a STEADY-STATE
-// tick pays no per-order cursor scan at all, however many event orders are in
-// the ring.
+// tick pays no per-order cursor scan and one journal read, however many event
+// orders are in the ring, while each order still sees only the events after
+// its own cursor.
 //
 // Two ticks, not one, and the assertion is on the second. The first tick is
 // cold by design: no run carries the live-cursor marker yet, so every event
@@ -99,18 +125,33 @@ func (s *cursorScanSpyStore) reset() {
 // The spy counts the "order:<name>" label, NOT "order-cursor": the grouped read
 // this fix introduces is itself a List, so a test that counted all cursor-ish
 // reads would assert 1 and pass on either implementation.
+//
+// The third tick is the one a lazily-widened journal read fails: the ring
+// reaches the bead.created orders, whose cursors are now the higher ones,
+// before the bead.closed orders, so a read sized to the first cursor asked for
+// must be repeated for the second. It also fails a shared read that forgets
+// the per-order cursor, because bead.created seq 3 is then still in view and
+// the created orders fire on it twice.
 func TestOrderDispatchEventCursorScanDoesNotScalePerOrder(t *testing.T) {
 	spy := newCursorScanSpyStore(beads.NewMemStore())
 	eventLog := events.NewFake()
+	journal := &journalReadSpy{Provider: eventLog}
+	eventLog.Record(events.Event{Type: events.BeadCreated, Actor: "test"})
 	eventLog.Record(events.Event{Type: events.BeadClosed, Actor: "test"})
 
-	names := []string{"cursor-a", "cursor-b", "cursor-c", "cursor-d"}
+	watch := map[string]string{
+		"created-a": events.BeadCreated,
+		"created-b": events.BeadCreated,
+		"closed-a":  events.BeadClosed,
+		"closed-b":  events.BeadClosed,
+	}
+	names := []string{"created-a", "created-b", "closed-a", "closed-b"}
 	aa := make([]orders.Order, 0, len(names))
 	for _, name := range names {
 		aa = append(aa, orders.Order{
 			Name:    name,
 			Trigger: "event",
-			On:      events.BeadClosed,
+			On:      watch[name],
 			Exec:    "true",
 		})
 	}
@@ -118,33 +159,115 @@ func TestOrderDispatchEventCursorScanDoesNotScalePerOrder(t *testing.T) {
 	execRun := func(context.Context, string, string, []string) ([]byte, error) {
 		return []byte("ok"), nil
 	}
-	ad := buildOrderDispatcherFromListExec(aa, spy, eventLog, execRun, events.Discard)
+	ad := buildOrderDispatcherFromListExec(aa, spy, journal, execRun, events.Discard)
 	if ad == nil {
 		t.Fatal("buildOrderDispatcherFromListExec returned nil")
 	}
+	// A budget rotates the ring start to just past the last dispatch, which
+	// is always a lower cursor. Unbudgeted, the walk follows the slice order.
+	ad.(*memoryOrderDispatcher).maxDispatchesPerTick = 0
 	cityPath := t.TempDir()
+	runs := func() map[string]int {
+		got := make(map[string]int, len(names))
+		for _, name := range names {
+			got[name] = len(trackingBeads(t, spy, "order:"+name))
+		}
+		return got
+	}
 
 	// Cold tick.
 	ad.dispatch(context.Background(), cityPath, time.Now())
 	ad.drain(context.Background())
+	before := runs()
 	for _, name := range names {
-		if got := len(trackingBeads(t, spy, "order:"+name)); got == 0 {
+		if before[name] == 0 {
 			t.Fatalf("cold tick left no cursor-bearing run for %s; the tick did not dispatch", name)
 		}
 	}
 
-	// A fresh event so the second tick evaluates the trigger rather than
-	// short-circuiting somewhere ahead of the cursor read.
-	eventLog.Record(events.Event{Type: events.BeadClosed, Actor: "test"})
-	spy.reset()
+	steady := []struct {
+		record string
+		fires  string
+	}{
+		{record: events.BeadCreated, fires: events.BeadCreated},
+		{record: events.BeadClosed, fires: events.BeadClosed},
+	}
+	for i, tick := range steady {
+		eventLog.Record(events.Event{Type: tick.record, Actor: "test"})
+		spy.reset()
+		journal.takeLists()
 
-	ad.dispatch(context.Background(), cityPath, time.Now().Add(10*time.Second))
-	ad.drain(context.Background())
+		at := time.Now().Add(time.Duration(i+1) * 10 * time.Second)
+		ad.dispatch(context.Background(), cityPath, at)
+		ad.drain(context.Background())
 
-	if got := spy.totalScans(); got != 0 {
-		t.Fatalf("steady-state tick issued %d per-order cursor scans (%v), want 0: "+
-			"the ring walk is paying one full-history scan per event order per tick",
-			got, spy.scans)
+		if got := spy.totalScans(); got != 0 {
+			t.Fatalf("steady tick %d issued %d per-order cursor scans (%v), want 0: "+
+				"the ring walk is paying one full-history scan per event order per tick",
+				i+1, got, spy.scans)
+		}
+		if got := journal.takeLists(); got != 1 {
+			t.Fatalf("steady tick %d read the event journal %d times, want 1: "+
+				"each event order is rescanning events.jsonl on its own",
+				i+1, got)
+		}
+		after := runs()
+		for _, name := range names {
+			want := 0
+			if watch[name] == tick.fires {
+				want = 1
+			}
+			if got := after[name] - before[name]; got != want {
+				t.Errorf("steady tick %d: %s (on %s) dispatched %d times, want %d",
+					i+1, name, watch[name], got, want)
+			}
+		}
+		before = after
+	}
+}
+
+// TestOrderTickEventsWidensForACursorBelowItsRead drives the branch a ring walk
+// with a carried hint never reaches: no hint, the higher cursor asked first.
+func TestOrderTickEventsWidensForACursorBelowItsRead(t *testing.T) {
+	eventLog := events.NewFake()
+	for _, typ := range []string{events.BeadClosed, events.BeadCreated, events.BeadClosed, events.BeadCreated, events.SessionWoke} {
+		eventLog.Record(events.Event{Type: typ, Actor: "test"})
+	}
+	journal := &journalReadSpy{Provider: eventLog}
+	m := &memoryOrderDispatcher{ep: journal, aa: []orders.Order{
+		{Name: "hi", Trigger: "event", On: events.BeadCreated},
+		{Name: "lo", Trigger: "event", On: events.BeadClosed},
+	}}
+	shared := m.newOrderTickEvents()
+
+	seqs := func(f events.Filter) []uint64 {
+		t.Helper()
+		got, err := shared.List(f)
+		if err != nil {
+			t.Fatalf("List(%+v): %v", f, err)
+		}
+		var out []uint64
+		for _, e := range got {
+			out = append(out, e.Seq)
+		}
+		return out
+	}
+	if got := seqs(events.Filter{Type: events.BeadCreated, AfterSeq: 3}); !slices.Equal(got, []uint64{4}) {
+		t.Fatalf("bead.created after 3 = %v, want [4]", got)
+	}
+	if got := seqs(events.Filter{Type: events.BeadClosed, AfterSeq: 0}); !slices.Equal(got, []uint64{1, 3}) {
+		t.Fatalf("bead.closed after 0 = %v, want [1 3]: the read was not widened to the lower cursor", got)
+	}
+	if got := journal.takeLists(); got != 2 {
+		t.Fatalf("journal reads = %d, want 2: one read, then one widening", got)
+	}
+	if got := seqs(events.Filter{Type: events.SessionWoke}); !slices.Equal(got, []uint64{5}) {
+		t.Fatalf("unwatched session.woke = %v, want [5]: it must go to the provider, not the shared read", got)
+	}
+	m.keepEventFloorHint(shared)
+	if !m.hasEventFloorHint || m.eventFloorHint != 0 {
+		t.Fatalf("carried hint = (%d, %v), want (0, true): the lowest cursor asked for",
+			m.eventFloorHint, m.hasEventFloorHint)
 	}
 }
 
