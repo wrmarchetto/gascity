@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-338t 2026-10-26T01:36:00Z
+last_seen: gs-ren5 2026-10-26T14:15:02Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5564,3 +5564,59 @@ Rig store since last_seen: gs-338t in progress (this entry), gs-gciv
 closed (#165).
 
 Source: pm-log #166
+
+## 167. gs-ren5: gascity merge gate over its 840 s cap, suite-speed work reopened on the whole gate (2026-10-26)
+
+From city ci-uhuqdc (toolsmith-3's table): 6 of 8 gascity sweep gates
+on 10-26 were killed at 840 s, main 377a4ebcc alone 2 of 3 times. The
+same code passed at 438 s and 726 s within the hour, at 1-min load 15-180
+on 24 cores. Every kill came 530-670 s into `make test-fast-parallel`,
+after 165-300 s of build, vet and dashboard-ci.
+
+Correction to the summons: #163 set no 840 s cap. Its figure, 1020 s, was
+the longest gate a pass can start. 840 is GASCITY_GATE_TIMEOUT, from city ci-ms847d
+(2df7e0b6). That commit's measurement is the bar this gate failed: 652 s
+composite (gs-sch3's slowest suite plus a 96 s warm-cache prefix), times
+1.25 rounds up to 815. Today's prefix alone ran 165-300 s.
+
+Ruling: (a), reopen suite-speed work, measured on the whole gate.
+
+- (b) is out on the roadmap, not only on #163. 840 is already at its
+  liveness ceiling. The 297 s slowest pre-gate sweep plus cap plus report
+  margin must fit the 1200 s SWEEP_BUDGET, so the cap can be at most 843.
+  A longer cap means a longer pass budget. That is one rig's gate eating
+  every rig's pass, which "Merge queue first" forbids. Each kill also
+  costs 840 s of shared-lane budget and requeues the branch, so the Target
+  loses more to kills than any cap figure would buy back.
+- Budget: the gate's own wall in the sweep run logs
+  (/var/tmp/merge-sweep-runs), build through suite, at or under 714 s
+  (the merge-gate-headroom 85 % line of 840). It must hold on every gate
+  over at least 8 consecutive sweep gate runs, taken at whatever load the
+  sweep meets. A busy day like 10-26 counts as ordinary load. A throwaway
+  worktree on a quiet host does not satisfy it. That is the gap between
+  ci-ms847d's 652 s and today's kills.
+- Which suites: whatever the ranking shows, per "Slow tests first". The
+  ranking covers the pre-suite stages too, since the prefix ran 2-3x its
+  measured figure. So does the runner's own drop to 2 jobs at load 22 and
+  up, which ci-ms847d's 555 s run shows. Those levers are the engineer's
+  HOW. One further lever
+  is in scope: development-time load yielding to merge-path gates, such as
+  niced mutation sweeps. It is the converse of #162 and consistent with
+  it, and it counts toward the same measure. Its placement is the mayor's.
+- In scope as maintenance of the existing gate, not new work.
+  bead-cycle-time is still in-progress, and this gate is inside its
+  Target interval (#161). #166 already ruled that a miss names its stage
+  and gets a bead under the epic. The operator's 01:29Z "nothing for now"
+  covers work after this epic, so no liaison round trip. The mayor files
+  the bead, labeled epic:bead-cycle-time in the gascity store.
+- ci-vx6ts8's memo cleared at a quiet moment is the mayor's stopgap and
+  does not need this ruling. A landing that fits on a quiet host is not
+  evidence toward the budget above.
+- Noted, no action this unit: city ci-r81svr closed 10-25 with gascity at
+  a 72 m median and 1.9 h p90, a MISS carried by session-other and push,
+  not by the gate. It reaches this seat through the epic-close or idle
+  path, not this bead.
+
+Rig store since last_seen: gs-338t closed (#166), and this bead.
+
+Source: roadmap bead-cycle-time
