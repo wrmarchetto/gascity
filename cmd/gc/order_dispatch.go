@@ -407,6 +407,10 @@ type memoryOrderDispatcher struct {
 	cacheMu              sync.Mutex
 	lastRunCache         map[string]time.Time
 	gateBackoffUntil     map[string]time.Time
+	// eventFloorHint is the lowest event cursor the previous tick asked for;
+	// see orderTickEvents. Read and written only by the tick walk.
+	eventFloorHint    uint64
+	hasEventFloorHint bool
 	// nowFn reads wall time. Nil means time.Now, which is every production
 	// construction. It exists so a suite can drive the ring walk on a
 	// simulated clock; see wallNow.
@@ -643,6 +647,14 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 	walk := ringWalkCosts{}
 	defer func() { m.reportRingWalkCosts(&walk) }()
 
+	// A nil m.ep must stay a nil interface: checkEvent tests for it.
+	var tickEvents events.Provider
+	if m.ep != nil {
+		shared := m.newOrderTickEvents()
+		defer m.keepEventFloorHint(shared)
+		tickEvents = shared
+	}
+
 	for offset := 0; offset < total; offset++ {
 		idx := (start + offset) % total
 		a := m.aa[idx]
@@ -872,7 +884,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 		// grid, not a different grid, and a clock-driven schedule has to be
 		// met by the clock-driven ticks.
 		triggerOpts.PatrolInterval = m.patrolInterval()
-		result := orders.CheckTriggerWithOptions(a, evalNow, lastRunFn, m.ep, cursorFn, triggerOpts)
+		result := orders.CheckTriggerWithOptions(a, evalNow, lastRunFn, tickEvents, cursorFn, triggerOpts)
 		if lastRunErr != nil {
 			logDispatchError(m.stderr, "gc: order dispatch: reading last run for %s: %v", a.ScopedName(), lastRunErr)
 			continue
@@ -909,7 +921,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 				refreshedLastRunFn := func(string) (time.Time, error) {
 					return refreshedLastRun, nil
 				}
-				result = orders.CheckTriggerWithOptions(a, evalNow, refreshedLastRunFn, m.ep, cursorFn, triggerOpts)
+				result = orders.CheckTriggerWithOptions(a, evalNow, refreshedLastRunFn, tickEvents, cursorFn, triggerOpts)
 				if !result.Due {
 					continue
 				}

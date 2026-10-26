@@ -487,6 +487,16 @@ func TestReadFiltered(t *testing.T) {
 		}
 	})
 
+	t.Run("by_types", func(t *testing.T) {
+		got, err := ReadFiltered(path, Filter{Types: []string{BeadClosed, SessionWoke}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 || got[0].Type != BeadClosed || got[1].Type != SessionWoke {
+			t.Fatalf("got %v, want the bead.closed and session.woke events", got)
+		}
+	})
+
 	t.Run("by_actor", func(t *testing.T) {
 		got, err := ReadFiltered(path, Filter{Actor: "gc"})
 		if err != nil {
