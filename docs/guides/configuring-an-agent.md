@@ -80,7 +80,7 @@ for that harness — you pick an abstract label, the harness renders the flag.
 
 ```toml
 # agents/reviewer/agent.toml
-provider        = "codex"
+provider        = "claude"
 option_defaults = { model = "sonnet", permission_mode = "plan" }
 ```
 
@@ -89,6 +89,12 @@ option_defaults = { model = "sonnet", permission_mode = "plan" }
 (see `ProviderOption` / `OptionChoice` in the [reference](/reference/config)).
 This is why you write `model = "sonnet"` and not a raw `--model` flag: the schema
 keeps the model selection portable and the flags server-side.
+
+Choices are checked when the config loads. A value the provider does not
+declare, a value in the wrong case, an empty value, or a key the schema does not
+have fails every `gc` command, naming the agent, the key, and the declared
+choices. So `model = "sonnet"` on a `codex` agent is an error rather than a
+quiet fallback to the provider's default.
 
 ## Axis 3 — Upstream (who serves the model)
 

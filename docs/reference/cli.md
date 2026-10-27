@@ -4907,7 +4907,8 @@ a recorded zero, and they are different findings. This matters most for
 wall-clock: compute facts are sparse, so most sessions have no wall-clock
 reading at all, and the SPAN column -- the interval between a session's first
 and last invocation -- is offered as an explicit LOWER BOUND on how long the
-session was alive, never as its duration.
+session was alive, never as its duration. A city with no .gc/usage.jsonl at
+all is refused rather than reported as a window with nothing in it.
 
 No cost or currency column exists. This city runs on Claude Code subscription
 usage rather than metered API tokens, so a dollar figure would be fabricated;

@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -63,7 +65,8 @@ a recorded zero, and they are different findings. This matters most for
 wall-clock: compute facts are sparse, so most sessions have no wall-clock
 reading at all, and the SPAN column -- the interval between a session's first
 and last invocation -- is offered as an explicit LOWER BOUND on how long the
-session was alive, never as its duration.
+session was alive, never as its duration. A city with no .gc/usage.jsonl at
+all is refused rather than reported as a window with nothing in it.
 
 No cost or currency column exists. This city runs on Claude Code subscription
 usage rather than metered API tokens, so a dollar figure would be fabricated;
@@ -111,6 +114,10 @@ func doUsage(stdout, stderr io.Writer, opts usageOptions) int {
 			since.Format(time.RFC3339), until.Format(time.RFC3339))
 		return 1
 	}
+	if opts.top < 0 {
+		fmt.Fprintf(stderr, "gc usage: --top %d is negative: pass a group count, or 0 to show every group\n", opts.top) //nolint:errcheck // best-effort stderr
+		return 1
+	}
 
 	cityPath, err := resolveCity()
 	if err != nil {
@@ -118,6 +125,14 @@ func doUsage(stdout, stderr io.Writer, opts usageOptions) int {
 		return 1
 	}
 	src := usageSource{UsagePath: filepath.Join(cityPath, ".gc", "usage.jsonl")}
+	// usage.ReadFacts reads an absent sink as empty, which suits gc costs. Here
+	// it would report a city checkout -- city.toml present, .gc/ untracked -- as
+	// an observed window of zero usage.
+	if _, err := os.Stat(src.UsagePath); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "gc usage: no usage log at %s, so nothing was observed there (not zero usage). "+ //nolint:errcheck // best-effort stderr
+			"If %s is a checkout rather than the live city, pass --city <live city root>\n", src.UsagePath, cityPath)
+		return 1
+	}
 	facts, warnings, err := usage.ReadFacts(src.UsagePath)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc usage: reading %s: %v\n", src.UsagePath, err) //nolint:errcheck // best-effort stderr

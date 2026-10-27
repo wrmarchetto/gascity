@@ -5,11 +5,13 @@ hurt, against the baseline in
 [`agent-efficiency-baseline.md`](agent-efficiency-baseline.md). Criterion 4 of
 the epic, commissioned by `gs-jbyc`.
 
-**The window is closed and the reading is taken.** It exited 3 -- no verdict,
-nothing concluded, criterion 4 still open -- because three of the five subject
-seats left the level under test while the window was open. See
-[Results](#results-read-2026-09-27-verdict-no-verdict) before reading anything
-below as a live question.
+**The window is closed, the reading is taken, and criterion 4 is dropped.**
+The reading exited 3 -- no verdict, nothing concluded -- because three of the
+five subject seats left the level under test while the window was open. Willie
+then dropped criterion 4 from the epic (gate `gs-3vdb`, `docs/pm-log.md` #147):
+the fleet converged on Opus 5.5, so the per-agent levels this window judged no
+longer run. Nothing below is a live question. The reading is under
+[Results](#results-read-2026-09-27-verdict-no-verdict).
 
 The criteria themselves are **not in this document**. They are in
 [`agent-efficiency-canary.toml`](agent-efficiency-canary.toml), which
