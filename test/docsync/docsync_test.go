@@ -551,7 +551,7 @@ func TestLocalMarkdownLinks(t *testing.T) {
 		docsRoot := filepath.Join(root, "docs")
 		relToDocsRoot, _ := filepath.Rel(docsRoot, path)
 		relToDocsRoot = filepath.ToSlash(relToDocsRoot)
-		publishedMintlifyPage := mintlify && !docsPublishExemptions[relToDocsRoot]
+		publishedMintlifyPage := mintlify && !docsPublishExempt(relToDocsRoot)
 		for _, target := range extractMarkdownLinks(string(data)) {
 			if isExternalLink(target) {
 				continue
@@ -674,6 +674,23 @@ var docsPublishExemptions = map[string]bool{
 	"roadmap.md": true,
 }
 
+// docsPublishExemptDirs is the same path contract, one file per epic: the
+// city's epic-review engine reads docs/self-review/<epic>.md (SELF_REVIEW_DIR
+// in its citybd.py) and refuses a closure review until that record exists.
+var docsPublishExemptDirs = []string{"self-review/"}
+
+func docsPublishExempt(rel string) bool {
+	if docsPublishExemptions[rel] {
+		return true
+	}
+	for _, dir := range docsPublishExemptDirs {
+		if strings.HasPrefix(rel, dir) {
+			return true
+		}
+	}
+	return false
+}
+
 // collectDocsMarkdownFiles returns every .md/.mdx file under docs/, as paths
 // relative to docs/ with forward slashes (e.g. "guides/index.md").
 func collectDocsMarkdownFiles(docsRoot string) ([]string, error) {
@@ -738,7 +755,7 @@ func TestEveryDocsPageIsPublished(t *testing.T) {
 
 	var orphans []string
 	for _, rel := range files {
-		if docsPublishExemptions[rel] {
+		if docsPublishExempt(rel) {
 			continue
 		}
 		pageForm := strings.TrimSuffix(rel, filepath.Ext(rel))
