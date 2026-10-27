@@ -45,6 +45,17 @@ type Doctor struct {
 	// reported as a timed-out advisory error; a timed-out fix is reported as an
 	// unconfirmed remediation.
 	CheckTimeout time.Duration
+	// Jobs is how many ConcurrentCheck runs may be in flight at once. One or
+	// less runs every check serially. Other checks always run one at a time,
+	// and a --fix run is always fully serial, because fixes mutate state.
+	Jobs int
+}
+
+// ConcurrentCheck is implemented by checks whose Run shares no state with any
+// other check, such as one that only spawns a subprocess. Doctor may run them
+// alongside each other and alongside the serial checks when Jobs > 1.
+type ConcurrentCheck interface {
+	RunsConcurrently() bool
 }
 
 // Register adds a check to the doctor's check list.
@@ -82,9 +93,20 @@ func (d *Doctor) run(ctx *CheckContext, w io.Writer, fix, stream bool) *Report {
 	}
 	ctx = &runCtx
 
+	pooled := d.startPool(ctx, fix)
+
 	r := &Report{}
-	for _, c := range d.checks {
-		result := d.boundedRun(c, ctx)
+	for i, c := range d.checks {
+		var result *CheckResult
+		if p := pooled[i]; p != nil {
+			<-p.done
+			if p.output.Len() > 0 && ctx.Output != nil {
+				p.output.WriteTo(ctx.Output) //nolint:errcheck // best-effort output
+			}
+			result = p.result
+		} else {
+			result = d.boundedRun(c, ctx)
+		}
 
 		// abandoned is true when a goroutine for this check may still be
 		// running — a timed-out Run, or a fix/verify abandoned below. Its
@@ -115,6 +137,45 @@ func (d *Doctor) run(ctx *CheckContext, w io.Writer, fix, stream bool) *Report {
 		r.tally(result)
 	}
 	return r
+}
+
+// pooledRun is one ConcurrentCheck's Run in flight on the Jobs pool. result
+// and output are written before done closes and read only after.
+type pooledRun struct {
+	done   chan struct{}
+	result *CheckResult
+	output bytes.Buffer
+}
+
+// startPool launches every ConcurrentCheck on a pool of d.Jobs workers, in
+// registration order, and returns their runs indexed like d.checks (nil for a
+// check the caller runs inline). It returns all nil for Jobs <= 1 or a fix.
+func (d *Doctor) startPool(ctx *CheckContext, fix bool) []*pooledRun {
+	pooled := make([]*pooledRun, len(d.checks))
+	if d.Jobs <= 1 || fix {
+		return pooled
+	}
+	var queue []int
+	for i, c := range d.checks {
+		if cc, ok := c.(ConcurrentCheck); ok && cc.RunsConcurrently() {
+			pooled[i] = &pooledRun{done: make(chan struct{})}
+			queue = append(queue, i)
+		}
+	}
+	slots := make(chan struct{}, d.Jobs)
+	go func() {
+		for _, i := range queue {
+			slots <- struct{}{}
+			go func(c Check, p *pooledRun) {
+				defer func() { <-slots }()
+				checkCtx := *ctx
+				checkCtx.Output = &p.output
+				p.result = d.boundedRun(c, &checkCtx)
+				close(p.done)
+			}(d.checks[i], pooled[i])
+		}
+	}()
+	return pooled
 }
 
 // tally folds one check result into the report's running counts. A fixed

@@ -50,6 +50,10 @@ type PackScriptCheck struct {
 // Name returns the check's fully-qualified name.
 func (c *PackScriptCheck) Name() string { return c.CheckName }
 
+// RunsConcurrently reports true: Run only spawns the script, reading nothing
+// shared, so Doctor may pool it when Jobs > 1.
+func (c *PackScriptCheck) RunsConcurrently() bool { return true }
+
 // CanFix reports whether the pack declared a fix script for this check.
 // When true, `gc doctor --fix` will dispatch to FixScript after the
 // check returns a non-OK status.

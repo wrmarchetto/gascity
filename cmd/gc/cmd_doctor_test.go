@@ -230,7 +230,7 @@ prefix = "fe"
 	})
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, false, false, false, 0, &stdout, &stderr)
+	_ = doDoctor(false, false, false, false, 0, 0, &stdout, &stderr)
 
 	if citySkip == nil || *citySkip {
 		t.Fatalf("city dolt check skip = %v, want false when a bd-backed rig inherits the city endpoint", citySkip)
@@ -481,7 +481,7 @@ dolt_port = "3308"
 	})
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, false, false, false, 0, &stdout, &stderr)
+	_ = doDoctor(false, false, false, false, 0, 0, &stdout, &stderr)
 
 	if !strings.Contains(stdout.String(), "canonical/compat Dolt drift") {
 		t.Fatalf("doctor output missing Dolt topology drift:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
@@ -513,7 +513,7 @@ source = "https://github.com/gastownhall/gc-actual-packs"
 	cleanupManagedDoltTestCity(t, cityDir)
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, true, false, false, 0, &stdout, &stderr)
+	_ = doDoctor(false, true, false, false, 0, 0, &stdout, &stderr)
 	out := stdout.String() + stderr.String()
 	if !strings.Contains(out, "stale-local-pack-dirs") {
 		t.Fatalf("doctor output missing stale-local-pack-dirs check:\n%s", out)
@@ -702,7 +702,7 @@ func runDoctorForStaleLocalPackDirTest(t *testing.T, cityDir string) string {
 	cleanupManagedDoltTestCity(t, cityDir)
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, true, false, false, 0, &stdout, &stderr)
+	_ = doDoctor(false, true, false, false, 0, 0, &stdout, &stderr)
 	return stdout.String() + stderr.String()
 }
 
@@ -730,7 +730,7 @@ func TestDoDoctorReportsLegacyBDSplitStore(t *testing.T) {
 	t.Cleanup(func() { cityFlag = origCityFlag })
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, false, false, false, 0, &stdout, &stderr)
+	_ = doDoctor(false, false, false, false, 0, 0, &stdout, &stderr)
 	out := stdout.String() + stderr.String()
 	if !strings.Contains(out, "bd-split-store") {
 		t.Fatalf("doctor output missing bd-split-store check:\n%s", out)
@@ -1081,5 +1081,52 @@ func TestWriteDoctorJSONProjectsTimedOut(t *testing.T) {
 	// consumers of non-timed-out results see unchanged output.
 	if n := strings.Count(buf.String(), "timed_out"); n != 1 {
 		t.Fatalf("timed_out appears %d times, want exactly 1 (only the abandoned check); out=%s", n, buf.String())
+	}
+}
+
+func TestDoctorCmdPoolsScriptChecksByDefault(t *testing.T) {
+	// The doctor-findings sweep passes no --jobs. Each local check waits for
+	// the other's marker, so both pass only when the default pools them.
+	cityDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(`[workspace]
+name = "demo"
+
+[[doctor.check]]
+name = "a"
+script = "checks/a.sh"
+
+[[doctor.check]]
+name = "b"
+script = "checks/b.sh"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityDir, "checks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range [][2]string{{"a", "b"}, {"b", "a"}} {
+		mine, theirs := filepath.Join(cityDir, pair[0]+".started"), filepath.Join(cityDir, pair[1]+".started")
+		body := "#!/bin/sh\ntouch '" + mine + "'\ni=0\n" +
+			"while [ ! -e '" + theirs + "' ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done\n" +
+			"[ -e '" + theirs + "' ] || { echo 'partner never started'; exit 2; }\necho met\n"
+		if err := os.WriteFile(filepath.Join(cityDir, "checks", pair[0]+".sh"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	origCityFlag := cityFlag
+	cityFlag = cityDir
+	t.Cleanup(func() { cityFlag = origCityFlag })
+
+	var stdout, stderr bytes.Buffer
+	cmd := newDoctorCmd(&stdout, &stderr)
+	cmd.SetArgs(nil)
+	_ = cmd.Execute()
+	out := stdout.String()
+	for _, name := range []string{"local:a", "local:b"} {
+		if !strings.Contains(out, "✓ "+name+" — met") {
+			t.Fatalf("%s did not meet its partner: default --jobs did not pool local checks\n%s", name, out)
+		}
 	}
 }

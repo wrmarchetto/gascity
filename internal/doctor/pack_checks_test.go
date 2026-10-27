@@ -358,3 +358,30 @@ func TestParseScriptOutput(t *testing.T) {
 		})
 	}
 }
+
+func TestDoctorRunPoolsPackScriptChecks(t *testing.T) {
+	// Each script waits for the other's marker, which only overlapping runs
+	// can satisfy. Run serially, the first exits 2 after its wait.
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.started"), filepath.Join(dir, "b.started")
+	script := func(name, mine, theirs string) string {
+		sub := filepath.Join(dir, name)
+		if err := os.Mkdir(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return writeCheckScript(t, sub, "#!/bin/sh\ntouch '"+mine+"'\ni=0\n"+
+			"while [ ! -e '"+theirs+"' ] && [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done\n"+
+			"[ -e '"+theirs+"' ] || { echo 'partner never started'; exit 2; }\necho met\n")
+	}
+	d := &Doctor{Jobs: 2}
+	d.Register(&PackScriptCheck{CheckName: "topo:a", Script: script("a", a, b), PackDir: dir, PackName: "topo"})
+	d.Register(&PackScriptCheck{CheckName: "topo:b", Script: script("b", b, a), PackDir: dir, PackName: "topo"})
+
+	report := d.RunCollect(&CheckContext{CityPath: dir}, false)
+	if report.Passed != 2 {
+		for _, r := range report.Results {
+			t.Logf("%s: %d %s", r.Name, r.Status, r.Message)
+		}
+		t.Fatalf("Passed = %d, want 2: pack script checks did not run concurrently", report.Passed)
+	}
+}
