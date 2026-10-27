@@ -329,6 +329,53 @@ func TestUsageReadsThePlantedLogEndToEnd(t *testing.T) {
 	if rep.Sessions != 2 {
 		t.Fatalf("Sessions = %d, want 2", rep.Sessions)
 	}
+
+	prevCityFlag, prevRigFlag := cityFlag, rigFlag
+	t.Cleanup(func() { cityFlag, rigFlag = prevCityFlag, prevRigFlag })
+	if err := os.WriteFile(filepath.Join(dir, "city.toml"), []byte("[workspace]\nname = \"usage\"\n"), 0o644); err != nil {
+		t.Fatalf("write city.toml: %v", err)
+	}
+	runUsage := func(args ...string) (string, string, error) {
+		cityFlag, rigFlag = "", ""
+		var stdout, stderr bytes.Buffer
+		cmd := newRootCmd(&stdout, &stderr)
+		cmd.SetArgs(append([]string{"--city", dir, "usage"}, args...))
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+		err := cmd.Execute()
+		return stdout.String(), stderr.String(), err
+	}
+
+	t.Run("the command reports the planted figures", func(t *testing.T) {
+		out, errOut, err := runUsage("--by", "type", "--json")
+		if err != nil {
+			t.Fatalf("gc usage: %v\nstderr: %s", err, errOut)
+		}
+		if !strings.Contains(out, `"input_tokens": `+strconv.Itoa(first+second)) {
+			t.Fatalf("JSON lacks the salted lab.engineer total %d:\n%s", first+second, out)
+		}
+	})
+
+	t.Run("a negative top is refused, not read as show-all", func(t *testing.T) {
+		out, errOut, err := runUsage("--by", "type", "--top", "-1")
+		if err == nil || !strings.Contains(errOut, "--top -1") {
+			t.Fatalf("err = %v, stderr = %q, want a refusal naming --top -1\nstdout: %s", err, errOut, out)
+		}
+	})
+
+	// The case a city checkout produces: city.toml present, sink absent.
+	t.Run("a missing log is refused, not read as an empty window", func(t *testing.T) {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove: %v", err)
+		}
+		out, errOut, err := runUsage("--by", "type", "--json")
+		if err == nil || !strings.Contains(errOut, path) {
+			t.Fatalf("err = %v, stderr = %q, want a refusal naming %s\nstdout: %s", err, errOut, path, out)
+		}
+		if strings.Contains(out, `"ok": true`) {
+			t.Fatalf("a missing log still printed an ok report:\n%s", out)
+		}
+	})
 }
 
 func usageLineContaining(t *testing.T, out, needle string) string {
