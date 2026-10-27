@@ -302,24 +302,195 @@ func TestPrintSummary(t *testing.T) {
 }
 
 func TestDoctor_ReportResultsInOrder(t *testing.T) {
-	d := &Doctor{}
-	d.Register(&mockCheck{name: "first", status: StatusOK, msg: "fine"})
-	d.Register(&mockCheck{name: "second", status: StatusWarning, msg: "hmm"})
-	d.Register(&mockCheck{name: "third", status: StatusError, msg: "bad"})
+	for _, jobs := range []int{0, 4} {
+		t.Run(fmt.Sprintf("jobs=%d", jobs), func(t *testing.T) {
+			// The concurrent first check finishes last, so under a pool the
+			// completion order is the reverse of the registration order.
+			d := &Doctor{Jobs: jobs, CheckTimeout: 2 * time.Second}
+			slow := make(chan struct{})
+			d.Register(&concurrentCheck{mockCheck: mockCheck{name: "first", status: StatusOK, msg: "fine", block: slow}})
+			d.Register(&concurrentCheck{mockCheck: mockCheck{name: "second", status: StatusWarning, msg: "hmm"}, onDone: func() {
+				if jobs > 1 {
+					close(slow)
+				}
+			}})
+			d.Register(&mockCheck{name: "third", status: StatusError, msg: "bad"})
+			if jobs <= 1 {
+				close(slow)
+			}
 
-	var buf bytes.Buffer
-	r := d.Run(&CheckContext{CityPath: "/tmp"}, &buf, false)
+			var buf bytes.Buffer
+			r := d.Run(&CheckContext{CityPath: "/tmp"}, &buf, false)
 
-	if len(r.Results) != 3 {
-		t.Fatalf("Results length = %d, want 3", len(r.Results))
+			if len(r.Results) != 3 {
+				t.Fatalf("Results length = %d, want 3", len(r.Results))
+			}
+			want := []string{"first", "second", "third"}
+			for i := range want {
+				if r.Results[i].Name != want[i] || r.Results[i].TimedOut {
+					t.Errorf("Results[%d] = %+v, want %q completed", i, r.Results[i], want[i])
+				}
+			}
+			out := buf.String()
+			if a, b, c := strings.Index(out, "first"), strings.Index(out, "second"), strings.Index(out, "third"); a < 0 || a > b || b > c {
+				t.Errorf("streamed output out of registration order: %q", out)
+			}
+		})
 	}
-	names := []string{r.Results[0].Name, r.Results[1].Name, r.Results[2].Name}
-	want := []string{"first", "second", "third"}
-	for i := range want {
-		if names[i] != want[i] {
-			t.Errorf("Results[%d].Name = %q, want %q", i, names[i], want[i])
+}
+
+// concurrentCheck is a mockCheck that opts into the Jobs pool. Run counts
+// itself into active/peak and calls onDone after its result is built.
+type concurrentCheck struct {
+	mockCheck
+	active, peak *atomic.Int32
+	gate         chan struct{} // if non-nil, Run holds until closed
+	arrive       chan struct{} // if non-nil, closed when Run starts
+	onDone       func()
+	output       string // written to ctx.Output during Run
+}
+
+func (c *concurrentCheck) RunsConcurrently() bool { return true }
+func (c *concurrentCheck) Run(ctx *CheckContext) *CheckResult {
+	if c.arrive != nil {
+		close(c.arrive)
+	}
+	if c.active != nil {
+		n := c.active.Add(1)
+		defer c.active.Add(-1)
+		for {
+			p := c.peak.Load()
+			if n <= p || c.peak.CompareAndSwap(p, n) {
+				break
+			}
 		}
 	}
+	if c.gate != nil {
+		<-c.gate
+	}
+	if c.output != "" && ctx.Output != nil {
+		fmt.Fprintln(ctx.Output, c.output) //nolint:errcheck // test writer
+	}
+	r := c.mockCheck.Run(ctx)
+	if c.onDone != nil {
+		c.onDone()
+	}
+	return r
+}
+
+// serialProbeCheck is an in-process check that closes arrive on entry, then
+// holds until await closes.
+type serialProbeCheck struct {
+	mockCheck
+	arrive, await chan struct{}
+}
+
+func (c *serialProbeCheck) Run(ctx *CheckContext) *CheckResult {
+	if c.arrive != nil {
+		close(c.arrive)
+	}
+	if c.await != nil {
+		<-c.await
+	}
+	return c.mockCheck.Run(ctx)
+}
+
+// declinedProbeCheck implements ConcurrentCheck and answers false.
+type declinedProbeCheck struct{ *serialProbeCheck }
+
+func (declinedProbeCheck) RunsConcurrently() bool { return false }
+
+// The cases below register a check that holds until a later one starts. Run
+// apart, the earlier one is abandoned at CheckTimeout, and that timeout is
+// the evidence they never overlapped.
+const holdTimeout = 100 * time.Millisecond
+
+func TestRunJobsPoolsOnlyConcurrentChecks(t *testing.T) {
+	t.Run("concurrent checks overlap up to Jobs", func(t *testing.T) {
+		// Each check holds until all four have started, which a serial run
+		// can never reach. CheckTimeout turns that deadlock into a failure.
+		const n = 4
+		var active, peak atomic.Int32
+		gate := make(chan struct{})
+		var started atomic.Int32
+		d := &Doctor{Jobs: n, CheckTimeout: 2 * time.Second}
+		for i := 0; i < n; i++ {
+			c := &concurrentCheck{mockCheck: mockCheck{name: fmt.Sprintf("c%d", i), status: StatusOK}, active: &active, peak: &peak}
+			c.gate = gate
+			d.Register(&startCounting{concurrentCheck: c, started: &started, all: n, release: gate})
+		}
+		r := d.Run(&CheckContext{}, io.Discard, false)
+		if r.Passed != n {
+			t.Fatalf("report = %+v, want %d passes (a timeout means the checks never overlapped)", r, n)
+		}
+		if got := peak.Load(); got != n {
+			t.Fatalf("peak concurrency = %d, want %d", got, n)
+		}
+	})
+	t.Run("pool never exceeds Jobs", func(t *testing.T) {
+		g := make(chan struct{})
+		d := &Doctor{Jobs: 2, CheckTimeout: holdTimeout}
+		d.Register(&concurrentCheck{mockCheck: mockCheck{name: "c0", status: StatusOK}, gate: g})
+		d.Register(&concurrentCheck{mockCheck: mockCheck{name: "c1", status: StatusOK}, gate: g})
+		d.Register(&concurrentCheck{mockCheck: mockCheck{name: "c2", status: StatusOK}, arrive: g})
+		r := d.RunCollect(&CheckContext{}, false)
+		if !r.Results[0].TimedOut && !r.Results[1].TimedOut {
+			t.Fatalf("a third check started while two held the pool: %+v %+v", r.Results[0], r.Results[1])
+		}
+	})
+	t.Run("in-process checks never overlap each other", func(t *testing.T) {
+		gA, gB := make(chan struct{}), make(chan struct{})
+		d := &Doctor{Jobs: 8, CheckTimeout: holdTimeout}
+		d.Register(&serialProbeCheck{mockCheck: mockCheck{name: "s0", status: StatusOK}, await: gA})
+		d.Register(&serialProbeCheck{mockCheck: mockCheck{name: "s1", status: StatusOK}, arrive: gA})
+		d.Register(&declinedProbeCheck{&serialProbeCheck{mockCheck: mockCheck{name: "d0", status: StatusOK}, await: gB}})
+		d.Register(&declinedProbeCheck{&serialProbeCheck{mockCheck: mockCheck{name: "d1", status: StatusOK}, arrive: gB}})
+		r := d.RunCollect(&CheckContext{}, false)
+		if !r.Results[0].TimedOut {
+			t.Fatalf("in-process checks overlapped: s0 = %+v", r.Results[0])
+		}
+		if !r.Results[2].TimedOut {
+			t.Fatalf("a check declining the pool was pooled: d0 = %+v", r.Results[2])
+		}
+	})
+	t.Run("fix runs everything serially", func(t *testing.T) {
+		g := make(chan struct{})
+		d := &Doctor{Jobs: 8, CheckTimeout: holdTimeout}
+		d.Register(&concurrentCheck{mockCheck: mockCheck{name: "c0", status: StatusOK}, gate: g})
+		d.Register(&concurrentCheck{mockCheck: mockCheck{name: "c1", status: StatusOK}, arrive: g})
+		r := d.Run(&CheckContext{}, io.Discard, true)
+		if !r.Results[0].TimedOut {
+			t.Fatalf("under --fix a later check started before an earlier one returned: c0 = %+v", r.Results[0])
+		}
+	})
+	t.Run("a pooled check's output stays grouped with its own result", func(t *testing.T) {
+		d := &Doctor{Jobs: 4, CheckTimeout: 2 * time.Second}
+		slow := make(chan struct{})
+		d.Register(&concurrentCheck{mockCheck: mockCheck{name: "alpha", status: StatusOK, block: slow}, output: "alpha-says"})
+		d.Register(&concurrentCheck{mockCheck: mockCheck{name: "beta", status: StatusOK}, output: "beta-says", onDone: func() { close(slow) }})
+		var buf bytes.Buffer
+		d.Run(&CheckContext{}, &buf, false)
+		out := buf.String()
+		a, aRes, b := strings.Index(out, "alpha-says"), strings.Index(out, "✓ alpha"), strings.Index(out, "beta-says")
+		if a < 0 || aRes < 0 || b < 0 || (a >= aRes || aRes >= b) {
+			t.Fatalf("output = %q, want alpha's output, then alpha's result, then beta's output", out)
+		}
+	})
+}
+
+// startCounting releases gate once all of its siblings have entered Run.
+type startCounting struct {
+	*concurrentCheck
+	started *atomic.Int32
+	all     int32
+	release chan struct{}
+}
+
+func (s *startCounting) Run(ctx *CheckContext) *CheckResult {
+	if s.started.Add(1) == s.all {
+		close(s.release)
+	}
+	return s.concurrentCheck.Run(ctx)
 }
 
 func TestDoctor_RunCollectSuppressesStreaming(t *testing.T) {

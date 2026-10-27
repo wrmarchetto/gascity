@@ -1350,6 +1350,7 @@ gc doctor --explain-postgres-auth
 | `--check-timeout` | duration | `1m0s` | per-check time budget; a check or its --fix remediation exceeding it is abandoned and reported as timed out (0 disables) |
 | `--explain-postgres-auth` | bool |  | after running checks, print per-scope Postgres credential resolution table (no values printed) |
 | `--fix` | bool |  | attempt automatic repairs and safe mechanical migrations |
+| `--jobs` | int | `8` | how many pack and local script checks may run at once; other checks, and every check under --fix, run one at a time (1 runs all serially) |
 | `--json` | bool |  | emit structured JSON instead of human-readable output |
 | `-v`, `--verbose` | bool |  | show extra diagnostic details |
 

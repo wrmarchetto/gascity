@@ -31,9 +31,14 @@ var (
 	newDoctorDoltLocalOnlyCheck  = doctor.NewDoltLocalOnlyRemoteCheck
 )
 
+// defaultDoctorJobs bounds concurrent script checks. Script checks are most
+// of a city's doctor wall time and each is an independent subprocess.
+const defaultDoctorJobs = 8
+
 func newDoctorCmd(stdout, stderr io.Writer) *cobra.Command {
 	var fix, verbose, jsonOut, explainPostgresAuth bool
 	var checkTimeout time.Duration
+	var jobs int
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check workspace health",
@@ -55,7 +60,7 @@ legacy-to-current pack rewrites that are available on this branch.`,
   gc doctor --explain-postgres-auth`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if doDoctor(fix, verbose, jsonOut, explainPostgresAuth, checkTimeout, stdout, stderr) != 0 {
+			if doDoctor(fix, verbose, jsonOut, explainPostgresAuth, checkTimeout, jobs, stdout, stderr) != 0 {
 				return errExit
 			}
 			return nil
@@ -68,6 +73,8 @@ legacy-to-current pack rewrites that are available on this branch.`,
 		"after running checks, print per-scope Postgres credential resolution table (no values printed)")
 	cmd.Flags().DurationVar(&checkTimeout, "check-timeout", 60*time.Second,
 		"per-check time budget; a check or its --fix remediation exceeding it is abandoned and reported as timed out (0 disables)")
+	cmd.Flags().IntVar(&jobs, "jobs", defaultDoctorJobs,
+		"how many pack and local script checks may run at once; other checks, and every check under --fix, run one at a time (1 runs all serially)")
 	return cmd
 }
 
@@ -474,14 +481,14 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	return checks
 }
 
-func doDoctor(fix, verbose, jsonOut, explainPostgresAuth bool, checkTimeout time.Duration, stdout, stderr io.Writer) int {
+func doDoctor(fix, verbose, jsonOut, explainPostgresAuth bool, checkTimeout time.Duration, jobs int, stdout, stderr io.Writer) int {
 	cityPath, err := resolveCity()
 	if err != nil {
 		fmt.Fprintf(stderr, "gc doctor: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
 
-	d := &doctor.Doctor{CheckTimeout: checkTimeout}
+	d := &doctor.Doctor{CheckTimeout: checkTimeout, Jobs: jobs}
 	ctx := &doctor.CheckContext{CityPath: cityPath, Verbose: verbose, ExplainPostgresAuth: explainPostgresAuth}
 	cfg, cfgErr := loadCityConfig(cityPath, stderr)
 	if cfgErr == nil {
