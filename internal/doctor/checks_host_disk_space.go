@@ -30,15 +30,15 @@ type HostDiskSpaceCheck struct {
 	measureDir   func(string) (int64, bool, error)
 }
 
-// NewHostDiskSpaceCheck creates a check for the filesystem mounted at /.
-// Doctor must inspect the host root rather than CityPath because city state
-// can reside on a different filesystem while Go's host-wide build paths fill
-// the root volume.
-func NewHostDiskSpaceCheck() *HostDiskSpaceCheck {
+// NewHostDiskSpaceCheck creates a check for the filesystem mounted at /,
+// measured through freeBytes (HostRootFreeBytes in production). Doctor must
+// inspect the host root rather than CityPath because city state can reside on
+// a different filesystem while Go's host-wide build paths fill the root volume.
+func NewHostDiskSpaceCheck(freeBytes func(string) (int64, error)) *HostDiskSpaceCheck {
 	return &HostDiskSpaceCheck{
 		rootPath:     "/",
 		minFreeBytes: hostDiskMinFreeBytes,
-		freeBytes:    hostRootFreeBytes,
+		freeBytes:    freeBytes,
 		consumers: []hostDiskConsumer{
 			{label: "GOCACHE", path: goCachePath()},
 			{label: "GOTMPDIR", path: goTempPath()},
@@ -64,7 +64,7 @@ func (c *HostDiskSpaceCheck) Run(_ *CheckContext) *CheckResult {
 	}
 	freeBytes := c.freeBytes
 	if freeBytes == nil {
-		freeBytes = hostRootFreeBytes
+		freeBytes = HostRootFreeBytes
 	}
 
 	free, err := freeBytes(rootPath)

@@ -175,6 +175,19 @@ func configureFSPressureForTests() {
 	}
 }
 
+// testHostRootFreeBytes clears the host-disk-space reserve, so a doctor run in
+// a test does not fail on the gate host's own free space.
+const testHostRootFreeBytes = int64(1) << 40
+
+func configureHostDiskForTests() {
+	doctorHostRootFreeBytes = func(path string) (int64, error) {
+		if path != "/" {
+			return 0, fmt.Errorf("unexpected host disk path %q", path)
+		}
+		return testHostRootFreeBytes, nil
+	}
+}
+
 // testTempRootAliveSentinel pins the alive-sentinel flock on this process's
 // test temp root for the binary's lifetime. The reference must stay live:
 // the runtime finalizes unreachable os.Files, which would close the
@@ -268,6 +281,7 @@ func TestMain(m *testing.M) {
 	// already owns the fixtures. Just configure hooks and forward.
 	if isTestscriptCommandInvocation(os.Args[0]) {
 		configureFSPressureForTests()
+		configureHostDiskForTests()
 		configureSupervisorHooksForTests()
 		testscript.Main(m, map[string]func(){
 			"gc": func() {
@@ -359,6 +373,7 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	configureFSPressureForTests()
+	configureHostDiskForTests()
 	configureSupervisorHooksForTests()
 	var testRunner testscript.TestingM = newDoltLeakGuardedTestingM(m, testTempRoot, testTempRoot, gcHome, runtimeDir, providerStubDir, sharedTestFixtureRoot)
 	if tmuxSocketCleanupRoot != "" {

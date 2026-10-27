@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/doctor"
@@ -104,4 +106,37 @@ func doctorCheckIndex(names []string, want string) int {
 		}
 	}
 	return -1
+}
+
+func TestBuildDoctorChecksHostDiskSpaceReadsInjectedProbe(t *testing.T) {
+	cityDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"demo\"\n"), 0o644); err != nil {
+		t.Fatalf("write city.toml: %v", err)
+	}
+	t.Setenv("GC_DOLT", "skip")
+	free := (int64(100) + time.Now().UnixNano()%400) << 30
+	prev := doctorHostRootFreeBytes
+	t.Cleanup(func() { doctorHostRootFreeBytes = prev })
+	var probed []string
+	doctorHostRootFreeBytes = func(path string) (int64, error) {
+		probed = append(probed, path)
+		return free, nil
+	}
+
+	checks := buildDoctorChecks(cityDir, &config.City{Workspace: config.Workspace{Name: "demo"}}, nil, buildDoctorChecksOpts{
+		SkipCityDoltCheck:    true,
+		SkipManagedDoltCheck: true,
+	})
+	i := doctorCheckIndex(doctorCheckNames(checks), "host-disk-space")
+	if i < 0 {
+		t.Fatal("host-disk-space check missing")
+	}
+	result := checks[i].Run(&doctor.CheckContext{CityPath: cityDir})
+	want := fmt.Sprintf("%.2f GB free on /", float64(free)/(1<<30))
+	if result.Status != doctor.StatusOK || !strings.Contains(result.Message, want) {
+		t.Fatalf("result = %v %q, want OK containing %q", result.Status, result.Message, want)
+	}
+	if len(probed) != 1 || probed[0] != "/" {
+		t.Fatalf("probed paths = %v, want [/]", probed)
+	}
 }

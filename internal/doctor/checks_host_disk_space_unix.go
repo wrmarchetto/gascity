@@ -8,7 +8,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func hostRootFreeBytes(path string) (int64, error) {
+// HostRootFreeBytes reports the bytes available to unprivileged users on the
+// filesystem holding path.
+func HostRootFreeBytes(path string) (int64, error) {
 	var stat unix.Statfs_t
 	if err := unix.Statfs(path, &stat); err != nil {
 		return 0, fmt.Errorf("statfs %q: %w", path, err)

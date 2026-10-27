@@ -29,6 +29,7 @@ var (
 	newDoctorDoltBackupCheck     = doctor.NewDoltBackupCheck
 	newDoctorCityDoltBackupCheck = doctor.NewCityDoltBackupCheck
 	newDoctorDoltLocalOnlyCheck  = doctor.NewDoltLocalOnlyRemoteCheck
+	doctorHostRootFreeBytes      = doctor.HostRootFreeBytes
 )
 
 func newDoctorCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -366,7 +367,7 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	// Host-root capacity must be checked independently of cityPath: Go's shared
 	// build cache and compiler temporary directories can exhaust / even when the
 	// city lives on another filesystem.
-	register(doctor.NewHostDiskSpaceCheck())
+	register(doctor.NewHostDiskSpaceCheck(doctorHostRootFreeBytes))
 	// Ungated by backend: a hold file is read by every managed-dolt door
 	// regardless, so a stray one must be visible even where it guards nothing.
 	register(newDoltMaintenanceHoldCheck(cityPath))
