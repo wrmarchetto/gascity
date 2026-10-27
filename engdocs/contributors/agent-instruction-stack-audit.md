@@ -29,7 +29,17 @@ a reproducible source-size measure, not a claim about provider framing tokens.
 
 For coverage, the same source set changed from 16,024 to 15,573 tokens for
 `lab.engineer` and from 19,429 to 18,978 for `lab.pm`. The repository-owned
-change removed 451 tokens (3.2%) from every lab role's stack.
+change removed 451 tokens from every lab role's stack, 3.2% of the Codex one.
+
+The source set is incomplete in both directions, which moves the absolute
+figures and not the 451-token change, since only `AGENTS.md` changed. The
+Claude stacks omit the city's `/home/willie/projects/city/CLAUDE.md`, which
+Claude Code loads by walking up from a city worktree: it is in a live
+`lab.engineer` session's loaded context, and it was 3,651 tokens at this
+audit's instant (city `1862fbf6`). The Codex row counts `~/.claude/CLAUDE.md`
+and the rig `CLAUDE.md`, which Codex does not read by those names, and no
+`AGENTS.md` sits in the engineer `CODEX_HOME`. Whether either reaches a Codex
+session is unverified: no Codex engineer session was running to check.
 
 ## Findings and dispositions
 
