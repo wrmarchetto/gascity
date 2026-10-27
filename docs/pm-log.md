@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ren5 2026-10-26T14:15:02Z
+last_seen: gs-cb0h 2026-10-27T15:47:45Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5620,3 +5620,31 @@ Ruling: (a), reopen suite-speed work, measured on the whole gate.
 Rig store since last_seen: gs-338t closed (#166), and this bead.
 
 Source: roadmap bead-cycle-time
+
+## 168. pm-self-review gs-cb0h: self-review pass filed for agent-efficiency (2026-10-27)
+
+Summons: every epic:agent-efficiency member is closed, and the review
+cannot open because the implementers' self-review record is missing.
+`gc city epic-review self-review gascity agent-efficiency --check`
+printed "no docs/self-review/agent-efficiency.md at gascity main"
+(exit 6).
+
+- Filed the pass with `--file`: gs-5buj, labeled epic:agent-efficiency
+  and self-review, for gascity/lab.engineer. The epic reads as
+  implementing again until gs-5buj closes and its record lands on main.
+- No acceptance verdict and no promotion here. Status stays in-progress.
+  The pm-epic-close summons that asks for both follows the review
+  opening.
+- Correction to #164 and #166: agent-efficiency was not in the
+  operator's review. Its review never opened, for want of this record.
+- Noted for the mayor: gs-5buj came out of the tool both assigned to and
+  routed to gascity/lab.engineer. The ledger
+  (incident/all/routeless-bead-raises-no-demand) says that shape raises
+  no pool demand. If no engineer claims it, the filer is the place to
+  fix, not the bead.
+
+Rig store since last_seen: gs-ren5 closed (#167), gs-46s4 closed,
+gs-gln1 deferred (bead-cycle-time's gate-speed bead), gs-5buj filed, and
+this summons.
+
+Source: roadmap agent-efficiency
