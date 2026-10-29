@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-aagg 2026-10-29T23:10:00Z
+last_seen: gs-7btr 2026-10-29T23:14:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5865,5 +5865,16 @@ The summons closes as a no-op under #172, which is what the mayor's comment
 on gs-aagg asks for. pm-open #12 is unchanged.
 
 Rig store since last_seen: gs-0awj closed (#177), and this summons.
+
+Source: pm-log #172
+
+## 179. Sweep summons gs-7btr: operator-deferred finding F11 already standalone (2026-10-29)
+
+gs-rv15a377628c08-f11-deferred has the same shape as F10 at #178, and the
+mayor has already labeled it `epic-deferred:agent-efficiency, standalone`.
+The summons closes as a no-op under #172, which is what the mayor's comment
+on gs-7btr asks for. pm-open #12 is unchanged.
+
+Rig store since last_seen: gs-aagg closed (#178), and this summons.
 
 Source: pm-log #172
