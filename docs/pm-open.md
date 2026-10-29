@@ -364,3 +364,28 @@ work arriving from outside the roadmap. Would settle it: enough gascity
 landings for the re-measurement and 3 more merge-gate gates, or Willie
 accepting the gascity Target on a smaller sample.
 
+
+## 12. Operator-deferred review findings carry no epic home (2026-10-29)
+
+Review generation ci-rv15a377628c08/001 of agent-efficiency (g1) deferred
+all seventeen findings to the gascity engineer, the operator's rationale
+being "defer all findings to the gascity engineer and close the epic".
+The liaison filed one remediation bead per finding,
+gs-rv15a377628c08-f01-deferred through -f17-deferred, each labeled
+`epic-deferred:agent-efficiency` and not `epic:agent-efficiency`. The
+roadmap sweep does not count the deferred label as a placement, so it
+files one epic-unmapped summons per bead.
+
+Ruling (pm-log #172): standalone. Labeling them `epic:agent-efficiency`
+would make them members of the epic the operator asked to close, and
+hold it at implementing. bead-cycle-time's criteria do not close over
+them. Opening an epic for them would be planning the operator declined
+(#166). Applied to -f17 by summons gs-5da8. The other sixteen take the
+same ruling under their own summonses.
+
+Question: (a) is `epic-deferred:<slug>` meant to count as placed, so the
+sweep stops summoning about each deferral, and (b) is anything owed back
+to the epic when a deferred finding lands?
+
+Would settle it: the operator or the mayor saying what the deferred label
+promises, and a sweep that reads it if it is meant as a placement.

@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-c1ft 2026-10-29T22:04:01Z
+last_seen: gs-3ja8 2026-10-29T22:51:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5752,3 +5752,36 @@ Rig store since last_seen: gs-qrgd closed, gs-rkvz closed (#170),
 gs-tra9 filed, and this summons.
 
 Source: roadmap agent-efficiency
+
+## 172. Sweep summons gs-5da8: operator-deferred finding F17 ruled standalone (2026-10-29)
+
+gs-rv15a377628c08-f17-deferred (P2, gascity/lab.engineer) is the
+remediation bead for finding F17 of agent-efficiency review g1. The
+operator decided the generation (ci-rv15a377628c08/001) with "defer all
+findings to the gascity engineer and close the epic". The bead is labeled
+`epic-deferred:agent-efficiency`, and the sweep does not read that label
+as a placement.
+
+Ruling: standalone. Placing it under `epic:agent-efficiency` would make it
+a member of the epic the operator asked to close. That would hold the
+epic at implementing and reverse the decision. bead-cycle-time's
+criteria do not close over review remediation. Opening an epic for the
+deferrals would be planning that #166 ruled out for now. Labeled with
+`gc bd update gs-rv15a377628c08-f17-deferred --add-label standalone`.
+Recorded as pm-open #12, a new class: the pm-open #3 class holds
+substrate work, and this one holds review deferrals.
+
+The same ruling covers -f01 through -f16. Their summonses (gs-97wl,
+gs-h8c6, gs-ejyb, gs-lko2, gs-0awj, gs-aagg, gs-7btr, gs-9g8l, gs-xea7,
+gs-6ss7, gs-vutg, gs-3ja8, and those not yet filed) each cite this entry
+under their own session. Mailed the mayor that the sweep treats an
+operator deferral as unmapped work.
+
+Not done here: closing agent-efficiency. That waits on the
+pm-epic-approved summons and `gc city epic-review close`.
+
+Rig store since last_seen: gs-tra9 closed (self-review refresh), F01
+through F17 filed by the liaison (F02 closed, F01 and F03 claimed),
+and thirteen epic-unmapped summonses, this one among them.
+
+Source: PM inference, unconfirmed
