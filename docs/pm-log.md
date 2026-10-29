@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-tdau 2026-10-29T00:40:25Z
+last_seen: gs-qrgd 2026-10-29T21:23:41Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5678,3 +5678,51 @@ Rig store since last_seen: gs-cb0h closed (#168), gs-5buj closed and
 merged (7db6d3ddd), gs-gln1 re-parked twice, and this summons.
 
 Source: roadmap bead-cycle-time
+
+## 170. pm-epic-close gs-rkvz: agent-efficiency review g1, verdict unmet:prefix-hygiene (2026-10-29)
+
+Summons: every epic:agent-efficiency member is closed and review
+generation city ci-rv15a377628c08 is open. gascity is gated, so no
+status edit here. Self-review `--check` printed `covered`.
+
+Verified from the close reasons of all ten members and the self-review
+record docs/self-review/agent-efficiency.md (gs-5buj):
+
+- Observability: met (gs-cm0w). Baseline merged before every other
+  member.
+- Prefix hygiene: UNMET. Recorded `review.pm_acceptance=unmet:prefix-hygiene`
+  on the generation. gs-ian6 moved the beacon and clock line and closed on
+  test evidence, with no paired read. The self-review took one (finding 5):
+  the second same-slot same-account spawn re-created most of its prompt.
+  It diverges at Claude Code's git-status block and the SessionStart hook
+  output, both ahead of the rendered prompt. The literal "nonzero
+  cache_read" holds, but #139 ruled that reading vacuous (true before any
+  change) and the creation/read split load-bearing. Filed gs-qrgd
+  (epic:agent-efficiency, gascity/lab.engineer) for the gap, done on a
+  fresh paired read. Already claimed at this entry.
+- Explicit model and effort: met (gs-yvxt; self-review saw no live
+  process at max).
+- Account affinity: met as specified (gs-z2on). Its payoff waits on
+  gs-qrgd, since there is no reused prompt to steer toward yet.
+- Memory drift: met (gs-arar).
+- Instruction audit: met (gs-saj5, figures corrected in the self-review).
+- Canary: dropped (#147, gs-78op).
+
+Conclusion block written with the status line unchanged. The write-up
+docs/epics/agent-efficiency.md was written but could NOT be committed:
+docs/epics is a symlink to engdocs/epics, so the plain stage fails in the
+VCS, and pm-git-gate.py refuses the resolved engdocs path. Not worked
+around. Filed city ci-pe8zqe (P1, mayor) for the gate/symlink fix, with
+the full write-up text in its body to land; removed from the root so no
+untracked file is left there. Its where-it-ended section says "not done"
+and needs revising when gs-qrgd closes.
+
+Promotion: none. No epic is `open`. bead-cycle-time is already
+in-progress, and #166's ruling stands: nothing new after it, for now. So
+no DECOMP and no new pm-open entry. Re-asking what comes next would
+contradict that ruling.
+
+Rig store since last_seen: gs-gln1 still date-parked, this summons, and
+gs-qrgd filed and claimed.
+
+Source: pm-log #139

@@ -201,6 +201,13 @@ decomposition (pm-log #137). Edits to ~/.claude/CLAUDE.md are Willie's
 own (it lives outside every rig), so audit findings there are proposals
 to him, not beads.
 
+Conclusion: Five of six criteria met in the close reasons of gs-cm0w,
+gs-yvxt, gs-z2on, gs-arar and gs-saj5, the canary criterion dropped
+(gs-78op). Prefix hygiene missed its intent: the self-review's paired read
+(gs-5buj, finding 5) shows the rendered prompt re-created on a second
+same-slot spawn, so the cache reuse the epic predicted was not reached.
+Ruled unmet at review g1, carried by gs-qrgd (pm-log #170).
+
 ## epic:bead-cycle-time -- City bead cycle time: the non-development time to main
 
 status: in-progress
