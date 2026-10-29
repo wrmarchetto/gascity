@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-qrgd 2026-10-29T21:23:41Z
+last_seen: gs-c1ft 2026-10-29T22:04:01Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5726,3 +5726,29 @@ Rig store since last_seen: gs-gln1 still date-parked, this summons, and
 gs-qrgd filed and claimed.
 
 Source: pm-log #139
+
+## 171. pm-self-review gs-c1ft: self-review refresh filed for agent-efficiency (2026-10-29)
+
+Summons: every epic:agent-efficiency member is closed again, and the
+review cannot reopen because the self-review record does not cover
+gs-qrgd, the prefix-hygiene gap bead filed at #170. `--check` printed
+"its Covers: block does not list member gs-qrgd f72c6c0b081b" (exit 6).
+
+- gs-qrgd closed with a fresh paired read in its close reason. The
+  change is city-side. Nothing changed in gascity.
+- Filed the pass with `--file`: gs-tra9, labeled epic:agent-efficiency,
+  for gascity/lab.engineer. The epic is implementing again until
+  gs-tra9's record lands on main.
+- No acceptance verdict and no promotion here. Status stays in-progress.
+  The pm-epic-close summons for the next review generation asks for
+  both. That is where prefix hygiene gets re-ruled against gs-qrgd's
+  read.
+- The write-up docs/epics/agent-efficiency.md is still not landed. It
+  waits on city ci-pe8zqe (pm-git-gate.py and the docs/epics symlink),
+  now with the toolsmith per the mayor's mail. Its where-it-ended
+  section needs revising for gs-qrgd before it lands.
+
+Rig store since last_seen: gs-qrgd closed, gs-rkvz closed (#170),
+gs-tra9 filed, and this summons.
+
+Source: roadmap agent-efficiency
