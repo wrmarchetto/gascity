@@ -65,6 +65,10 @@ LOCAL = timezone(timedelta(hours=-5))
 INFRASTRUCTURE_LABELS = ("order-tracking", "exec")
 WORK_BEAD_TYPES = ("task", "bug", "chore", "spec")
 
+# The gc.outcome values that are verdicts (internal/beadmeta/values.go).
+# skipped, canceled and missing_root record work that never reached one.
+VERDICT_OUTCOMES = ("pass", "fail")
+
 
 def is_work_bead(bead):
     """Whether a bead record is a unit of delivered work."""
@@ -139,6 +143,7 @@ class Sample:
         self.span_beads = 0
         self.verdicts = 0
         self.failures = 0
+        self.other_outcomes = defaultdict(int)
 
     @property
     def invocations_per_bead(self):
@@ -224,11 +229,8 @@ def measure_type_usage(usage, agent_type):
 def measure_authored(beads, author):
     """Verdicts and failures among the beads one actor authored.
 
-    The metric for an agent whose output is other agents' work: its own token
-    spend says how hard it thought, never whether it thought correctly. A bead
-    with no gc.outcome is not counted either way -- an unrecorded verdict is
-    not a pass, and treating it as one would let the rate fall whenever
-    recording slipped.
+    Only pass and fail count, in the rate and the day floor. A bead with no
+    outcome is dropped and any other outcome is tallied in other_outcomes.
     """
     sample = Sample()
     for bead in beads:
@@ -236,6 +238,9 @@ def measure_authored(beads, author):
             continue
         outcome = (bead.get("metadata") or {}).get("gc.outcome")
         if outcome is None:
+            continue
+        if outcome not in VERDICT_OUTCOMES:
+            sample.other_outcomes[outcome] += 1
             continue
         sample.verdicts += 1
         if outcome == "fail":
@@ -259,6 +264,13 @@ def format_reported(value):
     return "-" if value is None else f"{value:,.0f}"
 
 
+def format_outcomes(counts):
+    """Non-verdict outcomes as 'canceled 3, skipped 1', or '-' for none."""
+    if not counts:
+        return "-"
+    return ", ".join(f"{name} {n}" for name, n in sorted(counts.items()))
+
+
 def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     """Judge one criteria row, returning (state, line, detail).
 
@@ -268,6 +280,12 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     """
     metric = spec["metric"]
     margin = float(spec["margin"])
+    witness = spec.get("witness")
+    if witness == "output_per_invocation_not_up" and "witness_margin" not in spec:
+        raise SystemExit(
+            f"canary-eval: row {spec['type']!r} has witness {witness!r} and no "
+            "witness_margin; add witness_margin = <fraction> to that [[agent]] "
+            "row, sized on the baseline's output/invocation spread")
 
     if metric == "invocations_per_bead":
         base_value = baseline.invocations_per_bead
@@ -293,6 +311,10 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     if base_value is None or have_base < baseline_floor:
         return ("no-baseline", None,
                 f"baseline {floor_key}={have_base} under floor {baseline_floor}")
+    if base_value == 0:
+        return ("no-baseline", None,
+                f"baseline {format_value(metric, base_value)}, so a relative "
+                "margin puts the line at 0 and any window crosses it")
     if win_value is None or have_win < floor:
         return ("insufficient", None,
                 f"window {floor_key}={have_win} under floor {floor}")
@@ -304,22 +326,15 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
 
     line = base_value * (1.0 + margin)
 
-    # The witness answers a different question from the line: did the change
-    # this window is measuring actually reach the running sessions? Lowering an
-    # agent's reasoning effort should not RAISE its output tokens per
-    # invocation, and when it does -- past the row's own margin, so ordinary
-    # jitter cannot trip it -- the likeliest reading is that the row never left
-    # the old regime. A comparison against the wrong regime is worse than none,
-    # so the row declines instead of answering.
-    #
-    # A witness that stays FLAT is deliberately not caught here. It is genuinely
-    # ambiguous between "the level changed and cost nothing" and "the level
-    # never changed", and only the live process command line separates those --
-    # see the manual step in the canary document.
-    if spec.get("witness") == "output_per_invocation_not_up":
+    # The witness asks whether the level under test reached the sessions at
+    # all. Lower effort should not raise output per invocation, so a rise past
+    # witness_margin voids the row. A flat witness is ambiguous and is left to
+    # the manual process check in the canary document.
+    if witness == "output_per_invocation_not_up":
         base_opi = baseline_witness.output_per_invocation
         win_opi = window_witness.output_per_invocation
-        if base_opi and win_opi and win_opi > base_opi * (1.0 + margin):
+        witness_margin = float(spec["witness_margin"])
+        if base_opi and win_opi and win_opi > base_opi * (1.0 + witness_margin):
             return ("no-witness", line,
                     f"output/invocation rose {base_opi:,.0f} -> {win_opi:,.0f}; "
                     "the row is probably not running the level under test")
@@ -365,7 +380,8 @@ def main(argv=None):
         agent_type = spec["type"]
         role = spec.get("role", "report-only")
         metric = spec["metric"]
-        if metric == "author_fail_rate":
+        reads_outcomes = metric == "author_fail_rate"
+        if reads_outcomes:
             author = spec.get("author", agent_type)
             baseline = measure_authored(baseline_beads, author)
             window = measure_authored(window_beads, author)
@@ -399,6 +415,7 @@ def main(argv=None):
             "role": role,
             "metric": metric,
             "margin": float(spec["margin"]),
+            "witness_margin": spec.get("witness_margin"),
             "baseline": base_value,
             "window": win_value,
             "line": line,
@@ -408,6 +425,10 @@ def main(argv=None):
             "window_beads": window.beads,
             "baseline_verdicts": baseline.verdicts,
             "window_verdicts": window.verdicts,
+            "baseline_other_outcomes":
+                dict(baseline.other_outcomes) if reads_outcomes else None,
+            "window_other_outcomes":
+                dict(window.other_outcomes) if reads_outcomes else None,
             "window_days": len(window.days),
             "baseline_output_per_invocation": baseline_witness.output_per_invocation,
             "window_output_per_invocation": window_witness.output_per_invocation,
@@ -455,6 +476,10 @@ def main(argv=None):
               f"{format_value(row['metric'], row['window']):>12}"
               f"{format_value(row['metric'], row['line']):>12}  {row['state']}")
         print(f"{'':<26}{row['detail']}")
+        if row["window_other_outcomes"] is not None:
+            print(f"{'':<26}outside the rate: "
+                  f"{format_outcomes(row['baseline_other_outcomes'])} -> "
+                  f"{format_outcomes(row['window_other_outcomes'])}")
         print(f"{'':<26}reported: out tok/bead "
               f"{format_reported(row['baseline_output_tokens_per_bead'])} -> "
               f"{format_reported(row['window_output_tokens_per_bead'])}"

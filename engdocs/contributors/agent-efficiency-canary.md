@@ -20,6 +20,14 @@ each margin came from, what the window is, and -- the part no threshold can
 express -- what it is too small to see. If the two ever disagree, the TOML is
 the criterion and this file is the bug.
 
+The TOML is kept exactly as it was evaluated, so the current
+`scripts/canary-eval.py` refuses it. Its witnessed rows predate
+`witness_margin`, and the evaluator that read them reused each row's metric
+margin as the witness margin. On the `mayor` row that is the rate margin, which
+lets output per invocation more than double before the row voids. A later
+window states `witness_margin` on every witnessed row, sized on output per
+invocation's own baseline spread rather than borrowed from the metric.
+
 Take the reading with:
 
 ```bash
@@ -549,5 +557,5 @@ separate joins over the same data -- it does not independently confirm the
 data.
 
 `scripts/canary_eval_test.go` pins the evaluator's arithmetic and all three
-exit codes; `scripts/canary-eval.mutation-sweep.toml` proves each refusal is
-enforced, 14 of 14 mutations died.
+exit codes. `scripts/canary-eval.mutation-sweep.toml` proves each refusal is
+enforced, and the commit that changes it records the sweep's result.
