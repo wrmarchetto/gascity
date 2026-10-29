@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-3ja8 2026-10-29T22:51:00Z
+last_seen: gs-6p95 2026-10-29T22:51:32Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5785,3 +5785,18 @@ through F17 filed by the liaison (F02 closed, F01 and F03 claimed),
 and thirteen epic-unmapped summonses, this one among them.
 
 Source: PM inference, unconfirmed
+
+## 173. Sweep summons gs-97wl: operator-deferred finding F15 ruled standalone (2026-10-29)
+
+gs-rv15a377628c08-f15-deferred has the same shape as F17 at #172: a
+remediation bead from agent-efficiency review g1 with only
+`epic-deferred:agent-efficiency`. Same ruling, standalone, for the same
+reason. Labeled with
+`gc bd update gs-rv15a377628c08-f15-deferred --add-label standalone`.
+pm-open #12 is unchanged, so no new entry and no ping.
+
+Rig store since last_seen: three more summonses filed, gs-6p95 (F01),
+gs-5uvg (F03) and gs-93mu (F04), and F01 is still claimed by an engineer.
+No reply from the mayor yet to the #172 mail.
+
+Source: pm-log #172
