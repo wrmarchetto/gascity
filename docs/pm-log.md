@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-h8c6 2026-10-29T22:57:55Z
+last_seen: gs-ejyb 2026-10-29T23:00:04Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5820,5 +5820,17 @@ closed. Its own correction on gs-h8c6 withdraws that.
 
 Rig store since last_seen: gs-5da8 and gs-97wl closed (#172, #173), F01
 closed, F04 claimed by an engineer, gs-6p95 (F01's summons) still open.
+
+Source: pm-log #172
+
+## 175. Sweep summons gs-ejyb: operator-deferred finding F14 already standalone (2026-10-29)
+
+gs-rv15a377628c08-f14-deferred has the same shape as F16 at #174, and the
+mayor has already labeled it `epic-deferred:agent-efficiency, standalone`.
+The summons closes as a no-op under #172, which is what the mayor's comment
+on gs-ejyb asks for. pm-open #12 is unchanged.
+
+Rig store since last_seen: gs-h8c6 closed (#174), F04 still claimed by an
+engineer.
 
 Source: pm-log #172
