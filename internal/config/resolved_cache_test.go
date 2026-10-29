@@ -95,28 +95,72 @@ func TestBuildResolvedProviderCache_ReportsAllChainErrors(t *testing.T) {
 	}
 }
 
-func TestBuildResolvedProviderCache_RejectsInvalidLegacyBuiltinOptionDefaults(t *testing.T) {
-	cfg := &City{
-		Providers: map[string]ProviderSpec{
-			"codex-fast": {
-				Command: "codex",
-				OptionDefaults: map[string]string{
-					"permission_mode": "typo",
+func TestBuildResolvedProviderCache_RejectsUndeclaredOptionDefaults(t *testing.T) {
+	cases := []struct {
+		name      string
+		providers map[string]ProviderSpec
+		wantIn    []string
+		notIn     []string
+	}{
+		{
+			name: "legacy builtin by command, typo",
+			providers: map[string]ProviderSpec{
+				"codex-fast": {
+					Command:        "codex",
+					OptionDefaults: map[string]string{"permission_mode": "typo"},
 				},
 			},
+			wantIn: []string{
+				`provider "codex-fast" option_defaults`,
+				`"permission_mode"`, `"typo"`,
+			},
+		},
+		{
+			// The schema's {Value: ""} choice let this through, overriding
+			// the builtin's effort=max with no --effort flag at all.
+			name: "builtin by name, empty",
+			providers: map[string]ProviderSpec{
+				"claude": {OptionDefaults: map[string]string{"effort": ""}},
+			},
+			wantIn: []string{
+				`provider "claude" option_defaults`,
+				`"effort"`, OptionDefaultReasonEmpty, "max",
+			},
+		},
+		{
+			name: "base chain, empty",
+			providers: map[string]ProviderSpec{
+				"claude": {
+					Base:           strPtr("builtin:claude"),
+					OptionDefaults: map[string]string{"effort": ""},
+				},
+				"claude-mayor": {Base: strPtr("provider:claude")},
+			},
+			wantIn: []string{
+				`provider "claude" option_defaults`,
+				`"effort"`, OptionDefaultReasonEmpty,
+			},
+			// The remedy is in the layer that wrote the value.
+			notIn: []string{`provider "claude-mayor"`},
 		},
 	}
-
-	err := BuildResolvedProviderCache(cfg)
-	if err == nil {
-		t.Fatal("expected invalid option_defaults to fail cache build")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, `provider "codex-fast" option_defaults`) {
-		t.Fatalf("error = %q, want provider option_defaults context", msg)
-	}
-	if !strings.Contains(msg, `"permission_mode"`) || !strings.Contains(msg, `"typo"`) {
-		t.Fatalf("error = %q, want invalid option default details", msg)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := BuildResolvedProviderCache(&City{Providers: tc.providers})
+			if err == nil {
+				t.Fatal("expected invalid option_defaults to fail cache build")
+			}
+			for _, want := range tc.wantIn {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error = %q, want %q", err, want)
+				}
+			}
+			for _, unwanted := range tc.notIn {
+				if strings.Contains(err.Error(), unwanted) {
+					t.Errorf("error = %q, must not name %q", err, unwanted)
+				}
+			}
+		})
 	}
 }
 

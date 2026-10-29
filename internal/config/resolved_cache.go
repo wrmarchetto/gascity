@@ -78,7 +78,7 @@ func ValidateCustomProviderOptions(providers map[string]ProviderSpec) error {
 			errs = append(errs, fmt.Errorf("resolving provider %q: %w", name, err))
 			continue
 		}
-		if err := validateResolvedProviderOptions(name, resolved); err != nil {
+		if err := validateResolvedProviderOptions(name, providers[name].OptionDefaults, resolved); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -108,14 +108,46 @@ func resolveCustomProviderForValidation(name string, spec ProviderSpec, provider
 	return *specToResolved(name, &spec), nil
 }
 
-func validateResolvedProviderOptions(name string, resolved ResolvedProvider) error {
+// declared is the provider's own option_defaults, before any base merge, so
+// an empty value is reported once at the layer that wrote it rather than
+// again against every provider inheriting it.
+func validateResolvedProviderOptions(name string, declared map[string]string, resolved ResolvedProvider) error {
 	if err := ValidateOptionsSchema(resolved.OptionsSchema); err != nil {
 		return fmt.Errorf("provider %q options_schema: %w", name, err)
+	}
+	if err := emptyOptionDefaultsError(name, resolved.OptionsSchema, declared); err != nil {
+		return fmt.Errorf("provider %q option_defaults: %w", name, err)
 	}
 	if err := ValidateOptionDefaults(resolved.OptionsSchema, resolved.EffectiveDefaults); err != nil {
 		return fmt.Errorf("provider %q option_defaults: %w", name, err)
 	}
 	return nil
+}
+
+// emptyOptionDefaultsError refuses a declared empty value, which
+// ValidateOptionDefaults accepts because the schema offers "" as a
+// per-session "Default" choice. See InvalidAgentOptionDefaults for why a
+// declared "" is refused at the agent level too.
+func emptyOptionDefaultsError(name string, schema []ProviderOption, declared map[string]string) error {
+	keys := make([]string, 0, len(declared))
+	for key, value := range declared {
+		if value == "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	errs := make([]error, 0, len(keys))
+	for _, key := range keys {
+		var choices []string
+		if opt := findOption(schema, key); opt != nil {
+			choices = declaredOptionChoices(opt)
+		}
+		errs = append(errs, fmt.Errorf("option_defaults key %q is %s (declared "+
+			"values: %s). Name one in [providers.%s] option_defaults, or drop "+
+			"the key to inherit its base's default",
+			key, OptionDefaultReasonEmpty, strings.Join(choices, ", "), name))
+	}
+	return errors.Join(errs...)
 }
 
 // ResolvedProviderCached returns a deep-copied ResolvedProvider from
