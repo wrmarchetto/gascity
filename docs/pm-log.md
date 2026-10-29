@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-cb0h 2026-10-27T15:47:45Z
+last_seen: gs-tdau 2026-10-29T00:40:25Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5648,3 +5648,33 @@ gs-gln1 deferred (bead-cycle-time's gate-speed bead), gs-5buj filed, and
 this summons.
 
 Source: roadmap agent-efficiency
+
+## 169. pm-idle gs-tdau: bead-cycle-time stays in-progress, Target unmet, gap bead filed (2026-10-29)
+
+Summons: gascity has no open or in_progress work while bead-cycle-time is
+in-progress. agent-efficiency is not listed. It waits on its review.
+
+Verified from the beads, across every store the epic spans. City, sel4 and
+zephyr members are all closed, and dart has none. In gascity the only
+member not closed is gs-gln1, date-parked until 00:38Z.
+
+- Target: unmet. ci-r81svr (city 5fe037c3) measured the post-change window.
+  city, astoria-zephyr and gascity MISS, astoria-sel4 PASS, and dart landed
+  nothing. Its close reason names each miss's stage: queue passed over and
+  backlog drain for city and zephyr, session-other then push for gascity.
+  #166 ruled that a miss gets a bead under the epic. None was filed, so
+  nothing carried the Target. Filed city ci-7npmly (epic:bead-cycle-time,
+  assignee mayor) to place the follow-up: a re-measurement over a window
+  past the backlog drain, and a stage bead for any rig still over.
+- gs-gln1 (#167's gate budget): 5 of 8 gates at or under 714 s, none
+  killed. The 3 more it needs come only with gascity landings. By #166
+  none are queued, so it re-parks every 12 h on a condition that does not
+  move. The gascity half of the Target waits on the same landings.
+  Recorded as an update to pm-open #11(a).
+- No done and no promotion. gascity is gated, no epic is open, and #166
+  ruled nothing queued after this epic, so no DECOMP and no re-ask.
+
+Rig store since last_seen: gs-cb0h closed (#168), gs-5buj closed and
+merged (7db6d3ddd), gs-gln1 re-parked twice, and this summons.
+
+Source: roadmap bead-cycle-time

@@ -354,3 +354,13 @@ Update 2026-10-25 (pm-log #166): (b) RESOLVED. The operator answered city
 ci-3hywso "nothing for now": no new gascity epic after bead-cycle-time.
 (a) stays open on ci-r81svr's report. A follow-up raised by that
 measurement comes back as a new pm-open entry, not under (b).
+
+Update 2026-10-29 (pm-log #169): (a) answered MISS. ci-r81svr read city,
+astoria-zephyr and gascity over the Target, astoria-sel4 under, and dart
+unmeasured. The follow-up is city ci-7npmly. What stays open: gascity's
+half of the Target and gs-gln1's last 3 gates both need gascity landings.
+No gascity work is queued by ruling (#166), so both wait on maintenance
+work arriving from outside the roadmap. Would settle it: enough gascity
+landings for the re-measurement and 3 more merge-gate gates, or Willie
+accepting the gascity Target on a smaller sample.
+
