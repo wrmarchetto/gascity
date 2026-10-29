@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-3ja8 2026-10-29T23:30:00Z
+last_seen: gs-93mu 2026-10-29T23:34:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5931,5 +5931,18 @@ The summons closes as a no-op under #172, which is what the mayor's comment
 on gs-3ja8 asks for. pm-open #12 is unchanged.
 
 Rig store since last_seen: gs-vutg closed (#183), and this summons.
+
+Source: pm-log #172
+
+## 185. Sweep summons gs-93mu: operator-deferred finding F04 already standalone (2026-10-29)
+
+gs-rv15a377628c08-f04-deferred has the same shape as F06 at #184, and the
+mayor has already labeled it `epic-deferred:agent-efficiency, standalone`.
+The summons closes as a no-op under #172. pm-open #12 is unchanged. The
+bead itself is claimed by gascity/lab.engineer-1 on a fix branch, which
+the placement does not affect.
+
+Rig store since last_seen: gs-3ja8 closed (#184), F04 in progress, and
+this summons.
 
 Source: pm-log #172
