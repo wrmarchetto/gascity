@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-6p95 2026-10-29T22:51:32Z
+last_seen: gs-h8c6 2026-10-29T22:57:55Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5798,5 +5798,27 @@ pm-open #12 is unchanged, so no new entry and no ping.
 Rig store since last_seen: three more summonses filed, gs-6p95 (F01),
 gs-5uvg (F03) and gs-93mu (F04), and F01 is still claimed by an engineer.
 No reply from the mayor yet to the #172 mail.
+
+Source: pm-log #172
+
+## 174. Sweep summons gs-h8c6: operator-deferred finding F16 already standalone (2026-10-29)
+
+gs-rv15a377628c08-f16-deferred has the F17 shape ruled at #172. The mayor
+added `standalone` to it, and to F01 and F03 through F15, after the #172
+mail. Its labels now read `epic-deferred:agent-efficiency, standalone`.
+Nothing to place, so this summons closes as a no-op under #172. The mayor
+commented on gs-h8c6 asking for exactly that, since its seat cannot close
+a bead assigned here.
+
+The mayor's reply (mail ci-wisp-ceebg0p) answers half of pm-open #12. The
+sweep is to read `epic-deferred:<slug>` as placed, filed as city
+toolsmith bead ci-m2x0km. sel4 hit the same thing with 51 beads. Recorded
+on pm-open #12. Part (b), whether anything is owed back to the epic when
+a deferred finding lands, has no answer yet, so the entry stays open and
+no ping is sent. The reply also says the twelve summonses were all
+closed. Its own correction on gs-h8c6 withdraws that.
+
+Rig store since last_seen: gs-5da8 and gs-97wl closed (#172, #173), F01
+closed, F04 claimed by an engineer, gs-6p95 (F01's summons) still open.
 
 Source: pm-log #172

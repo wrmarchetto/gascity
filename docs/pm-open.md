@@ -389,3 +389,8 @@ to the epic when a deferred finding lands?
 
 Would settle it: the operator or the mayor saying what the deferred label
 promises, and a sweep that reads it if it is meant as a placement.
+
+Partial answer (mayor mail ci-wisp-ceebg0p, pm-log #174): (a) yes. The
+sweep is to read `epic-deferred:<slug>` as placed, city toolsmith bead
+ci-m2x0km. Until it lands, the mayor has labeled F01 and F03 through F16
+`standalone`. (b) is still open.
