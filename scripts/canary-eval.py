@@ -69,6 +69,18 @@ WORK_BEAD_TYPES = ("task", "bug", "chore", "spec")
 # skipped, canceled and missing_root record work that never reached one.
 VERDICT_OUTCOMES = ("pass", "fail")
 
+# --- criteria schema ---
+
+CRITERIA_SCHEMA = 1
+ROLES = ("subject", "control", "report-only")
+WITNESSES = ("output_per_invocation_not_up", "none")
+# Each metric's window floor. Its min_baseline_ twin is optional.
+FLOOR_KEYS = {
+    "invocations_per_bead": "min_beads",
+    "author_fail_rate": "min_verdicts",
+}
+REQUIRED_ROW_KEYS = ("type", "role", "metric", "margin", "min_days", "witness")
+
 
 def is_work_bead(bead):
     """Whether a bead record is a unit of delivered work."""
@@ -95,6 +107,70 @@ def local_day(timestamp):
 def load_json(path):
     with open(path, "rb") as handle:
         return json.load(handle)
+
+
+def row_errors(name, spec):
+    """Every way one [[agent]] row departs from the keys the evaluator reads."""
+    errors = []
+    for field, allowed in (("role", ROLES), ("metric", tuple(FLOOR_KEYS)),
+                           ("witness", WITNESSES)):
+        if field in spec and spec[field] not in allowed:
+            errors.append(f"{name} has {field} {spec[field]!r}; {field} is one "
+                          f"of {', '.join(allowed)}")
+    metric, witness = spec.get("metric"), spec.get("witness")
+    required = set(REQUIRED_ROW_KEYS)
+    if metric in FLOOR_KEYS:
+        required.add(FLOOR_KEYS[metric])
+    for key in sorted(required - set(spec)):
+        errors.append(f"{name} states no {key}; add {key} = ... to that "
+                      "[[agent]] row")
+    if witness == "output_per_invocation_not_up" and "witness_margin" not in spec:
+        errors.append(
+            f"{name} has witness {witness!r} and no witness_margin; add "
+            "witness_margin = <fraction> to that [[agent]] row, sized on the "
+            "baseline's output/invocation spread")
+    if metric not in FLOOR_KEYS or witness not in WITNESSES:
+        return errors
+
+    # A key is allowed only where this row reads it, so a misspelling cannot
+    # sit beside the key it meant while that key falls back to a default.
+    allowed = required | {"min_baseline_" + FLOOR_KEYS[metric][4:]}
+    if metric == "author_fail_rate":
+        allowed.add("author")
+    if witness == "output_per_invocation_not_up":
+        allowed.add("witness_margin")
+    for key in sorted(set(spec) - allowed):
+        errors.append(f"{name} has unknown key {key!r}; with metric {metric!r} "
+                      f"and witness {witness!r} a row reads "
+                      f"{', '.join(sorted(allowed))}")
+    return errors
+
+
+def criteria_errors(criteria):
+    """Every way a criteria document departs from the schema it must follow.
+
+    The file is the pre-registered revert rule (gs-jbyc), so a malformed one is
+    refused rather than read as the looser rule its defaults would make it.
+    """
+    errors = []
+    schema = criteria.get("schema")
+    if schema != CRITERIA_SCHEMA:
+        errors.append(f"schema is {schema!r}, expected {CRITERIA_SCHEMA}; set "
+                      f"schema = {CRITERIA_SCHEMA} at the top of the file")
+    for key in sorted(set(criteria) - {"schema", "agent"}):
+        errors.append(f"unknown top-level key {key!r}; a criteria file holds "
+                      "schema and [[agent]] rows only")
+    specs = criteria.get("agent")
+    if not isinstance(specs, list) or not specs:
+        errors.append("criteria file names no agents; add an [[agent]] row "
+                      "per agent judged")
+        return errors
+    for index, spec in enumerate(specs, 1):
+        agent_type = spec.get("type")
+        name = (f"row {agent_type!r}" if isinstance(agent_type, str)
+                else f"[[agent]] row {index}")
+        errors.extend(row_errors(name, spec))
+    return errors
 
 
 def load_usage(path):
@@ -280,25 +356,18 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     """
     metric = spec["metric"]
     margin = float(spec["margin"])
-    witness = spec.get("witness")
-    if witness == "output_per_invocation_not_up" and "witness_margin" not in spec:
-        raise SystemExit(
-            f"canary-eval: row {spec['type']!r} has witness {witness!r} and no "
-            "witness_margin; add witness_margin = <fraction> to that [[agent]] "
-            "row, sized on the baseline's output/invocation spread")
+    witness = spec["witness"]
+    floor_key = FLOOR_KEYS[metric]
+    floor = int(spec[floor_key])
 
-    if metric == "invocations_per_bead":
-        base_value = baseline.invocations_per_bead
-        win_value = window.invocations_per_bead
-        floor_key, floor = "min_beads", int(spec.get("min_beads", 0))
-        have_base, have_win = baseline.beads, window.beads
-    elif metric == "author_fail_rate":
+    if metric == "author_fail_rate":
         base_value = baseline.fail_rate
         win_value = window.fail_rate
-        floor_key, floor = "min_verdicts", int(spec.get("min_verdicts", 0))
         have_base, have_win = baseline.verdicts, window.verdicts
     else:
-        raise SystemExit(f"canary-eval: unknown metric {metric!r} in criteria")
+        base_value = baseline.invocations_per_bead
+        win_value = window.invocations_per_bead
+        have_base, have_win = baseline.beads, window.beads
 
     # The two sides are not the same size and never will be: the baseline is a
     # closed window that cannot grow while the canary window is twice its
@@ -319,7 +388,7 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
         return ("insufficient", None,
                 f"window {floor_key}={have_win} under floor {floor}")
 
-    min_days = int(spec.get("min_days", 0))
+    min_days = int(spec["min_days"])
     if len(window.days) < min_days:
         return ("insufficient", None,
                 f"window covered {len(window.days)} local days, floor {min_days}")
@@ -364,10 +433,12 @@ def main(argv=None):
 
     with open(args.criteria, "rb") as handle:
         criteria = tomllib.load(handle)
-    specs = criteria.get("agent", [])
-    if not specs:
-        print("canary-eval: criteria file names no agents", file=sys.stderr)
+    errors = criteria_errors(criteria)
+    for error in errors:
+        print(f"canary-eval: {args.criteria}: {error}", file=sys.stderr)
+    if errors:
         return EXIT_USAGE
+    specs = criteria["agent"]
 
     baseline_usage = load_usage(args.baseline_usage)
     window_usage = load_usage(args.window_usage)
@@ -378,7 +449,7 @@ def main(argv=None):
     reverts, voids = [], []
     for spec in specs:
         agent_type = spec["type"]
-        role = spec.get("role", "report-only")
+        role = spec["role"]
         metric = spec["metric"]
         reads_outcomes = metric == "author_fail_rate"
         if reads_outcomes:
