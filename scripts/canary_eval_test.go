@@ -116,6 +116,8 @@ type canaryFixture struct {
 	windowUsage    []canarySession
 	baselineBeads  []canaryBead
 	windowBeads    []canaryBead
+	extraBaselines [][]canaryBead // each passed as one more --baseline-beads dump
+	extraWindows   [][]canaryBead // each passed as one more --window-beads dump
 	extraArguments []string
 	arguments      []string // when set, the whole command line after the script
 }
@@ -161,6 +163,12 @@ func runCanaryEval(t *testing.T, f canaryFixture) canaryResult {
 		"--baseline-beads", baselineBeads,
 		"--window-beads", windowBeads,
 		"--zone", "America/Chicago",
+	}
+	for i, dump := range f.extraBaselines {
+		args = append(args, "--baseline-beads", write(fmt.Sprintf("baseline-beads-%d.json", i+2), dump))
+	}
+	for i, dump := range f.extraWindows {
+		args = append(args, "--window-beads", write(fmt.Sprintf("window-beads-%d.json", i+2), dump))
 	}
 	args = append(args, f.extraArguments...)
 	if f.arguments != nil {
@@ -588,6 +596,31 @@ func TestCanaryASessionHoldingSeveralBeadsSplitsItsCost(t *testing.T) {
 	if got.exit != canaryExitKeep {
 		t.Fatalf("exit = %d, want %d (keep); a shared session was charged to "+
 			"every bead it closed\nstdout:\n%s", got.exit, canaryExitKeep, got.stdout)
+	}
+
+	// A bead read twice is not a second bead to split across. Counted, these
+	// halve or thin the per-bead cost and read a regression as keep.
+	for _, tc := range []struct {
+		name                string
+		extraBase, extraWin [][]canaryBead
+		bead                string
+	}{
+		{"the same dump twice", nil, [][]canaryBead{winBeads}, "'win-b0'"},
+		{"two dumps sharing a bead", nil, [][]canaryBead{winBeads[:1]}, "'win-b0'"},
+		{"a baseline bead twice", [][]canaryBead{baseBeads[:1]}, nil, "'" + baseBeads[0].ID + "'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runCanaryEval(t, canaryFixture{
+				criteria: oneSubjectCriteria, baselineUsage: baseSess, windowUsage: winSess,
+				baselineBeads: baseBeads, windowBeads: winBeads,
+				extraBaselines: tc.extraBase, extraWindows: tc.extraWin,
+			})
+			if got.exit != canaryExitUsage || !strings.Contains(got.stderr, tc.bead) ||
+				strings.Contains(got.stderr, "Traceback") {
+				t.Fatalf("exit = %d, want %d and a refusal naming %s\nstdout:\n%s\nstderr:\n%s",
+					got.exit, canaryExitUsage, tc.bead, got.stdout, got.stderr)
+			}
+		})
 	}
 }
 
