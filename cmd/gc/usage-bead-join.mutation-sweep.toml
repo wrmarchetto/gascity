@@ -1,0 +1,37 @@
+# Proves gc usage --by bead's join (usageBeadIndex) is guarded by
+# TestUsageReadsThePlantedLogEndToEnd, which plants a real bead store.
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "gc usage bead join is exercised end to end"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./cmd/gc/", "-count=1", "-run", "Usage"]
+timeout_s = 1500
+
+# Positive control: a guard the suite was already known to kill.
+[[mutation]]
+id = "control-missing-log-accepted"
+path = "cmd/gc/cmd_usage.go"
+find = '''errors.Is(err, os.ErrNotExist) {'''
+replace = '''false && errors.Is(err, os.ErrNotExist) {'''
+expect_output = ["TestUsageReadsThePlantedLogEndToEnd/a_missing_log_is_refused"]
+
+# Flipped, every session reads "(no bead recorded)". Not `_ = b.ID`, which
+# leaves session unused and fails the build rather than the test.
+[[mutation]]
+id = "bead-join-never-populated"
+path = "cmd/gc/cmd_usage.go"
+find = '''index[session] = append(index[session], b.ID)'''
+replace = '''_, _ = session, b.ID'''
+expect_output = ["TestUsageReadsThePlantedLogEndToEnd/every_claimant_of_a_bead_is_joined"]
+
+# Flipped, the index is keyed by bead rather than by session.
+[[mutation]]
+id = "bead-join-keyed-by-bead"
+path = "cmd/gc/cmd_usage.go"
+find = '''index[session] = append(index[session], b.ID)'''
+replace = '''index[b.ID] = append(index[b.ID], session)'''
+expect_output = ["TestUsageReadsThePlantedLogEndToEnd/every_claimant_of_a_bead_is_joined"]
