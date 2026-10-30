@@ -800,6 +800,8 @@ func TestManagerReloadClosesChangedInstances(t *testing.T) {
 
 func TestManagerServeHTTPRoutesToWorkflowInstance(t *testing.T) {
 	contract := uniqueContract(t)
+	held := make(chan struct{})
+	release := make(chan struct{})
 	registerWorkflowContractForTest(t, contract, func(_ RuntimeContext, svc config.Service) (Instance, error) {
 		return &testInstance{
 			status: Status{
@@ -809,6 +811,11 @@ func TestManagerServeHTTPRoutesToWorkflowInstance(t *testing.T) {
 				LocalState:       "ready",
 			},
 			handleHTTP: func(w http.ResponseWriter, r *http.Request, subpath string) bool {
+				if subpath == "/hold" {
+					close(held)
+					<-release
+					return true
+				}
 				if subpath != "/hooks/github" {
 					t.Errorf("subpath = %q, want /hooks/github", subpath)
 				}
@@ -848,6 +855,29 @@ func TestManagerServeHTTPRoutesToWorkflowInstance(t *testing.T) {
 	if strings.TrimSpace(rec.Body.String()) != "POST /hooks/github" {
 		t.Errorf("body = %q, want %q", rec.Body.String(), "POST /hooks/github")
 	}
+
+	// A proxied request still in flight must not hold Tick, which runs on the
+	// controller's reconciler loop: a 25s console request stalled every
+	// reconciler phase behind it, order dispatch included (ci-3r1n86).
+	served := make(chan struct{})
+	go func() {
+		defer close(served)
+		mgr.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/svc/review-intake/hold", nil))
+	}()
+	<-held
+	ticked := make(chan struct{})
+	go func() {
+		defer close(ticked)
+		mgr.Tick(context.Background(), time.Now())
+	}()
+	select {
+	case <-ticked:
+	case <-time.After(5 * time.Second):
+		t.Error("Tick did not return while a proxied request was in flight")
+	}
+	close(release)
+	<-served
+	<-ticked
 }
 
 func TestManagerServeHTTPUsesBuiltinHealthzWorkflow(t *testing.T) {

@@ -478,19 +478,26 @@ func (m *Manager) AuthorizeAndServeHTTP(name string, w http.ResponseWriter, r *h
 		return false
 	}
 	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	e, ok := m.entries[name]
 	if !ok {
+		m.mu.RUnlock()
 		return false
 	}
 	if authorize != nil && !authorize(e.status) {
+		m.mu.RUnlock()
 		return true
 	}
-	if m.closed || e.inst == nil {
+	inst := e.inst
+	closed := m.closed
+	m.mu.RUnlock()
+	if closed || inst == nil {
 		return false
 	}
-	return e.inst.HandleHTTP(w, r, subpath)
+	// Served outside m.mu: Tick takes the write lock on the reconciler loop, so
+	// holding the read lock for the request stalled the controller for as long
+	// as the slowest proxied request ran. An instance closed mid-request answers
+	// for itself (proxyProcessInstance reports 502 through its ErrorHandler).
+	return inst.HandleHTTP(w, r, subpath)
 }
 
 // ServeHTTP routes /svc/{name}/... requests to the matching service instance.
