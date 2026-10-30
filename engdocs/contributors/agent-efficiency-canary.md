@@ -211,16 +211,38 @@ actually moved across the six baseline days:
 | `bench-engineer` | 64 | 99.45 | +8% | **+20%** |
 | `lab.engineer-codex` | 60 | 26.88 | +17% | **+33%** |
 
-**The two disagree, and the disagreement is the finding.** Day-to-day movement
-is two to five times the resampled figure for every high-volume agent. Beads
-are not exchangeable draws: work arrives in correlated batches, one day all
-small chores and the next all hard debugging. Had the margins been set from
-the resample alone they would sit at +4% to +12%, and every agent in the fleet
-would trip its revert rule during one ordinary hard week -- precisely the
-failure `gs-jbyc` names.
+**The two disagree for five of the six agents, and the disagreement is the
+finding.** For those five the worst day is 1.9 to 5.5 times the resampled
+figure, `lab.engineer-codex` lowest and `lab.pm` highest. `lab.engineer` is the
+exception: its worst day, +13%, barely exceeds its resampled +12%. Beads are not
+exchangeable draws: work arrives in correlated batches, one day all small
+chores and the next all hard debugging. Had the margins been set from the
+resample alone they would sit at +4% to +17%, and those five would trip their
+revert rules during one ordinary hard week -- precisely the failure `gs-jbyc`
+names.
 
 So the margins come from the day-to-day spread. The formula and every derived
 number live in the TOML.
+
+**Its "three standard deviations" count the window's noise alone.** The B term
+divides the daily spread by sqrt(3), for the window's three blocks, and treats
+the six-day baseline mean as exact. That is the one-sample shortcut the TOML
+corrected on the `mayor` row and never carried to the six invocation rows.
+Counting the baseline's own noise, B is 2.45 standard errors of the difference
+with the baseline's days independent (sqrt(1/3 + 1/6) against sqrt(1/3)), or
+1.64 under the TOML's block convention, which reads six days as 6 x 3/14
+blocks.
+After the round-up to the next 5% the six invocation lines sit at 2.6 to 2.9
+and 1.8 to 2.0 on those two readings, against 3.2 to 3.6 on the one-sample
+one. A re-baseline that reuses the formula owes the two-sample term,
+3 x sd x sqrt(1/3 + 1/b) for a baseline read as b independent blocks.
+
+The TOML's wording is left alone because the file is kept exactly as
+evaluated, under the hash [Results](#results-read-2026-09-27-verdict-no-verdict)
+records. One more
+figure in it does not recompute: the `mayor` row's first-draft margin of 0.75
+put the line at 2.13 standard errors, not 2.2. 4.53% x 0.75 is 3.40 points
+against a pooled 1.59%.
 
 ### Does averaging days help?
 
@@ -305,7 +327,15 @@ canary would catch four times in five:
 | `governor` | +45% | 14.87 | **+57%** |
 | `toolsmith` (control) | +20% | 76.07 | +25% |
 | `lab.engineer-codex` (control) | +75% | 47.05 | +95% |
-| `mayor` | +105% | 9.28% | rate reaching **10%** |
+| `mayor` | +105% | 9.28% | rate reaching **10.3%** |
+
+Each invocation figure is the margin plus 0.84 of the window's standard error,
+B/3, with the baseline mean treated as exact -- the convention stated above.
+Counting the baseline's own noise raises every one of them, so they are lower
+bounds. The `mayor` figure is the true window rate caught four times in five
+at the projected 567 verdicts, exact binomial against the fixed 9.28% line. At
+the 400-verdict floor it is 10.7%, and a true 10% rate is caught 72% of the
+time at 567 verdicts and 65% at 400.
 
 A real 10% regression in any row passes this window silently. That is a known,
 accepted limit, not an oversight: the alternative is a rule that fires on
@@ -484,8 +514,8 @@ all 14 days and its `agent.toml` carrying no model or effort change since
   roughly one more day away. Extending does not help: the extra days run the
   post-ruling regime and deepen the split rather than closing it.
 - `lab.pm` -- 97 beads over 14 days against a baseline of 303 over six. At the
-  window's own rate the floor of 303 is about 44 further days away, and the
-  seat changed model twice on the way there.
+  window's own rate the floor of 303 is about 30 further days away, 44 in all,
+  and the seat changed model twice on the way there.
 - `governor` -- unreachable. The seat was re-chartered and ran its last
   invocation 2026-09-18T22:50:04-05:00.
 - `lab.engineer-codex` -- unreachable while `suspended = true`. Its last
