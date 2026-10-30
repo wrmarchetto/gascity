@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: ci-l0wsvs 2026-10-30T13:20:00Z
+last_seen: gs-t6uu 2026-10-30T13:24:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6001,3 +6001,17 @@ gs-6p95 closed (#187), gs-fq9d closed as duplicate, and F03 to F17 deferred
 findings closed.
 
 Source: pm-log #170
+
+## 189. Summons gs-4np8: agent-efficiency self-review pass filed as gs-t6uu (2026-10-30)
+
+The self-review record does not cover two members added after it landed:
+ci-l0wsvs (the write-up landing at 478cc0621, #188) and gs-fq9d (its
+rig-store duplicate, closed with no commit). `--check` exited 6 naming
+both, and no open `epic:agent-efficiency` bead existed, so `--file` filed
+gs-t6uu, assigned to gascity/lab.engineer. No acceptance verdict and no
+promotion here: the pm-epic-close summons that asks for both follows the
+review opening.
+
+Rig store since last_seen: this summons and gs-t6uu.
+
+Source: pm-log #188
