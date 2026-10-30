@@ -42,7 +42,8 @@ import json
 import sys
 import tomllib
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # --- exit codes ---
 
@@ -51,17 +52,10 @@ EXIT_USAGE = 1
 EXIT_REVERT = 2
 EXIT_NO_VERDICT = 3
 
-# The baseline document states its window in -05:00 and the day floors below
-# count local days, so bead close timestamps are converted to this zone before
-# they are bucketed. Bucketing on UTC instead straddles local days and blurs
-# the very day-to-day spread the margins were derived from.
-LOCAL = timezone(timedelta(hours=-5))
-
-# Beads that are records of the machinery rather than units of delivered work.
-# `gc.kind` marks molecule steps, wisps and workflow beads; the two labels mark
-# order execution records, of which this city closes about 9,000 a day. Left in
-# the denominator they would divide the fleet's token spend by a count that has
-# nothing to do with how much work got done.
+# Beads recording the machinery rather than delivered work. `gc.kind` marks
+# molecule steps, wisps and workflow beads, and the two labels mark order
+# execution records (about 9,000 a day here). Counted, they would divide the
+# fleet's token spend by a figure unrelated to the work done.
 INFRASTRUCTURE_LABELS = ("order-tracking", "exec")
 WORK_BEAD_TYPES = ("task", "bug", "chore", "spec")
 
@@ -97,13 +91,17 @@ def is_work_bead(bead):
     return not any(lab in labels for lab in INFRASTRUCTURE_LABELS)
 
 
-def local_day(timestamp):
-    """The local calendar day a bead closed on, or None if it never closed."""
+def local_day(timestamp, zone):
+    """The calendar day in zone a bead closed on, or None if it never closed.
+
+    Bucketing on UTC instead straddles local days and blurs the very
+    day-to-day spread the margins were derived from.
+    """
     if not timestamp:
         return None
     return (
         datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        .astimezone(LOCAL)
+        .astimezone(zone)
         .date()
         .isoformat()
     )
@@ -264,7 +262,7 @@ class Sample:
         return self.span_seconds / self.span_beads if self.span_beads else None
 
 
-def measure_session_cost(beads, usage, agent_type):
+def measure_session_cost(beads, usage, agent_type, zone):
     """Cost of the beads one agent type closed, joined through gc.session_id.
 
     A session that closed several beads bought all of them with the same
@@ -293,7 +291,7 @@ def measure_session_cost(beads, usage, agent_type):
         share = 1.0 / len(held)
         for bead in held:
             sample.beads += 1
-            day = local_day(bead.get("closed_at"))
+            day = local_day(bead.get("closed_at"), zone)
             if day:
                 sample.days.add(day)
             sample.invocations += invocations * share
@@ -328,7 +326,7 @@ def measure_type_usage(usage, agent_type):
     return sample
 
 
-def measure_authored(beads, author):
+def measure_authored(beads, author, zone):
     """Verdicts and failures among the beads one actor authored.
 
     Only pass and fail count, in the rate and the day floor. A bead with no
@@ -347,7 +345,7 @@ def measure_authored(beads, author):
         sample.verdicts += 1
         if outcome == "fail":
             sample.failures += 1
-        day = local_day(bead.get("closed_at"))
+        day = local_day(bead.get("closed_at"), zone)
         if day:
             sample.days.add(day)
     return sample
@@ -466,7 +464,19 @@ def main(argv=None):
                         help="bd list --json of beads closed in the canary window (repeatable, one per rig)")
     parser.add_argument("--json", action="store_true", dest="as_json",
                         help="emit the report as JSON instead of a table")
+    parser.add_argument("--zone",
+                        help="IANA zone whose local days the day floors count, e.g. America/Chicago")
     args = parser.parse_args(argv)
+
+    # A named zone, not an offset: a window across a DST change carries two
+    # offsets, and either one alone buckets the other side's days an hour off.
+    try:
+        zone = ZoneInfo(args.zone or "")
+    except (ZoneInfoNotFoundError, ValueError):
+        print(f"canary-eval: --zone {args.zone!r} names no IANA zone, and the day "
+              "floors count local days in one. Remedy: pass the zone the windows "
+              "were fetched in, e.g. --zone America/Chicago", file=sys.stderr)
+        return EXIT_USAGE
 
     with open(args.criteria, "rb") as handle:
         criteria = tomllib.load(handle)
@@ -491,11 +501,13 @@ def main(argv=None):
         reads_outcomes = metric == "author_fail_rate"
         if reads_outcomes:
             author = spec.get("author", agent_type)
-            baseline = measure_authored(baseline_beads, author)
-            window = measure_authored(window_beads, author)
+            baseline = measure_authored(baseline_beads, author, zone)
+            window = measure_authored(window_beads, author, zone)
         else:
-            baseline = measure_session_cost(baseline_beads, baseline_usage, agent_type)
-            window = measure_session_cost(window_beads, window_usage, agent_type)
+            baseline = measure_session_cost(
+                baseline_beads, baseline_usage, agent_type, zone)
+            window = measure_session_cost(
+                window_beads, window_usage, agent_type, zone)
 
         baseline_witness = measure_type_usage(baseline_usage, agent_type)
         window_witness = measure_type_usage(window_usage, agent_type)

@@ -93,12 +93,21 @@ done
 command -v gc >/dev/null 2>&1 || die "gc is not on PATH"
 command -v bd >/dev/null 2>&1 || die "bd is not on PATH"
 
+# A reading is all of its files or none. A stale dump left in --out would be
+# read as part of this window, so a non-empty one is refused, and every file is
+# staged beside it and moved in only once the last call has succeeded.
+[ ! -e "$out" ] || [ -d "$out" ] || die "--out '$out' is not a directory"
+if [ -n "$(ls -A -- "$out" 2>/dev/null)" ]; then
+  die "--out '$out' is not empty, and a stale dump in it would be read as part of this window. Remedy: pass a new or empty directory"
+fi
 mkdir -p "$out"
+stage="$(mktemp -d "$out/.partial.XXXXXX")" # style-lint: ok (mktemp template)
+trap 'rm -rf -- "$stage"' EXIT
 
 fetch_usage() {
   local label="$1" since="$2" until="$3"
   gc usage --by session --since "$since" --until "$until" --top 0 --json \
-    >"$out/$label-usage.json" ||
+    >"$stage/$label-usage.json" ||
     die "gc usage failed for the $label window; a partial file is not a window"
 }
 
@@ -112,7 +121,7 @@ fetch_beads() {
     BEADS_DIR="$root/.beads" GC_BEADS_SCOPE_ROOT="$root" \
     bd list --all --include-gates --include-infra \
     --closed-after "$since" --closed-before "$until" \
-    --limit 0 --json >"$out/$label-beads-$name.json" ||
+    --limit 0 --json >"$stage/$label-beads-$name.json" ||
     die "bd list failed for store '$name' in the $label window"
 }
 
@@ -126,6 +135,9 @@ for store in "${stores[@]}"; do
   fetch_beads baseline "$baseline_since" "$baseline_until" "$name" "$root"
   fetch_beads window "$window_since" "$window_until" "$name" "$root"
 done
+
+mv -f -- "$stage"/*.json "$out"/
+rmdir -- "$stage"
 
 printf 'collected into %s:\n' "$out"
 for file in "$out"/*.json; do

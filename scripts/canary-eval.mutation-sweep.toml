@@ -1,16 +1,12 @@
-# Proves every refusal in scripts/canary-eval.py is actually enforced.
+# Proves every refusal in scripts/canary-eval.py and canary-fetch.sh holds.
 #
-# The evaluator's value is almost entirely in what it REFUSES to answer. A
-# version of it that answered "keep" wherever it could not measure would pass a
-# read of the suite, pass every happy-path assertion, and retire the epic's
-# open question by silence -- which is the one outcome the commissioning bead
-# (gs-jbyc) says must not happen. So each row below flips one refusal to its
-# accepting counterpart and requires the suite to go red.
+# The evaluator's value is mostly in what it refuses to answer. One that
+# answered "keep" wherever it could not measure would pass every happy-path
+# assertion and retire the epic's open question by silence, the outcome
+# gs-jbyc forbids. So each row flips one refusal and requires the suite red.
 #
-# NOT SWEPT here, deliberately: whether the figures the evaluator reads are the
-# right figures. The join, the de-duplication and the window bounds belong to
-# `gc usage` and `bd`, which have their own suites; this sweep is about the
-# decision layer alone.
+# Not swept: whether the figures read are right. The join, de-duplication and
+# window bounds belong to `gc usage` and `bd`, which have their own suites.
 
 [sweep]
 name = "canary-eval refuses to answer when it cannot separate the regimes"
@@ -236,9 +232,9 @@ expect_output = ["TestCanaryMachineryBeadsAreNotUnitsOfWork"]
 [[mutation]]
 id = "day-floor-counts-utc-days"
 path = "scripts/canary-eval.py"
-find = '''        .astimezone(LOCAL)'''
-replace = '''        .astimezone(timezone.utc)'''
-expect_output = ["TestCanaryDayFloorCountsLocalDaysNotUTCDays"]
+find = '''        .astimezone(zone)'''
+replace = '''        .astimezone(ZoneInfo("UTC"))'''
+expect_output = ["TestCanaryDayFloorCountsLocalDaysNotUTCDays/one_UTC_date"]
 
 # An unrecorded verdict is not a pass. Flipped, the authored-fail rate falls
 # whenever outcome recording slips, which reads as the planner improving.
@@ -410,3 +406,43 @@ find = '''    if errors:
 replace = '''    if False:
         return EXIT_USAGE'''
 expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/misspelled_role"]
+
+# A fixed offset buckets the far side of a DST change an hour off.
+[[mutation]]
+id = "local-day-at-a-fixed-offset"
+path = "scripts/canary-eval.py"
+find = '''        .astimezone(zone)'''
+replace = '''        .astimezone(datetime.fromisoformat("2026-01-01T00:00-05:00").tzinfo)'''
+expect_output = ["TestCanaryDayFloorCountsLocalDaysNotUTCDays/across_the_DST_change"]
+
+# Flipped, a reading with no zone named counts days in one nobody chose.
+[[mutation]]
+id = "unnamed-zone-defaulted"
+path = "scripts/canary-eval.py"
+find = '''        zone = ZoneInfo(args.zone or "")'''
+replace = '''        zone = ZoneInfo(args.zone or "America/Chicago")'''
+expect_output = ['--zone="": exit']
+
+# Flipped, an unknown zone ends in a traceback rather than a refusal.
+[[mutation]]
+id = "unknown-zone-crashes"
+path = "scripts/canary-eval.py"
+find = '''    except (ZoneInfoNotFoundError, ValueError):'''
+replace = '''    except ValueError:'''
+expect_output = ['--zone="Mars/Olympus": exit']
+
+# Flipped, a failed call leaves the files fetched before it.
+[[mutation]]
+id = "fetch-failure-keeps-staged-files"
+path = "scripts/canary-fetch.sh"
+find = '''trap 'rm -rf -- "$stage"' EXIT'''
+replace = '''trap ':' EXIT'''
+expect_output = ["FAIL call 2: leaves no output file"]
+
+# Flipped, a stale dump in --out is read as part of the new window.
+[[mutation]]
+id = "fetch-reuses-a-non-empty-out"
+path = "scripts/canary-fetch.sh"
+find = '''if [ -n "$(ls -A -- "$out" 2>/dev/null)" ]; then'''
+replace = '''if false; then'''
+expect_output = ["FAIL names the cause"]
