@@ -1,9 +1,11 @@
 # Self-review: epic:agent-efficiency
 
 Covers:
+- ci-l0wsvs 478cc0621973661997f8700d2f967f552f880d27
 - gs-78op 12f14e6ee7e01f50422496b3d4d55fb47db6233b
 - gs-arar none
 - gs-cm0w none
+- gs-fq9d none
 - gs-ian6 76bd2631a5297eb7a9cb62410cbc5fae445c3659
 - gs-jbyc c67299a5cc4818aacaf9f01f61363d1f3fc65004
 - gs-n3lh f8ed69273978227de9b00f7c369ee4665da57a05
@@ -22,6 +24,17 @@ finding 8's fix and two edits to the shared `merge-closed-features.test.py`
 touched one, so gs-5buj's bullets stand except where they say otherwise.
 Bullets opening "gs-tra9" are the second pass's, run with the installed `gc`,
 which refuses a missing usage log.
+
+Then by gs-t6uu over gascity `da8a96cca` and city `ec990e0b3`, for ci-l0wsvs,
+the write-up landed at `478cc0621`, and gs-fq9d, its rig-store duplicate
+closed with no commit. Review g1's seventeen findings landed as shipped fixes
+between gs-tra9's base and this one and changed member files, so each earlier
+bullet describes its own base. Three read differently now: the evaluator
+refuses the committed canary TOML on purpose (F04), `gc usage pair` orders a
+pair and refuses one that is not consecutive (F17), and a managed
+SessionStart carries no clock (F13). Bullets opening "gs-t6uu" ran a `gc`
+built from `da8a96cca`, and the installed one was rebuilt from that commit
+at 13:33Z during the pass.
 
 ## Code against docs
 
@@ -64,6 +77,15 @@ which refuses a missing usage log.
 - gs-tra9: gs-qrgd's paragraph in city `docs/account-rotation.md` said the
   rendered prompt is byte-stable only while the key is false, and that every
   respawn re-creates it (finding 8).
+- gs-t6uu: `engdocs/epics/agent-efficiency.md` at `478cc0621`, each claim
+  against its source. These held: the first-invocation figure is the
+  baseline document's own, the canary void is gs-n3lh's three of five seats,
+  the affinity order runs every five minutes (city
+  `orders/account-affinity-reshuffle.toml`), the fleet default is
+  `effort = "high"` (city `city.toml`), and no test or doctor check reads
+  `includeGitInstructions`. Four passages did not (findings 10 to 13).
+- gs-t6uu: the roadmap Conclusion edit in the same commit, met "on one PM
+  slot", matches gs-qrgd's read and stays true. Left as written.
 
 ## Docs against spec
 
@@ -107,6 +129,20 @@ dropped (pm-log #147).
   empty and garbled inputs.
 - Instruction audit: met. Every finding carries a disposition and the
   before/after change reproduces, absolute figures corrected (finding 4).
+- gs-t6uu, prefix hygiene across slots: `gc usage pair` over every
+  consecutive same-slot, same-account pair of Claude sessions created after
+  `d224675ac`, to 13:30Z. 85 tried, 2 refused as not consecutive, 83 read. A
+  hit is a second-session cache read over 10,000 tokens above the shared
+  prefix. 56 hit and 27 missed. Timed from one first request to the next, 55 of
+  the 56 hits fell within 3,572 s and 25 of the 27 misses at 3,636 s or
+  later. The misses at 1,393 s and 2,409 s straddle Claude Code's update from
+  2.1.312 to 2.1.314, which changes the shared prefix itself. One hit,
+  `toolsmith-1` on account 4 at 10,232 s, is unexplained: no session with its
+  prompt hash started between. A root-cause read of the request blobs, two
+  misses and two hits, found each pair byte-identical through `messages[0]`
+  and first diverging at the SessionStart output, and infers that only a
+  session's first request reads the slot's prefix, so its entry ages from
+  that request. The mechanism is inferred from token counts (finding 14).
 
 ## Run twice
 
@@ -124,6 +160,15 @@ dropped (pm-log #147).
 - gs-tra9: `gc usage pair ci-yua939 ci-qpq53g`, the table twice and `--json`
   twice: byte-identical within each form, the figures in gs-qrgd's close
   reason. gs-qrgd added no script or tool, so its key was run instead, below.
+- gs-t6uu: `gc usage pair` over the three PM pairs, the table twice each:
+  byte-identical, exit 0, the recorded figures, on accounts 4, 2 and 3. Six
+  engineer pairs, table then `--json`: same figures.
+- gs-t6uu: ci-l0wsvs added no tool, so the gate its commit cites was run.
+  `citybd.summary_defects` twice over the write-up: no defects either time,
+  and none after this pass's edit. The stale-writeup rule by hand,
+  `writeup_freshness`: none at `478cc0621`. It counts self-review beads as
+  members, so gs-t6uu's own close, after the write-up's last commit, will
+  report it. No production caller runs the rule yet (city `161503ea0`).
 
 ## Wrong input
 
@@ -155,6 +200,13 @@ dropped (pm-log #147).
   field for a skip, and `account-affinity.py` shows a successful call's
   stderr nowhere. The sink is upstream `internal/usage` and nothing shown was
   undercounted, so not a finding.
+- gs-t6uu: `summary_defects` with the write-up read as `bead-cycle-time`:
+  refused, naming its `epic:` line. A `closed:` instant in place of the
+  date: refused. `## where it ended` cut: refused, naming it. The gate reads
+  structure, not content, and passed findings 10 to 13.
+- gs-t6uu: `gc usage pair` reversed: ordered by creation, same figures. A
+  pair skipping a same-account spawn: refused, naming `ci-83mc0v` and the
+  remedy. A cross-account pair: refused, naming both roots.
 
 ## Missing input
 
@@ -173,6 +225,14 @@ dropped (pm-log #147).
 - gs-tra9: the key absent, same rig as above: the `gitStatus` block returns.
   That is the control showing the rig can see the block, and nothing in the
   city reports the key's absence (finding 9).
+- gs-t6uu: `read_epic_summary` at a rig with no write-up: "no summary
+  document exists", with the path. An empty write-up: all seven structural
+  defects named.
+- gs-t6uu: `canary-eval.py` with every data input omitted, over a copy of the
+  criteria with `witness_margin = 0.20` on its five witnessed rows: exit 3,
+  every row `no-baseline`, nothing said of the missing inputs. Finding 6
+  still holds at `da8a96cca`. The committed TOML is refused outright, exit 1,
+  as F04 chose.
 
 ## Findings
 
@@ -225,3 +285,21 @@ dropped (pm-log #147).
    the second being the witness of what a session consumed. A new city check
    is a gate-budget call (city `docs/city-gate-budget.md`), so it is for the
    epic review to rule on.
+10. The write-up called review g1's findings deferred. Every one had closed
+    as a shipped fix before it landed. Fixed, `81882b900`.
+11. It put the post-change read on one account. gs-tra9's two pairs are on
+    accounts 2 and 3. Fixed, `81882b900`.
+12. It said the city's rules cover both things the key drops. gs-qrgd
+    showed that for the attribution only, and no instruction file restates
+    the git guidance's warning against interactive `-i` commands. Fixed,
+    `81882b900`.
+13. It said the reuse was unmeasured on engineer slots and to assume no
+    fleet-wide savings until it was. The pairs above were in the usage log
+    when it landed. It now states the hour limit and points here. Fixed,
+    `81882b900`.
+14. Not fixed. Reuse lasts about an hour from the predecessor's first
+    request, whatever it did after, so a respawn following a session longer
+    than that re-creates its whole prompt and account affinity buys it
+    nothing. A fix keeps the slot's prefix read inside the hour, which
+    changes what every city session sends and needs its own paired read.
+    For the epic review to rule on, beside finding 9.
