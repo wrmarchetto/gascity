@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
@@ -19,15 +20,39 @@ import (
 	"github.com/gastownhall/gascity/internal/mail/beadmail"
 )
 
-func TestPrependHookBeaconFollowsStablePrompt(t *testing.T) {
-	const prompt = "stable startup payload"
-	got := prependHookBeacon("gastown", "worker", prompt)
-	if !strings.HasPrefix(got, prompt) {
-		t.Fatalf("hook prompt = %q, want stable payload first", got)
-	}
-	if !strings.Contains(got, "[gastown] worker") {
-		t.Fatalf("hook prompt = %q, want beacon retained after payload", got)
-	}
+func TestHookBeaconLeavesTheStartupContextStable(t *testing.T) {
+	t.Run("the beacon follows the payload", func(t *testing.T) {
+		const prompt = "stable startup payload"
+		got := appendHookBeacon("gastown", "worker", prompt, false)
+		if !strings.HasPrefix(got, prompt) {
+			t.Fatalf("hook prompt = %q, want stable payload first", got)
+		}
+		if !strings.Contains(got, "[gastown] worker") {
+			t.Fatalf("hook prompt = %q, want beacon retained after payload", got)
+		}
+	})
+
+	// A managed SessionStart carries no prompt, so its whole output is the
+	// beacon: two spawns of one agent must emit the same bytes.
+	t.Run("a managed SessionStart carries no clock", func(t *testing.T) {
+		emit := func(at time.Time) string {
+			prev := primeHookBeaconNow
+			primeHookBeaconNow = func() time.Time { return at }
+			t.Cleanup(func() { primeHookBeaconNow = prev })
+			var out bytes.Buffer
+			writePrimePromptWithFormat(&out, io.Discard, "", "gastown", "worker",
+				"rendered prompt", true, "", true, "", nil)
+			return out.String()
+		}
+		first := emit(time.Date(2026, 10, 29, 7, 59, 6, 0, time.UTC))
+		second := emit(time.Date(2026, 10, 29, 16, 34, 59, 0, time.UTC))
+		if first != second {
+			t.Fatalf("managed SessionStart output varies with the clock:\n%q\n%q", first, second)
+		}
+		if !strings.Contains(first, "[gastown] worker") {
+			t.Fatalf("managed SessionStart output = %q, want the agent identity", first)
+		}
+	})
 }
 
 type primeHookFailWriter struct {

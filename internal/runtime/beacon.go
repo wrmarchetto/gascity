@@ -16,10 +16,16 @@ func FormatBeacon(cityName, agentName string, includePrimeInstruction bool) stri
 	return FormatBeaconAt(cityName, agentName, includePrimeInstruction, time.Now())
 }
 
+// FormatBeaconIdentity returns the beacon's stable half, [city-name]
+// agent-name, for context that must not vary between sessions of one agent.
+func FormatBeaconIdentity(cityName, agentName string) string {
+	return "[" + cityName + "] " + agentName
+}
+
 // FormatBeaconAt is like FormatBeacon but accepts an explicit time
 // for testability.
 func FormatBeaconAt(cityName, agentName string, includePrimeInstruction bool, t time.Time) string {
-	beacon := "[" + cityName + "] " + agentName + " \u2022 " + t.Format("2006-01-02T15:04:05")
+	beacon := FormatBeaconIdentity(cityName, agentName) + " \u2022 " + t.Format("2006-01-02T15:04:05")
 	if includePrimeInstruction {
 		beacon += "\n\nRun `gc prime` to initialize your context."
 	}
