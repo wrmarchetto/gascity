@@ -1,0 +1,86 @@
+# Proves gc usage pair orders its two sessions and refuses a pair it cannot
+# show is consecutive (cmd_usage_pair.go, through cmd_usage_pair_test.go).
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "gc usage pair orders the pair and proves it consecutive"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./cmd/gc/", "-count=1", "-run", "UsagePair"]
+timeout_s = 900
+
+[[mutation]]
+id = "unordered-pair-accepted"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''	if first.CreatedAt.IsZero() || second.CreatedAt.IsZero() || first.CreatedAt.Equal(second.CreatedAt) {'''
+replace = '''	if false {'''
+expect_output = ["TestBuildUsagePairReportRefusesAPairItCannotVouchFor/no_creation_time"]
+
+# Flipped, a reversed pair reads as the earlier session reusing the later's cache.
+[[mutation]]
+id = "argument-order-reported"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''	if later.CreatedAt.Before(earlier.CreatedAt) {'''
+replace = '''	if false {'''
+expect_output = ["TestBuildUsagePairReportPreservesAllFirstInvocationInputSides"]
+
+[[mutation]]
+id = "spawn-between-ignored"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''		if successor == nil || peer.CreatedAt.Before(successor.CreatedAt) {'''
+replace = '''		if false {'''
+expect_output = ["TestBuildUsagePairReportRefusesAPairItCannotVouchFor/a_spawn_between_them_on_the_pair's_root"]
+
+[[mutation]]
+id = "unplaced-spawn-between-skipped"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''		if peer.TranscriptRoot != "" && peer.TranscriptRoot != earlier.TranscriptRoot {'''
+replace = '''		if peer.TranscriptRoot != earlier.TranscriptRoot {'''
+expect_output = ["TestBuildUsagePairReportRefusesAPairItCannotVouchFor/a_spawn_between_them_on_an_unknown_root"]
+
+# Flipped, a spawn on another account, which shares no cache, refuses the pair.
+[[mutation]]
+id = "other-account-spawn-refuses"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''		if peer.TranscriptRoot != "" && peer.TranscriptRoot != earlier.TranscriptRoot {'''
+replace = '''		if false {'''
+expect_output = ["TestBuildUsagePairReportPreservesAllFirstInvocationInputSides"]
+
+[[mutation]]
+id = "spawn-outside-the-pair-refuses"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''			!peer.CreatedAt.After(earlier.CreatedAt) || !peer.CreatedAt.Before(later.CreatedAt) {'''
+replace = '''			false {'''
+expect_output = ["TestBuildUsagePairReportPreservesAllFirstInvocationInputSides"]
+
+[[mutation]]
+id = "listing-unbounded-by-the-pair"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''			!info.CreatedAt.After(lo) || !info.CreatedAt.Before(hi) {'''
+replace = '''			false {'''
+expect_output = ["TestUsagePairSlotPeersListsTheSlotsSpawnsBetweenThePair"]
+
+[[mutation]]
+id = "listing-ignores-the-slot"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''usagePairStableSlot(info) != a.Slot ||'''
+replace = '''false ||'''
+expect_output = ["TestUsagePairSlotPeersListsTheSlotsSpawnsBetweenThePair"]
+
+# Flipped, the closed sessions -- nearly every spawn between -- go unseen.
+[[mutation]]
+id = "listing-skips-closed-sessions"
+path = "cmd/gc/cmd_usage_pair.go"
+find = '''front.ListAll(sessionpkg.ListAllOptions{IncludeClosed: true})'''
+replace = '''front.ListAll(sessionpkg.ListAllOptions{IncludeClosed: false})'''
+expect_output = ["TestUsagePairSlotPeersListsTheSlotsSpawnsBetweenThePair"]
+
+[[mutation]]
+id = "schema-drops-created-at"
+path = "schemas/usage/pair/result.schema.json"
+find = '''          "created_at": {"type": "string", "format": "date-time"},
+'''
+replace = ''''''
+expect_output = ["all three must match"]
