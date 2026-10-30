@@ -204,9 +204,10 @@ to him, not beads.
 Conclusion: Five of six criteria met in the close reasons of gs-cm0w,
 gs-yvxt, gs-z2on, gs-arar and gs-saj5, the canary criterion dropped
 (gs-78op). Prefix hygiene missed its intent: the self-review's paired read
-(gs-5buj, finding 5) shows the rendered prompt re-created on a second
-same-slot spawn, so the cache reuse the epic predicted was not reached.
-Ruled unmet at review g1, carried by gs-qrgd (pm-log #170).
+(gs-5buj, finding 5) showed the rendered prompt re-created on a second
+same-slot spawn, ruled unmet at review g1 (pm-log #170). gs-qrgd then met it
+on one PM slot by switching off Claude Code's git-status block, with a new
+paired read in its close reason. Approval is the operator's (pm-log #188).
 
 ## epic:bead-cycle-time -- City bead cycle time: the non-development time to main
 

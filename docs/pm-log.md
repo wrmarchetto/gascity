@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-6p95 2026-10-29T23:37:00Z
+last_seen: ci-l0wsvs 2026-10-30T13:20:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -5976,3 +5976,28 @@ gascity/lab.engineer-1, and this summons. It is the last of the F01 to F17
 summonses still open.
 
 Source: pm-log #172
+
+## 188. ci-l0wsvs: agent-efficiency write-up landed at engdocs/epics (2026-10-30)
+
+City f3e1e2136 merged the gate fix from ci-pe8zqe, so the PM gate now
+admits engdocs/epics/<slug>.md behind this rig's docs/epics link. Landed
+the #170 write-up there, revised before landing: gs-qrgd closed after #170
+was written, with a paired read showing the rendered prompt served from
+cache on a same-slot same-account respawn once Claude Code's git-status
+block was switched off (city d224675ac). The "not reached" and "follow-up
+open" passages were stale, so what was found, where it ended and the
+references now say what gs-qrgd measured, its bounds (one PM slot, no
+engineer-slot pair, nothing pins the setting), and that approval is the
+operator's. The roadmap Conclusion was corrected the same way. The status
+line is unchanged: gascity is gated, and the operator's question on this
+epic is open with the liaison. parse_epic_summary/summary_defects report
+no defects.
+
+gs-fq9d was the rig-store duplicate of this bead, already closed by the
+mayor.
+
+Rig store since last_seen: gs-gln1 and gs-sodh closed, gs-d690 closed,
+gs-6p95 closed (#187), gs-fq9d closed as duplicate, and F03 to F17 deferred
+findings closed.
+
+Source: pm-log #170
