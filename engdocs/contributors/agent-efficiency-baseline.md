@@ -232,8 +232,12 @@ median first-invocation read being 40% of the same session's own maximum is also
 not evidence: a session's cache grows as its conversation extends, so the ratio
 would look like that with the prefix perfectly reused.
 
-Criterion 2's stated measurement -- a second consecutive spawn of the same agent
-slot on the same account -- is the one that separates those cases, and no pair
-of that shape can be isolated from this window's records. The figure above is
-recorded so the comparison has a before, not so the question is treated as
-answered.
+Criterion 2's pair -- a second consecutive spawn of the same agent slot on the
+same account -- separates those cases only through its cache-creation figure and
+the request segment where the two spawns diverge. A nonzero read on the pair
+does not: the pre-change pair in `docs/self-review/agent-efficiency.md` finding
+5 read nonzero on both spawns while the second re-created the rendered prompt.
+`gc usage pair` reports the creation/read split, and the divergence is read from
+the transcripts' request records. No pair of that shape can be isolated from
+this window's records. The figure above is recorded so the comparison has a
+before, not so the question is treated as answered.
