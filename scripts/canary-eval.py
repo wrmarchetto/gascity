@@ -185,18 +185,27 @@ def load_usage(path):
 
 
 def load_beads(paths):
-    """Concatenate several bd list --json dumps, keeping only work beads.
+    """Concatenate bd list --json dumps, one per rig store, keeping work beads.
 
-    Several paths because a bead store is per rig and `bd` is scoped by working
-    directory: a fleet-wide reading is the union of every rig's store, and one
-    store's dump silently answers for one rig alone.
+    A fleet-wide reading is the union of every rig's store, since `bd` is
+    scoped by directory. Returns (beads, errors), one error per id read twice.
     """
-    out = []
+    out, errors, seen = [], [], {}
     for path in paths or []:
         for bead in (load_json(path) or []):
-            if is_work_bead(bead):
-                out.append(bead)
-    return out
+            if not is_work_bead(bead):
+                continue
+            # Refused, not de-duplicated: a store passed twice is usually
+            # another rig's store not passed at all.
+            bead_id = bead.get("id")
+            if bead_id in seen:
+                errors.append(f"bead {bead_id!r} is in {seen[bead_id]} and again "
+                              f"in {path}; pass each rig's dump once")
+                continue
+            if bead_id is not None:
+                seen[bead_id] = path
+            out.append(bead)
+    return out, errors
 
 
 class Sample:
@@ -467,8 +476,13 @@ def main(argv=None):
 
     baseline_usage = load_usage(args.baseline_usage)
     window_usage = load_usage(args.window_usage)
-    baseline_beads = load_beads(args.baseline_beads)
-    window_beads = load_beads(args.window_beads)
+    baseline_beads, baseline_errors = load_beads(args.baseline_beads)
+    window_beads, window_errors = load_beads(args.window_beads)
+    for side, side_errors in (("baseline", baseline_errors), ("window", window_errors)):
+        for error in side_errors:
+            print(f"canary-eval: --{side}-beads: {error}", file=sys.stderr)
+    if baseline_errors or window_errors:
+        return EXIT_USAGE
 
     rows = []
     reverts, voids = [], []

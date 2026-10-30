@@ -383,6 +383,31 @@ find = '''    def error(self, message):'''
 replace = '''    def unused_error(self, message):'''
 expect_output = ["TestCanaryAMalformedCommandLineIsAUsageErrorNotARevert/no_criteria"]
 
+# Flipped, a bead dump passed twice splits each session's cost over copies.
+[[mutation]]
+id = "duplicate-beads-counted"
+path = "scripts/canary-eval.py"
+find = '''            if bead_id in seen:'''
+replace = '''            if False:'''
+expect_output = ["TestCanaryASessionHoldingSeveralBeadsSplitsItsCost/the_same_dump_twice"]
+
+[[mutation]]
+id = "baseline-duplicates-ignored"
+path = "scripts/canary-eval.py"
+find = '''    if baseline_errors or window_errors:'''
+replace = '''    if window_errors:'''
+expect_output = ["TestCanaryASessionHoldingSeveralBeadsSplitsItsCost/a_baseline_bead_twice"]
+
+# Flipped, the duplicate is reported and the reading is judged anyway.
+[[mutation]]
+id = "duplicates-printed-but-judged"
+path = "scripts/canary-eval.py"
+find = '''    if baseline_errors or window_errors:
+        return EXIT_USAGE'''
+replace = '''    if False:
+        return EXIT_USAGE'''
+expect_output = ["TestCanaryASessionHoldingSeveralBeadsSplitsItsCost/two_dumps_sharing_a_bead"]
+
 # Flipped, --zon is quietly read as --zone.
 [[mutation]]
 id = "abbreviated-flags-accepted"
