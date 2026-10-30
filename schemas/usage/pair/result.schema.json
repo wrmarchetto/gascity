@@ -16,10 +16,11 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["session_id", "transcript_path", "uncached_tokens", "cache_read_tokens", "cache_creation_tokens"],
+        "required": ["session_id", "transcript_path", "created_at", "uncached_tokens", "cache_read_tokens", "cache_creation_tokens"],
         "properties": {
           "session_id": {"type": "string", "minLength": 1},
           "transcript_path": {"type": "string", "minLength": 1},
+          "created_at": {"type": "string", "format": "date-time"},
           "uncached_tokens": {"type": "integer", "minimum": 0},
           "cache_read_tokens": {"type": "integer", "minimum": 0},
           "cache_creation_tokens": {"type": "integer", "minimum": 0}

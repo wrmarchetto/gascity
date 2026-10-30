@@ -4945,8 +4945,10 @@ gc usage --by bead --since 168h --json
 Report uncached, cache-read, and cache-creation input tokens from the first invocation of two sessions.
 
 The command refuses a pair unless the two records resolve to the same stable
-agent slot and the same configured transcript-root account. It reports those
-observations without declaring whether the pair passed a cache experiment.
+agent slot and the same configured transcript-root account, and unless no other
+spawn of that slot on that account was created between them. It reports the
+earlier session first, with each creation time, whatever the argument order,
+and without declaring whether the pair passed a cache experiment.
 
 ```
 gc usage pair <first-session> <second-session> [flags]
