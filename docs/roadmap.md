@@ -134,7 +134,8 @@ change. Remaining evidence: gs-wnn (Socket Mode ingress), gs-a9bm/gs-msc2
 
 ## epic:agent-efficiency -- Agent session efficiency: time and usage headroom
 
-status: in-progress
+status: done
+Review: ci-rv15a377628c08/001
 
 Make the agent fleet cheaper in the two currencies that actually bind this
 city: wall-clock time and usage-window headroom. The city runs on Claude
