@@ -128,6 +128,7 @@ func runCanaryEval(t *testing.T, f canaryFixture) canaryResult {
 		"--window-usage", windowUsage,
 		"--baseline-beads", baselineBeads,
 		"--window-beads", windowBeads,
+		"--zone", "America/Chicago",
 	}
 	args = append(args, f.extraArguments...)
 	cmd := exec.Command("python3", args...) //nolint:gosec // fixed script path under the repo
@@ -553,40 +554,60 @@ func TestCanaryMachineryBeadsAreNotUnitsOfWork(t *testing.T) {
 	}
 }
 
-// TestCanaryDayFloorCountsLocalDaysNotUTCDays pins the timezone the day floor
-// counts in.
-//
-// The two window beads close at 02:00Z and 18:00Z on the same UTC date, which
-// is two different local dates in -05:00 -- the zone the baseline document
-// states its window in. A floor of 2 is therefore satisfied by local
-// bucketing and starved by UTC bucketing, and nothing else in this suite can
-// tell the two apart: every other fixture closes beads at 18:00Z, where the
-// two calendars agree.
+// TestCanaryDayFloorCountsLocalDaysNotUTCDays: each case closes two window
+// beads on one date of a wrong calendar -- UTC, or a fixed -05:00 across the
+// DST change -- and two local dates in the named zone, so a floor of 2 passes
+// only under local bucketing. Every other fixture closes at 18:00Z.
 func TestCanaryDayFloorCountsLocalDaysNotUTCDays(t *testing.T) {
 	criteria := strings.Replace(oneSubjectCriteria,
 		"min_beads = 5\nmin_days = 3", "min_beads = 2\nmin_days = 2", 1)
-	var baseSess, winSess []canarySession
+	var baseSess []canarySession
 	baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
 
-	winBeads := []canaryBead{}
-	for i, at := range []string{"2026-09-05T02:00:00Z", "2026-09-05T18:00:00Z"} {
-		sess := fmt.Sprintf("win-s%d", i)
-		winSess = append(winSess, canarySession{
-			Key: sess, AgentTypes: []string{"alpha"},
-			Invocations: 20, OutputToks: 20000, CacheRead: 2000000,
-		})
-		winBeads = append(winBeads, canaryBead{
-			ID: fmt.Sprintf("win-b%d", i), IssueType: "task", ClosedAt: at,
-			Metadata: map[string]string{"gc.session_id": sess, "gc.outcome": "pass"},
+	for _, tc := range []struct {
+		name     string
+		closedAt []string
+	}{
+		{"one UTC date", []string{"2026-09-05T02:00:00Z", "2026-09-05T18:00:00Z"}},
+		// 05:30Z is 23:30 on 11-01 in CST, and 00:30 on 11-02 at -05:00.
+		{"across the DST change", []string{"2026-11-02T05:30:00Z", "2026-11-02T18:00:00Z"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var winSess []canarySession
+			winBeads := []canaryBead{}
+			for i, at := range tc.closedAt {
+				sess := fmt.Sprintf("win-s%d", i)
+				winSess = append(winSess, canarySession{
+					Key: sess, AgentTypes: []string{"alpha"},
+					Invocations: 20, OutputToks: 20000, CacheRead: 2000000,
+				})
+				winBeads = append(winBeads, canaryBead{
+					ID: fmt.Sprintf("win-b%d", i), IssueType: "task", ClosedAt: at,
+					Metadata: map[string]string{"gc.session_id": sess, "gc.outcome": "pass"},
+				})
+			}
+			got := runCanaryEval(t, canaryFixture{
+				criteria: criteria, baselineUsage: baseSess, windowUsage: winSess,
+				baselineBeads: baseBeads, windowBeads: winBeads,
+			})
+			if got.exit != canaryExitKeep {
+				t.Fatalf("exit = %d, want %d (keep); the day floor did not count local "+
+					"days\nstdout:\n%s", got.exit, canaryExitKeep, got.stdout)
+			}
 		})
 	}
-	got := runCanaryEval(t, canaryFixture{
-		criteria: criteria, baselineUsage: baseSess, windowUsage: winSess,
-		baselineBeads: baseBeads, windowBeads: winBeads,
-	})
-	if got.exit != canaryExitKeep {
-		t.Fatalf("exit = %d, want %d (keep); the day floor did not count local "+
-			"days\nstdout:\n%s", got.exit, canaryExitKeep, got.stdout)
+
+	for _, zone := range []string{"", "Mars/Olympus", "-05:00"} {
+		got := runCanaryEval(t, canaryFixture{
+			criteria: criteria, baselineUsage: baseSess, windowUsage: baseSess,
+			baselineBeads: baseBeads, windowBeads: baseBeads,
+			extraArguments: []string{"--zone=" + zone},
+		})
+		if got.exit != canaryExitUsage || !strings.Contains(got.stderr, "names no IANA zone") ||
+			strings.Contains(got.stderr, "Traceback") {
+			t.Fatalf("--zone=%q: exit = %d, want %d and a refusal naming the zone\nstderr:\n%s",
+				zone, got.exit, canaryExitUsage, got.stderr)
+		}
 	}
 }
 
@@ -1110,4 +1131,8 @@ func TestCanaryJSONReportCarriesEveryRowTheTableDoes(t *testing.T) {
 			t.Fatalf("json rows omit %q: %s", want, got.stdout)
 		}
 	}
+}
+
+func TestCanaryFetchLeavesAWholeReadingOrNone(t *testing.T) {
+	runShellSuite(t, "canary-fetch.test.sh")
 }

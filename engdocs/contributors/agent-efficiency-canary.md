@@ -56,6 +56,11 @@ python3 scripts/canary-eval.py \
   --window-beads   /tmp/canary/window-beads-dart.json
 ```
 
+Those are the commands as they were run. The current evaluator also requires
+`--zone America/Chicago`, the zone whose local days the floors count, and
+refuses an offset in its place. The current fetch refuses an `--out` that is
+not empty, and leaves no file at all when any call fails.
+
 Exit 0 keeps the levels, 2 names the agents to revert, 3 means the run could
 not separate the regimes and nothing may be concluded from it.
 
