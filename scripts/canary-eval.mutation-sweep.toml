@@ -487,3 +487,79 @@ path = "scripts/canary-eval.py"
 find = '''        allow_abbrev=False)'''
 replace = '''        allow_abbrev=True)'''
 expect_output = ["TestCanaryAMalformedCommandLineIsAUsageErrorNotARevert/a_unique_prefix"]
+
+# --- the verdict lines, which the table cannot stand in for ---
+
+# The table prints every row's name, so only the REVERT line says whom.
+[[mutation]]
+id = "revert-line-never-printed"
+path = "scripts/canary-eval.py"
+find = '''        print(f"  REVERT {agent} to its pre-epic level")'''
+replace = '''        pass'''
+expect_output = ["TestCanaryRevertFiresWhenASubjectCrossesItsLine"]
+
+# Exit 2 either way, and only the second crossed subject left to revert.
+[[mutation]]
+id = "only-the-last-crossed-subject-is-named"
+path = "scripts/canary-eval.py"
+find = '''                reverts.append(agent_type)'''
+replace = '''                reverts[:] = [agent_type]'''
+expect_output = ["TestCanaryEveryCrossedSubjectIsNamedNotJustTheFirst"]
+
+[[mutation]]
+id = "void-line-never-printed"
+path = "scripts/canary-eval.py"
+find = '''        print(f"  NO VERDICT {note}")'''
+replace = '''        pass'''
+expect_output = ["TestCanaryAMovedControlVoidsTheRunInsteadOfRevertingASubject/crossed"]
+
+# --- the filters and keys a fixture has to make visible ---
+
+# Another actor's passes thin the rate below its line.
+[[mutation]]
+id = "author-filter-ignored"
+path = "scripts/canary-eval.py"
+find = '''        if bead.get("created_by") != author:'''
+replace = '''        if False:'''
+expect_output = ["TestCanaryAuthorFailRateJudgesAuthoredBeadsNotSessionCost"]
+
+# Mail naming a real session joins the per-bead denominator.
+[[mutation]]
+id = "issue-type-filter-removed"
+path = "scripts/canary-eval.py"
+find = '''    if (bead.get("issue_type") or "") not in WORK_BEAD_TYPES:'''
+replace = '''    if False:'''
+expect_output = ["TestCanaryMachineryBeadsAreNotUnitsOfWork"]
+
+# Flipped, a 10% rise voids a row whose witness_margin is 20%.
+[[mutation]]
+id = "witness-fires-on-any-rise"
+path = "scripts/canary-eval.py"
+find = '''win_opi > base_opi * (1.0 + witness_margin)'''
+replace = '''win_opi > base_opi'''
+expect_output = ["TestCanaryAWitnessGoingTheWrongWayVoidsTheRow/a_rise_inside_its_witness_margin"]
+
+# A control that could not be measured cannot say the fleet held.
+[[mutation]]
+id = "control-only-voids-when-crossed"
+path = "scripts/canary-eval.py"
+find = '''            if state != "inside":
+                voids.append(f"{agent_type}: control {state} ({detail})")'''
+replace = '''            if state == "crossed":
+                voids.append(f"{agent_type}: control {state} ({detail})")'''
+expect_output = ["TestCanaryAMovedControlVoidsTheRunInsteadOfRevertingASubject/under_its_window_floor"]
+
+# An authored rate's baseline twin is min_baseline_verdicts.
+[[mutation]]
+id = "baseline-verdict-floor-key-ignored"
+path = "scripts/canary-eval.py"
+find = '''    baseline_floor = int(spec.get("min_baseline_" + floor_key[4:], floor))'''
+replace = '''    baseline_floor = int(spec.get("min_baseline_beads", floor))'''
+expect_output = ["authored rate, min_baseline_verdicts"]
+
+[[mutation]]
+id = "baseline-span-reports-window-figure"
+path = "scripts/canary-eval.py"
+find = '''            "baseline_span_seconds_per_bead": baseline.span_seconds_per_bead,'''
+replace = '''            "baseline_span_seconds_per_bead": window.span_seconds_per_bead,'''
+expect_output = ["TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric"]
