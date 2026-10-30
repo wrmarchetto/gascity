@@ -70,9 +70,27 @@ expect_output = ["TestCanaryARowUnderItsDayFloorIsNoVerdictNotAPass"]
 [[mutation]]
 id = "witness-never-checked"
 path = "scripts/canary-eval.py"
-find = '''    if spec.get("witness") == "output_per_invocation_not_up":'''
+find = '''    if witness == "output_per_invocation_not_up":'''
 replace = '''    if False:'''
 expect_output = ["TestCanaryAWitnessGoingTheWrongWayVoidsTheRow"]
+
+# The witness's own margin. Flipped back to the metric margin, a rate row's
+# 1.05 lets output per invocation double before the row voids.
+[[mutation]]
+id = "witness-reuses-the-metric-margin"
+path = "scripts/canary-eval.py"
+find = '''float(spec["witness_margin"])'''
+replace = '''margin'''
+expect_output = ["TestCanaryAnAuthoredRateRowStillGetsAWitness/a_doubled_output_voids_against_its_own_margin"]
+
+# A witnessed row that states no witness_margin. Flipped, the refusal is gone
+# and the row reaches the margin read without one.
+[[mutation]]
+id = "witness-without-its-own-margin-accepted"
+path = "scripts/canary-eval.py"
+find = '''    if witness == "output_per_invocation_not_up" and "witness_margin" not in spec:'''
+replace = '''    if False:'''
+expect_output = ["TestCanaryAnAuthoredRateRowStillGetsAWitness/a_witness_with_no_margin_of_its_own_is_refused"]
 
 # The witness for a row judged on what it AUTHORED. Flipped back to the bead
 # join, it is silently absent for exactly that row -- the agent that closes no
@@ -154,10 +172,46 @@ expect_output = ["TestCanaryDayFloorCountsLocalDaysNotUTCDays"]
 id = "unrecorded-outcome-counts-as-a-verdict"
 path = "scripts/canary-eval.py"
 find = '''        if outcome is None:
-            continue
-        sample.verdicts += 1'''
-replace = '''        sample.verdicts += 1'''
-expect_output = ["TestCanaryABeadWithNoRecordedOutcomeIsNotAPass"]
+            continue'''
+replace = '''        if outcome is None:
+            outcome = "pass"'''
+expect_output = ["TestCanaryABeadWithNoRecordedVerdictIsNotAPass/no_outcome"]
+
+# Only pass and fail are verdicts. Flipped, a canceled or skipped bead is a
+# pass in the denominator and dilutes the rate the same way.
+[[mutation]]
+id = "non-verdict-outcome-counts-toward-the-rate"
+path = "scripts/canary-eval.py"
+find = '''        if outcome not in VERDICT_OUTCOMES:'''
+replace = '''        if outcome not in VERDICT_OUTCOMES and False:'''
+expect_output = ["TestCanaryABeadWithNoRecordedVerdictIsNotAPass/canceled"]
+
+# Flipped, a day holding only canceled beads satisfies the day floor.
+[[mutation]]
+id = "non-verdict-outcome-covers-a-day"
+path = "scripts/canary-eval.py"
+find = '''            sample.other_outcomes[outcome] += 1'''
+replace = '''            sample.other_outcomes[outcome] += 1
+            sample.days.add(local_day(bead.get("closed_at")))'''
+expect_output = ["TestCanaryABeadWithNoRecordedVerdictIsNotAPass/a_day_of_only_canceled_beads_covers_no_day"]
+
+# Non-verdict outcomes are reported beside the rate. Flipped, they vanish
+# from the report and a rate read off canceled work looks complete.
+[[mutation]]
+id = "non-verdict-outcomes-not-reported"
+path = "scripts/canary-eval.py"
+find = '''    return ", ".join(f"{name} {n}" for name, n in sorted(counts.items()))'''
+replace = '''    return "-"'''
+expect_output = ["TestCanaryABeadWithNoRecordedVerdictIsNotAPass/canceled"]
+
+# A relative margin over a zero baseline puts the line at zero. Flipped, one
+# failure in the window reverts a seat whose baseline was clean.
+[[mutation]]
+id = "zero-baseline-draws-a-line"
+path = "scripts/canary-eval.py"
+find = '''    if base_value == 0:'''
+replace = '''    if False:'''
+expect_output = ["TestCanaryAnAuthoredRateWithNoDrawableLineIsNoVerdict/baseline_with_no_failures"]
 
 # Every crossed subject is named, not just the first. A revert decision is per
 # agent, so a report that stopped at the first crossing would leave a level

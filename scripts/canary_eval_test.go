@@ -53,6 +53,9 @@ const (
 	canaryExitNoVerdict = 3
 )
 
+// canaryExitUsage is a refusal of the criteria file, with nothing on stdout.
+const canaryExitUsage = 1
+
 // canarySession is one row of a gc usage --by session --json report, reduced
 // to the fields the evaluator reads. Written as a struct rather than a raw
 // JSON string so a field rename in the fixture cannot silently stop matching.
@@ -141,10 +144,10 @@ func runCanaryEval(t *testing.T, f canaryFixture) canaryResult {
 		}
 		exit = ee.ExitCode()
 	}
-	// An interpreter that could not open the script exits 2, which is also the
-	// evaluator's revert code. Without this guard a deleted or renamed script
-	// would hand a silent pass to every test that asserts only on exit 2.
-	if strings.TrimSpace(out.String()) == "" {
+	// An interpreter that could not open the script exits 2, the revert code,
+	// so empty stdout fails here. A refusal prints to stderr alone and exits 1,
+	// as a traceback does, so a test expecting one asserts on its text.
+	if strings.TrimSpace(out.String()) == "" && exit != canaryExitUsage {
 		t.Fatalf("canary-eval.py produced no stdout (exit %d); stderr:\n%s",
 			exit, errBuf.String())
 	}
@@ -191,6 +194,7 @@ margin = 0.20
 min_beads = 5
 min_days = 3
 witness = "output_per_invocation_not_up"
+witness_margin = 0.20
 `
 
 // TestCanaryRevertFiresWhenASubjectCrossesItsLine pins the tool's whole
@@ -279,6 +283,7 @@ margin = 0.20
 min_beads = 5
 min_days = 3
 witness = "output_per_invocation_not_up"
+witness_margin = 0.20
 
 [[agent]]
 type = "ctl"
@@ -673,12 +678,9 @@ func TestCanaryAuthorFailRateJudgesAuthoredBeadsNotSessionCost(t *testing.T) {
 	}
 }
 
-// TestCanaryAuthorFailRateUnderItsVerdictFloorIsNoVerdict starves the same
-// metric. A fail rate over a handful of verdicts is binomial noise: the
-// baseline rate measured for this city moved between 0% and 12.5% across
-// single days at n around 40, so a rule that answered at n=6 would answer
-// from nothing.
-func TestCanaryAuthorFailRateUnderItsVerdictFloorIsNoVerdict(t *testing.T) {
+// TestCanaryAnAuthoredRateWithNoDrawableLineIsNoVerdict covers a window of
+// too few verdicts, and a zero baseline, whose relative line sits at zero.
+func TestCanaryAnAuthoredRateWithNoDrawableLineIsNoVerdict(t *testing.T) {
 	mk := func(prefix string, n, fails int) []canaryBead {
 		out := make([]canaryBead, 0, n)
 		for i := 0; i < n; i++ {
@@ -695,31 +697,38 @@ func TestCanaryAuthorFailRateUnderItsVerdictFloorIsNoVerdict(t *testing.T) {
 		}
 		return out
 	}
-	got := runCanaryEval(t, canaryFixture{
-		criteria:      authorCriteria,
-		baselineBeads: mk("base", 20, 2),
-		windowBeads:   mk("win", 6, 3),
-	})
-	if got.exit != canaryExitNoVerdict {
-		t.Fatalf("exit = %d, want %d (no verdict)\nstdout:\n%s",
-			got.exit, canaryExitNoVerdict, got.stdout)
+	for _, tc := range []struct {
+		name      string
+		baseline  []canaryBead
+		window    []canaryBead
+		wantState string
+	}{
+		{"window under its verdict floor", mk("base", 20, 2), mk("win", 6, 3), "insufficient"},
+		{"baseline with no failures", mk("base", 20, 0), mk("win", 20, 1), "no-baseline"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runCanaryEval(t, canaryFixture{
+				criteria:      authorCriteria,
+				baselineBeads: tc.baseline,
+				windowBeads:   tc.window,
+			})
+			if got.exit != canaryExitNoVerdict {
+				t.Fatalf("exit = %d, want %d (no verdict)\nstdout:\n%s",
+					got.exit, canaryExitNoVerdict, got.stdout)
+			}
+			if !strings.Contains(got.stdout, "NO VERDICT alpha: "+tc.wantState) {
+				t.Fatalf("void is not reported as %s:\n%s", tc.wantState, got.stdout)
+			}
+		})
 	}
 }
 
-// TestCanaryABeadWithNoRecordedOutcomeIsNotAPass pads the window with
-// authored beads that closed without any gc.outcome at all.
-//
-// This is the majority case, not an edge: 581 of the 1,153 work beads in the
-// gs-cm0w baseline window carry no outcome, and 72 of the 315 the planner
-// authored are in that state. Counting them as verdicts would put them in the
-// denominator as passes, so the measured rate would fall whenever outcome
-// recording slipped -- and slipping recording would read as the planner
-// improving. The fixture holds a genuine 25% window rate that only survives
-// if unrecorded beads stay out of the count entirely: fold them in and the
-// same failures read as 8.3%, comfortably inside the line.
-func TestCanaryABeadWithNoRecordedOutcomeIsNotAPass(t *testing.T) {
-	mk := func(prefix string, n, fails, unrecorded int) []canaryBead {
-		out := make([]canaryBead, 0, n+unrecorded)
+// TestCanaryABeadWithNoRecordedVerdictIsNotAPass pads the window with beads
+// that closed on no outcome or a non-verdict one. Only pass and fail may
+// enter the rate or the day floor, and the others are reported beside it.
+func TestCanaryABeadWithNoRecordedVerdictIsNotAPass(t *testing.T) {
+	mk := func(prefix string, n, fails, verdictDays int, pad string, padN int) []canaryBead {
+		out := make([]canaryBead, 0, n+padN)
 		for i := 0; i < n; i++ {
 			outcome := "pass"
 			if i < fails {
@@ -727,45 +736,68 @@ func TestCanaryABeadWithNoRecordedOutcomeIsNotAPass(t *testing.T) {
 			}
 			out = append(out, canaryBead{
 				ID: fmt.Sprintf("%s-b%d", prefix, i), IssueType: "task",
-				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
+				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%verdictDays)),
 				CreatedBy: "alpha",
 				Metadata:  map[string]string{"gc.outcome": outcome},
 			})
 		}
-		for i := 0; i < unrecorded; i++ {
+		for i := 0; i < padN; i++ {
+			meta := map[string]string{}
+			if pad != "" {
+				meta["gc.outcome"] = pad
+			}
 			out = append(out, canaryBead{
 				ID: fmt.Sprintf("%s-u%d", prefix, i), IssueType: "task",
 				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
 				CreatedBy: "alpha",
-				Metadata:  map[string]string{},
+				Metadata:  meta,
 			})
 		}
 		return out
 	}
-	got := runCanaryEval(t, canaryFixture{
-		criteria:      authorCriteria,
-		baselineBeads: mk("base", 20, 2, 0),
-		windowBeads:   mk("win", 20, 5, 40),
-	})
-	if got.exit != canaryExitRevert {
-		t.Fatalf("exit = %d, want %d (revert); beads that closed with no "+
-			"recorded outcome were counted as passes\nstdout:\n%s",
-			got.exit, canaryExitRevert, got.stdout)
+	// 5 fails in 20 is 25% against a 17.5% line. Forty padding beads folded
+	// in as passes read 8.3%, inside it.
+	for _, tc := range []struct {
+		name        string
+		pad         string
+		verdictDays int
+		want        int
+		reported    string
+	}{
+		{"no outcome", "", 4, canaryExitRevert, "outside the rate: - -> -"},
+		{"canceled", "canceled", 4, canaryExitRevert, "canceled 40"},
+		{"skipped", "skipped", 4, canaryExitRevert, "skipped 40"},
+		{"missing_root", "missing_root", 4, canaryExitRevert, "missing_root 40"},
+		{
+			"a day of only canceled beads covers no day", "canceled", 1,
+			canaryExitNoVerdict, "covered 1 local days",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runCanaryEval(t, canaryFixture{
+				criteria:      authorCriteria,
+				baselineBeads: mk("base", 20, 2, 4, "", 0),
+				windowBeads:   mk("win", 20, 5, tc.verdictDays, tc.pad, 40),
+			})
+			if got.exit != tc.want {
+				t.Fatalf("exit = %d, want %d; beads closed with no verdict "+
+					"entered the rate or the day floor\nstdout:\n%s",
+					got.exit, tc.want, got.stdout)
+			}
+			if !strings.Contains(got.stdout, tc.reported) {
+				t.Fatalf("report does not carry %q:\n%s", tc.reported, got.stdout)
+			}
+		})
 	}
 }
 
-// TestCanaryAnAuthoredRateRowStillGetsAWitness closes the gap that the
-// witness had while it was read off the bead join.
-//
-// The agent judged on what it authored closes no beads of its own, so a
-// witness taken from the join is silently absent for it -- and that is the row
-// whose level change carries the most risk, because a planner still running
-// the old level would produce a clean-looking authored-fail rate under the new
-// window's name. The witness therefore comes from the agent's whole recorded
-// usage, which exists whether or not it ever claimed a bead. Here the authored
-// rate is flat and only the witness is wrong.
+// TestCanaryAnAuthoredRateRowStillGetsAWitness reads the witness off the
+// agent's whole usage, since an authoring agent closes no beads, and against
+// a witness_margin of its own: the planner's 1.05 rate margin, reused, let
+// output per invocation double unseen.
 func TestCanaryAnAuthoredRateRowStillGetsAWitness(t *testing.T) {
-	criteria := strings.Replace(authorCriteria,
+	witnessed := strings.Replace(authorCriteria, "margin = 0.75", "margin = 1.05", 1)
+	witnessed = strings.Replace(witnessed,
 		`witness = "none"`, `witness = "output_per_invocation_not_up"`, 1)
 	mk := func(prefix string, n, fails int) []canaryBead {
 		out := make([]canaryBead, 0, n)
@@ -783,23 +815,41 @@ func TestCanaryAnAuthoredRateRowStillGetsAWitness(t *testing.T) {
 		}
 		return out
 	}
-	got := runCanaryEval(t, canaryFixture{
-		criteria: criteria,
-		baselineUsage: []canarySession{{
-			Key: "base-s0", AgentTypes: []string{"alpha"},
-			Invocations: 100, OutputToks: 100000,
-		}},
-		windowUsage: []canarySession{{
-			Key: "win-s0", AgentTypes: []string{"alpha"},
-			Invocations: 100, OutputToks: 400000,
-		}},
-		baselineBeads: mk("base", 20, 2),
-		windowBeads:   mk("win", 20, 2),
-	})
-	if got.exit != canaryExitNoVerdict {
-		t.Fatalf("exit = %d, want %d (no verdict); an authored-rate row was "+
-			"judged with no witness\nstdout:\n%s", got.exit, canaryExitNoVerdict, got.stdout)
+	run := func(criteria string) canaryResult {
+		return runCanaryEval(t, canaryFixture{
+			criteria: criteria,
+			baselineUsage: []canarySession{{
+				Key: "base-s0", AgentTypes: []string{"alpha"},
+				Invocations: 100, OutputToks: 100000,
+			}},
+			windowUsage: []canarySession{{
+				Key: "win-s0", AgentTypes: []string{"alpha"},
+				Invocations: 100, OutputToks: 200000,
+			}},
+			baselineBeads: mk("base", 20, 2),
+			windowBeads:   mk("win", 20, 2),
+		})
 	}
+
+	t.Run("a doubled output voids against its own margin", func(t *testing.T) {
+		got := run(witnessed + "witness_margin = 0.20\n")
+		if got.exit != canaryExitNoVerdict {
+			t.Fatalf("exit = %d, want %d (no verdict); an authored-rate row was "+
+				"judged with no witness\nstdout:\n%s",
+				got.exit, canaryExitNoVerdict, got.stdout)
+		}
+	})
+	t.Run("a witness with no margin of its own is refused", func(t *testing.T) {
+		got := run(witnessed)
+		if got.exit != canaryExitUsage ||
+			!strings.Contains(got.stderr, "row 'alpha'") ||
+			!strings.Contains(got.stderr, "no witness_margin") ||
+			strings.Contains(got.stderr, "Traceback") {
+			t.Fatalf("exit = %d, want %d with a refusal naming the row\n"+
+				"stdout:\n%s\nstderr:\n%s",
+				got.exit, canaryExitUsage, got.stdout, got.stderr)
+		}
+	})
 }
 
 // TestCanaryEveryCrossedSubjectIsNamedNotJustTheFirst matters because the
