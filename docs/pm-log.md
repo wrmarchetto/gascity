@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ueld 2026-10-30T14:45:58Z
+last_seen: gs-fxx4 2026-10-30T14:49:51Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6040,3 +6040,16 @@ Rig store since last_seen: gs-t6uu closed, gs-fxx4 filed, and this
 summons.
 
 Source: roadmap bead-cycle-time
+
+## 191. Summons gs-fxx4: agent-efficiency closed on its approved review (2026-10-30)
+
+Ran `gc city epic-review close gascity agent-efficiency` as the summons
+names. It validated approval ci-rv15a377628c08/001 against main and made
+bookkeeping commit 90146bb95: `status: done` and the `Review:` line. The
+Conclusion and the engdocs/epics write-up were already in place from #188.
+No promotion and no DECOMP: bead-cycle-time is still in-progress, waiting
+on ci-cj9utx (#190), and no epic has `status: open` (#166).
+
+Rig store since last_seen: gs-ueld closed (#190), and this summons.
+
+Source: pm-log #190
