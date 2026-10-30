@@ -1,9 +1,7 @@
 package events
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,25 +71,8 @@ func readFilteredTrackedContext(ctx context.Context, path string, filter Filter)
 	}
 	defer f.Close() //nolint:errcheck // read-only file
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // handle lines up to 1MB
-	for scanner.Scan() {
-		var e Event
-		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil {
-			continue // skip malformed lines
-		}
-		if !matchesFilter(e, filter) {
-			continue
-		}
-		result = append(result, e)
-		if limitReached(len(result), filter) {
-			break
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return result, listed, fmt.Errorf("scanning events: %w", err)
-	}
-	return result, listed, nil
+	result, err = scanActiveFiltered(f, filter, result)
+	return result, listed, err
 }
 
 // ReadFilteredWithInFlightContext is ReadFilteredWithInFlight but propagates
