@@ -852,6 +852,107 @@ func TestCanaryAnAuthoredRateRowStillGetsAWitness(t *testing.T) {
 	})
 }
 
+// TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser runs each malformation
+// over a window whose correct verdict is revert, so a rule that fell back to a
+// default reads keep or revert instead of the exit-1 refusal.
+func TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser(t *testing.T) {
+	var baseSess, winSess []canarySession
+	baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
+	winBeads := canaryBeads("win", 6, 3, 40, "alpha", &winSess)
+	run := func(criteria string) canaryResult {
+		return runCanaryEval(t, canaryFixture{
+			criteria: criteria, baselineUsage: baseSess, windowUsage: winSess,
+			baselineBeads: baseBeads, windowBeads: winBeads,
+		})
+	}
+	if got := run(oneSubjectCriteria); got.exit != canaryExitRevert {
+		t.Fatalf("well-formed criteria: exit = %d, want %d, so no case below can "+
+			"tell a refusal from a misreading\nstdout:\n%s\nstderr:\n%s",
+			got.exit, canaryExitRevert, got.stdout, got.stderr)
+	}
+
+	for _, tc := range []struct {
+		name, find, replace string
+		want                []string
+	}{
+		{
+			"misspelled role", `role = "subject"`, `role = "subjet"`,
+			[]string{"row 'alpha' has role 'subjet'"},
+		},
+		{
+			"no role", "role = \"subject\"\n", "",
+			[]string{"row 'alpha' states no role"},
+		},
+		{
+			"no type", "type = \"alpha\"\n", "",
+			[]string{"[[agent]] row 1 states no type"},
+		},
+		{
+			"misspelled metric", `metric = "invocations_per_bead"`,
+			`metric = "invocation_per_bead"`,
+			[]string{"row 'alpha' has metric 'invocation_per_bead'"},
+		},
+		{
+			"misspelled witness", `witness = "output_per_invocation_not_up"`,
+			`witness = "output_per_invocation_not_upp"`,
+			[]string{"row 'alpha' has witness 'output_per_invocation_not_upp'"},
+		},
+		{
+			"misspelled floor key", "min_beads = 5", "min_bead = 5",
+			[]string{
+				"row 'alpha' has unknown key 'min_bead'",
+				"row 'alpha' states no min_beads",
+			},
+		},
+		{
+			"no day floor", "min_days = 3\n", "",
+			[]string{"row 'alpha' states no min_days"},
+		},
+		{
+			"a floor its metric never reads", "min_beads = 5",
+			"min_beads = 5\nmin_verdicts = 5",
+			[]string{"row 'alpha' has unknown key 'min_verdicts'"},
+		},
+		{
+			"an author on a row judged on session cost", "min_beads = 5",
+			"min_beads = 5\nauthor = \"alpha\"",
+			[]string{"row 'alpha' has unknown key 'author'"},
+		},
+		{
+			"a witness margin on an unwitnessed row",
+			`witness = "output_per_invocation_not_up"`, `witness = "none"`,
+			[]string{"row 'alpha' has unknown key 'witness_margin'"},
+		},
+		{"no schema", "schema = 1\n", "", []string{"schema is None, expected 1"}},
+		{
+			"an unknown schema", "schema = 1", "schema = 2",
+			[]string{"schema is 2, expected 1"},
+		},
+		{
+			"an unknown top-level key", "schema = 1", "schema = 1\nwindow_days = 14",
+			[]string{"unknown top-level key 'window_days'"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(oneSubjectCriteria, tc.find) {
+				t.Fatalf("fixture carries no %q to replace", tc.find)
+			}
+			got := run(strings.Replace(oneSubjectCriteria, tc.find, tc.replace, 1))
+			if got.exit != canaryExitUsage || got.stdout != "" ||
+				strings.Contains(got.stderr, "Traceback") {
+				t.Fatalf("exit = %d, want %d with nothing on stdout and no "+
+					"traceback\nstdout:\n%s\nstderr:\n%s",
+					got.exit, canaryExitUsage, got.stdout, got.stderr)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got.stderr, want) {
+					t.Fatalf("refusal does not say %q:\n%s", want, got.stderr)
+				}
+			}
+		})
+	}
+}
+
 // TestCanaryEveryCrossedSubjectIsNamedNotJustTheFirst matters because the
 // revert decision is per agent: the bead commissioning this work says so
 // directly -- dropping a technician from max to high and dropping the mayor

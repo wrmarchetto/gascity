@@ -70,8 +70,10 @@ expect_output = ["TestCanaryARowUnderItsDayFloorIsNoVerdictNotAPass"]
 [[mutation]]
 id = "witness-never-checked"
 path = "scripts/canary-eval.py"
-find = '''    if witness == "output_per_invocation_not_up":'''
-replace = '''    if False:'''
+find = '''    if witness == "output_per_invocation_not_up":
+        base_opi = baseline_witness.output_per_invocation'''
+replace = '''    if False:
+        base_opi = baseline_witness.output_per_invocation'''
 expect_output = ["TestCanaryAWitnessGoingTheWrongWayVoidsTheRow"]
 
 # The witness's own margin. Flipped back to the metric margin, a rate row's
@@ -224,3 +226,115 @@ find = '''            if state == "crossed":
 replace = '''            if state == "crossed" and not reverts:
                 reverts.append(agent_type)'''
 expect_output = ["TestCanaryEveryCrossedSubjectIsNamedNotJustTheFirst"]
+
+# --- the criteria file is refused when malformed, not read looser ---
+
+# Flipped, a misspelled role is no role the vote reads, and a subject that
+# crossed its line keeps its level.
+[[mutation]]
+id = "any-role-accepted"
+path = "scripts/canary-eval.py"
+find = '''(("role", ROLES),'''
+replace = '''(("role", (spec.get("role"),)),'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/misspelled_role"]
+
+[[mutation]]
+id = "any-metric-accepted"
+path = "scripts/canary-eval.py"
+find = '''("metric", tuple(FLOOR_KEYS)),'''
+replace = '''("metric", (spec.get("metric"),)),'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/misspelled_metric"]
+
+# Flipped, a misspelled witness is never checked.
+[[mutation]]
+id = "any-witness-accepted"
+path = "scripts/canary-eval.py"
+find = '''("witness", WITNESSES)):'''
+replace = '''("witness", (spec.get("witness"),))):'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/misspelled_witness"]
+
+[[mutation]]
+id = "missing-key-accepted"
+path = "scripts/canary-eval.py"
+find = '''    for key in sorted(required - set(spec)):'''
+replace = '''    for key in ():'''
+expect_output = [
+  "TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/no_role",
+  "TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/no_day_floor",
+]
+
+# Flipped, a misspelled key sits beside the one it meant, which falls back.
+[[mutation]]
+id = "unknown-key-accepted"
+path = "scripts/canary-eval.py"
+find = '''    for key in sorted(set(spec) - allowed):'''
+replace = '''    for key in ():'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/a_floor_its_metric_never_reads"]
+
+[[mutation]]
+id = "every-floor-key-allowed-on-every-metric"
+path = "scripts/canary-eval.py"
+find = '''    allowed = required | {"min_baseline_" + FLOOR_KEYS[metric][4:]}'''
+replace = '''    allowed = required | {"min_baseline_" + FLOOR_KEYS[metric][4:]} | set(FLOOR_KEYS.values())'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/a_floor_its_metric_never_reads"]
+
+[[mutation]]
+id = "author-allowed-on-every-metric"
+path = "scripts/canary-eval.py"
+find = '''    if metric == "author_fail_rate":
+        allowed.add("author")'''
+replace = '''    if True:
+        allowed.add("author")'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/an_author_on_a_row_judged_on_session_cost"]
+
+[[mutation]]
+id = "witness-margin-allowed-on-every-row"
+path = "scripts/canary-eval.py"
+find = '''    if witness == "output_per_invocation_not_up":
+        allowed.add("witness_margin")'''
+replace = '''    if True:
+        allowed.add("witness_margin")'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/a_witness_margin_on_an_unwitnessed_row"]
+
+[[mutation]]
+id = "schema-unchecked"
+path = "scripts/canary-eval.py"
+find = '''    if schema != CRITERIA_SCHEMA:'''
+replace = '''    if False:'''
+expect_output = [
+  "TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/no_schema",
+  "TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/an_unknown_schema",
+]
+
+[[mutation]]
+id = "unknown-top-level-key-accepted"
+path = "scripts/canary-eval.py"
+find = '''    for key in sorted(set(criteria) - {"schema", "agent"}):'''
+replace = '''    for key in ():'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/an_unknown_top-level_key"]
+
+# A row with no type still needs a name the refusal can point at.
+[[mutation]]
+id = "untyped-row-named-none"
+path = "scripts/canary-eval.py"
+find = '''                else f"[[agent]] row {index}")'''
+replace = '''                else f"row {agent_type!r}")'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/no_type"]
+
+# Flipped, the first fault hides the rest and each fix costs another run.
+[[mutation]]
+id = "only-the-first-refusal-is-printed"
+path = "scripts/canary-eval.py"
+find = '''    for error in errors:'''
+replace = '''    for error in errors[:1]:'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/misspelled_floor_key"]
+
+# Flipped, the refusal is printed and the malformed rule is judged anyway.
+[[mutation]]
+id = "refused-criteria-still-judged"
+path = "scripts/canary-eval.py"
+find = '''    if errors:
+        return EXIT_USAGE'''
+replace = '''    if False:
+        return EXIT_USAGE'''
+expect_output = ["TestCanaryAMalformedCriteriaRowIsRefusedNotReadLooser/misspelled_role"]
