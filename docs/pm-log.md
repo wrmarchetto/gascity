@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-fxx4 2026-10-30T14:49:51Z
+last_seen: gs-0pz3 2026-10-30T15:00:16Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6051,5 +6051,23 @@ No promotion and no DECOMP: bead-cycle-time is still in-progress, waiting
 on ci-cj9utx (#190), and no epic has `status: open` (#166).
 
 Rig store since last_seen: gs-ueld closed (#190), and this summons.
+
+Source: pm-log #190
+
+## 192. pm-idle gs-0pz3: rig still waits on bead-cycle-time's re-measurement (2026-10-30)
+
+Fresh pm-idle hash because agent-efficiency moved to done (#191). The
+ruling is #190's, unchanged: the third disposition, the rig waits on
+something outside it.
+
+- bead-cycle-time is the only epic not done, and every gascity member is
+  closed. Its Target closes on a measurement, not a landing.
+- City ci-cj9utx (analyst-fable) is still deferred in the city store to
+  2026-11-02, so a post-drain window fills. City-store deferrals have a
+  wake (pm-open #11), so no gascity bead is filed here.
+- No done, no promotion, no DECOMP: no epic has status: open (#166).
+- pm-open #11 is unchanged.
+
+Rig store since last_seen: gs-fxx4 closed (#191), and this summons.
 
 Source: pm-log #190
