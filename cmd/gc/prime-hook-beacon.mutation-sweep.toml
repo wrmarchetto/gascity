@@ -1,0 +1,47 @@
+# Proves the SessionStart hook beacon in cmd_prime.go stays after the stable
+# prompt, and carries no clock on a managed session.
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "prime hook beacon keeps the startup context stable"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./cmd/gc/", "-count=1", "-run", "TestHookBeaconLeavesTheStartupContextStable"]
+timeout_s = 600
+
+# Flipped, every managed spawn's SessionStart output differs by its second.
+[[mutation]]
+id = "managed-beacon-keeps-the-clock"
+path = "cmd/gc/cmd_prime.go"
+find = '''	if managed {
+		beacon = runtime.FormatBeaconIdentity(cityName, agentName)
+	}'''
+replace = '''	if false {
+		beacon = runtime.FormatBeaconIdentity(cityName, agentName)
+	}'''
+expect_output = ["TestHookBeaconLeavesTheStartupContextStable/a_managed_SessionStart_carries_no_clock"]
+
+[[mutation]]
+id = "managed-flag-never-passed"
+path = "cmd/gc/cmd_prime.go"
+find = '''appendHookBeacon(cityName, agentName, prompt, suppressPrompt)'''
+replace = '''appendHookBeacon(cityName, agentName, prompt, false)'''
+expect_output = ["TestHookBeaconLeavesTheStartupContextStable/a_managed_SessionStart_carries_no_clock"]
+
+# Flipped, the agent no longer learns its identity from SessionStart.
+[[mutation]]
+id = "managed-identity-dropped"
+path = "cmd/gc/cmd_prime.go"
+find = '''		beacon = runtime.FormatBeaconIdentity(cityName, agentName)'''
+replace = '''		beacon = ""'''
+expect_output = ["want the agent identity"]
+
+# Flipped, the varying beacon precedes the payload a prompt cache would reuse.
+[[mutation]]
+id = "beacon-before-the-payload"
+path = "cmd/gc/cmd_prime.go"
+find = '''	return prompt + "\n\n" + beacon'''
+replace = '''	return beacon + "\n\n" + prompt'''
+expect_output = ["TestHookBeaconLeavesTheStartupContextStable/the_beacon_follows_the_payload"]

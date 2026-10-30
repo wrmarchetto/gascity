@@ -491,11 +491,19 @@ func primeHookAgentCandidatesFromPath(path string) []string {
 	return nil
 }
 
-func prependHookBeacon(cityName, agentName, prompt string) string {
+var primeHookBeaconNow = time.Now
+
+// appendHookBeacon places the beacon after the stable prompt. A managed
+// session gets the identity alone, so its SessionStart output is the same
+// bytes on every spawn. Its clock arrives per prompt instead (clock_inject.go).
+func appendHookBeacon(cityName, agentName, prompt string, managed bool) string {
 	if cityName == "" || agentName == "" {
 		return prompt
 	}
-	beacon := runtime.FormatBeaconAt(cityName, agentName, false, time.Now())
+	beacon := runtime.FormatBeaconAt(cityName, agentName, false, primeHookBeaconNow())
+	if managed {
+		beacon = runtime.FormatBeaconIdentity(cityName, agentName)
+	}
 	if prompt == "" {
 		return beacon
 	}
@@ -608,7 +616,7 @@ func writePrimePromptWithFormat(stdout, stderr io.Writer, cityPath, cityName, ag
 		prompt = ""
 	}
 	if hookMode {
-		prompt = prependHookBeacon(cityName, agentName, prompt)
+		prompt = appendHookBeacon(cityName, agentName, prompt, suppressPrompt)
 		// The step reminder is hook-only context, not the startup prompt, so it
 		// survives suppression — managed SessionStart hooks still carry it. Folded
 		// into the single write below to keep exactly one provider hook context.
