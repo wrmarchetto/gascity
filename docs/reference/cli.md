@@ -4896,11 +4896,13 @@ Account the recorded usage facts per session, per agent type, or per work bead.
 
 Reads .gc/usage.jsonl (the local usage sink) and groups it on the actor axis,
 which gc costs does not: gc costs rolls facts up by run id, the execution
-rather than the agent that ran it. The bead column is joined through each work
-bead's own gc.session_id in the bead store this command's scope resolves to --
-the same scope gc bd would use -- so in a multi-rig city most sessions show as
-"(no bead recorded)" because their bead lives in another
-rig's store.
+rather than the agent that ran it. The bead column is joined through every
+session a work bead records as its claimant -- gc.claim_sessions, plus
+gc.session_id for the current holder -- in the bead store this command's scope
+resolves to, the same scope gc bd would use. In a multi-rig city most sessions
+show as "(no bead recorded)" because their bead lives in
+another rig's store. A bead claimed before gc.claim_sessions was recorded names
+its last claimant only, and is counted as such rather than shown as complete.
 
 EVERY READING SAYS WHETHER IT WAS OBSERVED. A dash is "not recorded", a zero is
 a recorded zero, and they are different findings. This matters most for
