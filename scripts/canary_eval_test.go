@@ -225,6 +225,26 @@ func canaryBeads(prefix string, n, spreadDays int, sessionInvocations int,
 	return beads
 }
 
+// canaryAuthored makes n beads authored by alpha, the first fails of them
+// failed, spread over four local days. They carry no session: an authored
+// rate never reads one.
+func canaryAuthored(prefix string, n, fails int) []canaryBead {
+	out := make([]canaryBead, 0, n)
+	for i := 0; i < n; i++ {
+		outcome := "pass"
+		if i < fails {
+			outcome = "fail"
+		}
+		out = append(out, canaryBead{
+			ID: fmt.Sprintf("%s-b%d", prefix, i), IssueType: "task",
+			ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
+			CreatedBy: "alpha",
+			Metadata:  map[string]string{"gc.outcome": outcome},
+		})
+	}
+	return out
+}
+
 // oneSubjectCriteria is the smallest criteria file that judges anything: one
 // subject on the per-bead invocation metric with a 20% margin.
 const oneSubjectCriteria = `
@@ -256,7 +276,9 @@ func TestCanaryRevertFiresWhenASubjectCrossesItsLine(t *testing.T) {
 		t.Fatalf("exit = %d, want %d (revert)\nstdout:\n%s\nstderr:\n%s",
 			got.exit, canaryExitRevert, got.stdout, got.stderr)
 	}
-	if !strings.Contains(got.stdout, "alpha") {
+	// The table prints every row's name, so only the verdict line can say
+	// which agent to revert.
+	if !strings.Contains(got.stdout, "REVERT alpha to its pre-epic level") {
 		t.Fatalf("revert verdict does not name the agent to revert:\n%s", got.stdout)
 	}
 }
@@ -343,23 +365,40 @@ witness = "none"
 // the control row exists. Both agents rise by the same 50%, which is what a
 // fleet-wide change -- a harder month of work, a provider-side change --
 // produces. Reading that as a per-agent regression would revert a level on
-// evidence that says nothing about it, so the run must decline to answer.
+// evidence that says nothing about it, so the run must decline to answer. A
+// control that could not be measured voids the same way, since it cannot say
+// the fleet held either.
 func TestCanaryAMovedControlVoidsTheRunInsteadOfRevertingASubject(t *testing.T) {
-	var baseSess, winSess []canarySession
-	baseBeads := canaryBeads("basea", 6, 3, 20, "alpha", &baseSess)
-	baseBeads = append(baseBeads, canaryBeads("basec", 6, 3, 20, "ctl", &baseSess)...)
-	winBeads := canaryBeads("wina", 6, 3, 30, "alpha", &winSess)
-	winBeads = append(winBeads, canaryBeads("winc", 6, 3, 30, "ctl", &winSess)...)
-	got := runCanaryEval(t, canaryFixture{
-		criteria: controlCriteria, baselineUsage: baseSess, windowUsage: winSess,
-		baselineBeads: baseBeads, windowBeads: winBeads,
-	})
-	if got.exit != canaryExitNoVerdict {
-		t.Fatalf("exit = %d, want %d (no verdict)\nstdout:\n%s",
-			got.exit, canaryExitNoVerdict, got.stdout)
-	}
-	if !strings.Contains(got.stdout, "ctl") {
-		t.Fatalf("void verdict does not name the control that moved:\n%s", got.stdout)
+	for _, tc := range []struct {
+		name                     string
+		baseCtl, winCtl, winRate int
+		wantState                string
+	}{
+		{"crossed", 6, 6, 30, "control crossed"},
+		{"under its window floor", 6, 3, 20, "control insufficient"},
+		{"absent from the baseline", 0, 6, 20, "control no-baseline"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var baseSess, winSess []canarySession
+			baseBeads := canaryBeads("basea", 6, 3, 20, "alpha", &baseSess)
+			baseBeads = append(baseBeads,
+				canaryBeads("basec", tc.baseCtl, 3, 20, "ctl", &baseSess)...)
+			winBeads := canaryBeads("wina", 6, 3, 30, "alpha", &winSess)
+			winBeads = append(winBeads,
+				canaryBeads("winc", tc.winCtl, 3, tc.winRate, "ctl", &winSess)...)
+			got := runCanaryEval(t, canaryFixture{
+				criteria: controlCriteria, baselineUsage: baseSess, windowUsage: winSess,
+				baselineBeads: baseBeads, windowBeads: winBeads,
+			})
+			if got.exit != canaryExitNoVerdict {
+				t.Fatalf("exit = %d, want %d (no verdict)\nstdout:\n%s",
+					got.exit, canaryExitNoVerdict, got.stdout)
+			}
+			if !strings.Contains(got.stdout, "NO VERDICT ctl: "+tc.wantState) {
+				t.Fatalf("void verdict does not name the control as %s:\n%s",
+					tc.wantState, got.stdout)
+			}
+		})
 	}
 }
 
@@ -452,6 +491,28 @@ witness = "none"
 		t.Fatalf("exit = %d, want %d; min_baseline_beads did not relax the "+
 			"baseline side\nstdout:\n%s",
 			withFloor.exit, canaryExitKeep, withFloor.stdout)
+	}
+
+	// An authored rate's twin is min_baseline_verdicts. 20 baseline verdicts
+	// under a window floor of 30 are judged only through it.
+	authored := strings.Replace(authorCriteria, "min_verdicts = 10", "min_verdicts = 30", 1)
+	for _, tc := range []struct {
+		name, criteria string
+		want           int
+	}{
+		{"no min_baseline_verdicts", authored, canaryExitNoVerdict},
+		{"min_baseline_verdicts", strings.Replace(authored, "min_verdicts = 30",
+			"min_verdicts = 30\nmin_baseline_verdicts = 10", 1), canaryExitKeep},
+	} {
+		got := runCanaryEval(t, canaryFixture{
+			criteria:      tc.criteria,
+			baselineBeads: canaryAuthored("base", 20, 2),
+			windowBeads:   canaryAuthored("win", 40, 4),
+		})
+		if got.exit != tc.want {
+			t.Fatalf("authored rate, %s: exit = %d, want %d\nstdout:\n%s",
+				tc.name, got.exit, tc.want, got.stdout)
+		}
 	}
 }
 
@@ -671,11 +732,30 @@ func TestCanaryAWitnessGoingTheWrongWayVoidsTheRow(t *testing.T) {
 			}
 		})
 	}
+
+	// A 10% rise is inside the row's 20% witness_margin, so it keeps.
+	t.Run("a rise inside its witness margin", func(t *testing.T) {
+		var baseSess, winSess []canarySession
+		baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
+		winBeads := canaryBeads("win", 6, 3, 20, "alpha", &winSess)
+		for i := range winSess {
+			winSess[i].OutputToks = winSess[i].OutputToks * 11 / 10
+		}
+		got := runCanaryEval(t, canaryFixture{
+			criteria: oneSubjectCriteria, baselineUsage: baseSess, windowUsage: winSess,
+			baselineBeads: baseBeads, windowBeads: winBeads,
+		})
+		if got.exit != canaryExitKeep {
+			t.Fatalf("exit = %d, want %d (keep)\nstdout:\n%s",
+				got.exit, canaryExitKeep, got.stdout)
+		}
+	})
 }
 
 // TestCanaryMachineryBeadsAreNotUnitsOfWork pads the window with the records
 // this city's orders write -- about nine thousand a day, carrying the
-// order-tracking label -- and with a molecule step bead carrying gc.kind.
+// order-tracking label -- with molecule step beads carrying gc.kind, and with
+// mail, whose bead type is not a work type.
 //
 // The fixture keeps a genuine 50% regression in the subject's real work. If
 // the machinery rows reached the denominator they would divide the same token
@@ -696,10 +776,13 @@ func TestCanaryMachineryBeadsAreNotUnitsOfWork(t *testing.T) {
 			ClosedAt: "2026-09-05T18:00:00Z",
 			Metadata: map[string]string{"gc.session_id": "win-s0", "gc.outcome": "pass"},
 		}
-		if i%2 == 0 {
+		switch i % 3 {
+		case 0:
 			padding.Labels = []string{"order-tracking", "exec"}
-		} else {
+		case 1:
 			padding.Metadata["gc.kind"] = "wisp"
+		default:
+			padding.IssueType = "message"
 		}
 		winBeads = append(winBeads, padding)
 	}
@@ -830,27 +913,19 @@ witness = "none"
 // because the agent being judged here is one whose own token cost is not the
 // thing at risk: a planner's cost says how hard it thought, not whether it
 // thought correctly.
+//
+// The window also carries forty passes another actor authored. Counted, they
+// read 5 in 60, 8.3%, inside the line.
 func TestCanaryAuthorFailRateJudgesAuthoredBeadsNotSessionCost(t *testing.T) {
-	mk := func(prefix string, n, fails int) []canaryBead {
-		out := make([]canaryBead, 0, n)
-		for i := 0; i < n; i++ {
-			outcome := "pass"
-			if i < fails {
-				outcome = "fail"
-			}
-			out = append(out, canaryBead{
-				ID: fmt.Sprintf("%s-b%d", prefix, i), IssueType: "task",
-				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
-				CreatedBy: "alpha",
-				Metadata:  map[string]string{"gc.outcome": outcome},
-			})
-		}
-		return out
+	window := canaryAuthored("win", 20, 5)
+	for _, bead := range canaryAuthored("other", 40, 0) {
+		bead.CreatedBy = "beta"
+		window = append(window, bead)
 	}
 	got := runCanaryEval(t, canaryFixture{
 		criteria:      authorCriteria,
-		baselineBeads: mk("base", 20, 2),
-		windowBeads:   mk("win", 20, 5),
+		baselineBeads: canaryAuthored("base", 20, 2),
+		windowBeads:   window,
 	})
 	if got.exit != canaryExitRevert {
 		t.Fatalf("exit = %d, want %d (revert)\nstdout:\n%s\nstderr:\n%s",
@@ -861,30 +936,20 @@ func TestCanaryAuthorFailRateJudgesAuthoredBeadsNotSessionCost(t *testing.T) {
 // TestCanaryAnAuthoredRateWithNoDrawableLineIsNoVerdict covers a window of
 // too few verdicts, and a zero baseline, whose relative line sits at zero.
 func TestCanaryAnAuthoredRateWithNoDrawableLineIsNoVerdict(t *testing.T) {
-	mk := func(prefix string, n, fails int) []canaryBead {
-		out := make([]canaryBead, 0, n)
-		for i := 0; i < n; i++ {
-			outcome := "pass"
-			if i < fails {
-				outcome = "fail"
-			}
-			out = append(out, canaryBead{
-				ID: fmt.Sprintf("%s-b%d", prefix, i), IssueType: "task",
-				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
-				CreatedBy: "alpha",
-				Metadata:  map[string]string{"gc.outcome": outcome},
-			})
-		}
-		return out
-	}
 	for _, tc := range []struct {
 		name      string
 		baseline  []canaryBead
 		window    []canaryBead
 		wantState string
 	}{
-		{"window under its verdict floor", mk("base", 20, 2), mk("win", 6, 3), "insufficient"},
-		{"baseline with no failures", mk("base", 20, 0), mk("win", 20, 1), "no-baseline"},
+		{
+			"window under its verdict floor",
+			canaryAuthored("base", 20, 2), canaryAuthored("win", 6, 3), "insufficient",
+		},
+		{
+			"baseline with no failures",
+			canaryAuthored("base", 20, 0), canaryAuthored("win", 20, 1), "no-baseline",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := runCanaryEval(t, canaryFixture{
@@ -979,22 +1044,6 @@ func TestCanaryAnAuthoredRateRowStillGetsAWitness(t *testing.T) {
 	witnessed := strings.Replace(authorCriteria, "margin = 0.75", "margin = 1.05", 1)
 	witnessed = strings.Replace(witnessed,
 		`witness = "none"`, `witness = "output_per_invocation_not_up"`, 1)
-	mk := func(prefix string, n, fails int) []canaryBead {
-		out := make([]canaryBead, 0, n)
-		for i := 0; i < n; i++ {
-			outcome := "pass"
-			if i < fails {
-				outcome = "fail"
-			}
-			out = append(out, canaryBead{
-				ID: fmt.Sprintf("%s-b%d", prefix, i), IssueType: "task",
-				ClosedAt:  fmt.Sprintf("2026-09-%02dT18:00:00Z", 4+(i%4)),
-				CreatedBy: "alpha",
-				Metadata:  map[string]string{"gc.outcome": outcome},
-			})
-		}
-		return out
-	}
 	run := func(criteria string) canaryResult {
 		return runCanaryEval(t, canaryFixture{
 			criteria: criteria,
@@ -1006,8 +1055,8 @@ func TestCanaryAnAuthoredRateRowStillGetsAWitness(t *testing.T) {
 				Key: "win-s0", AgentTypes: []string{"alpha"},
 				Invocations: 100, OutputToks: 200000,
 			}},
-			baselineBeads: mk("base", 20, 2),
-			windowBeads:   mk("win", 20, 2),
+			baselineBeads: canaryAuthored("base", 20, 2),
+			windowBeads:   canaryAuthored("win", 20, 2),
 		})
 	}
 
@@ -1173,7 +1222,7 @@ witness = "none"
 		t.Fatalf("exit = %d, want %d\nstdout:\n%s", got.exit, canaryExitRevert, got.stdout)
 	}
 	for _, want := range []string{"alpha", "beta"} {
-		if !strings.Contains(got.stdout, want) {
+		if !strings.Contains(got.stdout, "REVERT "+want+" to its pre-epic level") {
 			t.Fatalf("revert verdict omits %q:\n%s", want, got.stdout)
 		}
 	}
@@ -1251,8 +1300,9 @@ func TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric(t *testing
 	if *row.WindowOutputPerBead != 20000 {
 		t.Fatalf("window output tokens per bead = %v, want 20000", *row.WindowOutputPerBead)
 	}
-	if *row.WindowSpanPerBead != 900 {
-		t.Fatalf("window span seconds per bead = %v, want 900", *row.WindowSpanPerBead)
+	if *row.BaselineSpanPerBead != 600 || *row.WindowSpanPerBead != 900 {
+		t.Fatalf("span seconds per bead = %v -> %v, want 600 -> 900",
+			*row.BaselineSpanPerBead, *row.WindowSpanPerBead)
 	}
 	if row.WindowSpanObserved == nil || *row.WindowSpanObserved != 6 {
 		t.Fatalf("window span observation count missing or wrong; a span figure "+
