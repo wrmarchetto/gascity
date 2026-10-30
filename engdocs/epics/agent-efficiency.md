@@ -53,34 +53,43 @@ goes, then cut it in the ways that measurement supports.
   prompt and does not matter.
 - With that block switched off, a second paired measurement showed the
   rendered prompt served from cache on a same-slot, same-account respawn.
-  The figures are in the follow-up's close reason. That was measured on one
-  project-manager slot on one account. No engineer slot had respawned at the
-  time, and nothing mechanically pins the setting: a later settings edit
-  that turns git status back on silently undoes the reuse.
+  The figures are in the follow-up's close reason. The self-review record
+  adds the same slot on two more accounts, then every same-slot,
+  same-account respawn in the sixteen hours after the change, engineer and
+  toolsmith slots included. Reuse held only when the respawn's first
+  request came within about an hour of its predecessor's first request, so
+  a respawn after a session that ran longer than an hour re-creates the
+  whole prompt.
+  Nothing mechanically pins the setting either: a later settings edit that
+  turns git status back on silently undoes the reuse.
 - Switching git status off also drops Claude Code's built-in git guidance and
-  its commit-attribution reminder. The city's own rules already cover both.
+  its commit-attribution reminder. The operator's global rules already forbid
+  that attribution. No instruction file the city loads restates the git
+  guidance, among it the warning against interactive `-i` git commands.
 - The canary comparison of effort levels per agent could not reach a
   verdict: three of the five agents being measured changed model or role
   during the two-week window. It was dropped once the whole fleet moved to
   the same model, which removed the question it was asking.
 - The account-preference script lands only some preferences in a week when
   half the accounts are near their limits, by design. Its payoff depends on
-  the cache reuse above, which is now measured on one slot and not yet
-  across the fleet.
+  the cache reuse above, so it reaches only a respawn that starts within
+  about an hour of its predecessor.
 
 ## where it ended
 
 All work under the epic is finished, the cache-reuse follow-up included.
 The epic's first review ruled the prefix-hygiene requirement unmet, before
-that follow-up landed, and its remaining findings were deferred as
-standalone work. Whether the epic is approved and closed is the operator's
-call, recorded in the review generation, not here.
+that follow-up landed, and its findings were deferred as standalone work.
+Every one of them has since closed with a shipped fix. Whether the epic is
+approved and closed is the operator's call, recorded in the review
+generation, not here.
 
 Left undone on purpose: the canary comparison, dropped by Willie when the
 fleet converged on one model. The audit's proposals for Willie's own global
 instruction file are his to make, not work items. No guard checks that git
-status stays off in agent settings, and the reuse has not been measured on
-an engineer slot. Do not assume fleet-wide savings until it has.
+status stays off in agent settings. Nothing keeps a slot's cached prompt
+alive past its hour, which was found after the epic's work closed and has
+no work item yet: the epic review rules on it.
 
 ## references
 
@@ -92,8 +101,10 @@ an engineer slot. Do not assume fleet-wide savings until it has.
 - gs-arar -- account-home memory removed and gated (city repo)
 - gs-saj5 -- instruction-stack audit with before and after size
 - gs-jbyc, gs-n3lh, gs-78op -- canary window, its void reading, and the drop
-- gs-5buj -- implementers' self-review, docs/self-review/agent-efficiency.md
+- gs-5buj, gs-tra9, gs-t6uu -- implementers' self-review passes,
+  docs/self-review/agent-efficiency.md
 - gs-qrgd -- the cache-reuse follow-up and its paired read (city d224675ac)
 - gs-rv15a377628c08-f01-deferred to f17-deferred -- review findings, deferred
+  and then fixed
 - city ci-rv15a377628c08 -- the epic review generation, verdict recorded there
 - pm-log #139, #147, #170, #188
