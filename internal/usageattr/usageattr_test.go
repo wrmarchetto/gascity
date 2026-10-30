@@ -219,6 +219,8 @@ func TestAgentTypeStripsTheSessionSuffixItActuallyCarries(t *testing.T) {
 		modelFact("ci-a", "lab__engineer-ci-a", 1_000, 1, 0, 0, 0),
 		modelFact("ci-b", "mayor", 1_000, 1, 0, 0, 0),
 		modelFact("ci-c", "core__control-dispatcher-ci-c", 1_000, 1, 0, 0, 0),
+		modelFact("ci-d", "lab__ci-runner-ci-d", 1_000, 1, 0, 0, 0),
+		modelFact("s1", "bench-engineer", 1_000, 1, 0, 0, 0),
 	}, Options{By: ByType})
 
 	got := map[string]bool{}
@@ -228,7 +230,7 @@ func TestAgentTypeStripsTheSessionSuffixItActuallyCarries(t *testing.T) {
 			t.Fatalf("group %q flagged SuffixUnmatched, want matched", g.Key)
 		}
 	}
-	for _, want := range []string{"lab.engineer", "mayor", "core.control-dispatcher"} {
+	for _, want := range []string{"lab.engineer", "mayor", "core.control-dispatcher", "lab.ci-runner", "bench-engineer"} {
 		if !got[want] {
 			t.Fatalf("type %q missing from %v", want, got)
 		}
@@ -246,19 +248,30 @@ func TestAgentTypeStripsTheSessionSuffixItActuallyCarries(t *testing.T) {
 // the idempotency-key de-duplication usage.ReadFacts does -- the raw line count
 // is ~21% higher and skewed entirely toward compute.
 func TestUnmatchedSessionSuffixIsFlaggedNotRepaired(t *testing.T) {
-	rep := Aggregate([]usage.Fact{
-		modelFact("ci-wisp-rkib0rl", "toolsmith-codex-adhoc-e1546d8930", 1_000, 1, 0, 0, 0),
-	}, Options{By: ByType})
+	for _, tc := range []struct {
+		name, session, worker string
+	}{
+		{"adhoc tag", "ci-wisp-rkib0rl", "toolsmith-codex-adhoc-e1546d8930"},
+		{"another session's id", "ci-cj23kh", "adversarial-reader-claude-ci-3jfs7f"},
+		{"another session's id, no digit", "ci-5b3nl9", "lab__pm-ci-nwwphz"},
+		{"another session's wisp id", "ci-r07dgk", "mayor-ci-wisp-3epyfuc"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rep := Aggregate([]usage.Fact{
+				modelFact(tc.session, tc.worker, 1_000, 1, 0, 0, 0),
+			}, Options{By: ByType})
 
-	g := rep.Groups[0]
-	if g.Key != "toolsmith-codex-adhoc-e1546d8930" {
-		t.Fatalf("Key = %q, want the worker name verbatim", g.Key)
-	}
-	if !g.SuffixUnmatched {
-		t.Fatalf("SuffixUnmatched = false, want true")
-	}
-	if rep.Residue.SuffixUnmatchedSessions != 1 {
-		t.Fatalf("Residue.SuffixUnmatchedSessions = %d, want 1", rep.Residue.SuffixUnmatchedSessions)
+			g := rep.Groups[0]
+			if g.Key != tc.worker {
+				t.Fatalf("Key = %q, want the worker name verbatim", g.Key)
+			}
+			if !g.SuffixUnmatched {
+				t.Fatalf("SuffixUnmatched = false, want true")
+			}
+			if rep.Residue.SuffixUnmatchedSessions != 1 {
+				t.Fatalf("Residue.SuffixUnmatchedSessions = %d, want 1", rep.Residue.SuffixUnmatchedSessions)
+			}
+		})
 	}
 }
 

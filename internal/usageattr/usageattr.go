@@ -40,6 +40,7 @@ package usageattr
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/agent"
@@ -402,13 +403,18 @@ func agentTypeOf(worker, sessionID string) (string, bool) {
 	return worker, false
 }
 
-// containsSessionTail reports whether a name carries a trailing segment that
-// looks like a session tag without being this session's id -- the adhoc case.
-// It exists so a singleton name (`mayor`) is not lumped in with a mismatched one
+// containsSessionTail reports whether a name carries a session tag that is not
+// this session's id -- an adhoc tag, or another session's id. It exists so a
+// singleton name (`mayor`) is not lumped in with a mismatched one
 // (`toolsmith-codex-adhoc-e1546d8930`).
 func containsSessionTail(worker, sessionID string) bool {
 	if sessionID == "" {
 		return false
+	}
+	// Another session's id, found by this id's own prefix: the city's 6-char
+	// tails are too short for looksTagged (`...-ci-3jfs7f` ran in `ci-cj23kh`).
+	if p := strings.IndexByte(sessionID, '-'); p > 0 && strings.Contains(worker, "-"+sessionID[:p+1]) {
+		return true
 	}
 	for i := len(worker) - 1; i >= 0; i-- {
 		if worker[i] == '-' {

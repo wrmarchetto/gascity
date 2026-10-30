@@ -1,0 +1,39 @@
+# Proves the session-name rule in internal/usageattr/usageattr.go flags what
+# it cannot strip and strips what it can, through usageattr_test.go.
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "usageattr flags a session name carrying another session's id"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./internal/usageattr/", "-count=1"]
+timeout_s = 300
+
+# The city's own 6-char id tails are too short for looksTagged, so without the
+# prefix check a name inherited from another session reads as a singleton.
+[[mutation]]
+id = "inherited-id-reads-as-singleton"
+path = "internal/usageattr/usageattr.go"
+find = '''p > 0 && strings.Contains(worker, "-"+sessionID[:p+1])'''
+replace = '''p > 0 && strings.Contains(worker, "\x00")'''
+expect_output = ["TestUnmatchedSessionSuffixIsFlaggedNotRepaired/another_session's_id"]
+
+# An id with no prefix has nothing to match on. Without the guard the prefix
+# is empty and every hyphenated singleton is flagged.
+[[mutation]]
+id = "dashless-id-flags-every-hyphen"
+path = "internal/usageattr/usageattr.go"
+find = '''if p := strings.IndexByte(sessionID, '-'); p > 0 && '''
+replace = '''if p := strings.IndexByte(sessionID, '-'); '''
+expect_output = ["TestAgentTypeStripsTheSessionSuffixItActuallyCarries"]
+
+# The own-suffix strip has to run first: every per-session name contains its
+# own id's prefix.
+[[mutation]]
+id = "prefix-check-before-own-suffix"
+path = "internal/usageattr/usageattr.go"
+find = '''if sessionID != "" && len(worker) > len(sessionID)+1 {'''
+replace = '''if sessionID != "" && len(worker) > len(sessionID)+1 && !containsSessionTail(worker, sessionID) {'''
+expect_output = ["TestAgentTypeStripsTheSessionSuffixItActuallyCarries"]
