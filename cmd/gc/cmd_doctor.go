@@ -371,10 +371,14 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	// (gc -> bd.real -> dolt) that operators routinely misread as CPU saturation.
 	// Advisory + read-only (/proc/stat); no config needed.
 	register(newForkRateCheck())
-	// Host-root capacity must be checked independently of cityPath: Go's shared
-	// build cache and compiler temporary directories can exhaust / even when the
-	// city lives on another filesystem.
-	register(doctor.NewHostDiskSpaceCheck(doctorHostRootFreeBytes))
+	// Host capacity must be checked independently of cityPath: Go's shared
+	// build cache and compiler temporary directories can exhaust / or the
+	// filesystem the city's [workspace] env moved them to.
+	var workspaceEnv map[string]string
+	if cfg != nil {
+		workspaceEnv = cfg.Workspace.Env
+	}
+	register(doctor.NewHostDiskSpaceCheck(doctorHostRootFreeBytes, workspaceEnv))
 	// Ungated by backend: a hold file is read by every managed-dolt door
 	// regardless, so a stray one must be visible even where it guards nothing.
 	register(newDoltMaintenanceHoldCheck(cityPath))
