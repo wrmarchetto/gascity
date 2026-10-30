@@ -195,70 +195,98 @@ type sessionAccount struct {
 // other way owns that. Ordering of the input is irrelevant: bounds are taken by
 // comparison, not by position.
 func Aggregate(facts []usage.Fact, opts Options) Report {
+	acc := NewAccumulator(opts)
+	for _, f := range facts {
+		acc.Add(f)
+	}
+	return acc.Report()
+}
+
+// Accumulator is Aggregate one fact at a time, for a caller streaming the log
+// (usage.ScanFacts). It keeps the in-window sessions and only counts the rest,
+// so its memory follows the window asked for rather than the log's age.
+type Accumulator struct {
+	opts     Options
+	window   Window
+	accounts map[string]*sessionAccount
+	order    []string
+}
+
+// NewAccumulator starts an empty aggregation under opts.
+func NewAccumulator(opts Options) *Accumulator {
 	if opts.By == "" {
 		opts.By = BySession
 	}
+	return &Accumulator{
+		opts:     opts,
+		window:   Window{Since: opts.Since, Until: opts.Until},
+		accounts: map[string]*sessionAccount{},
+	}
+}
+
+// Add folds one de-duplicated fact into the aggregation.
+func (a *Accumulator) Add(f usage.Fact) {
+	if f.At == 0 {
+		a.window.FactsUndated++
+		return
+	}
+	when := time.UnixMilli(f.At)
+	if !inWindow(when, a.opts.Since, a.opts.Until) {
+		a.window.FactsOutsideWindow++
+		return
+	}
+	a.window.FactsInWindow++
+	spanBounds(&a.window.FirstFactAt, &a.window.LastFactAt, when)
+	a.window.Observed = true
+
+	acc := a.accounts[f.SessionID]
+	if acc == nil {
+		typ, matched := agentTypeOf(f.Worker, f.SessionID)
+		acc = &sessionAccount{id: f.SessionID, agentType: typ, suffixUnmatched: !matched}
+		a.accounts[f.SessionID] = acc
+		a.order = append(a.order, f.SessionID)
+	}
+	spanBounds(&acc.firstAt, &acc.lastAt, when)
+	switch f.Kind {
+	case usage.KindModel:
+		acc.tokens.Observed = true
+		acc.tokens.Invocations++
+		acc.tokens.InputTokens += f.InputTokens
+		acc.tokens.OutputTokens += f.OutputTokens
+		acc.tokens.CacheReadTokens += f.CacheReadTokens
+		acc.tokens.CacheCreationTokens += f.CacheCreationTokens
+		acc.modelFacts++
+		spanBounds(&acc.firstModelAt, &acc.lastModelAt, when)
+	case usage.KindCompute:
+		acc.wall.Observed = true
+		acc.wall.ComputeFacts++
+		acc.wall.Seconds += f.WallSeconds
+	}
+}
+
+// Report groups what has been added so far. It leaves the Accumulator as it
+// was, so a second call returns the same Report.
+func (a *Accumulator) Report() Report {
 	rep := Report{
-		Grouping: opts.By,
-		Window:   Window{Since: opts.Since, Until: opts.Until},
+		Grouping: a.opts.By,
+		Window:   a.window,
+		Sessions: len(a.accounts),
 	}
-
-	accounts := map[string]*sessionAccount{}
-	var order []string
-	for _, f := range facts {
-		if f.At == 0 {
-			rep.Window.FactsUndated++
-			continue
-		}
-		when := time.UnixMilli(f.At)
-		if !inWindow(when, opts.Since, opts.Until) {
-			rep.Window.FactsOutsideWindow++
-			continue
-		}
-		rep.Window.FactsInWindow++
-		spanBounds(&rep.Window.FirstFactAt, &rep.Window.LastFactAt, when)
-		rep.Window.Observed = true
-
-		acc := accounts[f.SessionID]
-		if acc == nil {
-			typ, matched := agentTypeOf(f.Worker, f.SessionID)
-			acc = &sessionAccount{id: f.SessionID, agentType: typ, suffixUnmatched: !matched}
-			accounts[f.SessionID] = acc
-			order = append(order, f.SessionID)
-		}
-		spanBounds(&acc.firstAt, &acc.lastAt, when)
-		switch f.Kind {
-		case usage.KindModel:
-			acc.tokens.Observed = true
-			acc.tokens.Invocations++
-			acc.tokens.InputTokens += f.InputTokens
-			acc.tokens.OutputTokens += f.OutputTokens
-			acc.tokens.CacheReadTokens += f.CacheReadTokens
-			acc.tokens.CacheCreationTokens += f.CacheCreationTokens
-			acc.modelFacts++
-			spanBounds(&acc.firstModelAt, &acc.lastModelAt, when)
-		case usage.KindCompute:
-			acc.wall.Observed = true
-			acc.wall.ComputeFacts++
-			acc.wall.Seconds += f.WallSeconds
-		}
-	}
-	rep.Sessions = len(accounts)
 
 	// Totals come from the sessions, not from the groups. Under ByBead the
 	// groups overlap, so summing rows would count a shared session twice.
-	for _, id := range order {
-		foldReading(&rep.Totals, accounts[id])
-		if accounts[id].suffixUnmatched {
+	for _, id := range a.order {
+		foldReading(&rep.Totals, a.accounts[id])
+		if a.accounts[id].suffixUnmatched {
 			rep.Residue.SuffixUnmatchedSessions++
 		}
 	}
 
-	rep.Groups = buildGroups(order, accounts, opts, &rep.Residue)
+	rep.Groups = buildGroups(a.order, a.accounts, a.opts, &rep.Residue)
 	sortGroups(rep.Groups)
-	if opts.Top > 0 && len(rep.Groups) > opts.Top {
-		rep.GroupsOmitted = len(rep.Groups) - opts.Top
-		rep.Groups = rep.Groups[:opts.Top]
+	if a.opts.Top > 0 && len(rep.Groups) > a.opts.Top {
+		rep.GroupsOmitted = len(rep.Groups) - a.opts.Top
+		rep.Groups = rep.Groups[:a.opts.Top]
 	}
 	return rep
 }

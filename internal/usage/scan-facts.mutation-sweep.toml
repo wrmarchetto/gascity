@@ -1,0 +1,48 @@
+# Proves the guards gc usage now streams through still hold: ScanFacts's
+# first-occurrence de-duplication and usageattr.Accumulator's window drop.
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "streamed gc usage keeps de-duplication and windowing"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./internal/usage/", "./internal/usageattr/", "-count=1"]
+timeout_s = 600
+
+# Flipped, a replayed fact is counted again.
+[[mutation]]
+id = "scan-keeps-replays"
+path = "internal/usage/local_sink.go"
+find = '''			} else if _, dup := seen[f.IdempotencyKey]; !dup {'''
+replace = '''			} else if true {'''
+expect_output = ["TestLocalSinkAppendAndReadDedup"]
+
+# Flipped, a fact with no idempotency key is never visited.
+[[mutation]]
+id = "scan-skips-unkeyed-facts"
+path = "internal/usage/local_sink.go"
+find = '''			} else if f.IdempotencyKey == "" {
+				visit(f)'''
+replace = '''			} else if f.IdempotencyKey == "" {
+				_ = f'''
+expect_output = ["TestReadFactsKeepsEmptyKeyFacts"]
+
+# Flipped, a fact outside the window is counted as outside and then kept.
+[[mutation]]
+id = "accumulator-keeps-outside-facts"
+path = "internal/usageattr/usageattr.go"
+find = '''		a.window.FactsOutsideWindow++
+		return'''
+replace = '''		a.window.FactsOutsideWindow++'''
+expect_output = ["TestWindowExcludesFactsOutsideBounds"]
+
+# Flipped, an undated fact lands in a session account.
+[[mutation]]
+id = "accumulator-keeps-undated-facts"
+path = "internal/usageattr/usageattr.go"
+find = '''		a.window.FactsUndated++
+		return'''
+replace = '''		a.window.FactsUndated++'''
+expect_output = ["TestFactsWithNoTimestampAreCountedNotSilentlyBinned"]

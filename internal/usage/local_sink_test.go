@@ -14,9 +14,13 @@ func TestLocalSinkAppendAndReadDedup(t *testing.T) {
 	s := NewLocalSink(path)
 	ctx := context.Background()
 
-	f1 := Fact{Kind: KindModel, RunID: "r1", IdempotencyKey: "k1", InputTokens: 1}
-	f2 := Fact{Kind: KindModel, RunID: "r1", IdempotencyKey: "k2", InputTokens: 2}
-	for _, f := range []Fact{f1, f2, f1 /* replay of k1 */} {
+	f1 := Fact{Kind: KindModel, RunID: "r1", IdempotencyKey: "k1", InputTokens: 1, At: 1000}
+	f2 := Fact{Kind: KindModel, RunID: "r1", IdempotencyKey: "k2", InputTokens: 2, At: 2000}
+	// A replay can carry a later At (62 keys in the live log do), so a
+	// reader windowing before it de-duplicates would count it twice.
+	replay := f1
+	replay.At = 9000
+	for _, f := range []Fact{f1, f2, replay} {
 		if err := s.Record(ctx, f); err != nil {
 			t.Fatalf("Record: %v", err)
 		}
@@ -35,6 +39,18 @@ func TestLocalSinkAppendAndReadDedup(t *testing.T) {
 	// First-occurrence order preserved.
 	if got[0].IdempotencyKey != "k1" || got[1].IdempotencyKey != "k2" {
 		t.Fatalf("order/dedup wrong: %q, %q", got[0].IdempotencyKey, got[1].IdempotencyKey)
+	}
+	if got[0].At != 1000 {
+		t.Fatalf("k1 At = %d, want the first occurrence's 1000", got[0].At)
+	}
+
+	var streamed []Fact
+	scanWarnings, err := ScanFacts(path, func(f Fact) { streamed = append(streamed, f) })
+	if err != nil || len(scanWarnings) != 0 {
+		t.Fatalf("ScanFacts: err %v, warnings %v", err, scanWarnings)
+	}
+	if len(streamed) != len(got) || streamed[0] != got[0] || streamed[1] != got[1] {
+		t.Fatalf("ScanFacts streamed %+v, want exactly what ReadFacts returns: %+v", streamed, got)
 	}
 }
 
