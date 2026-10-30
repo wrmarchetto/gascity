@@ -209,8 +209,8 @@ var bootstrapPolicy = Ledger{
 			// artifact under test -- it is the committed enforcement of the
 			// agent-efficiency revert criteria -- and its contract is its three
 			// exit codes, which only a real process carries. One literal
-			// exec.Command serves all eighteen tests through runCanaryEval; a
-			// second would be new debt for no gain.
+			// exec.Command serves every test in that file through
+			// runCanaryEval. A second would be new debt for no gain.
 			// +2 calls / 1 file (gs-1soi):
 			// scripts/dashboard_bundle_generated_tree_test.go, which pins the
 			// shape the upstream-merge procedure reads. Both spawns are the
@@ -766,10 +766,11 @@ var bootstrapPolicy = Ledger{
 			// +1 call / 1 file (gs-jbyc): the canary evaluator's contract
 			// suite, which stays Small debt for the same reason. Its one spawn
 			// runs a pure Python evaluator over files in a t.TempDir() -- no
-			// network, no store, no process state -- and the eighteen tests
-			// share it through runCanaryEval. An exact Medium owner would not
-			// cover it anyway: the call sits in a helper, and a resource inside
-			// a helper stays Small debt however Medium its callers are.
+			// network, no store, no process state -- and every test in the
+			// suite shares it through runCanaryEval. An exact Medium owner
+			// would not cover it anyway: the call sits in a helper, and a
+			// resource inside a helper stays Small debt however Medium its
+			// callers are.
 			// +2 calls / 1 file (gs-1soi): the dashboard-bundle shape
 			// guard, which stays Small debt. Neither spawn touches the
 			// network, a store or process state -- one reads the index, the

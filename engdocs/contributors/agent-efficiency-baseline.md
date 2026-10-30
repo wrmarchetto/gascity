@@ -11,9 +11,9 @@ they were derived from, and the regressions it is too small to catch are in
 [`agent-efficiency-canary.md`](agent-efficiency-canary.md). One figure here is
 load-bearing for it and easy to miss: the per-bead and per-type numbers below
 are means over a six-day window, and their DAY-TO-DAY spread -- not shown
-here, measured in the canary document -- is two to five times what resampling
-the beads suggests. A threshold set from these means alone fires on ordinary
-work-mix variation.
+here, measured in the canary document -- is for most agents several times what
+resampling the beads suggests. A threshold set from these means alone fires on
+ordinary work-mix variation.
 
 Reproduce any figure here with:
 
