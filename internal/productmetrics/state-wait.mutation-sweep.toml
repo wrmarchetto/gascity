@@ -1,0 +1,33 @@
+# Proves DisableAndPurge's two state-lock waits stay separate: the first one
+# is never held to the post-uploader bound (control.go, control_unix_test.go).
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "the post-uploader state wait does not bound the first state lock"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./internal/productmetrics/", "-count=1", "-run", "TestDisableAndPurgeBoundsInitialAndPostUploaderStateLocks"]
+timeout_s = 600
+
+# The defect gs-d690 found: the post-uploader bound also caps the first
+# acquisition, which creates and fsyncs state.lock.
+[[mutation]]
+id = "first-wait-held-to-the-post-uploader-bound"
+path = "internal/productmetrics/control.go"
+find = '''	stateWait := service.deps.disableStateWait
+'''
+replace = '''	stateWait := service.deps.disableStateWait + service.deps.disableCleanupStateWait
+'''
+expect_output = ["the_post-uploader_bound_never_reaches_the_first_lock", "acquire lock \"state.lock\": context deadline exceeded"]
+
+# Flipped, the post-uploader wait is the 12s default and outlasts the test.
+[[mutation]]
+id = "post-uploader-wait-ignores-its-dep"
+path = "internal/productmetrics/control.go"
+find = '''	cleanupStateWait := service.deps.disableCleanupStateWait
+'''
+replace = '''	cleanupStateWait := service.deps.disableStateWait
+'''
+expect_output = ["post-uploader_state_lock"]

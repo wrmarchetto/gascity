@@ -166,20 +166,39 @@ func TestDisableAndPurgeBoundsInitialAndPostUploaderStateLocks(t *testing.T) {
 		}
 	})
 
+	// Expired before any lock is tried, so a post-uploader bound that reached
+	// the first acquisition (which creates and fsyncs state.lock) fails here
+	// every time, where the push gate saw it only under fsync contention.
+	t.Run("the post-uploader bound never reaches the first lock", func(t *testing.T) {
+		_, service, _ := newRecordServiceFixture(t, testEventIDThree)
+		service.deps.disableCleanupStateWait = time.Nanosecond
+		reached := false
+		service.deps.beforeDisableUploaderLock = func() { reached = true }
+		_, err := service.DisableAndPurge(context.Background())
+		if !reached {
+			t.Fatalf("off returned before the uploader phase: %v (cause: %v)", err, errors.Unwrap(err))
+		}
+		requirePurgeErrorClass(t, err, PurgeErrorStorage)
+	})
+
 	t.Run("post-uploader state lock", func(t *testing.T) {
 		home, service, _ := newRecordServiceFixture(t, testEventIDThree)
-		service.deps.disableStateWait = 100 * time.Millisecond
+		service.deps.disableCleanupStateWait = 100 * time.Millisecond
 		atUploader := make(chan struct{})
 		releaseUploaderAttempt := make(chan struct{})
 		service.deps.beforeDisableUploaderLock = func() {
 			close(atUploader)
 			<-releaseUploaderAttempt
 		}
+		started := time.Now()
 		call := startDisableAndPurge(t, service)
 		select {
 		case <-atUploader:
+		case early := <-call:
+			t.Fatalf("off returned after %s, before the uploader phase: %v (cause: %v)",
+				time.Since(started), early.err, errors.Unwrap(early.err))
 		case <-time.After(testutil.GoroutineRaceTimeout):
-			t.Fatal("off did not reach uploader phase")
+			t.Fatalf("off was still running after %s and never reached the uploader phase", time.Since(started))
 		}
 		pending := readStateFixture(t, home)
 		if pending.Preference != preferenceDisabled || pending.CleanupKind != cleanupDisable {
