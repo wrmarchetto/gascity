@@ -66,6 +66,37 @@ type canarySession struct {
 	OutputToks  int      `json:"output_tokens"`
 	CacheRead   int      `json:"cache_read_tokens"`
 	SpanSeconds float64  `json:"span_seconds_lower_bound"`
+	// JSON names written as null, which gc usage's schema permits on every
+	// measurement (schemas/usage/result.schema.json).
+	Null []string `json:"-"`
+}
+
+// noModelFacts is the null set gc usage writes for a session that recorded
+// compute facts and no model facts (cmd/gc/cmd_usage.go usageJSONGroupOf).
+var noModelFacts = []string{
+	"invocations", "output_tokens", "cache_read_tokens",
+	"span_seconds_lower_bound",
+}
+
+// MarshalJSON writes each field named in Null as JSON null, and refuses a
+// name the struct does not carry so a misspelling cannot leave a value in.
+func (s canarySession) MarshalJSON() ([]byte, error) {
+	type plain canarySession
+	body, err := json.Marshal(plain(s))
+	if err != nil || len(s.Null) == 0 {
+		return body, err
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return nil, err
+	}
+	for _, name := range s.Null {
+		if _, ok := fields[name]; !ok {
+			return nil, fmt.Errorf("canarySession %s: no field %q to null", s.Key, name)
+		}
+		fields[name] = nil
+	}
+	return json.Marshal(fields)
 }
 
 // canaryBead is one row of bd list --json, reduced the same way.
@@ -445,21 +476,89 @@ func TestCanaryARowUnderItsDayFloorIsNoVerdictNotAPass(t *testing.T) {
 	}
 }
 
-// TestCanaryAnAgentWithNoWindowDataIsNoVerdictNotAPass removes the agent from
-// the window entirely. An agent that stopped running is a missing measurement;
-// silently skipping it would let the epic be declared safe for an agent the
-// window never observed.
-func TestCanaryAnAgentWithNoWindowDataIsNoVerdictNotAPass(t *testing.T) {
-	var baseSess, winSess []canarySession
-	baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
-	winBeads := []canaryBead{}
-	got := runCanaryEval(t, canaryFixture{
-		criteria: oneSubjectCriteria, baselineUsage: baseSess, windowUsage: winSess,
-		baselineBeads: baseBeads, windowBeads: winBeads,
-	})
-	if got.exit != canaryExitNoVerdict {
-		t.Fatalf("exit = %d, want %d (no verdict)\nstdout:\n%s",
-			got.exit, canaryExitNoVerdict, got.stdout)
+// TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero covers an agent
+// absent from the window and one whose sessions gc usage reports with null
+// invocations. Read as 0, either declares the epic safe for an agent the window
+// never measured. An observed 0 is still a measurement and is judged.
+func TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero(t *testing.T) {
+	unobserved := func(sessions []canarySession) {
+		for i := range sessions {
+			sessions[i].Null = noModelFacts
+		}
+	}
+	cases := []struct {
+		name   string
+		window func(sess *[]canarySession) []canaryBead
+		want   int
+		says   string
+	}{
+		{
+			name:   "no window beads",
+			window: func(*[]canarySession) []canaryBead { return []canaryBead{} },
+			want:   canaryExitNoVerdict,
+		},
+		{
+			name: "every window session recorded no model facts",
+			window: func(sess *[]canarySession) []canaryBead {
+				beads := canaryBeads("win", 6, 3, 20, "alpha", sess)
+				unobserved(*sess)
+				return beads
+			},
+			want: canaryExitNoVerdict,
+			says: "window min_beads=0 under floor 5; 6 more beads' sessions have " +
+				"invocations null",
+		},
+		{
+			// Read as 0, the four unobserved beads halve 20 per bead to 10.
+			name: "half the window's sessions recorded no model facts",
+			window: func(sess *[]canarySession) []canaryBead {
+				beads := canaryBeads("win", 8, 4, 20, "alpha", sess)
+				unobserved((*sess)[4:])
+				return beads
+			},
+			want: canaryExitNoVerdict,
+			says: "no model facts: 0 -> 4 beads",
+		},
+		{
+			// Six observed beads on one day, three unobserved on three days.
+			name: "only unobserved beads cover the other days",
+			window: func(sess *[]canarySession) []canaryBead {
+				beads := canaryBeads("win", 6, 1, 20, "alpha", sess)
+				var gap []canarySession
+				beads = append(beads, canaryBeads("gap", 3, 3, 20, "alpha", &gap)...)
+				unobserved(gap)
+				*sess = append(*sess, gap...)
+				return beads
+			},
+			want: canaryExitNoVerdict,
+			says: "window covered 1 local days, floor 3",
+		},
+		{
+			name: "an observed zero is judged",
+			window: func(sess *[]canarySession) []canaryBead {
+				return canaryBeads("win", 6, 3, 0, "alpha", sess)
+			},
+			want: canaryExitKeep,
+			says: "20.00 -> 0.00, line 24.00",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var baseSess, winSess []canarySession
+			baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
+			winBeads := tc.window(&winSess)
+			got := runCanaryEval(t, canaryFixture{
+				criteria: oneSubjectCriteria, baselineUsage: baseSess, windowUsage: winSess,
+				baselineBeads: baseBeads, windowBeads: winBeads,
+			})
+			if got.exit != tc.want {
+				t.Fatalf("exit = %d, want %d\nstdout:\n%s\nstderr:\n%s",
+					got.exit, tc.want, got.stdout, got.stderr)
+			}
+			if !strings.Contains(got.stdout, tc.says) {
+				t.Fatalf("stdout does not say %q:\n%s", tc.says, got.stdout)
+			}
+		})
 	}
 }
 
@@ -534,20 +633,43 @@ func TestCanaryASessionHoldingSeveralBeadsSplitsItsCost(t *testing.T) {
 // comparison that assumes the wrong regime is worse than no comparison. The
 // fixture holds invocations per bead flat so the only thing under test is the
 // witness.
+//
+// The second case adds two sessions whose output tokens are null. Read as 0,
+// their 200 invocations pull output per invocation from 2,000 to 750.
 func TestCanaryAWitnessGoingTheWrongWayVoidsTheRow(t *testing.T) {
-	var baseSess, winSess []canarySession
-	baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
-	winBeads := canaryBeads("win", 6, 3, 20, "alpha", &winSess)
-	for i := range winSess {
-		winSess[i].OutputToks *= 2
-	}
-	got := runCanaryEval(t, canaryFixture{
-		criteria: oneSubjectCriteria, baselineUsage: baseSess, windowUsage: winSess,
-		baselineBeads: baseBeads, windowBeads: winBeads,
-	})
-	if got.exit != canaryExitNoVerdict {
-		t.Fatalf("exit = %d, want %d (no verdict)\nstdout:\n%s",
-			got.exit, canaryExitNoVerdict, got.stdout)
+	for name, extra := range map[string][]canarySession{
+		"every session observed": nil,
+		"a session with null output tokens is not read as zero output": {
+			{
+				Key: "win-x0", AgentTypes: []string{"alpha"}, Invocations: 100,
+				Null: []string{"output_tokens"},
+			},
+			{
+				Key: "win-x1", AgentTypes: []string{"alpha"}, Invocations: 100,
+				Null: []string{"output_tokens"},
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var baseSess, winSess []canarySession
+			baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
+			winBeads := canaryBeads("win", 6, 3, 20, "alpha", &winSess)
+			for i := range winSess {
+				winSess[i].OutputToks *= 2
+			}
+			got := runCanaryEval(t, canaryFixture{
+				criteria: oneSubjectCriteria, baselineUsage: baseSess,
+				windowUsage:   append(winSess, extra...),
+				baselineBeads: baseBeads, windowBeads: winBeads,
+			})
+			if got.exit != canaryExitNoVerdict {
+				t.Fatalf("exit = %d, want %d (no verdict)\nstdout:\n%s",
+					got.exit, canaryExitNoVerdict, got.stdout)
+			}
+			if !strings.Contains(got.stdout, "output/invocation rose 1,000 -> 2,000") {
+				t.Fatalf("witness did not read 2,000 output/invocation:\n%s", got.stdout)
+			}
+		})
 	}
 }
 
@@ -1070,14 +1192,21 @@ witness = "none"
 // Wall-clock carries its observation count beside it. The baseline records a
 // span for most sessions and a true wall-clock for 8.5% of them, so a row
 // reporting a small number needs to say whether that is a short window or a
-// thin one; a bare figure cannot distinguish not-observed from zero.
+// thin one; a bare figure cannot distinguish not-observed from zero. Two
+// window beads with no model facts are counted beside the token figures and
+// kept out of them: read as 0, they pull output per bead from 20,000 to 15,000.
 func TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric(t *testing.T) {
-	var baseSess, winSess []canarySession
+	var baseSess, winSess, gapSess []canarySession
 	baseBeads := canaryBeads("base", 6, 3, 20, "alpha", &baseSess)
 	winBeads := canaryBeads("win", 6, 3, 20, "alpha", &winSess)
 	for i := range winSess {
 		winSess[i].SpanSeconds = 900
 	}
+	winBeads = append(winBeads, canaryBeads("gap", 2, 2, 20, "alpha", &gapSess)...)
+	for i := range gapSess {
+		gapSess[i].Null = noModelFacts
+	}
+	winSess = append(winSess, gapSess...)
 	for i := range baseSess {
 		baseSess[i].SpanSeconds = 600
 	}
@@ -1096,6 +1225,8 @@ func TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric(t *testing
 			BaselineSpanPerBead  *float64 `json:"baseline_span_seconds_per_bead"`
 			WindowSpanPerBead    *float64 `json:"window_span_seconds_per_bead"`
 			WindowSpanObserved   *int     `json:"window_span_observed_beads"`
+			BaselineUnobserved   *int     `json:"baseline_unobserved_beads"`
+			WindowUnobserved     *int     `json:"window_unobserved_beads"`
 		} `json:"rows"`
 	}
 	if err := json.Unmarshal([]byte(got.stdout), &doc); err != nil {
@@ -1127,6 +1258,11 @@ func TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric(t *testing
 		t.Fatalf("window span observation count missing or wrong; a span figure "+
 			"with no count cannot distinguish a thin window from a short one: %v",
 			row.WindowSpanObserved)
+	}
+	if row.BaselineUnobserved == nil || *row.BaselineUnobserved != 0 ||
+		row.WindowUnobserved == nil || *row.WindowUnobserved != 2 {
+		t.Fatalf("unobserved bead counts = %v -> %v, want 0 -> 2",
+			row.BaselineUnobserved, row.WindowUnobserved)
 	}
 }
 

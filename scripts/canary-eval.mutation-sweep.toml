@@ -140,7 +140,79 @@ find = '''            elif state != "inside":
                 voids.append(f"{agent_type}: {state} ({detail})")'''
 replace = '''            elif state == "never-happens":
                 voids.append(f"{agent_type}: {state} ({detail})")'''
-expect_output = ["TestCanaryAnAgentWithNoWindowDataIsNoVerdictNotAPass"]
+expect_output = ["TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero/no_window_beads"]
+
+# --- a null gc usage measurement is not observed, never zero ---
+
+# Flipped, a window whose sessions recorded no model facts measures 0
+# invocations per bead, meets its floors and reads keep.
+[[mutation]]
+id = "null-token-reading-read-as-zero"
+path = "scripts/canary-eval.py"
+find = '''    return None if None in values else values'''
+replace = '''    return tuple(value or 0 for value in values)'''
+expect_output = [
+  "TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero/every_window_session_recorded_no_model_facts",
+  "TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero/half_the_window's_sessions_recorded_no_model_facts",
+  "TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric",
+]
+
+# Flipped, an observed zero is set aside as if it were null.
+[[mutation]]
+id = "observed-zero-read-as-unobserved"
+path = "scripts/canary-eval.py"
+find = '''    return None if None in values else values'''
+replace = '''    return None if not all(values) else values'''
+expect_output = ["TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero/an_observed_zero_is_judged"]
+
+# Flipped, beads set aside for no model facts still cover days, so observed
+# beads all on one day pass a three-day floor.
+[[mutation]]
+id = "unobserved-beads-cover-days"
+path = "scripts/canary-eval.py"
+find = '''            sample.unobserved_beads += len(held)
+            continue'''
+replace = '''            sample.unobserved_beads += len(held)
+            sample.days.update(local_day(b.get("closed_at")) for b in held)
+            continue'''
+expect_output = ["TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero/only_unobserved_beads_cover_the_other_days"]
+
+# Flipped, a session with invocations and null output tokens adds its
+# invocations to the witness and 0 output, and a real rise is hidden.
+[[mutation]]
+id = "witness-reads-a-partial-reading-as-zero"
+path = "scripts/canary-eval.py"
+find = '''        reading = token_reading(group)
+        if reading is None:
+            continue
+        sample.invocations += reading[0]'''
+replace = '''        reading = tuple(group.get(field) or 0 for field in TOKEN_FIELDS)
+        sample.invocations += reading[0]'''
+expect_output = ["TestCanaryAWitnessGoingTheWrongWayVoidsTheRow/a_session_with_null_output_tokens_is_not_read_as_zero_output"]
+
+# Flipped, the void names a short window and not the missing measurement.
+[[mutation]]
+id = "unobserved-beads-unnamed-in-the-void"
+path = "scripts/canary-eval.py"
+find = '''    if not sample.unobserved_beads:
+        return ""'''
+replace = '''    if True:
+        return ""'''
+expect_output = ["TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero/every_window_session_recorded_no_model_facts"]
+
+[[mutation]]
+id = "unobserved-beads-unreported-in-the-table"
+path = "scripts/canary-eval.py"
+find = '''        if row["window_unobserved_beads"] is not None:'''
+replace = '''        if False:'''
+expect_output = ["TestCanaryAWindowCostNotObservedIsNoVerdictNotAMeasuredZero/half_the_window's_sessions_recorded_no_model_facts"]
+
+[[mutation]]
+id = "unobserved-beads-unreported-in-json"
+path = "scripts/canary-eval.py"
+find = '''                None if reads_outcomes else window.unobserved_beads,'''
+replace = '''                None if reads_outcomes else 0,'''
+expect_output = ["TestCanaryReportCarriesTokensAndWallClockNotJustTheTriggerMetric"]
 
 # The machinery filter. Flipped, this city's ~9,000 daily order-tracking
 # records land in the per-bead denominator and every regression reads as a
