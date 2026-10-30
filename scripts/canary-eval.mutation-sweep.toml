@@ -446,3 +446,19 @@ path = "scripts/canary-fetch.sh"
 find = '''if [ -n "$(ls -A -- "$out" 2>/dev/null)" ]; then'''
 replace = '''if false; then'''
 expect_output = ["FAIL names the cause"]
+
+# Flipped, argparse's own exit 2 reads as a revert.
+[[mutation]]
+id = "usage-error-exits-the-revert-code"
+path = "scripts/canary-eval.py"
+find = '''    def error(self, message):'''
+replace = '''    def unused_error(self, message):'''
+expect_output = ["TestCanaryAMalformedCommandLineIsAUsageErrorNotARevert/no_criteria"]
+
+# Flipped, --zon is quietly read as --zone.
+[[mutation]]
+id = "abbreviated-flags-accepted"
+path = "scripts/canary-eval.py"
+find = '''        allow_abbrev=False)'''
+replace = '''        allow_abbrev=True)'''
+expect_output = ["TestCanaryAMalformedCommandLineIsAUsageErrorNotARevert/a_unique_prefix"]

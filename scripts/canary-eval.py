@@ -449,9 +449,24 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     return (state, line, f"{shown[0]} -> {shown[1]}, line {shown[2]}")
 
 
+class UsageParser(argparse.ArgumentParser):
+    """An argument parser whose usage errors exit EXIT_USAGE.
+
+    Stock argparse exits 2 on one, which is EXIT_REVERT, and a reading is
+    taken by its exit code.
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_USAGE, f"{self.prog}: error: {message}\n")
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Decide keep or revert for the agent-efficiency canary.")
+    # allow_abbrev off: a unique prefix (--zon) would otherwise be read as
+    # the flag it abbreviates, with nothing said.
+    parser = UsageParser(
+        description="Decide keep or revert for the agent-efficiency canary.",
+        allow_abbrev=False)
     parser.add_argument("--criteria", required=True,
                         help="committed TOML naming each agent, its metric and its margin")
     parser.add_argument("--baseline-usage",

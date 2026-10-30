@@ -117,6 +117,7 @@ type canaryFixture struct {
 	baselineBeads  []canaryBead
 	windowBeads    []canaryBead
 	extraArguments []string
+	arguments      []string // when set, the whole command line after the script
 }
 
 // canaryResult is what the evaluator reported, for assertions that need to
@@ -162,6 +163,9 @@ func runCanaryEval(t *testing.T, f canaryFixture) canaryResult {
 		"--zone", "America/Chicago",
 	}
 	args = append(args, f.extraArguments...)
+	if f.arguments != nil {
+		args = append(args[:1:1], f.arguments...)
+	}
 	cmd := exec.Command("python3", args...) //nolint:gosec // fixed script path under the repo
 	var out, errBuf strings.Builder
 	cmd.Stdout = &out
@@ -1269,6 +1273,32 @@ func TestCanaryJSONReportCarriesEveryRowTheTableDoes(t *testing.T) {
 	}
 }
 
-func TestCanaryFetchLeavesAWholeReadingOrNone(t *testing.T) {
-	runShellSuite(t, "canary-fetch.test.sh")
+// TestCanaryAMalformedCommandLineIsAUsageErrorNotARevert: stock argparse exits
+// 2 on a usage error, the revert code, and a reading is taken by its exit.
+func TestCanaryAMalformedCommandLineIsAUsageErrorNotARevert(t *testing.T) {
+	criteria := filepath.Join(t.TempDir(), "criteria.toml")
+	if err := os.WriteFile(criteria, []byte(oneSubjectCriteria), 0o644); err != nil {
+		t.Fatalf("write criteria: %v", err)
+	}
+	for _, tc := range []struct {
+		name             string
+		arguments, extra []string
+		want             string
+	}{
+		{"no criteria", []string{"--zone", "America/Chicago"}, nil, "--criteria"},
+		{"misspelled flag", []string{"--criteria", criteria, "--windowbeads", "x"}, nil, "--windowbeads"},
+		{"the fetch script's --window", []string{"--criteria", criteria, "--window", "x"}, nil, "--window"},
+		{"a unique prefix", nil, []string{"--zon", "UTC"}, "--zon"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runCanaryEval(t, canaryFixture{
+				criteria: oneSubjectCriteria, arguments: tc.arguments, extraArguments: tc.extra,
+			})
+			if got.exit != canaryExitUsage || !strings.Contains(got.stderr, tc.want) ||
+				strings.Contains(got.stderr, "Traceback") {
+				t.Fatalf("exit = %d, want %d and an error naming %s\nstderr:\n%s",
+					got.exit, canaryExitUsage, tc.want, got.stderr)
+			}
+		})
+	}
 }
