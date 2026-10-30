@@ -65,6 +65,11 @@ LOCAL = timezone(timedelta(hours=-5))
 INFRASTRUCTURE_LABELS = ("order-tracking", "exec")
 WORK_BEAD_TYPES = ("task", "bug", "chore", "spec")
 
+# The gc usage fields a token reading is made of. gc usage writes them null
+# together for a session with no model facts (cmd/gc/cmd_usage.go
+# usageJSONGroupOf), and null is not-observed, never zero.
+TOKEN_FIELDS = ("invocations", "output_tokens", "cache_read_tokens")
+
 # The gc.outcome values that are verdicts (internal/beadmeta/values.go).
 # skipped, canceled and missing_root record work that never reached one.
 VERDICT_OUTCOMES = ("pass", "fail")
@@ -173,6 +178,16 @@ def criteria_errors(criteria):
     return errors
 
 
+def token_reading(group):
+    """Returns (invocations, output_tokens, cache_read_tokens), or None.
+
+    None when any field is null or absent. A partial reading is not mixed with
+    zeros: a 0 standing in for a missing output count lowers the witness.
+    """
+    values = tuple(group.get(field) for field in TOKEN_FIELDS)
+    return None if None in values else values
+
+
 def load_usage(path):
     """Index one gc usage --by session --json report by session id.
 
@@ -217,6 +232,9 @@ class Sample:
         # zero-duration work, which is the not-observed-versus-zero confusion
         # the baseline document spends a section on.
         self.span_beads = 0
+        # Joined beads whose session recorded no model facts. They are kept out
+        # of every figure above, the floors included, and reported here.
+        self.unobserved_beads = 0
         self.verdicts = 0
         self.failures = 0
         self.other_outcomes = defaultdict(int)
@@ -267,15 +285,20 @@ def measure_session_cost(beads, usage, agent_type):
         holders[session_id].append(bead)
     for session_id, held in holders.items():
         group = usage[session_id]
+        reading = token_reading(group)
+        if reading is None:
+            sample.unobserved_beads += len(held)
+            continue
+        invocations, output_tokens, cache_read_tokens = reading
         share = 1.0 / len(held)
         for bead in held:
             sample.beads += 1
             day = local_day(bead.get("closed_at"))
             if day:
                 sample.days.add(day)
-            sample.invocations += (group.get("invocations") or 0) * share
-            sample.output_tokens += (group.get("output_tokens") or 0) * share
-            sample.cache_read_tokens += (group.get("cache_read_tokens") or 0) * share
+            sample.invocations += invocations * share
+            sample.output_tokens += output_tokens * share
+            sample.cache_read_tokens += cache_read_tokens * share
             span = group.get("span_seconds_lower_bound")
             if span:
                 sample.span_seconds += span * share
@@ -296,9 +319,12 @@ def measure_type_usage(usage, agent_type):
     for group in usage.values():
         if agent_type not in (group.get("agent_types") or []):
             continue
-        sample.invocations += group.get("invocations") or 0
-        sample.output_tokens += group.get("output_tokens") or 0
-        sample.cache_read_tokens += group.get("cache_read_tokens") or 0
+        reading = token_reading(group)
+        if reading is None:
+            continue
+        sample.invocations += reading[0]
+        sample.output_tokens += reading[1]
+        sample.cache_read_tokens += reading[2]
     return sample
 
 
@@ -347,6 +373,14 @@ def format_outcomes(counts):
     return ", ".join(f"{name} {n}" for name, n in sorted(counts.items()))
 
 
+def unobserved_note(sample):
+    """A short-sample detail's suffix naming the beads set aside, or ''."""
+    if not sample.unobserved_beads:
+        return ""
+    return (f"; {sample.unobserved_beads} more beads' sessions have invocations "
+            "null in gc usage (no model facts), not read as 0")
+
+
 def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
     """Judge one criteria row, returning (state, line, detail).
 
@@ -379,19 +413,22 @@ def evaluate_row(spec, baseline, window, baseline_witness, window_witness):
 
     if base_value is None or have_base < baseline_floor:
         return ("no-baseline", None,
-                f"baseline {floor_key}={have_base} under floor {baseline_floor}")
+                f"baseline {floor_key}={have_base} under floor {baseline_floor}"
+                + unobserved_note(baseline))
     if base_value == 0:
         return ("no-baseline", None,
                 f"baseline {format_value(metric, base_value)}, so a relative "
                 "margin puts the line at 0 and any window crosses it")
     if win_value is None or have_win < floor:
         return ("insufficient", None,
-                f"window {floor_key}={have_win} under floor {floor}")
+                f"window {floor_key}={have_win} under floor {floor}"
+                + unobserved_note(window))
 
     min_days = int(spec["min_days"])
     if len(window.days) < min_days:
         return ("insufficient", None,
-                f"window covered {len(window.days)} local days, floor {min_days}")
+                f"window covered {len(window.days)} local days, floor {min_days}"
+                + unobserved_note(window))
 
     line = base_value * (1.0 + margin)
 
@@ -500,6 +537,10 @@ def main(argv=None):
                 dict(baseline.other_outcomes) if reads_outcomes else None,
             "window_other_outcomes":
                 dict(window.other_outcomes) if reads_outcomes else None,
+            "baseline_unobserved_beads":
+                None if reads_outcomes else baseline.unobserved_beads,
+            "window_unobserved_beads":
+                None if reads_outcomes else window.unobserved_beads,
             "window_days": len(window.days),
             "baseline_output_per_invocation": baseline_witness.output_per_invocation,
             "window_output_per_invocation": window_witness.output_per_invocation,
@@ -551,6 +592,10 @@ def main(argv=None):
             print(f"{'':<26}outside the rate: "
                   f"{format_outcomes(row['baseline_other_outcomes'])} -> "
                   f"{format_outcomes(row['window_other_outcomes'])}")
+        if row["window_unobserved_beads"] is not None:
+            print(f"{'':<26}no model facts: "
+                  f"{row['baseline_unobserved_beads']} -> "
+                  f"{row['window_unobserved_beads']} beads")
         print(f"{'':<26}reported: out tok/bead "
               f"{format_reported(row['baseline_output_tokens_per_bead'])} -> "
               f"{format_reported(row['window_output_tokens_per_bead'])}"
