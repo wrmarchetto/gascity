@@ -664,7 +664,9 @@ func TestReadFilteredAfterSeq(t *testing.T) {
 			case 50:
 				buf.WriteString("not-json\n\n")
 			case 150:
-				buf.WriteString(strings.Repeat(`{"type":"unsequenced"}`+"\n", 40))
+				// Wide enough in bytes that probes for lower floors land in it.
+				pad := strings.Repeat("u", 1_000)
+				buf.WriteString(strings.Repeat(`{"type":"unsequenced","message":"`+pad+`"}`+"\n", 40))
 			case 200:
 				e.Message = strings.Repeat("x", 20_000)
 			}
