@@ -162,6 +162,27 @@ func readFilteredTracked(path string, filter Filter) ([]Event, map[eventSeqWindo
 	}
 	defer f.Close() //nolint:errcheck // read-only file
 
+	result, err = scanActiveFiltered(f, filter, result)
+	return result, listed, err
+}
+
+// scanActiveFiltered appends the active log's events matching filter to
+// result. With an AfterSeq floor the scan starts at seekAfterSeq's offset, so
+// a walk's cost follows the events above the floor rather than the file size.
+func scanActiveFiltered(f *os.File, filter Filter, result []Event) ([]Event, error) {
+	if filter.AfterSeq > 0 {
+		info, err := f.Stat()
+		if err != nil {
+			return result, fmt.Errorf("stat events: %w", err)
+		}
+		start, err := seekAfterSeq(f, info.Size(), filter.AfterSeq)
+		if err != nil {
+			return result, err
+		}
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			return result, fmt.Errorf("seeking events: %w", err)
+		}
+	}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // handle lines up to 1MB
 	for scanner.Scan() {
@@ -178,9 +199,57 @@ func readFilteredTracked(path string, filter Filter) ([]Event, map[eventSeqWindo
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return result, listed, fmt.Errorf("scanning events: %w", err)
+		return result, fmt.Errorf("scanning events: %w", err)
 	}
-	return result, listed, nil
+	return result, nil
+}
+
+// seekAfterSeq bisects the first size bytes of an active log for a line-start
+// offset with every earlier line at or below floor. Writers assign seq under
+// the file's flock, so the log is seq-ascending. A probe that finds no
+// sequenced line only lowers the bound, so the offset errs early, never late.
+func seekAfterSeq(f io.ReaderAt, size int64, floor uint64) (int64, error) {
+	lo, hi := int64(0), size
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		end, seq, ok, err := probeSeqAfter(f, mid, hi, size)
+		if err != nil {
+			return 0, err
+		}
+		if !ok || seq > floor {
+			hi = mid
+			continue
+		}
+		lo = end
+	}
+	return lo, nil
+}
+
+// probeSeqAfter reads the first complete sequenced line starting after offset
+// from and before limit. Returns (end, seq, ok), end being the offset just
+// past that line.
+func probeSeqAfter(f io.ReaderAt, from, limit, size int64) (int64, uint64, bool, error) {
+	r := bufio.NewReader(io.NewSectionReader(f, from, size-from))
+	skipped, err := r.ReadBytes('\n')
+	pos := from + int64(len(skipped))
+	for err == nil && pos < limit {
+		var line []byte
+		line, err = r.ReadBytes('\n')
+		if err != nil {
+			break
+		}
+		pos += int64(len(line))
+		var header struct {
+			Seq uint64 `json:"seq"`
+		}
+		if json.Unmarshal(line, &header) == nil && header.Seq > 0 {
+			return pos, header.Seq, true, nil
+		}
+	}
+	if err != nil && err != io.EOF {
+		return 0, 0, false, fmt.Errorf("seeking events: %w", err)
+	}
+	return 0, 0, false, nil
 }
 
 // ReadFilteredWithInFlight is ReadFiltered plus events still stranded in

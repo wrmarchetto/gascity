@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -650,6 +651,89 @@ func TestReadFilteredAfterSeq(t *testing.T) {
 	if got[1].Seq != 5 {
 		t.Errorf("got[1].Seq = %d, want 5", got[1].Seq)
 	}
+
+	t.Run("equals an unfloored read at every floor", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		base := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		buf.WriteString(`{"type":"unsequenced"}` + "\n")
+		for seq := uint64(1); seq <= 300; seq++ {
+			e := Event{Seq: seq, Type: BeadCreated, Ts: base.Add(time.Duration(seq) * time.Second)}
+			switch seq {
+			case 50:
+				buf.WriteString("not-json\n\n")
+			case 150:
+				// Wide enough in bytes that probes for lower floors land in it.
+				pad := strings.Repeat("u", 1_000)
+				buf.WriteString(strings.Repeat(`{"type":"unsequenced","message":"`+pad+`"}`+"\n", 40))
+			case 200:
+				e.Message = strings.Repeat("x", 20_000)
+			}
+			if err := enc.Encode(e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		buf.WriteString(`{"seq":301,"type":`)
+		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		all, err := ReadFiltered(path, Filter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(all) != 341 {
+			t.Fatalf("fixture: unfloored read saw %d events, want 341", len(all))
+		}
+		for floor := uint64(1); floor <= 302; floor++ {
+			want := ApplyFilter(all, Filter{AfterSeq: floor})
+			got, err := ReadFiltered(path, Filter{AfterSeq: floor})
+			if err != nil {
+				t.Fatalf("floor %d: %v", floor, err)
+			}
+			if len(got) != len(want) {
+				t.Fatalf("floor %d: got %d events, want %d", floor, len(got), len(want))
+			}
+			for i := range want {
+				if got[i].Seq != want[i].Seq {
+					t.Fatalf("floor %d: event %d seq %d, want %d", floor, i, got[i].Seq, want[i].Seq)
+				}
+			}
+		}
+	})
+
+	t.Run("does not decode lines below the floor", func(t *testing.T) {
+		// Seq 1_000_000 is planted out of order at line 10, so only a read
+		// that decodes below the floor can return it.
+		path := filepath.Join(t.TempDir(), "events.jsonl")
+		var buf bytes.Buffer
+		enc := json.NewEncoder(&buf)
+		for seq := uint64(1); seq <= 10_000; seq++ {
+			e := Event{Seq: seq, Type: BeadCreated}
+			if seq == 10 {
+				e.Seq = 1_000_000
+			}
+			if err := enc.Encode(e); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := ReadFiltered(path, Filter{AfterSeq: 9_995})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var seqs []uint64
+		for _, e := range got {
+			seqs = append(seqs, e.Seq)
+		}
+		if want := []uint64{9_996, 9_997, 9_998, 9_999, 10_000}; !slices.Equal(seqs, want) {
+			t.Fatalf("seqs = %v, want %v", seqs, want)
+		}
+	})
 }
 
 func TestReadFilteredAfterSeqCombined(t *testing.T) {
