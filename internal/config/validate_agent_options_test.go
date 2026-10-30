@@ -179,15 +179,33 @@ func TestAgentOptionDefaultsErrorCarriesTheRemedy(t *testing.T) {
 	}
 }
 
-// TestAgentOptionDefaultsSkipsStartCommandAgents pins the one exemption.
-// start_command clears the options schema (ResolveProvider step 1), so no
-// option value in that agent is reachable and validating against an absent
-// schema would refuse every key.
+// TestAgentOptionDefaultsSkipsStartCommandAgents pins the exemption to where
+// ResolveProvider clears the options schema: an agent start_command (step 1)
+// or a workspace one (steps 2 and 4b). Each case first proves launch reads no
+// schema, so the exemption cannot drift from the resolver.
 func TestAgentOptionDefaultsSkipsStartCommandAgents(t *testing.T) {
-	cfg := claudeOptionCity(t, map[string]string{"effort": "xhgih"})
-	cfg.Agents[0].StartCommand = "my-agent --run"
-	if err := ValidateAgentOptionDefaults(cfg); err != nil {
-		t.Fatalf("start_command agent has no reachable options schema: %v", err)
+	found := func(string) (string, error) { return "/bin/true", nil }
+	for _, tc := range []struct {
+		name string
+		set  func(*City)
+	}{
+		{"agent start_command", func(c *City) { c.Agents[0].StartCommand = "my-agent --run" }},
+		{"workspace start_command", func(c *City) { c.Workspace.StartCommand = "custom-wrapper --run" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := claudeOptionCity(t, map[string]string{"effort": "xhgih"})
+			tc.set(cfg)
+			resolved, err := ResolveProvider(&cfg.Agents[0], &cfg.Workspace, cfg.Providers, found)
+			if err != nil {
+				t.Fatalf("ResolveProvider: %v", err)
+			}
+			if len(resolved.OptionsSchema) != 0 || len(resolved.EffectiveDefaults) != 0 {
+				t.Fatalf("launch reads a schema here, so this is not an exemption: %+v", resolved)
+			}
+			if err := ValidateAgentOptionDefaults(cfg); err != nil {
+				t.Fatalf("validation refuses a default launch never reads: %v", err)
+			}
+		})
 	}
 }
 
@@ -249,20 +267,27 @@ option_defaults = { model = "opus-5", effort = "xhgih" }
 	}
 }
 
-// TestLoadWithIncludesAcceptsDeclaredAgentEffort is the paired accepting case.
-// Without it the test above passes on any load failure -- a missing provider
-// catalog entry, a parse error in the fixture -- and would keep passing if the
-// new refusal were deleted.
-func TestLoadWithIncludesAcceptsDeclaredAgentEffort(t *testing.T) {
-	dir := t.TempDir()
-	cityDir := filepath.Join(dir, "city")
-	if err := os.MkdirAll(cityDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeTestFile(t, cityDir, "city.toml", `
+// TestLoadWithIncludesAcceptsDeclaredOrUnreachableAgentEffort is the paired
+// accepting case. Without it the test above passes on any load failure and
+// would keep passing if the refusal were deleted. The second case is an
+// undeclared effort that workspace.start_command makes unreachable.
+func TestLoadWithIncludesAcceptsDeclaredOrUnreachableAgentEffort(t *testing.T) {
+	for _, tc := range []struct {
+		name, workspaceExtra, effort string
+	}{
+		{"declared effort", "", "xhigh"},
+		{"workspace start_command", `start_command = "custom-wrapper --run"`, "custom-wrapper-level"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cityDir := filepath.Join(t.TempDir(), "city")
+			if err := os.MkdirAll(cityDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeTestFile(t, cityDir, "city.toml", `
 [workspace]
 name = "test"
 provider = "claude"
+`+tc.workspaceExtra+`
 
 [providers.claude]
 base = "builtin:claude"
@@ -270,10 +295,12 @@ base = "builtin:claude"
 [[agent]]
 name = "engineer"
 provider = "claude"
-option_defaults = { model = "opus-5", effort = "xhigh" }
+option_defaults = { model = "opus-5", effort = "`+tc.effort+`" }
 `)
-	if _, _, err := LoadWithIncludes(fsys.OSFS{}, filepath.Join(cityDir, "city.toml")); err != nil {
-		t.Fatalf("a city naming declared choices must load: %v", err)
+			if _, _, err := LoadWithIncludes(fsys.OSFS{}, filepath.Join(cityDir, "city.toml")); err != nil {
+				t.Fatalf("a city whose launch reads no invalid default must load: %v", err)
+			}
+		})
 	}
 }
 

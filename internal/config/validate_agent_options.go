@@ -75,11 +75,11 @@ func InvalidAgentOptionDefaults(cfg *City) []InvalidAgentOptionDefault {
 		if len(agent.OptionDefaults) == 0 {
 			continue
 		}
-		// start_command is the escape hatch: ResolveProvider returns a bare
-		// ResolvedProvider with no OptionsSchema, so nothing in
-		// option_defaults is reachable. Validating against the absent schema
-		// would refuse every key on those agents.
-		if agent.StartCommand != "" {
+		// start_command is the escape hatch: ResolveProvider clears the
+		// OptionsSchema for an agent one (step 1) and for a workspace one
+		// (steps 2 and 4b), so nothing in option_defaults is reachable and
+		// validating against the absent schema would refuse every key.
+		if agent.StartCommand != "" || cfg.Workspace.StartCommand != "" {
 			continue
 		}
 		name := agentProviderName(cfg, agent)

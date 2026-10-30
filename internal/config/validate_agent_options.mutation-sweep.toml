@@ -1,0 +1,44 @@
+# Proves the agent option_defaults refusal in validate_agent_options.go is
+# enforced, and exempts exactly the agents whose launch reads no schema.
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "option_defaults refused where reachable, exempt where start_command clears the schema"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./internal/config/", "-count=1", "-run", "AgentOptionDefaults|LoadWithIncludes|ResolveDefaultArgs"]
+timeout_s = 600
+
+# Flipped, a city on workspace.start_command fails to load over a default
+# its launch never reads.
+[[mutation]]
+id = "workspace-start-command-validated"
+path = "internal/config/validate_agent_options.go"
+find = '''if agent.StartCommand != "" || cfg.Workspace.StartCommand != "" {'''
+replace = '''if agent.StartCommand != "" {'''
+expect_output = ["TestAgentOptionDefaultsSkipsStartCommandAgents/workspace_start_command"]
+
+[[mutation]]
+id = "agent-start-command-validated"
+path = "internal/config/validate_agent_options.go"
+find = '''if agent.StartCommand != "" || cfg.Workspace.StartCommand != "" {'''
+replace = '''if cfg.Workspace.StartCommand != "" {'''
+expect_output = ["TestAgentOptionDefaultsSkipsStartCommandAgents/agent_start_command"]
+
+# Flipped, the exemption swallows every agent and nothing is validated.
+[[mutation]]
+id = "every-agent-exempt"
+path = "internal/config/validate_agent_options.go"
+find = '''if agent.StartCommand != "" || cfg.Workspace.StartCommand != "" {'''
+replace = '''if true {'''
+expect_output = ["TestAgentOptionDefaultsRefusesUnrecognizedValues"]
+
+# Flipped, the refusal never reaches a gc invocation.
+[[mutation]]
+id = "load-path-skips-validation"
+path = "internal/config/compose.go"
+find = '''	if err := ValidateAgentOptionDefaults(root); err != nil {'''
+replace = '''	if err := error(nil); err != nil {'''
+expect_output = ["TestLoadWithIncludesRefusesUnrecognizedAgentEffort"]
