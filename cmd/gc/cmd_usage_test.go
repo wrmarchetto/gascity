@@ -10,9 +10,10 @@
 // grouping and window arithmetic (internal/usageattr), and the bead-store scope
 // resolution (shared with gc bd).
 //
-// What it cannot represent: a live store. BeadsOf is injected, so a change in
-// how the claim path stamps gc.session_id goes green here and is caught only by
-// running the command against the real city -- which the recorded baseline is.
+// What it cannot represent: a live store. The bead join is driven against a
+// planted file store whose metadata this suite writes, so a change in how the
+// claim path stamps gc.session_id or gc.claim_sessions goes green here and is
+// caught only by running the command against the real city.
 //
 // Run: go test ./cmd/gc/ -run TestUsage
 package main
@@ -22,11 +23,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/beadmeta"
+	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/usage"
 	"github.com/gastownhall/gascity/internal/usageattr"
 )
@@ -279,6 +283,8 @@ func TestUsageReadsThePlantedLogEndToEnd(t *testing.T) {
 	first := int(salt%9000) + 1000
 	second := int(salt%700) + 300
 	other := int(salt%400) + 100
+	legacy := int(salt%300) + 50
+	anon := int(salt%200) + 20
 	lines := `{"run_id":"ci-salt","session_id":"ci-salt","worker":"lab__engineer-ci-salt",` +
 		`"kind":"model","input_tokens":` + strconv.Itoa(first) +
 		`,"at":` + strconv.FormatInt(salt, 10) + `,"idempotency_key":"k1"}` + "\n" +
@@ -287,7 +293,12 @@ func TestUsageReadsThePlantedLogEndToEnd(t *testing.T) {
 		`,"at":` + strconv.FormatInt(salt+5000, 10) + `,"idempotency_key":"k2"}` + "\n" +
 		`{"run_id":"ci-other","session_id":"ci-other","worker":"lab__pm-ci-other",` +
 		`"kind":"model","input_tokens":` + strconv.Itoa(other) +
-		`,"at":` + strconv.FormatInt(salt, 10) + `,"idempotency_key":"k3"}` + "\n"
+		`,"at":` + strconv.FormatInt(salt, 10) + `,"idempotency_key":"k3"}` + "\n" +
+		`{"run_id":"ci-legacy","session_id":"ci-legacy","worker":"lab__toolsmith-ci-legacy",` +
+		`"kind":"model","input_tokens":` + strconv.Itoa(legacy) +
+		`,"at":` + strconv.FormatInt(salt, 10) + `,"idempotency_key":"k4"}` + "\n" +
+		`{"run_id":"run-anon","kind":"model","input_tokens":` + strconv.Itoa(anon) +
+		`,"at":` + strconv.FormatInt(salt, 10) + `,"idempotency_key":"k5"}` + "\n"
 	path := filepath.Join(gcDir, "usage.jsonl")
 	if err := os.WriteFile(path, []byte(lines), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -326,14 +337,54 @@ func TestUsageReadsThePlantedLogEndToEnd(t *testing.T) {
 	if pm.Tokens.InputTokens != other {
 		t.Fatalf("lab.pm InputTokens = %d, want the salted %d", pm.Tokens.InputTokens, other)
 	}
-	if rep.Sessions != 2 {
-		t.Fatalf("Sessions = %d, want 2", rep.Sessions)
+	if rep.Sessions != 4 {
+		t.Fatalf("Sessions = %d, want 4", rep.Sessions)
 	}
 
 	prevCityFlag, prevRigFlag := cityFlag, rigFlag
 	t.Cleanup(func() { cityFlag, rigFlag = prevCityFlag, prevRigFlag })
-	if err := os.WriteFile(filepath.Join(dir, "city.toml"), []byte("[workspace]\nname = \"usage\"\n"), 0o644); err != nil {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	configureIsolatedRuntimeEnv(t)
+	if err := os.WriteFile(filepath.Join(dir, "city.toml"), []byte("[workspace]\nname = \"usage\"\n\n[beads]\nprovider = \"file\"\n"), 0o644); err != nil {
 		t.Fatalf("write city.toml: %v", err)
+	}
+	if err := ensureScopedFileStoreLayout(dir); err != nil {
+		t.Fatalf("file store layout: %v", err)
+	}
+	if err := ensurePersistedScopeLocalFileStore(dir); err != nil {
+		t.Fatalf("file store: %v", err)
+	}
+	store, err := openStoreAtForCity(dir, dir)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	// ci-other claimed gs-reclaimed first and ci-salt holds it now, so
+	// gc.session_id names only ci-salt. gs-legacy predates gc.claim_sessions,
+	// gs-garbled carries a claim list that does not decode, and gs-unclaimed
+	// names no session, so it must not collect the session-less fact.
+	planted := []beads.Bead{
+		{ID: "gs-reclaimed", Metadata: map[string]string{
+			beadSessionMetadataKey:            "ci-salt",
+			beadmeta.ClaimSessionsMetadataKey: `["ci-other:claude:k-other","ci-salt:codex:k-salt"]`,
+		}},
+		{ID: "gs-legacy", Metadata: map[string]string{beadSessionMetadataKey: "ci-legacy"}},
+		{ID: "gs-garbled", Metadata: map[string]string{
+			beadSessionMetadataKey:            "ci-other",
+			beadmeta.ClaimSessionsMetadataKey: "ci-other",
+		}},
+		{ID: "gs-unclaimed"},
+	}
+	beadID := map[string]string{}
+	for _, b := range planted {
+		created, err := store.Create(b)
+		if err != nil {
+			t.Fatalf("plant %s: %v", b.ID, err)
+		}
+		beadID[b.ID] = created.ID
+	}
+	if err := store.Close(beadID["gs-reclaimed"]); err != nil {
+		t.Fatalf("close gs-reclaimed: %v", err)
 	}
 	runUsage := func(args ...string) (string, string, error) {
 		cityFlag, rigFlag = "", ""
@@ -360,6 +411,76 @@ func TestUsageReadsThePlantedLogEndToEnd(t *testing.T) {
 		out, errOut, err := runUsage("--by", "type", "--top", "-1")
 		if err == nil || !strings.Contains(errOut, "--top -1") {
 			t.Fatalf("err = %v, stderr = %q, want a refusal naming --top -1\nstdout: %s", err, errOut, out)
+		}
+	})
+
+	t.Run("every claimant of a bead is joined to it, not only the last", func(t *testing.T) {
+		out, errOut, err := runUsage("--by", "bead", "--json")
+		if err != nil {
+			t.Fatalf("gc usage: %v\nstderr: %s", err, errOut)
+		}
+		var got struct {
+			Groups []struct {
+				Key              string   `json:"key"`
+				Sessions         []string `json:"sessions"`
+				InputTokens      int      `json:"input_tokens"`
+				LastClaimantOnly bool     `json:"last_claimant_only"`
+			} `json:"groups"`
+			Residue struct {
+				SessionsWithNoBead         int `json:"sessions_with_no_bead"`
+				SessionsNamingSeveralBeads int `json:"sessions_naming_several_beads"`
+				BeadsLastClaimantOnly      int `json:"beads_last_claimant_only"`
+			} `json:"residue"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("decode: %v\n%s", err, out)
+		}
+		rows := map[string]int{}
+		for i, g := range got.Groups {
+			rows[g.Key] = i
+		}
+		for _, want := range []struct {
+			key      string
+			sessions []string
+			input    int
+			lastOnly bool
+		}{
+			{"gs-reclaimed", []string{"ci-other", "ci-salt"}, first + second + other, false},
+			{"gs-legacy", []string{"ci-legacy"}, legacy, true},
+			{"gs-garbled", []string{"ci-other"}, other, true},
+		} {
+			key := want.key
+			i, ok := rows[beadID[key]]
+			if !ok {
+				t.Fatalf("no %s row:\n%s", key, out)
+			}
+			g := got.Groups[i]
+			sessions := append([]string(nil), g.Sessions...)
+			sort.Strings(sessions)
+			if strings.Join(sessions, ",") != strings.Join(want.sessions, ",") ||
+				g.InputTokens != want.input || g.LastClaimantOnly != want.lastOnly {
+				t.Fatalf("%s = sessions %v input %d last_claimant_only %v, want %v %d %v",
+					key, g.Sessions, g.InputTokens, g.LastClaimantOnly, want.sessions, want.input, want.lastOnly)
+			}
+		}
+		if i, ok := rows[usageattr.UnattributedBeadKey]; !ok || got.Residue.SessionsWithNoBead != 1 ||
+			strings.Join(got.Groups[i].Sessions, ",") != "" || got.Groups[i].InputTokens != anon {
+			t.Fatalf("%q must hold the session-less fact alone (no claimant may fall through, and no bead "+
+				"may claim the empty session):\n%s", usageattr.UnattributedBeadKey, out)
+		}
+		if got.Residue.SessionsNamingSeveralBeads != 1 || got.Residue.BeadsLastClaimantOnly != 2 {
+			t.Fatalf("residue = %+v, want ci-other on two beads and two last-claimant-only beads", got.Residue)
+		}
+		if !strings.Contains(errOut, beadID["gs-garbled"]) || !strings.Contains(errOut, beadmeta.ClaimSessionsMetadataKey) {
+			t.Fatalf("stderr does not name the undecodable claim list on gs-garbled:\n%s", errOut)
+		}
+
+		text, _, err := runUsage("--by", "bead")
+		if err != nil {
+			t.Fatalf("gc usage text: %v", err)
+		}
+		if !strings.Contains(usageLineContaining(t, text, "last claimant"), "2 bead") {
+			t.Fatalf("text residue does not count the two last-claimant-only beads:\n%s", text)
 		}
 	})
 

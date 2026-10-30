@@ -273,8 +273,9 @@ func TestBeadJoinComesFromTheStoreNotTheFact(t *testing.T) {
 		modelFact("ci-a", "lab__engineer-ci-a", 1_000, 7, 0, 0, 0),
 		modelFact("ci-b", "lab__engineer-ci-b", 1_000, 9, 0, 0, 0),
 	}, Options{
-		By:      ByBead,
-		BeadsOf: map[string][]string{"ci-a": {"gs-1"}},
+		By:               ByBead,
+		BeadsOf:          map[string][]string{"ci-a": {"gs-1"}},
+		LastClaimantOnly: map[string]bool{"gs-1": true, "gs-idle": true},
 	})
 
 	var withBead, without *Group
@@ -300,6 +301,11 @@ func TestBeadJoinComesFromTheStoreNotTheFact(t *testing.T) {
 	}
 	if rep.Residue.SessionsWithNoBead != 1 {
 		t.Fatalf("Residue.SessionsWithNoBead = %d, want 1", rep.Residue.SessionsWithNoBead)
+	}
+	// gs-idle has no session in the window, so it is no row and no residue.
+	if !withBead.LastClaimantOnly || without.LastClaimantOnly || rep.Residue.BeadsLastClaimantOnly != 1 {
+		t.Fatalf("gs-1 flagged %v, unattributed flagged %v, Residue.BeadsLastClaimantOnly = %d, want true false 1",
+			withBead.LastClaimantOnly, without.LastClaimantOnly, rep.Residue.BeadsLastClaimantOnly)
 	}
 }
 
@@ -382,6 +388,17 @@ func TestTruncationNeverChangesTheTotals(t *testing.T) {
 	}
 	if full.GroupsOmitted != 0 {
 		t.Fatalf("full.GroupsOmitted = %d, want 0", full.GroupsOmitted)
+	}
+
+	beadCut := Aggregate(facts, Options{
+		By:               ByBead,
+		BeadsOf:          map[string][]string{"ci-a": {"gs-a"}, "ci-b": {"gs-b"}, "ci-c": {"gs-c"}},
+		LastClaimantOnly: map[string]bool{"gs-c": true},
+		Top:              1,
+	})
+	if beadCut.Residue.BeadsLastClaimantOnly != 1 {
+		t.Fatalf("Residue.BeadsLastClaimantOnly = %d after truncation, want 1 for the dropped gs-c row",
+			beadCut.Residue.BeadsLastClaimantOnly)
 	}
 }
 

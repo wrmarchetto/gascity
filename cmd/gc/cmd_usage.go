@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -54,11 +55,13 @@ func newUsageCmd(stdout, stderr io.Writer) *cobra.Command {
 
 Reads .gc/usage.jsonl (the local usage sink) and groups it on the actor axis,
 which gc costs does not: gc costs rolls facts up by run id, the execution
-rather than the agent that ran it. The bead column is joined through each work
-bead's own gc.session_id in the bead store this command's scope resolves to --
-the same scope gc bd would use -- so in a multi-rig city most sessions show as
-"` + usageattr.UnattributedBeadKey + `" because their bead lives in another
-rig's store.
+rather than the agent that ran it. The bead column is joined through every
+session a work bead records as its claimant -- gc.claim_sessions, plus
+gc.session_id for the current holder -- in the bead store this command's scope
+resolves to, the same scope gc bd would use. In a multi-rig city most sessions
+show as "` + usageattr.UnattributedBeadKey + `" because their bead lives in
+another rig's store. A bead claimed before gc.claim_sessions was recorded names
+its last claimant only, and is counted as such rather than shown as complete.
 
 EVERY READING SAYS WHETHER IT WAS OBSERVED. A dash is "not recorded", a zero is
 a recorded zero, and they are different findings. This matters most for
@@ -145,8 +148,9 @@ func doUsage(stdout, stderr io.Writer, opts usageOptions) int {
 	}
 
 	beadsOf := map[string][]string{}
+	var lastClaimantOnly map[string]bool
 	if grouping == usageattr.ByBead {
-		beadsOf, src.BeadScope, err = usageBeadIndex(cityPath, opts.rig, stderr)
+		beadsOf, lastClaimantOnly, src.BeadScope, err = usageBeadIndex(cityPath, opts.rig, stderr)
 		if err != nil {
 			fmt.Fprintf(stderr, "gc usage: %v\n", err) //nolint:errcheck // best-effort stderr
 			return 1
@@ -154,7 +158,8 @@ func doUsage(stdout, stderr io.Writer, opts usageOptions) int {
 	}
 
 	rep := usageattr.Aggregate(facts, usageattr.Options{
-		By: grouping, Since: since, Until: until, BeadsOf: beadsOf, Top: opts.top,
+		By: grouping, Since: since, Until: until, BeadsOf: beadsOf,
+		LastClaimantOnly: lastClaimantOnly, Top: opts.top,
 	})
 	if opts.jsonOut {
 		enc := json.NewEncoder(stdout)
@@ -170,39 +175,71 @@ func doUsage(stdout, stderr io.Writer, opts usageOptions) int {
 }
 
 // usageBeadIndex builds session id -> bead ids from the bead store this command
-// is scoped to, returning the scope label alongside it.
+// is scoped to. Returns (index, lastClaimantOnly, scope label, error), where
+// lastClaimantOnly holds the beads whose record cannot name earlier claimants.
 //
 // The whole store is listed and filtered here rather than queried by key:
 // ListQuery.Metadata matches key=value and there is no has-key form, and the
 // values wanted are every session id there has ever been. Closed beads are
 // included deliberately -- a session's work is almost always closed by the time
 // anyone accounts for it.
-func usageBeadIndex(cityPath, rigName string, stderr io.Writer) (map[string][]string, string, error) {
+func usageBeadIndex(cityPath, rigName string, stderr io.Writer) (map[string][]string, map[string]bool, string, error) {
 	cfg, err := loadCityConfig(cityPath, stderr)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	target, err := resolveBdScopeTarget(cfg, cityPath, rigName, nil, false, stderr)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	store, err := openStoreAtForCityWithConfig(target.ScopeRoot, cityPath, cfg)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	all, err := store.List(beads.ListQuery{IncludeClosed: true, AllowScan: true})
 	if err != nil {
-		return nil, "", fmt.Errorf("listing beads in %s: %w", usageScopeLabel(target), err)
+		return nil, nil, "", fmt.Errorf("listing beads in %s: %w", usageScopeLabel(target), err)
 	}
 	index := map[string][]string{}
+	lastOnly := map[string]bool{}
 	for _, b := range all {
-		session := strings.TrimSpace(b.Metadata[beadSessionMetadataKey])
-		if session == "" {
-			continue
+		sessions, complete := usageBeadClaimants(b, stderr)
+		if !complete {
+			lastOnly[b.ID] = true
 		}
-		index[session] = append(index[session], b.ID)
+		for _, session := range sessions {
+			index[session] = append(index[session], b.ID)
+		}
 	}
-	return index, usageScopeLabel(target), nil
+	return index, lastOnly, usageScopeLabel(target), nil
+}
+
+// usageBeadClaimants returns every session a bead records as its claimant, once
+// each, and whether gc.claim_sessions supplied the list. gc.session_id alone
+// names only the current holder, since every reclaim overwrites it.
+func usageBeadClaimants(b beads.Bead, stderr io.Writer) ([]string, bool) {
+	var sessions []string
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id != "" && !slices.Contains(sessions, id) {
+			sessions = append(sessions, id)
+		}
+	}
+	complete := false
+	if raw := strings.TrimSpace(b.Metadata[beadmeta.ClaimSessionsMetadataKey]); raw != "" {
+		var entries []string
+		if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+			fmt.Fprintf(stderr, "gc usage: %s on %s is not a JSON string array, so only its %s is joined and earlier claimants are missing from its row: %v -- repair it with `gc bd update %s --set-metadata '%s=[...]'`\n", //nolint:errcheck // best-effort stderr
+				beadmeta.ClaimSessionsMetadataKey, b.ID, beadSessionMetadataKey, err, b.ID, beadmeta.ClaimSessionsMetadataKey)
+		} else {
+			complete = true
+			for _, entry := range entries {
+				add(parseHookClaimSessionEntry(entry).ID)
+			}
+		}
+	}
+	add(b.Metadata[beadSessionMetadataKey])
+	return sessions, complete
 }
 
 func usageScopeLabel(target execStoreTarget) string {
@@ -275,8 +312,8 @@ func renderUsageText(w io.Writer, rep usageattr.Report, src usageSource) {
 		fmt.Fprintf(w, "source    %s\n", src.UsagePath) //nolint:errcheck
 	}
 	if rep.Grouping == usageattr.ByBead {
-		fmt.Fprintf(w, "beads     joined through %s in the %s store\n", //nolint:errcheck
-			beadSessionMetadataKey, usageScopeOrUnknown(src.BeadScope))
+		fmt.Fprintf(w, "beads     joined through %s and %s in the %s store\n", //nolint:errcheck
+			beadmeta.ClaimSessionsMetadataKey, beadSessionMetadataKey, usageScopeOrUnknown(src.BeadScope))
 	}
 
 	if !rep.Window.Observed {
@@ -336,6 +373,11 @@ func renderUsageResidue(w io.Writer, rep usageattr.Report) {
 			r.SessionsNamingSeveralBeads)
 		fmt.Fprintf(w, "Each carries the whole session; TOTAL counts distinct sessions and does not double it.\n") //nolint:errcheck
 	}
+	if r.BeadsLastClaimantOnly > 0 {
+		fmt.Fprintf(w, "%d bead(s) record their last claimant only (no usable %s), so earlier claimants\n", //nolint:errcheck
+			r.BeadsLastClaimantOnly, beadmeta.ClaimSessionsMetadataKey)
+		fmt.Fprintf(w, "are missing from those rows. --json marks each with last_claimant_only.\n") //nolint:errcheck
+	}
 }
 
 func usageGroupLabel(g usageattr.Group) string {
@@ -386,6 +428,7 @@ type usageJSONGroup struct {
 	AgentTypes          []string `json:"agent_types"`
 	SuffixUnmatched     bool     `json:"suffix_unmatched"`
 	SharesSessions      bool     `json:"shares_sessions"`
+	LastClaimantOnly    bool     `json:"last_claimant_only"`
 	Invocations         *int     `json:"invocations"`
 	InputTokens         *int     `json:"input_tokens"`
 	OutputTokens        *int     `json:"output_tokens"`
@@ -428,6 +471,7 @@ type usageJSONResidue struct {
 	SuffixUnmatchedSessions    int `json:"suffix_unmatched_sessions"`
 	SessionsWithNoBead         int `json:"sessions_with_no_bead"`
 	SessionsNamingSeveralBeads int `json:"sessions_naming_several_beads"`
+	BeadsLastClaimantOnly      int `json:"beads_last_claimant_only"`
 }
 
 // usageJSONView projects a report for machine consumers. Exported field names
@@ -457,10 +501,11 @@ func usageJSONView(rep usageattr.Report, src usageSource) usageJSONReport {
 			SuffixUnmatchedSessions:    rep.Residue.SuffixUnmatchedSessions,
 			SessionsWithNoBead:         rep.Residue.SessionsWithNoBead,
 			SessionsNamingSeveralBeads: rep.Residue.SessionsNamingSeveralBeads,
+			BeadsLastClaimantOnly:      rep.Residue.BeadsLastClaimantOnly,
 		},
 	}
 	if rep.Grouping == usageattr.ByBead {
-		out.BeadJoinKey = beadSessionMetadataKey
+		out.BeadJoinKey = beadmeta.ClaimSessionsMetadataKey + "," + beadSessionMetadataKey
 	}
 	for _, g := range rep.Groups {
 		out.Groups = append(out.Groups, usageJSONGroupOf(g))
@@ -471,13 +516,14 @@ func usageJSONView(rep usageattr.Report, src usageSource) usageJSONReport {
 
 func usageJSONGroupOf(g usageattr.Group) usageJSONGroup {
 	out := usageJSONGroup{
-		Key:             g.Key,
-		Sessions:        g.Sessions,
-		AgentTypes:      g.AgentTypes,
-		SuffixUnmatched: g.SuffixUnmatched,
-		SharesSessions:  g.SharesSessions,
-		FirstAt:         usageJSONTime(g.FirstAt),
-		LastAt:          usageJSONTime(g.LastAt),
+		Key:              g.Key,
+		Sessions:         g.Sessions,
+		AgentTypes:       g.AgentTypes,
+		SuffixUnmatched:  g.SuffixUnmatched,
+		SharesSessions:   g.SharesSessions,
+		LastClaimantOnly: g.LastClaimantOnly,
+		FirstAt:          usageJSONTime(g.FirstAt),
+		LastAt:           usageJSONTime(g.LastAt),
 	}
 	if g.Tokens.Observed {
 		out.Invocations = usageIntPtr(g.Tokens.Invocations)

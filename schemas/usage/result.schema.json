@@ -59,12 +59,14 @@
       "required": [
         "suffix_unmatched_sessions",
         "sessions_with_no_bead",
-        "sessions_naming_several_beads"
+        "sessions_naming_several_beads",
+        "beads_last_claimant_only"
       ],
       "properties": {
         "suffix_unmatched_sessions": { "type": "integer" },
         "sessions_with_no_bead": { "type": "integer" },
-        "sessions_naming_several_beads": { "type": "integer" }
+        "sessions_naming_several_beads": { "type": "integer" },
+        "beads_last_claimant_only": { "type": "integer" }
       },
       "additionalProperties": true
     }
@@ -80,6 +82,7 @@
         "agent_types": { "type": ["array", "null"], "items": { "type": "string" } },
         "suffix_unmatched": { "type": "boolean" },
         "shares_sessions": { "type": "boolean" },
+        "last_claimant_only": { "type": "boolean" },
         "invocations": { "type": ["integer", "null"] },
         "input_tokens": { "type": ["integer", "null"] },
         "output_tokens": { "type": ["integer", "null"] },

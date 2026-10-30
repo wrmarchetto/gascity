@@ -60,7 +60,8 @@ const (
 	BySession Grouping = "session"
 	// ByType accounts per agent type derived from the session name.
 	ByType Grouping = "type"
-	// ByBead accounts per work bead, joined through the bead's gc.session_id.
+	// ByBead accounts per work bead, joined through every session the bead
+	// records as a claimant.
 	ByBead Grouping = "bead"
 )
 
@@ -71,11 +72,12 @@ const (
 // where the side effect belongs. A session absent from the map held no bead
 // that this store knows of, which is not the same as having held none.
 type Options struct {
-	By      Grouping
-	Since   time.Time           // inclusive; zero means no lower bound
-	Until   time.Time           // exclusive; zero means no upper bound
-	BeadsOf map[string][]string // session id -> bead ids naming it
-	Top     int                 // keep the N largest groups; 0 keeps all
+	By               Grouping
+	Since            time.Time           // inclusive; zero means no lower bound
+	Until            time.Time           // exclusive; zero means no upper bound
+	BeadsOf          map[string][]string // session id -> bead ids naming it
+	LastClaimantOnly map[string]bool     // bead ids whose record names only their current holder
+	Top              int                 // keep the N largest groups; 0 keeps all
 }
 
 // Tokens is a model-fact reading. Observed false means no model fact landed in
@@ -130,11 +132,12 @@ type Reading struct {
 
 // Group is one account: a session, an agent type, or a bead.
 type Group struct {
-	Key             string
-	Sessions        []string
-	AgentTypes      []string
-	SuffixUnmatched bool // the session name did not end in its own session id
-	SharesSessions  bool // ByBead only: a session here also belongs to another bead
+	Key              string
+	Sessions         []string
+	AgentTypes       []string
+	SuffixUnmatched  bool // the session name did not end in its own session id
+	SharesSessions   bool // ByBead only: a session here also belongs to another bead
+	LastClaimantOnly bool // ByBead only: earlier claimants went unrecorded, so are absent
 	Reading
 	FirstAt time.Time
 	LastAt  time.Time
@@ -161,6 +164,7 @@ type Residue struct {
 	SuffixUnmatchedSessions    int
 	SessionsWithNoBead         int
 	SessionsNamingSeveralBeads int
+	BeadsLastClaimantOnly      int // counted before Top truncates
 }
 
 // Report is the result of one aggregation.
@@ -297,6 +301,10 @@ func buildGroups(order []string, accounts map[string]*sessionAccount, opts Optio
 			g := byKey[key]
 			if g == nil {
 				g = &Group{Key: key}
+				if opts.LastClaimantOnly[key] {
+					g.LastClaimantOnly = true
+					res.BeadsLastClaimantOnly++
+				}
 				byKey[key] = g
 				keys = append(keys, key)
 			}
