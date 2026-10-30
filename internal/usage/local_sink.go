@@ -115,12 +115,21 @@ func terminateTornTail(file *os.File) error {
 // reserved for I/O failures; a corrupt line is a warning, not an error. Returns
 // nil facts and nil warnings when the file does not exist.
 func ReadFacts(path string) (facts []Fact, warnings []string, err error) {
+	warnings, err = ScanFacts(path, func(f Fact) { facts = append(facts, f) })
+	return facts, warnings, err
+}
+
+// ScanFacts is ReadFacts without the slice: each surviving fact goes to visit
+// in file order, so a caller filtering by window holds only what it keeps.
+// It still holds every IdempotencyKey seen, since first-occurrence-wins
+// de-duplication spans the whole log.
+func ScanFacts(path string, visit func(Fact)) (warnings []string, err error) {
 	file, openErr := os.Open(path)
 	if errors.Is(openErr, os.ErrNotExist) {
-		return nil, nil, nil
+		return nil, nil
 	}
 	if openErr != nil {
-		return nil, nil, openErr
+		return nil, openErr
 	}
 	defer file.Close() //nolint:errcheck // read-only handle
 
@@ -133,7 +142,7 @@ func ReadFacts(path string) (facts []Fact, warnings []string, err error) {
 	for {
 		line, readErr := reader.ReadString('\n')
 		if readErr != nil && !errors.Is(readErr, io.EOF) {
-			return facts, warnings, readErr
+			return warnings, readErr
 		}
 		atEOF := errors.Is(readErr, io.EOF)
 		if atEOF && line == "" {
@@ -145,15 +154,15 @@ func ReadFacts(path string) (facts []Fact, warnings []string, err error) {
 			if jsonErr := json.Unmarshal([]byte(content), &f); jsonErr != nil {
 				warnings = append(warnings, fmt.Sprintf("usage: skipped malformed fact at %s:%d: %v", path, lineNo, jsonErr))
 			} else if f.IdempotencyKey == "" {
-				facts = append(facts, f)
+				visit(f)
 			} else if _, dup := seen[f.IdempotencyKey]; !dup {
 				seen[f.IdempotencyKey] = struct{}{}
-				facts = append(facts, f)
+				visit(f)
 			}
 		}
 		if atEOF {
 			break
 		}
 	}
-	return facts, warnings, nil
+	return warnings, nil
 }

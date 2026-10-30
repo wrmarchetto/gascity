@@ -136,17 +136,6 @@ func doUsage(stdout, stderr io.Writer, opts usageOptions) int {
 			"If %s is a checkout rather than the live city, pass --city <live city root>\n", src.UsagePath, cityPath)
 		return 1
 	}
-	facts, warnings, err := usage.ReadFacts(src.UsagePath)
-	if err != nil {
-		fmt.Fprintf(stderr, "gc usage: reading %s: %v\n", src.UsagePath, err) //nolint:errcheck // best-effort stderr
-		return 1
-	}
-	// Malformed lines are skipped by the reader, so surface them: a silently
-	// partial read undercounts a window that later gets compared against another.
-	for _, w := range warnings {
-		fmt.Fprintf(stderr, "gc usage: %s\n", w) //nolint:errcheck // best-effort stderr
-	}
-
 	beadsOf := map[string][]string{}
 	var lastClaimantOnly map[string]bool
 	if grouping == usageattr.ByBead {
@@ -157,10 +146,23 @@ func doUsage(stdout, stderr io.Writer, opts usageOptions) int {
 		}
 	}
 
-	rep := usageattr.Aggregate(facts, usageattr.Options{
+	// Streamed, not read whole: the facts outside the window are counted and
+	// dropped, so memory follows the window asked for and not the log's age.
+	acc := usageattr.NewAccumulator(usageattr.Options{
 		By: grouping, Since: since, Until: until, BeadsOf: beadsOf,
 		LastClaimantOnly: lastClaimantOnly, Top: opts.top,
 	})
+	warnings, err := usage.ScanFacts(src.UsagePath, acc.Add)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc usage: reading %s: %v\n", src.UsagePath, err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	// Malformed lines are skipped by the reader, so surface them: a silently
+	// partial read undercounts a window that later gets compared against another.
+	for _, w := range warnings {
+		fmt.Fprintf(stderr, "gc usage: %s\n", w) //nolint:errcheck // best-effort stderr
+	}
+	rep := acc.Report()
 	if opts.jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
