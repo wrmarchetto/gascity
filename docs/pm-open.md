@@ -364,6 +364,11 @@ work arriving from outside the roadmap. Would settle it: enough gascity
 landings for the re-measurement and 3 more merge-gate gates, or Willie
 accepting the gascity Target on a smaller sample.
 
+Update 2026-10-30 (pm-log #190): gs-gln1 closed on its measure, so only
+gascity's half of the Target is open here. It waits on city ci-cj9utx,
+the re-measurement deferred to 2026-11-02. Would settle it: that bead's
+report, read by the idle or epic-close summons that follows it.
+
 
 ## 12. Operator-deferred review findings carry no epic home (2026-10-29)
 

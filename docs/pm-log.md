@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-t6uu 2026-10-30T13:24:00Z
+last_seen: gs-ueld 2026-10-30T14:45:58Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6015,3 +6015,28 @@ review opening.
 Rig store since last_seen: this summons and gs-t6uu.
 
 Source: pm-log #188
+
+## 190. pm-idle gs-ueld: rig waits on bead-cycle-time's re-measurement (2026-10-30)
+
+Summons: gascity has no open or in_progress work while bead-cycle-time is
+in-progress. agent-efficiency is not asked about here: it is approved, and
+its close is summons gs-fxx4, the next unit. Disposition: the third, the
+rig waits on something outside it.
+
+- Every gascity member of the epic is closed. gs-gln1 closed on its done
+  measure, #167's gate budget met: 9 consecutive sweep gates at or under
+  714 s, none killed (its close reason holds the records). The landings it
+  waited on (#169) came from the agent-efficiency fix rounds.
+- Target: still unmet, still carried. City ci-7npmly placed the follow-up
+  as ci-cj9utx (analyst-fable), deferred in the city store to 2026-11-02
+  so a post-drain window fills. It re-measures every rig and files a stage
+  bead per rig still over, gascity's session-other first. City-store
+  deferrals have a wake (pm-open #11), so no gascity bead is filed here.
+- No done, no promotion, no DECOMP: the Target is open, gascity is gated,
+  and no epic has status: open (#166).
+- pm-open #11 updated: gs-gln1's half settled, (a) waits on ci-cj9utx.
+
+Rig store since last_seen: gs-t6uu closed, gs-fxx4 filed, and this
+summons.
+
+Source: roadmap bead-cycle-time
