@@ -348,6 +348,13 @@ func provedRuntimeScoped(constructor SymbolRef, file, test, scope string, allowe
 // compares !Expires.After(now) -- which is why
 // doctor/test-policy-expiry-horizon reports two closure dates from one expiry
 // date.
+//
+// Renewed 2026-11-03 (bead gs-y6g3) to the 90-day ceiling again, after
+// retiring the subprocess and acp default-directory waivers: cmd/gc now
+// resolves that directory and calls the proved WithDir constructor. The seven
+// survivors are structural, each for the reason its row in the review
+// document gives. That review also found that the herdr and tmux suites
+// break the proof-factory shape, so a guaranteed binary alone retires neither.
 func waivedRuntime(constructor SymbolRef, reason string) ContractClaim {
 	return ContractClaim{
 		Constructor: constructor,
@@ -355,7 +362,7 @@ func waivedRuntime(constructor SymbolRef, reason string) ContractClaim {
 		Disposition: DispositionWaived,
 		Waiver: &Waiver{
 			Owner:   runtimeContractWaiverOwner,
-			Expires: time.Date(2026, time.November, 9, 0, 0, 0, 0, time.UTC),
+			Expires: time.Date(2027, time.February, 1, 0, 0, 0, 0, time.UTC),
 			Reason:  reason,
 		},
 	}
