@@ -1170,9 +1170,15 @@ func (cr *CityRuntime) tick(
 		cr.resetFSPressureEpisode()
 	}
 
+	// Every top-level phase ends here, so once the head-of-tick walk has run
+	// this is also where a sub-tick order that came due mid-tick is walked.
+	midTickWalkArmed := false
 	recordPhase := func(site TraceSiteCode, name string, start time.Time, fields map[string]any) {
 		if trace != nil {
 			trace.RecordControllerOperation(site, TraceReasonRetained, TraceOutcomeComplete, name, time.Since(start), fields)
+		}
+		if midTickWalkArmed {
+			cr.walkOrdersIfSubTickDue(ctx, cityRoot, trace)
 		}
 	}
 
@@ -1190,6 +1196,7 @@ func (cr *CityRuntime) tick(
 	phaseStart = time.Now()
 	cr.dispatchOrders(ctx, cityRoot)
 	recordPhase(TraceSiteOrderDispatch, "dispatch_orders", phaseStart, nil)
+	midTickWalkArmed = true
 	if ctx.Err() != nil {
 		return
 	}
@@ -1444,6 +1451,21 @@ func (cr *CityRuntime) dispatchOrders(ctx context.Context, cityRoot string) {
 	cr.runNudgeMailSweepWatchdog(now)
 	if cr.od != nil {
 		cr.od.dispatch(ctx, cityRoot, now)
+	}
+}
+
+// walkOrdersIfSubTickDue walks the orders again between tick phases when a
+// sub-tick order has come due since the last walk began. Walked only at the
+// head of each tick, such an order waits out whatever tick is running, which
+// held the 30s orders to 1.5-1.6/min on a 90%-busy loop (ci-bt024f).
+func (cr *CityRuntime) walkOrdersIfSubTickDue(ctx context.Context, cityRoot string, trace *sessionReconcilerTraceCycle) {
+	if cr.od == nil || !cr.od.subTickOrderDue(time.Now()) {
+		return
+	}
+	start := time.Now()
+	cr.dispatchOrders(ctx, cityRoot)
+	if trace != nil {
+		trace.RecordControllerOperation(TraceSiteOrderDispatch, TraceReasonRetained, TraceOutcomeComplete, "dispatch_orders.mid_tick", time.Since(start), nil)
 	}
 }
 
