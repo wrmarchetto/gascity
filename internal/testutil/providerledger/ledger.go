@@ -161,10 +161,6 @@ func Catalog() []Entry {
 		),
 		builtin(
 			"subprocess", "exact:subprocess", nil,
-			waivedRuntime(
-				repoSymbol("internal/runtime/subprocess", "NewSeamBacked"),
-				"NewSeamBacked selects a distinct reachable empty-cityPath branch with shared /tmp state; the WithDir proof does not exercise that composition",
-			),
 			provedRuntime(
 				repoSymbol("internal/runtime/subprocess", "NewSeamBackedWithDir"),
 				"internal/runtime/subprocess/seam_conformance_test.go",
@@ -176,10 +172,6 @@ func Catalog() []Entry {
 		),
 		builtin(
 			"acp", "exact:acp", nil,
-			waivedRuntime(
-				repoSymbol("internal/runtime/acp", "NewSeamBacked"),
-				"NewSeamBacked always uses shared os.TempDir()/gc-acp state; the WithDir proof does not exercise that composition",
-			),
 			provedRuntime(
 				repoSymbol("internal/runtime/acp", "NewSeamBackedWithDir"),
 				"internal/runtime/acp/conformance_test.go",
@@ -322,9 +314,9 @@ func provedRuntimeScoped(constructor SymbolRef, file, test, scope string, allowe
 
 // waivedRuntime records a contract gap against one shared expiry rather than a
 // per-waiver date, so the whole remaining set is reviewed in one sitting rather
-// than nine. The cost of that choice is a hard cliff: on the expiry date every
-// waived claim fails at once and the push gate closes for everyone, which is
-// what it is for.
+// than one waiver at a time. The cost of that choice is a hard cliff: on the
+// expiry date every waived claim fails at once and the push gate closes for
+// everyone, which is what it is for.
 //
 // Renewed 2026-08-12 (city bead ci-k5ey0) to the 90-day maxWaiverHorizon
 // ceiling. The renewal review found none of the nine retirable: each needs a
@@ -356,6 +348,13 @@ func provedRuntimeScoped(constructor SymbolRef, file, test, scope string, allowe
 // compares !Expires.After(now) -- which is why
 // doctor/test-policy-expiry-horizon reports two closure dates from one expiry
 // date.
+//
+// Renewed 2026-11-03 (bead gs-y6g3) to the 90-day ceiling again, after
+// retiring the subprocess and acp default-directory waivers: cmd/gc now
+// resolves that directory and calls the proved WithDir constructor. The seven
+// survivors are structural, each for the reason its row in the review
+// document gives. That review also found that the herdr and tmux suites
+// break the proof-factory shape, so a guaranteed binary alone retires neither.
 func waivedRuntime(constructor SymbolRef, reason string) ContractClaim {
 	return ContractClaim{
 		Constructor: constructor,
@@ -363,7 +362,7 @@ func waivedRuntime(constructor SymbolRef, reason string) ContractClaim {
 		Disposition: DispositionWaived,
 		Waiver: &Waiver{
 			Owner:   runtimeContractWaiverOwner,
-			Expires: time.Date(2026, time.November, 9, 0, 0, 0, 0, time.UTC),
+			Expires: time.Date(2027, time.February, 1, 0, 0, 0, 0, time.UTC),
 			Reason:  reason,
 		},
 	}

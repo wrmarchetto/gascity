@@ -49,11 +49,13 @@ func buildRuntimeRegistry() *registry.Registry {
 	must(r.Register("subprocess", func(_ string, _ config.SessionConfig, _, cityPath string) (runtime.Provider, error) {
 		// Cut-over: the subprocess provider is served through the de-conflated
 		// seams (runtime.NewProviderFromSeams), validated by the full Provider
-		// conformance suite in TestSubprocessSeamConformance.
-		if cityPath != "" {
-			return sessionsubprocess.NewSeamBackedWithDir(providerStateDir("subprocess", cityPath)), nil
+		// conformance suite in TestSubprocessSeamConformance. Both branches
+		// reach that proved constructor; only the directory differs.
+		dir := providerStateDir("subprocess", cityPath)
+		if dir == "" {
+			dir = sessionsubprocess.DefaultDir()
 		}
-		return sessionsubprocess.NewSeamBacked(), nil
+		return sessionsubprocess.NewSeamBackedWithDir(dir), nil
 	}))
 	must(r.Register("acp", func(_ string, sc config.SessionConfig, _, cityPath string) (runtime.Provider, error) {
 		cfg := sessionacp.Config{
@@ -61,10 +63,11 @@ func buildRuntimeRegistry() *registry.Registry {
 			NudgeBusyTimeout:  sc.ACP.NudgeBusyTimeoutDuration(),
 			OutputBufferLines: sc.ACP.OutputBufferLinesOrDefault(),
 		}
-		if cityPath != "" {
-			return sessionacp.NewSeamBackedWithDir(providerStateDir("acp", cityPath), cfg), nil
+		dir := providerStateDir("acp", cityPath)
+		if dir == "" {
+			dir = sessionacp.DefaultDir()
 		}
-		return sessionacp.NewSeamBacked(cfg), nil
+		return sessionacp.NewSeamBackedWithDir(dir, cfg), nil
 	}))
 	must(r.Register("t3bridge", func(_ string, _ config.SessionConfig, _, _ string) (runtime.Provider, error) {
 		return sessiont3bridge.NewSeamBacked(), nil

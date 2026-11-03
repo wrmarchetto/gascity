@@ -71,16 +71,14 @@ var (
 	_                             runtime.ProcessTableScanner = (*Provider)(nil)
 )
 
-// NewProvider returns a subprocess [Provider] that stores socket files in
-// a default temporary directory. Suitable for production use.
-func NewProvider() *Provider {
-	dir := filepath.Join(os.TempDir(), "gc-subprocess")
-	_ = os.MkdirAll(dir, 0o755)
-	return newProvider(dir)
+// DefaultDir is the socket directory for a provider with no city path to
+// derive a private one from. Every such provider on the host shares it.
+func DefaultDir() string {
+	return filepath.Join(os.TempDir(), "gc-subprocess")
 }
 
 // NewProviderWithDir returns a subprocess [Provider] that stores socket files
-// in the given directory. Useful for tests that need isolated state.
+// in the given directory.
 func NewProviderWithDir(dir string) *Provider {
 	_ = os.MkdirAll(dir, 0o755)
 	return newProvider(dir)

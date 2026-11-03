@@ -19,9 +19,6 @@ var (
 	_ runtime.SleepCapabilityProvider     = (*seamBackedProvider)(nil)
 )
 
-// NewSeamBacked constructs an acp provider served through the seams.
-func NewSeamBacked(cfg Config) runtime.Provider { return seamBack(NewProvider(cfg)) }
-
 // NewSeamBackedWithDir is NewProviderWithDir served through the seams.
 func NewSeamBackedWithDir(dir string, cfg Config) runtime.Provider {
 	return seamBack(NewProviderWithDir(dir, cfg))
