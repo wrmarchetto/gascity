@@ -24,14 +24,10 @@ var (
 	_ runtime.ProcessTableScanner = (*seamBackedProvider)(nil)
 )
 
-// NewSeamBacked returns a subprocess provider served through the seams, storing
-// socket/meta files in a default temporary directory. It returns the
-// [runtime.Provider] interface (matching the other provider constructors); the
-// non-seam extensions remain reachable via comma-ok type assertion on the
-// concrete *seamBackedProvider behind it.
-func NewSeamBacked() runtime.Provider { return seamBack(NewProvider()) }
-
-// NewSeamBackedWithDir returns NewProviderWithDir served through the seams.
+// NewSeamBackedWithDir returns NewProviderWithDir served through the seams. It
+// returns the [runtime.Provider] interface (matching the other provider
+// constructors); the non-seam extensions remain reachable via comma-ok type
+// assertion on the concrete *seamBackedProvider behind it.
 func NewSeamBackedWithDir(dir string) runtime.Provider { return seamBack(NewProviderWithDir(dir)) }
 
 func seamBack(raw *Provider) *seamBackedProvider {

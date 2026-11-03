@@ -74,21 +74,14 @@ var (
 	_ runtime.TransportCapabilityProvider = (*Provider)(nil)
 )
 
-// NewProvider returns an ACP [Provider] that stores socket files in
-// a default temporary directory.
-func NewProvider(cfg Config) *Provider {
-	dir := filepath.Join(os.TempDir(), "gc-acp")
-	_ = os.MkdirAll(dir, 0o755)
-	return &Provider{
-		dir:      dir,
-		conns:    make(map[string]*sessionConn),
-		workDirs: make(map[string]string),
-		cfg:      cfg,
-	}
+// DefaultDir is the socket directory for a provider with no city path to
+// derive a private one from. Every such provider on the host shares it.
+func DefaultDir() string {
+	return filepath.Join(os.TempDir(), "gc-acp")
 }
 
 // NewProviderWithDir returns an ACP [Provider] that stores socket files
-// in the given directory. Useful for tests that need isolated state.
+// in the given directory.
 func NewProviderWithDir(dir string, cfg Config) *Provider {
 	_ = os.MkdirAll(dir, 0o755)
 	return &Provider{

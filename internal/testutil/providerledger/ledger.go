@@ -161,10 +161,6 @@ func Catalog() []Entry {
 		),
 		builtin(
 			"subprocess", "exact:subprocess", nil,
-			waivedRuntime(
-				repoSymbol("internal/runtime/subprocess", "NewSeamBacked"),
-				"NewSeamBacked selects a distinct reachable empty-cityPath branch with shared /tmp state; the WithDir proof does not exercise that composition",
-			),
 			provedRuntime(
 				repoSymbol("internal/runtime/subprocess", "NewSeamBackedWithDir"),
 				"internal/runtime/subprocess/seam_conformance_test.go",
@@ -176,10 +172,6 @@ func Catalog() []Entry {
 		),
 		builtin(
 			"acp", "exact:acp", nil,
-			waivedRuntime(
-				repoSymbol("internal/runtime/acp", "NewSeamBacked"),
-				"NewSeamBacked always uses shared os.TempDir()/gc-acp state; the WithDir proof does not exercise that composition",
-			),
 			provedRuntime(
 				repoSymbol("internal/runtime/acp", "NewSeamBackedWithDir"),
 				"internal/runtime/acp/conformance_test.go",
@@ -322,9 +314,9 @@ func provedRuntimeScoped(constructor SymbolRef, file, test, scope string, allowe
 
 // waivedRuntime records a contract gap against one shared expiry rather than a
 // per-waiver date, so the whole remaining set is reviewed in one sitting rather
-// than nine. The cost of that choice is a hard cliff: on the expiry date every
-// waived claim fails at once and the push gate closes for everyone, which is
-// what it is for.
+// than one waiver at a time. The cost of that choice is a hard cliff: on the
+// expiry date every waived claim fails at once and the push gate closes for
+// everyone, which is what it is for.
 //
 // Renewed 2026-08-12 (city bead ci-k5ey0) to the 90-day maxWaiverHorizon
 // ceiling. The renewal review found none of the nine retirable: each needs a
