@@ -10822,10 +10822,13 @@ const residualLogMarker = "not due on a sub-tick interval"
 // The first tick's output is discarded deliberately: it carries the ordinary
 // dispatch logging, and a case asserting over both cannot tell a residual
 // line from a line the first tick wrote.
-func dispatchTwiceForResidual(t *testing.T, interval string, gap time.Duration) (string, time.Time, time.Time) {
+func dispatchTwiceForResidual(t *testing.T, interval string, gap time.Duration) *residualRun {
 	t.Helper()
-	cityDir := t.TempDir()
-	store := beads.NewMemStore()
+	run := residualRun{store: beads.NewMemStore(), cityDir: t.TempDir()}
+	store := run.store
+	// Stamped on the walk's own timeline, 400ms after its anchor, so a
+	// deadline derived from CreatedAt compares against the anchors below.
+	store.Clock = func() time.Time { return run.anchor.Add(400 * time.Millisecond) }
 	stderr := &bytes.Buffer{}
 	m := &memoryOrderDispatcher{
 		aa: []orders.Order{{
@@ -10843,9 +10846,10 @@ func dispatchTwiceForResidual(t *testing.T, interval string, gap time.Duration) 
 		cfg:    &config.City{},
 	}
 
+	run.m = m
+
 	firstNow := time.Now()
-	m.dispatch(context.Background(), cityDir, firstNow)
-	m.drain(context.Background())
+	run.walk(firstNow)
 
 	tracking := trackingBeads(t, store, "order-run:trio-member")
 	if len(tracking) != 1 {
@@ -10853,10 +10857,31 @@ func dispatchTwiceForResidual(t *testing.T, interval string, gap time.Duration) 
 	}
 
 	stderr.Reset()
-	evalNow := firstNow.Add(gap)
-	m.dispatch(context.Background(), cityDir, evalNow)
-	m.drain(context.Background())
-	return stderr.String(), tracking[0].CreatedAt, evalNow
+	run.evalNow = firstNow.Add(gap)
+	run.walk(run.evalNow)
+	run.out = stderr.String()
+	run.createdAt = tracking[0].CreatedAt
+	return &run
+}
+
+// walk runs one tick's ring walk anchored at `at` and waits for its runs.
+func (r *residualRun) walk(at time.Time) {
+	r.anchor = at
+	r.m.dispatch(context.Background(), r.cityDir, at)
+	r.m.drain(context.Background())
+}
+
+// residualRun is what dispatchTwiceForResidual leaves behind: the second
+// tick's stderr, the first run's CreatedAt, the second tick's anchor, and the
+// dispatcher and store for a case that goes on to drive more ticks.
+type residualRun struct {
+	out       string
+	createdAt time.Time
+	evalNow   time.Time
+	m         *memoryOrderDispatcher
+	store     *beads.MemStore
+	cityDir   string
+	anchor    time.Time
 }
 
 // TestOrderDispatchLogsTheResidualForSubTickOrders pins the instrument
@@ -10874,7 +10899,8 @@ func dispatchTwiceForResidual(t *testing.T, interval string, gap time.Duration) 
 // is NOT firstNow, and a case asserting the gap would be asserting a value
 // the dispatcher never compared against.
 func TestOrderDispatchLogsTheResidualForSubTickOrders(t *testing.T) {
-	out, createdAt, evalNow := dispatchTwiceForResidual(t, "30s", 5*time.Second)
+	run := dispatchTwiceForResidual(t, "30s", 5*time.Second)
+	out, createdAt, evalNow := run.out, run.createdAt, run.evalNow
 
 	if !strings.Contains(out, residualLogMarker) {
 		t.Fatalf("second tick stderr missing the residual diagnostic:\n%s", out)
@@ -10936,6 +10962,16 @@ func TestOrderDispatchLogsTheResidualForSubTickOrders(t *testing.T) {
 		t.Errorf("logged eval_now %s is %s past the tick instant, want under 1s",
 			loggedEval, loggedEval.Sub(evalNow))
 	}
+
+	// The same not-due comparison arms the mid-tick walk at the instant it
+	// turns: last_run plus 30s less the 5s slack, and not a nanosecond before.
+	deadline := createdAt.Add(25 * time.Second)
+	if run.m.subTickOrderDue(deadline.Add(-time.Nanosecond)) {
+		t.Errorf("subTickOrderDue armed before the deadline %s", deadline)
+	}
+	if !run.m.subTickOrderDue(deadline) {
+		t.Errorf("subTickOrderDue not armed at the deadline %s", deadline)
+	}
 }
 
 // TestOrderDispatchLeavesLongIntervalResidualsUnlogged pins the gate, which is
@@ -10945,10 +10981,14 @@ func TestOrderDispatchLogsTheResidualForSubTickOrders(t *testing.T) {
 // exists to show. An order whose interval exceeds the patrol interval has a
 // legitimate reason to be not due and needs no explanation.
 func TestOrderDispatchLeavesLongIntervalResidualsUnlogged(t *testing.T) {
-	out, _, _ := dispatchTwiceForResidual(t, "1h", 5*time.Second)
+	run := dispatchTwiceForResidual(t, "1h", 5*time.Second)
 
-	if strings.Contains(out, residualLogMarker) {
-		t.Fatalf("a 1h order against a 30s patrol logged a residual:\n%s", out)
+	if strings.Contains(run.out, residualLogMarker) {
+		t.Fatalf("a 1h order against a 30s patrol logged a residual:\n%s", run.out)
+	}
+	// The same gate keeps it from arming a mid-tick walk, even once due.
+	if run.m.subTickOrderDue(run.createdAt.Add(2 * time.Hour)) {
+		t.Error("a 1h order against a 30s patrol armed a mid-tick walk")
 	}
 }
 
@@ -10957,9 +10997,79 @@ func TestOrderDispatchLeavesLongIntervalResidualsUnlogged(t *testing.T) {
 // a per-tick trace of every sub-tick order rather than a record of the misses,
 // and the residual count read off it would be the tick count.
 func TestOrderDispatchLogsNoResidualWhenTheOrderIsDue(t *testing.T) {
-	out, _, _ := dispatchTwiceForResidual(t, "30s", 40*time.Second)
+	run := dispatchTwiceForResidual(t, "30s", 40*time.Second)
 
-	if strings.Contains(out, residualLogMarker) {
-		t.Fatalf("a due order logged a residual:\n%s", out)
+	if strings.Contains(run.out, residualLogMarker) {
+		t.Fatalf("a due order logged a residual:\n%s", run.out)
+	}
+	// A dispatch re-arms from the run it just wrote, not the one before it.
+	tracking := trackingBeads(t, run.store, "order-run:trio-member")
+	if len(tracking) != 2 {
+		t.Fatalf("tracking beads after the second tick = %d, want 2", len(tracking))
+	}
+	latest := tracking[0].CreatedAt
+	if tracking[1].CreatedAt.After(latest) {
+		latest = tracking[1].CreatedAt
+	}
+	deadline := latest.Add(25 * time.Second)
+	if run.m.subTickOrderDue(deadline.Add(-time.Nanosecond)) {
+		t.Errorf("subTickOrderDue armed before the new run's deadline %s", deadline)
+	}
+	if !run.m.subTickOrderDue(deadline) {
+		t.Errorf("subTickOrderDue not armed at the new run's deadline %s", deadline)
+	}
+}
+
+// When the cached last run says due but the store holds a later run, the walk
+// re-arms from the store's run, which is the comparison it actually made.
+func TestSubTickOrderDueArmsFromTheStoreWhenItContradictsTheCache(t *testing.T) {
+	run := dispatchTwiceForResidual(t, "30s", 5*time.Second)
+	start := run.evalNow.Add(-5 * time.Second)
+
+	// Another writer's run, 20s in, that the dispatcher's cache never saw.
+	run.anchor = start.Add(20 * time.Second)
+	other, err := run.store.Create(beads.Bead{
+		Title:  "order:trio-member",
+		Labels: []string{"order-run:trio-member", labelOrderTracking},
+	})
+	if err != nil {
+		t.Fatalf("creating the out-of-band run: %v", err)
+	}
+	if err := run.store.Close(other.ID); err != nil {
+		t.Fatalf("closing the out-of-band run: %v", err)
+	}
+
+	run.walk(start.Add(30 * time.Second))
+	if got := len(trackingBeads(t, run.store, "order-run:trio-member")); got != 2 {
+		t.Fatalf("tracking beads after the refreshed walk = %d, want 2 (no dispatch)", got)
+	}
+	deadline := other.CreatedAt.Add(25 * time.Second)
+	if run.m.subTickOrderDue(deadline.Add(-time.Nanosecond)) {
+		t.Errorf("subTickOrderDue armed before the store run's deadline %s", deadline)
+	}
+	if !run.m.subTickOrderDue(deadline) {
+		t.Errorf("subTickOrderDue not armed at the store run's deadline %s", deadline)
+	}
+}
+
+// A deadline that passed before the last walk began was that walk's to serve.
+// When the walk skips the order instead, the stale deadline must not arm a
+// mid-tick walk, or every phase boundary of the tick would walk again.
+func TestSubTickOrderDueIgnoresADeadlineTheLastWalkSkipped(t *testing.T) {
+	run := dispatchTwiceForResidual(t, "30s", 5*time.Second)
+	deadline := run.createdAt.Add(25 * time.Second)
+	if !run.m.subTickOrderDue(deadline) {
+		t.Fatalf("control: subTickOrderDue not armed at the deadline %s", deadline)
+	}
+
+	// Gate backoff makes the third walk skip the order without evaluating it.
+	walkAt := deadline.Add(15 * time.Second)
+	run.m.setGateBackoff("trio-member", walkAt.Add(time.Hour))
+	run.walk(walkAt)
+	if got := len(trackingBeads(t, run.store, "order-run:trio-member")); got != 1 {
+		t.Fatalf("tracking beads after the skipped walk = %d, want 1", got)
+	}
+	if run.m.subTickOrderDue(walkAt.Add(time.Second)) {
+		t.Error("a deadline from before the last walk armed a mid-tick walk")
 	}
 }

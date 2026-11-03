@@ -211,6 +211,9 @@ var (
 type orderDispatcher interface {
 	dispatch(ctx context.Context, cityPath string, now time.Time)
 	drain(ctx context.Context) bool
+	// subTickOrderDue reports whether an order whose interval is at most the
+	// patrol interval has come due since the last walk began.
+	subTickOrderDue(now time.Time) bool
 }
 
 // ExecRunner runs a shell command with context, working directory, and
@@ -411,6 +414,11 @@ type memoryOrderDispatcher struct {
 	// see orderTickEvents. Read and written only by the tick walk.
 	eventFloorHint    uint64
 	hasEventFloorHint bool
+	// subTickDue is, per sub-tick cooldown order, the instant its cooldown
+	// next comes due as of the walk that last evaluated it, and walkStart is
+	// the latest walk's tick anchor. Read and written only by the tick walk.
+	subTickDue map[string]time.Time
+	walkStart  time.Time
 	// nowFn reads wall time. Nil means time.Now, which is every production
 	// construction. It exists so a suite can drive the ring walk on a
 	// simulated clock; see wallNow.
@@ -616,6 +624,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 	// authoritative for what tick this is; tickWall is only ever used to
 	// measure how far into the tick a given order is being evaluated.
 	tickWall := m.wallNow()
+	m.walkStart = now
 
 	total := len(m.aa)
 	if total == 0 {
@@ -899,6 +908,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 				logDispatchError(m.stderr, "gc: order dispatch: %s %s — raise check_timeout if the check needs a slow store read", a.ScopedName(), result.Reason)
 			}
 			m.logCooldownResidual(a, evalNow, result)
+			m.noteSubTickDue(a, result.LastRun, result.Slack)
 			continue
 		}
 		// NO RESIDUAL DIAGNOSTIC ON THE REFRESH PATH BELOW, and the absence is
@@ -923,6 +933,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 				}
 				result = orders.CheckTriggerWithOptions(a, evalNow, refreshedLastRunFn, tickEvents, cursorFn, triggerOpts)
 				if !result.Due {
+					m.noteSubTickDue(a, result.LastRun, result.Slack)
 					continue
 				}
 			}
@@ -968,6 +979,7 @@ func (m *memoryOrderDispatcher) dispatch(ctx context.Context, cityPath string, n
 			continue
 		}
 		m.rememberLastRun(scoped, storeKeysForGate, trackingBead.CreatedAt)
+		m.noteSubTickDue(a, trackingBead.CreatedAt, result.Slack)
 		if spendDispatchBudget(idx) {
 			return
 		}
@@ -1399,17 +1411,14 @@ func (m *memoryOrderDispatcher) logCooldownResidual(a orders.Order, evalNow time
 	// A zero LastRun means never run, which is DUE and cannot reach here; the
 	// guard is for the bad-interval and query-error results, which are not-due
 	// with no comparison to report.
-	if a.Trigger != "cooldown" || result.LastRun.IsZero() {
+	if result.LastRun.IsZero() {
 		return
 	}
-	interval, err := time.ParseDuration(a.Interval)
-	if err != nil || interval <= 0 {
+	interval, ok := m.subTickCooldownInterval(a)
+	if !ok {
 		return
 	}
 	patrol := m.patrolInterval()
-	if patrol <= 0 || interval > patrol {
-		return
-	}
 	logDispatchError(m.stderr,
 		"gc: order dispatch: %s not due on a sub-tick interval: eval_now=%s last_run=%s elapsed=%s interval=%s slack=%s patrol=%s -- %s",
 		a.ScopedName(),
@@ -1421,6 +1430,50 @@ func (m *memoryOrderDispatcher) logCooldownResidual(a orders.Order, evalNow time
 		patrol,
 		result.Reason,
 	)
+}
+
+// subTickOrderDue reports whether a sub-tick order came due after the latest
+// walk began and by now. A deadline from before that walk was the walk's to
+// serve, so an order it skipped (budget, gate backoff) cannot re-arm a walk at
+// every phase boundary of the tick.
+func (m *memoryOrderDispatcher) subTickOrderDue(now time.Time) bool {
+	for _, due := range m.subTickDue {
+		if due.After(m.walkStart) && !due.After(now) {
+			return true
+		}
+	}
+	return false
+}
+
+// noteSubTickDue records when a sub-tick order's cooldown next comes due,
+// measured from the run it was last compared against. A never-run order
+// carries no slack, so its first deadline lands a full interval out.
+func (m *memoryOrderDispatcher) noteSubTickDue(a orders.Order, lastRun time.Time, slack time.Duration) {
+	interval, ok := m.subTickCooldownInterval(a)
+	if !ok || lastRun.IsZero() {
+		return
+	}
+	if m.subTickDue == nil {
+		m.subTickDue = make(map[string]time.Time)
+	}
+	m.subTickDue[a.ScopedName()] = lastRun.Add(interval - slack)
+}
+
+// subTickCooldownInterval returns the interval of a cooldown order that is at
+// most the patrol interval: the orders that should fire on every tick, and so
+// the only ones a missed tick costs a whole period.
+func (m *memoryOrderDispatcher) subTickCooldownInterval(a orders.Order) (time.Duration, bool) {
+	if a.Trigger != "cooldown" {
+		return 0, false
+	}
+	interval, err := time.ParseDuration(a.Interval)
+	if err != nil || interval <= 0 {
+		return 0, false
+	}
+	if patrol := m.patrolInterval(); patrol <= 0 || interval > patrol {
+		return 0, false
+	}
+	return interval, true
 }
 
 func (m *memoryOrderDispatcher) patrolInterval() time.Duration {

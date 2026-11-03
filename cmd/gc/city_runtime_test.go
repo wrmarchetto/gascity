@@ -696,6 +696,8 @@ func (d *managedDoltPreflightOrderDispatcher) drain(context.Context) bool {
 	return true
 }
 
+func (d *managedDoltPreflightOrderDispatcher) subTickOrderDue(time.Time) bool { return false }
+
 func hasLabelPrefix(labels []string, prefix string) bool {
 	for _, label := range labels {
 		if strings.HasPrefix(label, prefix) {
@@ -1586,6 +1588,7 @@ type recordingOrderDispatcher struct {
 	called      atomic.Bool
 	calls       atomic.Int32
 	onDispatch  func(context.Context, string, time.Time)
+	subTickDue  func(time.Time) bool
 	drainCalls  int
 	drainCtxErr error
 }
@@ -1596,6 +1599,12 @@ func (r *recordingOrderDispatcher) dispatch(ctx context.Context, cityRoot string
 	if r.onDispatch != nil {
 		r.onDispatch(ctx, cityRoot, now)
 	}
+}
+
+// subTickOrderDue answers false unless a case scripts it, which is the
+// answer that keeps the tick to its single head-of-tick walk.
+func (r *recordingOrderDispatcher) subTickOrderDue(now time.Time) bool {
+	return r.subTickDue != nil && r.subTickDue(now)
 }
 
 func (r *recordingOrderDispatcher) drain(ctx context.Context) bool {
@@ -1620,6 +1629,8 @@ func newBlockingOrderDispatcher() *blockingOrderDispatcher {
 }
 
 func (b *blockingOrderDispatcher) dispatch(context.Context, string, time.Time) {}
+
+func (b *blockingOrderDispatcher) subTickOrderDue(time.Time) bool { return false }
 
 func (b *blockingOrderDispatcher) drain(ctx context.Context) bool {
 	b.mu.Lock()
@@ -1686,6 +1697,51 @@ func TestCityRuntimeTickDispatchesOrdersBeforeDemandSnapshot(t *testing.T) {
 
 	if !od.called.Load() {
 		t.Fatal("order dispatcher was not called")
+	}
+	if got := od.calls.Load(); got != 1 {
+		t.Fatalf("dispatch calls = %d with no sub-tick order due, want 1", got)
+	}
+}
+
+// A sub-tick order that comes due while the tick runs is walked at the next
+// phase boundary rather than at the next tick, and never ahead of the
+// head-of-tick walk, which runs behind the pressure gate and Dolt preflight.
+func TestCityRuntimeTickWalksOrdersAgainWhenASubTickOrderComesDue(t *testing.T) {
+	od := &recordingOrderDispatcher{}
+	var queriedBeforeHeadWalk atomic.Bool
+	pending := true
+	od.subTickDue = func(time.Time) bool {
+		if od.calls.Load() == 0 {
+			queriedBeforeHeadWalk.Store(true)
+		}
+		due := pending
+		pending = false
+		return due
+	}
+	cr := &CityRuntime{
+		cityName:            "test-city",
+		cityPath:            t.TempDir(),
+		cfg:                 &config.City{Workspace: config.Workspace{Name: "test-city"}},
+		sp:                  runtime.NewFake(),
+		standaloneCityStore: beads.NewMemStore(),
+		od:                  od,
+		stdout:              io.Discard,
+		stderr:              io.Discard,
+	}
+	cr.buildFnWithSessionBeads = func(*config.City, runtime.Provider, beads.Store, map[string]beads.Store, *sessionBeadSnapshot, *sessionReconcilerTraceCycle) DesiredStateResult {
+		return DesiredStateResult{State: map[string]TemplateParams{}}
+	}
+
+	var dirty atomic.Bool
+	var lastProviderName string
+	var prevPoolRunning map[string]bool
+	cr.tick(context.Background(), &dirty, &lastProviderName, cr.cityPath, &prevPoolRunning, "patrol")
+
+	if got := od.calls.Load(); got != 2 {
+		t.Fatalf("dispatch calls = %d with one sub-tick order due mid-tick, want 2", got)
+	}
+	if queriedBeforeHeadWalk.Load() {
+		t.Error("asked whether a sub-tick order was due before the head-of-tick walk")
 	}
 }
 
