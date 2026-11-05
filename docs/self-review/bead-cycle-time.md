@@ -221,7 +221,8 @@ pm-log #150 to #193.
 1. gascity `AGENTS.md`: the done-criterion said the push gate runs the
    full fast suite for any Go change. Since gs-0y4d it runs the scoped
    selection, and the full run is the sweep's. Fixed in gascity
-   `0622d0789`.
+   `0622d0789`, and `22dd6257f` makes the docsync suite read the sentence
+   against `.githooks/pre-push`, seen red both ways before it passed.
 2. gascity `scripts/push-gate-select`: its embed-only branch pointed at a
    "DELIBERATE ABSENCE note above" that gs-rvw5 (`6cc97eff8`) moved into
    `TESTING.md`. Fixed in `0622d0789`.
