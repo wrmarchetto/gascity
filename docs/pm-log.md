@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-0pz3 2026-10-30T15:00:16Z
+last_seen: gs-g0j5 2026-11-05T21:50:16Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6069,5 +6069,25 @@ something outside it.
 - pm-open #11 is unchanged.
 
 Rig store since last_seen: gs-fxx4 closed (#191), and this summons.
+
+Source: pm-log #190
+
+## 193. Summons gs-g0j5: bead-cycle-time self-review pass filed as gs-q1ix (2026-11-05)
+
+Every gascity member of the epic is closed, and `--check` exited 6: no
+docs/self-review/bead-cycle-time.md at gascity main. No open
+`epic:bead-cycle-time` bead existed, so `--file` filed gs-q1ix, assigned
+to gascity/lab.engineer. No acceptance verdict and no promotion here: the
+pm-epic-close summons that asks for both follows the review opening.
+
+For that later ruling: city ci-cj9utx (#190) closed with its re-measure.
+Its close reason holds the figures. The Target missed in city,
+astoria-sel4 and astoria-zephyr, each with a stage bead filed
+(ci-ce84ou, ci-5c95j4, ci-fb3uff), and gascity was unmeasured with no
+landings in the window. Its branch was not yet on main at close.
+pm-open #11 is left for that ruling to update.
+
+Rig store since last_seen: gs-0pz3 closed (#192), gs-y6g3 and the F09
+deferred finding closed, and this summons.
 
 Source: pm-log #190
