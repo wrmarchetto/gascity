@@ -229,11 +229,31 @@ exit 0
 }
 
 func TestOrphanSweepPreservesQualifiedRigAssignees(t *testing.T) {
-	cityDir := t.TempDir()
-	binDir := t.TempDir()
-	gcLog := filepath.Join(t.TempDir(), "gc.log")
+	for _, tc := range []struct {
+		name      string
+		padAgents int
+	}{
+		{name: "configured agents"},
+		{name: "configured agents first in a list past pipe capacity", padAgents: pipeOverflowRows},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cityDir := t.TempDir()
+			binDir := t.TempDir()
+			gcLog := filepath.Join(t.TempDir(), "gc.log")
+			explainFile := filepath.Join(t.TempDir(), "config-explain.txt")
 
-	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+			var explain strings.Builder
+			for _, agent := range []string{"gastown.deacon", "project/gastown.refinery", "project/gastown.polecat"} {
+				fmt.Fprintf(&explain, "Agent: %s\n  source: pack\n", agent)
+			}
+			for i := 0; i < tc.padAgents; i++ {
+				fmt.Fprintf(&explain, "Agent: pad/padding-agent-%05d\n  source: pack\n", i)
+			}
+			if err := os.WriteFile(explainFile, []byte(explain.String()), 0o644); err != nil {
+				t.Fatalf("WriteFile(config explain): %v", err)
+			}
+
+			writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
 printf '%s\n' "$*" >> "$GC_CALL_LOG"
 if [ "$1" = "--rig" ]; then
   shift 2
@@ -241,14 +261,7 @@ fi
 case "$1" in
   config)
     if [ "$2" = "explain" ]; then
-      cat <<'EOF'
-Agent: gastown.deacon
-  source: pack
-Agent: project/gastown.refinery
-  source: pack
-Agent: project/gastown.polecat
-  source: pack
-EOF
+      cat "$GC_CONFIG_EXPLAIN_FILE"
       exit 0
     fi
     ;;
@@ -299,36 +312,42 @@ esac
 exit 1
 `)
 
-	env := map[string]string{
-		"GC_CITY":      cityDir,
-		"GC_CITY_PATH": cityDir,
-		"GC_CALL_LOG":  gcLog,
-		"PATH":         binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-	}
+			env := map[string]string{
+				"GC_CITY":                cityDir,
+				"GC_CITY_PATH":           cityDir,
+				"GC_CALL_LOG":            gcLog,
+				"GC_CONFIG_EXPLAIN_FILE": explainFile,
+				"PATH":                   binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			}
 
-	script := coreScriptPath("orphan-sweep.sh")
-	cmd := exec.Command(script)
-	cmd.Env = mergeTestEnv(env)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s failed: %v\n%s", filepath.Base(script), err, out)
-	}
-	if !strings.Contains(string(out), "orphan-sweep: reset 1 orphaned beads") {
-		t.Fatalf("unexpected orphan-sweep output:\n%s", out)
-	}
+			script := coreScriptPath("orphan-sweep.sh")
+			cmd := exec.Command(script)
+			cmd.Env = mergeTestEnv(env)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", filepath.Base(script), err, out)
+			}
+			if got, want := strings.TrimSpace(string(out)), "orphan-sweep: reset 1 orphaned beads"; got != want {
+				t.Fatalf("orphan-sweep output = %q, want %q", got, want)
+			}
 
-	logData, err := os.ReadFile(gcLog)
-	if err != nil {
-		t.Fatalf("ReadFile(gc log): %v", err)
-	}
-	log := string(logData)
-	if !strings.Contains(log, "bd release-if-current ga-orphan project/gastown.missing") {
-		t.Fatalf("orphan bead was not reset:\n%s", log)
-	}
-	for _, preserved := range []string{"ga-valid", "ga-pool"} {
-		if strings.Contains(log, "bd release-if-current "+preserved+" ") {
-			t.Fatalf("valid assignee %s was reset:\n%s", preserved, log)
-		}
+			logData, err := os.ReadFile(gcLog)
+			if err != nil {
+				t.Fatalf("ReadFile(gc log): %v", err)
+			}
+			log := string(logData)
+			if !strings.Contains(log, "bd release-if-current ga-orphan project/gastown.missing") {
+				t.Fatalf("orphan bead was not reset:\n%s", log)
+			}
+			for _, preserved := range []string{"ga-valid", "ga-pool"} {
+				if strings.Contains(log, "bd release-if-current "+preserved+" ") {
+					t.Fatalf("valid assignee %s was reset:\n%s", preserved, log)
+				}
+				if strings.Contains(log, "bd show "+preserved+" ") {
+					t.Fatalf("configured assignee %s was probed as an orphan:\n%s", preserved, log)
+				}
+			}
+		})
 	}
 }
 
@@ -728,13 +747,33 @@ exit 1
 }
 
 func TestOrphanSweepRefreshesLivenessAfterBeadList(t *testing.T) {
-	cityDir := t.TempDir()
-	binDir := t.TempDir()
-	tmpDir := t.TempDir()
-	gcLog := filepath.Join(tmpDir, "gc.log")
-	sessionCountFile := filepath.Join(tmpDir, "session-count")
+	for _, tc := range []struct {
+		name        string
+		padSessions int
+	}{
+		{name: "live row on refresh"},
+		{name: "live row first in a list past pipe capacity", padSessions: pipeOverflowRows},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cityDir := t.TempDir()
+			binDir := t.TempDir()
+			tmpDir := t.TempDir()
+			gcLog := filepath.Join(tmpDir, "gc.log")
+			sessionCountFile := filepath.Join(tmpDir, "session-count")
+			liveListFile := filepath.Join(tmpDir, "live-session-list.json")
 
-	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+			var liveList strings.Builder
+			liveList.WriteString(`{"sessions":[` +
+				`{"id":"mc-live","session_name":"project__worker-gc-race","alias":"project/worker-1","agent_name":"project/worker","closed":false}`)
+			for i := 0; i < tc.padSessions; i++ {
+				fmt.Fprintf(&liveList, `,{"id":"mc-pad-%05d","session_name":"pad__worker-gc-%05d","closed":false}`, i, i)
+			}
+			liveList.WriteString(`],"summary":{},"filters":{},"schema_version":"1"}` + "\n")
+			if err := os.WriteFile(liveListFile, []byte(liveList.String()), 0o644); err != nil {
+				t.Fatalf("WriteFile(live session list): %v", err)
+			}
+
+			writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
 printf '%s\n' "$*" >> "$GC_CALL_LOG"
 case "$1" in
   config)
@@ -760,11 +799,7 @@ EOF
       if [ "$count" -eq 1 ]; then
         printf '{"sessions":[],"summary":{},"filters":{},"schema_version":"1"}\n'
       else
-        cat <<'EOF'
-{"sessions":[
-  {"id":"mc-live","session_name":"project__worker-gc-race","alias":"project/worker-1","agent_name":"project/worker","closed":false}
-],"summary":{},"filters":{},"schema_version":"1"}
-EOF
+        cat "$GC_LIVE_SESSION_LIST_FILE"
       fi
       exit 0
     fi
@@ -786,35 +821,38 @@ esac
 exit 1
 `)
 
-	env := map[string]string{
-		"GC_CITY":               cityDir,
-		"GC_CITY_PATH":          cityDir,
-		"GC_CALL_LOG":           gcLog,
-		"GC_SESSION_COUNT_FILE": sessionCountFile,
-		"PATH":                  binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-	}
+			env := map[string]string{
+				"GC_CITY":                   cityDir,
+				"GC_CITY_PATH":              cityDir,
+				"GC_CALL_LOG":               gcLog,
+				"GC_SESSION_COUNT_FILE":     sessionCountFile,
+				"GC_LIVE_SESSION_LIST_FILE": liveListFile,
+				"PATH":                      binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+			}
 
-	script := coreScriptPath("orphan-sweep.sh")
-	cmd := exec.Command(script)
-	cmd.Env = mergeTestEnv(env)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s failed: %v\n%s", filepath.Base(script), err, out)
-	}
-	if strings.Contains(string(out), "orphan-sweep: reset") {
-		t.Fatalf("unexpected orphan reset output:\n%s", out)
-	}
+			script := coreScriptPath("orphan-sweep.sh")
+			cmd := exec.Command(script)
+			cmd.Env = mergeTestEnv(env)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", filepath.Base(script), err, out)
+			}
+			if strings.Contains(string(out), "orphan-sweep: reset") {
+				t.Fatalf("unexpected orphan reset output:\n%s", out)
+			}
 
-	logData, err := os.ReadFile(gcLog)
-	if err != nil {
-		t.Fatalf("ReadFile(gc log): %v", err)
-	}
-	log := string(logData)
-	if got := strings.Count(log, "session list --json"); got != 2 {
-		t.Fatalf("session list count = %d, want 2 post-bd refresh:\n%s", got, log)
-	}
-	if strings.Contains(log, "bd update ga-live-race ") {
-		t.Fatalf("live session claimed between liveness and bead list was reset:\n%s", log)
+			logData, err := os.ReadFile(gcLog)
+			if err != nil {
+				t.Fatalf("ReadFile(gc log): %v", err)
+			}
+			log := string(logData)
+			if got := strings.Count(log, "session list --json"); got != 2 {
+				t.Fatalf("session list count = %d, want 2 post-bd refresh:\n%s", got, log)
+			}
+			if strings.Contains(log, "bd update ga-live-race ") {
+				t.Fatalf("live session claimed between liveness and bead list was reset:\n%s", log)
+			}
+		})
 	}
 }
 
@@ -6942,6 +6980,11 @@ func writeExecutable(t *testing.T, path, body string) {
 	}
 }
 
+// pipeOverflowRows rows of 20 or more bytes put over 256 KiB behind an early
+// match, past the 64 KiB pipe capacity (pipe(7)) plus grep's first read, so a
+// writer feeding `grep -q` still holds unwritten bytes when grep exits.
+const pipeOverflowRows = 16384
+
 func linkTestPathTool(t *testing.T, binDir, name string) {
 	t.Helper()
 	realPath, err := exec.LookPath(name)
@@ -10570,28 +10613,50 @@ func TestWispCompactPromotesNonClosedPastTTL(t *testing.T) {
 	}
 }
 
-func TestWispCompactPromotesClosedWispsWithComments(t *testing.T) {
-	pastTTL := time.Now().Add(-48 * time.Hour).UTC().Format(wispTimestampLayout)
-	beads := fmt.Sprintf(`[
-  {"id":"ga-discussed","status":"closed","ephemeral":true,"updated_at":%q,"comment_count":3,"labels":[]}
-]`, pastTTL)
+func TestWispCompactPromotesClosedWispsWithProvenValue(t *testing.T) {
+	padLabels := make([]string, 0, pipeOverflowRows+1)
+	padLabels = append(padLabels, "keep")
+	for i := 0; i < pipeOverflowRows; i++ {
+		padLabels = append(padLabels, fmt.Sprintf("padding-label-%05d", i))
+	}
+	for _, tc := range []struct {
+		name     string
+		id       string
+		comments int
+		labels   []string
+	}{
+		{name: "comments", id: "ga-discussed", comments: 3, labels: []string{}},
+		{name: "keep label", id: "ga-kept", labels: []string{"keep"}},
+		{name: "keep label first in a list past pipe capacity", id: "ga-kept", labels: padLabels},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pastTTL := time.Now().Add(-48 * time.Hour).UTC().Format(wispTimestampLayout)
+			labels, err := json.Marshal(tc.labels)
+			if err != nil {
+				t.Fatalf("Marshal(labels): %v", err)
+			}
+			beads := fmt.Sprintf(`[
+  {"id":%q,"status":"closed","ephemeral":true,"updated_at":%q,"comment_count":%d,"labels":%s}
+]`, tc.id, pastTTL, tc.comments, labels)
 
-	bdLog, env := wispCompactEnv(t, beads)
-	runScript(t, coreScriptPath("wisp-compact.sh"), env)
+			bdLog, env := wispCompactEnv(t, beads)
+			runScript(t, coreScriptPath("wisp-compact.sh"), env)
 
-	log, err := os.ReadFile(bdLog)
-	if err != nil {
-		t.Fatalf("ReadFile(bd log): %v", err)
-	}
-	s := string(log)
-	if !strings.Contains(s, "update ga-discussed --persistent") {
-		t.Fatalf("expected `bd update ga-discussed --persistent`; bd log:\n%s", s)
-	}
-	if !strings.Contains(s, "proven value") {
-		t.Fatalf("expected promotion comment to mention proven value; bd log:\n%s", s)
-	}
-	if strings.Contains(s, "delete ga-discussed") {
-		t.Fatalf("wisp with comments must be preserved, not deleted; bd log:\n%s", s)
+			log, err := os.ReadFile(bdLog)
+			if err != nil {
+				t.Fatalf("ReadFile(bd log): %v", err)
+			}
+			s := string(log)
+			if !strings.Contains(s, "update "+tc.id+" --persistent") {
+				t.Fatalf("expected `bd update %s --persistent`; bd log:\n%s", tc.id, s)
+			}
+			if !strings.Contains(s, "proven value") {
+				t.Fatalf("expected promotion comment to mention proven value; bd log:\n%s", s)
+			}
+			if strings.Contains(s, "delete "+tc.id) {
+				t.Fatalf("wisp with proven value must be preserved, not deleted; bd log:\n%s", s)
+			}
+		})
 	}
 }
 
