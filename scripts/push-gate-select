@@ -206,8 +206,8 @@ def decide(argv: list[str]) -> str:
 
     inventory = package_inventory(go_tool)
     if not classify_paths(records, inventory):
-        # Only embedded files changed. The pre-existing hook skipped this
-        # case and so does this one; see the DELIBERATE ABSENCE note above.
+        # Only embedded files changed. The old hook skipped this case too,
+        # and TESTING.md, "Scoping the push gate", says why it still does.
         return "none"
 
     packages = affected_package_args(records, go_tool, inventory)

@@ -406,9 +406,12 @@ concurrent builds.
 Before considering any task complete:
 
 - The push gate passed: `git push`, without `--no-verify`, ran
-  `.githooks/pre-push` to a green finish. It runs the full fast suite for any
-  push that changes a Go build input, so do not also run `make test` or
-  `make test-fast-parallel` before pushing -- that is the same suite twice.
+  `.githooks/pre-push` to a green finish. For a push that changes a Go build
+  input it runs the fast suite over the packages the push can reach, widening
+  to the full fast suite on any uncertainty (`TESTING.md`, "Scoping the push
+  gate"). The full suite runs once per landing, in the city's merge sweep
+  gate, so do not also run `make test` or `make test-fast-parallel` before
+  pushing.
   While working, test the packages you changed (`go test ./internal/foo/`)
   or run `make test-affected`, the fast suite over only the packages the work
   since its fork point off main can reach

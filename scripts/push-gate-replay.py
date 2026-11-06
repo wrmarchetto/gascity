@@ -6,7 +6,7 @@ from its fork point off main, in a detached worktree under /var/tmp, and
 writes one JSON line per landing. `summarize` prints the decision rates, why
 each full decision widened, and each scoped selection's share of summed
 package time from `go test -json` logs of `make test`. Figures and re-run
-commands: TESTING.md, "What the push gate's selection would save".
+commands: TESTING.md, "What the push gate's selection saves".
 """
 
 from __future__ import annotations
@@ -173,6 +173,11 @@ def summarize(args: argparse.Namespace) -> int:
     with open(args.rows, encoding="utf-8") as handle:
         rows = [json.loads(line) for line in handle if line.strip()]
     rows = [r for r in rows if r["when"] >= args.since]
+    if not rows:
+        print(f"push-gate-replay: {args.rows} holds no landing at or after "
+              f"--since {args.since!r}, so there is nothing to summarize",
+              file=sys.stderr)
+        return 1
     with open(args.manifest, encoding="utf-8") as handle:
         manifest = [
             line.strip() for line in handle
@@ -197,6 +202,11 @@ def summarize(args: argparse.Namespace) -> int:
 
     print(f"\npackage time: {len(args.test_json)} log(s), "
           f"{len(times)} packages, {total:.0f}s summed")
+    # make test writes these logs and they do not survive long in /var/tmp,
+    # so the decisions above stand without them.
+    if not total:
+        print("no log holds a package time, so no share is computed")
+        return 0
     print(f"always-run manifest, {len(manifest)} entries: {floor:.0f}s, "
           f"{100 * floor / total:.1f}%")
     scoped = [r for r in rows if r["decision"] == "scoped"]
@@ -234,7 +244,8 @@ def main() -> int:
     report.add_argument("--manifest", required=True)
     report.add_argument("--since", default="",
                         help="ISO time, rows before it are left out")
-    report.add_argument("test_json", nargs="+")
+    report.add_argument("test_json", nargs="*",
+                        help="go test -json logs of make test, for the shares")
     args = parser.parse_args()
     return replay(args) if args.command == "replay" else summarize(args)
 
