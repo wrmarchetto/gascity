@@ -1,6 +1,10 @@
 # Self-review: epic:bead-cycle-time
 
 Covers:
+- as-8384y 9a55b09d56ce2935cd4b241a56efcbbd35b49b31
+- as-hq04p e54d0de3709a259481727db7bd0fff4bdce92bae
+- az-8ujz bf3e658f8992d110a3cd66e9d68ed3ea6c44a2ac
+- az-r41s 36e259ea94a453761c4428bb074eea6d2ac7b999
 - ci-3imbeu 1fe0ea1eadf6e1facb89848ecbb0041c0f888b65
 - ci-5c95j4 4f0d887e5de9193420692dbd356b48b4db5afe27
 - ci-7npmly none
@@ -35,14 +39,18 @@ Pass taken by gs-q1ix over gascity `e6cc8beaa` and city `a0798b51c`, with
 the city fixes rebased onto city `9282c3991`. The `ci-` members and gs-sodh
 landed in the city repo, the other `gs-` members here, each read over its
 whole merged branch, not only its listed commit. ci-fb3uff's `3fe364d77`
-and ci-tr56b0's `6d2e61066` are not on city main at this pass: their sweep
-merges `c9e50d8ab` and `7487c4c89` were made at 21:44Z on 11-05 and sit on
-no branch, so both were read at their branch tips.
+and ci-tr56b0's `6d2e61066` were read at their branch tips, their sweep
+merges `c9e50d8ab` and `7487c4c89` (21:44Z on 11-05) being on no branch
+then. Both are on city main at the refresh.
 
-Four more members carry the label in the astoria stores, which the Covers
-block cannot list (finding 7): az-r41s, az-8ujz, as-hq04p and as-8384y. All
-four are on their rigs' main. They were read for landing and their tools
-run, in the bullets that name them.
+Refreshed by gs-hyos over gascity `d1b1ccfbd`, city `091587a88`,
+astoria-sel4 `a3783b03` and astoria-zephyr `d0d98eb8`, after city
+ci-5li8wk (finding 7) let the Covers block name the four astoria members.
+Each was read over its whole merged branch: as-8384y's `4a817c4c` and
+as-hq04p's `08b314a9` in sel4, az-r41s's `e687d003` and az-8ujz's
+`173729bb` in zephyr, the last carrying az-10ry's `c0d1eb8d` after the
+listed commit. Their tools were run at the astoria shas above, in scratch
+worktrees, and the gs-q1ix bullets stand as written unless amended here.
 
 ## Code against docs
 
@@ -95,10 +103,38 @@ run, in the bullets that name them.
   (finding 1). `scripts/push-gate-select` cited a docstring note gs-rvw5
   deleted, and `scripts/push-gate-replay.py` a `TESTING.md` passage by its
   old title (findings 2 and 3).
-- Astoria: zephyr `docs/gate-suite-cost.md` (az-r41s) cites the city
-  baseline at its committed shas and the zephyr cap by its constant.
-  as-hq04p keeps its ranking and before/after sizes in its close reason
-  and its bead comment, with no page.
+- as-8384y, sel4 `docs/affected-host-tests.md`, its `CLAUDE.md` paragraph
+  and spec D16: selection rules 1 to 5, the seam (the three roots, what
+  they import or source, `dts/`, `gen_layout.py`, the `(session)` row), a
+  rename as a removal and an addition, exit 5 on an empty selection,
+  `--record-reads` refused beside any flag, and the xdist refusal all match
+  `affected_tests.py`, `host_suite_reads.py` and `run_host_tests.sh` at
+  `4a817c4c`. sel4's later `641f6b8f` (F27) stamps the table with its
+  recording commit and runs whole every module edited since, and the page
+  was amended in the same commit.
+- as-hq04p has no page: its ranking and sizes are its close reason and
+  bead comment. Read in code: `b25d690c`'s candidate pattern is a superset
+  trigger of HEX, DEC and SHIFT on one line, each hit line read whole.
+  `e54d0de3`'s lexer memo keys on text and path and hands each caller a
+  fresh list. `67b45c1f` removed the never-released case and moved its one
+  distinct assertion, `openocd.refused == 0`, into the slow-poll case.
+- az-8ujz, zephyr `docs/hardware-testing.md` "Affected-only runs" and
+  `CLAUDE.md`: the four full-run triggers, the added-line rule, the build
+  roots and the whole-tree reader rule match `select` and `change_set` in
+  `affected_tests.py`. `run_tests.sh` refuses `--hardware`, the `--memc-*`
+  arms, `--board` and `--no-retry` beside `--affected`, and `--host` by
+  its own refusal, as the page says. The page does not say the selected
+  gates run one at a time (finding 10).
+- az-r41s, zephyr `docs/hardware-testing.md` "The repo gates": nproc
+  slots, the one foreground line, GATE FAIL by line, GATE STOP, INCOMPLETE,
+  the re-raised signal and the bash 5.1 refusal match `run_repo_gates.sh`.
+  Its "about 180 invocations" is 227 at `d0d98eb8`, and zephyr `b0510283`
+  already replaced it with the `REPO GATES:` line's own count.
+  `docs/gate-suite-cost.md` quotes the baseline's zephyr rows, its 82 of
+  118 budget-exhausted rows and its suite sizes as city `659b7fd0` states
+  them, and the 890 s cap as `ZEPHYR_GATE_TIMEOUT` still reads on city
+  main. The merge's `docs/invariant-provenance.md` paragraphs are a comment
+  block `5408f992` moved there, as its body says.
 
 ## Docs against spec
 
@@ -110,11 +146,11 @@ pm-log #150 to #193.
   20:15Z.
 - Target: unmet at the last measurement. ci-cj9utx's cohort misses in
   city, astoria-sel4 and astoria-zephyr, and gascity and dart have no row.
-  Its stage beads have shipped: ci-5c95j4 landed at 19:56Z and ci-ce84ou
-  at 20:06Z on 11-05, and zephyr's ci-fb3uff and ci-tr56b0 are not on city
-  main at this pass. No measurement follows any of them. This pass's own
-  cohort run is a determinism check, not a re-measure: its last commits
-  end at 16:50:19Z, so it tests none of the four.
+  Its stage beads have shipped: ci-5c95j4 landed at 19:56Z, ci-ce84ou at
+  20:06Z, and zephyr's ci-fb3uff and ci-tr56b0 at 21:44Z on 11-05. No
+  measurement follows any of them at the refresh. gs-q1ix's own cohort run
+  is a determinism check, not a re-measure: its last commits end at
+  16:50:19Z, so it tests none of the four.
 - Merge queue first: met. Lanes (`6094f34c`, ci-ms65m7) and one merge
   result per repo with bisection (`8354d8b5`, ci-cicsvc, ci-sx056l closed
   as its duplicate) landed, and queue wait is decomposed before
@@ -138,7 +174,15 @@ pm-log #150 to #193.
   runs are affected-only in gascity (gs-rvw5, gs-0y4d), sel4 (as-8384y)
   and zephyr (az-8ujz). gascity's push-gate fallback rate is measured in
   `TESTING.md`, and its common trigger, a new remote branch, is fixed by
-  gs-0y4d.
+  gs-0y4d. Bounds on the astoria half at the refresh: sel4's table,
+  recorded at `641f6b8f`, runs whole the 177 of 332 modules edited since
+  and the 29 it never measured, so any affected run there selects at
+  least 206 of 332 until `--record-reads` runs again, a cost its page
+  states. zephyr's affected run executes its selected gates serially
+  (finding 10). Neither has a push gate to narrow.
+  `docs/bead-cycle-time-post-change.md` counts each rig's in-session full
+  and scoped runs per landing since, but times none of them, so az-8ujz's
+  and as-8384y's savings in time are still their own predictions.
 
 ## Run twice
 
@@ -165,6 +209,30 @@ pm-log #150 to #193.
   `scripts/affected_tests.py plan` at `bf3e658f8` against `~3`, twice
   each: identical, both full because the selector or `run_tests.sh`
   itself changed.
+- sel4 `affected_tests.py` at `a3783b03` against `HEAD~5` and `HEAD~1`,
+  twice each: identical. `HEAD~5` is full, `dts/astoria-soc.dtsi` having
+  changed. `HEAD~1`, three sweep specs, selects 214 of 332 modules, 206 of
+  them run whole for the table's age (Docs against spec).
+- sel4 `host_suite_reads.py`: one module recorded with `--record-reads`,
+  then `fold` over its log directory twice: byte-identical tables. The
+  selector reads that table as full, "the table names no recorded tree",
+  because only `record` writes the `(recorded at)` stamp and `fold` does
+  not. That errs toward running more and was left.
+- zephyr `affected_tests.py plan` at `d0d98eb8` against `HEAD~1` and
+  `HEAD~3`, twice each: identical, 75 and 90 of 227 invocations, build
+  skipped. `run_tests.sh --affected --base HEAD~1` then ran the plan's own
+  output: green, 362 s at load 12 to 34, build skipped, and its verdicts
+  block names the affected run.
+- zephyr `run_repo_gates.sh` over the same tree: 227 invocations, 0
+  failed, 425 s at load 34 to 73. The plan's 75 lines back to back, each
+  sourcing `gate_quiet.sh` as the affected arm does: 121 s through `xargs
+  -P 24` at load 41 to 48, then 578 s one at a time through a spike to
+  about 120. The affected run's own serial gates took about 345 s at load
+  12 to 34, so even at the lower load serial cost 2.9 times concurrent
+  (finding 10). No gate failed in either.
+- as-hq04p added no tool. Its equivalence and memo cases, `-k 'literal or
+  lex or memo'` over `test_check_layout.py` and `test_layout_derivation.py`,
+  pass at `a3783b03`, 56 of them.
 - The city suites of every script the epic touched, at `a0798b51c`:
   bead-cycle-time and merge-queue-wait OK, test-growth-gate 29/29,
   notify-on-close OK, epic-review-drive 57/57, merge-closed-features 1819
@@ -194,6 +262,21 @@ pm-log #150 to #193.
 - sel4 `affected_tests.py --base no-such-ref`: exit 2 with the
   `--affected=<ref>` remedy. zephyr `plan --base no-such-ref`: exit 0, a
   full run with its reason, the side it is built to fail toward.
+- sel4 `run_host_tests.sh`: `--record-reads --sitting`, `--affected
+  --affected=main` and an empty `--affected=` each exit 64 with the usage
+  line. `--affected=no-such-ref` exits 2, NOT RUN, with the remedy.
+- sel4 `host_suite_reads.py fold` over sel4 logs, given the zephyr
+  checkout as its root: exit 0, and it wrote a two-row table of empty reads
+  into that checkout's `scripts/`. This pass did that to the zephyr rig
+  root by mistake and removed the file at once. The table carries no
+  stamp, so a selector reading it runs full. Left.
+- zephyr `run_tests.sh`: `--affected` beside `--hardware`,
+  `--memc-shipped`, `--board`, `--no-retry` or `--host` in either order,
+  `--base` without `--affected`, and `--base` with no value each exit 2
+  with the reason.
+- zephyr `affected_tests.py audit no-such-gate` printed "0 target(s), 0
+  uncovered read(s)" and exited 0, which is what a clean audit of a real
+  gate prints (finding 9).
 
 ## Missing input
 
@@ -215,6 +298,13 @@ pm-log #150 to #193.
 - sel4 `affected_tests.py` outside a checkout: refused. zephyr `plan` with
   `--root` at a missing directory: a full run, though its reason names the
   base, not the root.
+- sel4 `host_suite_reads.py fold` over a missing log directory, and over
+  an empty one: exit 0, and the committed table, 26306 lines, became `{}`
+  (finding 8). `record` reaches the same fold.
+- sel4 `affected_tests.py` with the table deleted, or holding only a
+  foreign `(recorded at)` stamp: full, with the refresh remedy.
+- zephyr `affected_tests.py audit --root` at a missing directory: a
+  CalledProcessError traceback, exit 1. Nonzero, so left, unnamed as it is.
 
 ## Findings
 
@@ -239,12 +329,33 @@ pm-log #150 to #193.
    pass, and `merge-queue-wait.py` crashed unnamed on a foreign
    `--baseline-csv` and an early `--as-of`. Fixed in city `65d753a0e`,
    test first, with three mutation rows, 29/29 died.
-7. `citybd.epic_members` reads only the rig and city stores, so the four
-   astoria members can be named neither in this Covers block nor in the
+7. `citybd.epic_members` read only the rig and city stores, so the four
+   astoria members could be named neither in this Covers block nor in the
    review it opens. The closure machinery's, not this epic's: filed as
-   city ci-5li8wk (toolsmith). This pass read them by hand.
+   city ci-5li8wk (toolsmith), fixed in city `54b6be7d1`, on city main
+   since `b1e93e4e4`. The refresh lists the four and reads them.
+8. sel4 `host_suite_reads.py fold` over a log directory holding no log
+   wrote `{}` over the recorded table and exited 0, the class of finding
+   6. Fixed in sel4 `6eebd80c`: refused by name, exit 2, nothing written.
+   Test first, both shapes red at `a3783b03`. Its sweep spec
+   `scripts/gs_hyos_fold_no_log.sweep.toml`, 3/3 died.
+9. zephyr `affected_tests.py audit <target>` with a target matching no
+   gate line traced nothing and exited 0 with a clean audit's summary.
+   Fixed in zephyr `4254e039`: refused by name, exit 2. Test first, red at
+   `d0d98eb8`. Three rows added to `affected_tests.mutation-sweep.toml`,
+   3/3 died.
+10. zephyr `run_tests.sh --affected` runs its selected gates one at a
+    time, an `eval` loop written against the serial runner, while az-r41s
+    made plain `run_repo_gates.sh` concurrent. az-8ujz landed after
+    az-r41s and kept the loop. The timing pair under Run twice puts the
+    serial subset at about 2.9 times the concurrent one. A runner change
+    with its own sweeps and timing, so filed as zephyr az-20v1f
+    (astoria-zephyr/lab.engineer), not as a member of this epic.
 
-The city fixes are on city branch `fix/gs-q1ix-bead-cycle-time-self-review`,
-for the sweep to land after gs-q1ix closes. Noted and left: PUSH_SELECT
-reads the hook's catch-all line as unknown, and zephyr's `plan` blames the
-base for a missing `--root`. Both err toward counting or testing more.
+gs-q1ix's city fixes landed on city main in `fa46fcac4`. The sel4 and
+zephyr fixes are on branch `fix/gs-hyos-bead-cycle-time-self-review` in
+each rig, for the sweep to land after gs-hyos closes. Noted and left:
+PUSH_SELECT reads the hook's catch-all line as unknown, zephyr's `plan`
+blames the base for a missing `--root`, sel4's `fold` writes no recording
+stamp, and fold accepts logs from another checkout. Each errs toward
+counting or testing more.
