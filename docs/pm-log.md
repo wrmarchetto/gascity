@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-g0j5 2026-11-05T21:50:16Z
+last_seen: gs-hyos 2026-11-06T01:36:12Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6091,3 +6091,25 @@ Rig store since last_seen: gs-0pz3 closed (#192), gs-y6g3 and the F09
 deferred finding closed, and this summons.
 
 Source: pm-log #190
+
+## 194. Summons gs-vlk5: bead-cycle-time self-review refresh filed as gs-hyos (2026-11-05)
+
+gs-q1ix's record landed on main (dd11dbf09), and `--check` now exits 6
+naming four members it does not list: as-8384y, as-hq04p, az-8ujz and
+az-r41s, the shipped astoria-sel4 and astoria-zephyr members. They became
+visible when city ci-5li8wk (filed by gs-q1ix) taught epic_members to read
+every bound rig store. gs-q1ix read them by hand, but its Covers block
+predates that fix. No open `epic:bead-cycle-time` bead existed, so
+`--file` filed gs-hyos, assigned to gascity/lab.engineer. No acceptance
+verdict and no promotion here: the pm-epic-close summons that asks for
+both follows the review opening.
+
+For later rulings: ci-5li8wk's close notes that astoria-sel4
+validation-debt now also gains az-81rqr and gs-y6g3 by label. That is
+sel4's epic, not this rig's to relabel. gs-q1ix also filed gs-6ogl (push
+gate flake, closed since) and left a city branch for the sweep.
+
+Rig store since last_seen: gs-q1ix closed, gs-6ogl and gs-t0d8 closed,
+this summons, and gs-hyos.
+
+Source: pm-log #193
