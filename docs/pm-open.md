@@ -380,6 +380,12 @@ last epic not done and no epic is open. #166's answer, "nothing for
 now", stands until Willie says otherwise. Would settle it: a
 `gc city pm plan gascity '<epic>'` sitting.
 
+Update 2026-11-06 (pm-log #196): RESOLVED. Operator ruling relayed as
+gs-amn4 (city ci-txlfqv): (a) gascity's half of the Target may be
+accepted on a small or empty sample, recorded on the Target criterion,
+and (b) no next epic for gascity, #166 re-affirmed. The other rigs'
+halves stay on city ci-71d5yl.
+
 
 ## 12. Operator-deferred review findings carry no epic home (2026-10-29)
 

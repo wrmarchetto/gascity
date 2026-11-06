@@ -237,7 +237,9 @@ Acceptance:
 - Target: in every rig, last code commit to landing on main is under one
   hour at the 90th percentile, and shorter is better. Willie set no tighter
   number. A post-change window over the baseline's measure meets it
-  (pm-log #158).
+  (pm-log #158). gascity's half may be accepted on a small or empty
+  sample, so the epic is not held open waiting on gascity landings. The
+  other rigs' halves stay on city ci-71d5yl's re-measure (pm-log #196).
 - Merge queue first: one rig's gate no longer consumes the sweep pass
   budget of every other rig, and a rig's closed branches land together
   under one gate run rather than one branch per pass. Queue wait per rig

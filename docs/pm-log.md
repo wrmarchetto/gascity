@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-dxba 2026-11-06T14:38:11Z
+last_seen: gs-amn4 2026-11-06T14:55:47Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6155,3 +6155,26 @@ Rig store since last_seen: gs-hyos and gs-vlk5 closed (#194), and this
 summons.
 
 Source: roadmap bead-cycle-time
+
+## 196. Operator ruling gs-amn4: gascity's Target half on a small sample, no next epic (2026-11-06)
+
+The liaison relayed the operator's answer to pm-open #11 as gs-amn4 (mail
+ci-wisp-h3ct3u2, record ci-txlfqv in the city store). The operator's
+words, verbatim, 2026-11-06T14:46:04Z: "1. Yes, it can be accepted with
+small or empty sample. 2. No next epic for gascity"
+
+- (a) gascity's half of the bead-cycle-time Target may be accepted on a
+  small or empty sample. The epic is not held open waiting on gascity
+  landings. Recorded on the Target criterion in docs/roadmap.md. The
+  other rigs' halves stay on city ci-71d5yl's re-measure, so review g1's
+  `unmet:target` still stands: it rests on city, astoria-sel4 and
+  astoria-zephyr missing, which this ruling does not touch. The
+  Conclusion block is unchanged for the same reason.
+- (b) No next epic for gascity. #166 is re-affirmed, so no DECOMP and no
+  promotion.
+
+pm-open #11 marked RESOLVED. No new open entry, so no ping.
+
+Rig store since last_seen: gs-dxba closed (#195), and this bead.
+
+Source: pm-log #196
