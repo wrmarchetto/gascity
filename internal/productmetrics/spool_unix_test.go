@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/gchome"
-	"github.com/gastownhall/gascity/internal/testutil"
 	"golang.org/x/sys/unix"
 )
 
@@ -8264,21 +8263,20 @@ func TestDualControlCleanupPreemptsDeepTreeStarvation(t *testing.T) {
 	}
 }
 
+// purgeHelperCommand re-executes this test binary as test's helper, with
+// env=mode. The one spawn site the purge helpers and their watcher share.
+func purgeHelperCommand(test, env, mode string) *exec.Cmd {
+	command := exec.Command(os.Args[0], "-test.run=^"+test+"$")
+	command.Env = append(os.Environ(), env+"="+mode)
+	return command
+}
+
 func TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit(t *testing.T) {
 	t.Parallel()
 	const helperEnvironment = "GC_PRODUCTMETRICS_LOW_NOFILE_HELPER"
 	if os.Getenv(helperEnvironment) != "1" {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*testutil.ExecRaceTimeout)
-		defer cancel()
-		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit$")
-		command.Env = append(os.Environ(), helperEnvironment+"=1")
-		output, err := command.CombinedOutput()
-		if ctx.Err() != nil {
-			t.Fatalf("low-NOFILE purge helper timed out: %v\n%s", ctx.Err(), output)
-		}
-		if err != nil {
-			t.Fatalf("low-NOFILE purge helper failed: %v\n%s", err, output)
-		}
+		runPurgeHelper(t, "low-NOFILE",
+			purgeHelperCommand("TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit", helperEnvironment, "1"))
 		return
 	}
 
@@ -8319,6 +8317,7 @@ func TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	reportPurgeHelperProgress("fixture")
 	result := spoolSweepResult{}
 	for attempt := 0; attempt < 128 && !result.complete; attempt++ {
 		root := mustOpenMutableRoot(t, home)
@@ -8334,6 +8333,7 @@ func TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit(t *testing.T) {
 			t.Fatalf("low-NOFILE purge attempt %d = complete:%v err:%v close:%v progressed:%v evidence:%v usage:%+v",
 				attempt+1, result.complete, purgeErr, closeErr, before != after, strongEvidence, result.usage)
 		}
+		reportPurgeHelperProgress(fmt.Sprintf("attempt %d", attempt+1))
 	}
 	if !result.complete || result.quota != (spoolQuota{}) {
 		t.Fatalf("low-NOFILE deep purge did not converge: %+v", result)
@@ -8347,10 +8347,7 @@ func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
 	t.Parallel()
 	const helperEnvironment = "GC_PRODUCTMETRICS_MIN_NOFILE_HELPER"
 	if os.Getenv(helperEnvironment) != "1" {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*testutil.ExecRaceTimeout)
-		defer cancel()
-		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget$")
-		command.Env = append(os.Environ(), helperEnvironment+"=1")
+		command := purgeHelperCommand("TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget", helperEnvironment, "1")
 		defer func() {
 			for _, inherited := range command.ExtraFiles {
 				if err := inherited.Close(); err != nil {
@@ -8365,13 +8362,7 @@ func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
 			}
 			command.ExtraFiles = append(command.ExtraFiles, inherited)
 		}
-		output, err := command.CombinedOutput()
-		if ctx.Err() != nil {
-			t.Fatalf("minimum-directory-budget purge helper timed out: %v\n%s", ctx.Err(), output)
-		}
-		if err != nil {
-			t.Fatalf("minimum-directory-budget purge helper failed: %v\n%s", err, output)
-		}
+		runPurgeHelper(t, "minimum-directory-budget", command)
 		return
 	}
 
@@ -8420,6 +8411,7 @@ func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
 		t.Fatalf("minimum-directory-budget RLIMIT_NOFILE = %+v, err=%v, want %+v", observed, err, limit)
 	}
 
+	reportPurgeHelperProgress("fixture")
 	result := spoolSweepResult{}
 	for attempt := 0; attempt < 32 && !result.complete; attempt++ {
 		root := mustOpenMutableRoot(t, home)
@@ -8434,6 +8426,7 @@ func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
 			t.Fatalf("minimum-directory-budget purge attempt %d = complete:%v err:%v close:%v progressed:%v evidence:%v usage:%+v",
 				attempt+1, result.complete, purgeErr, closeErr, before != after, strongEvidence, result.usage)
 		}
+		reportPurgeHelperProgress(fmt.Sprintf("attempt %d", attempt+1))
 	}
 	if !result.complete || result.quota != (spoolQuota{}) {
 		t.Fatalf("minimum-directory-budget nested purge did not converge: %+v", result)

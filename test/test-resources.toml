@@ -64,7 +64,9 @@ resource = "subprocess"
 # a real `sh` child, like every sibling suite in that package. The script IS
 # the artifact under test, and its verdict is its exit code and output, which
 # only a real process carries.
-baseline_calls = 630
+# -1 call (ci-4ycjfo): internal/productmetrics/spool_unix_test.go's two purge
+# helpers now share one re-exec site, purgeHelperCommand.
+baseline_calls = 629
 baseline_files = 187
 reported_calls = 495
 reported_files = 135

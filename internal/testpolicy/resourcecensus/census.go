@@ -239,7 +239,9 @@ var bootstrapPolicy = Ledger{
 			// runs commands/sync/run.sh as a real `sh` child, like every
 			// sibling suite in examples/bd/dolt. The script is the artifact
 			// under test, and only a real process carries its exit code.
-			BaselineCalls:   630,
+			// -1 call (ci-4ycjfo): the two productmetrics purge helpers
+			// share one re-exec site, purgeHelperCommand.
+			BaselineCalls:   629,
 			BaselineFiles:   187,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
