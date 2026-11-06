@@ -846,7 +846,8 @@ func TestTwoConcurrentDisableAndPurgeCallsReuseOwnerAndCrossUploaderBarrier(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	service.deps.disableUploaderWait = testutil.GoroutineRaceTimeout
+	// The losing call waits out the winner's whole purge on this lock.
+	service.deps.disableUploaderWait = purgeCallWait
 	attempts := make(chan struct{}, 2)
 	service.deps.beforeDisableUploaderLock = func() { attempts <- struct{}{} }
 
@@ -2351,13 +2352,18 @@ func waitForTestArm(armed <-chan struct{}) bool {
 	}
 }
 
+// purgeCallWait bounds a wait spanning one DisableAndPurge, as a hang
+// detector only. The call is about 80 serialized fsyncs, measured at up to
+// 492ms each on this host's ext4 /tmp under four concurrent fsync writers.
+const purgeCallWait = 6 * testutil.GoroutineRaceTimeout
+
 func receivePurgeCall(t *testing.T, call <-chan purgeCallResult) purgeCallResult {
 	t.Helper()
 	select {
 	case result := <-call:
 		return result
-	case <-time.After(testutil.GoroutineRaceTimeout):
-		t.Fatal("timed out waiting for DisableAndPurge")
+	case <-time.After(purgeCallWait):
+		t.Fatalf("timed out after %v waiting for DisableAndPurge", purgeCallWait)
 		return purgeCallResult{}
 	}
 }
