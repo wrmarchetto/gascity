@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-amn4 2026-11-06T14:55:47Z
+last_seen: gs-ogj6 2026-11-06T15:06:04Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6176,5 +6176,28 @@ small or empty sample. 2. No next epic for gascity"
 pm-open #11 marked RESOLVED. No new open entry, so no ping.
 
 Rig store since last_seen: gs-dxba closed (#195), and this bead.
+
+Source: pm-log #196
+
+## 197. pm-idle gs-ogj6: rig still waits on ci-71d5yl's re-measure (2026-11-06)
+
+New pm-idle hash, because the Target text changed at #196. The ruling is
+the third disposition again: the rig waits on something outside it.
+
+- bead-cycle-time is the only epic that is not done. Every member is
+  closed, and review generation ci-rv64454c4a9350 is open with
+  `unmet:target` (#195). gascity is gated, so an epic under operator
+  review is not a pm-idle question, and the status line stays as it is.
+- The outside dependency is city ci-71d5yl. The mayor holds it in
+  progress, and it places the re-measure of the other rigs' halves.
+  gascity's half needs no landings now (#196). That bead lives in the
+  city store, so its wake is the city's. No gascity bead is filed.
+- No promotion and no DECOMP: the operator said there is no next epic for
+  gascity (#196).
+- pm-open is unchanged. #11 already names ci-71d5yl as the thing the
+  remaining halves wait on, and the question has no new part for Willie,
+  so no new entry and no ping.
+
+Rig store since last_seen: gs-amn4 closed (#196), and this summons.
 
 Source: pm-log #196
