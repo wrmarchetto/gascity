@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-hyos 2026-11-06T01:36:12Z
+last_seen: gs-dxba 2026-11-06T14:38:11Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6113,3 +6113,45 @@ Rig store since last_seen: gs-q1ix closed, gs-6ogl and gs-t0d8 closed,
 this summons, and gs-hyos.
 
 Source: pm-log #193
+
+## 195. pm-epic-close gs-dxba: bead-cycle-time review g1, verdict unmet:target (2026-11-06)
+
+Summons: every epic:bead-cycle-time member is closed in every store and
+review generation city ci-rv64454c4a9350 is open. gascity is gated, so no
+status edit here. Self-review `--check` printed `covered` (gs-q1ix,
+refreshed by gs-hyos).
+
+Verified from the members' close reasons and
+docs/self-review/bead-cycle-time.md:
+
+- Baseline: met (ci-npfgao, on city main before the first reduction).
+- Target: UNMET. Recorded `review.pm_acceptance=unmet:target` on the
+  generation. ci-cj9utx's cohort missed in city, astoria-sel4 and
+  astoria-zephyr, and gascity and dart had no rows. Its stage beads
+  ci-5c95j4, ci-ce84ou, ci-fb3uff and ci-tr56b0 shipped on 11-05, each
+  with a predicted, untested line, and no measurement follows them. No
+  open member carried the Target, so filed city ci-71d5yl
+  (epic:bead-cycle-time, assignee mayor, the #169 shape) to place the
+  re-measure over a window after those landings.
+- Merge queue first: met (ci-ms65m7 lanes, ci-cicsvc batching with
+  bisection, ci-sx056l its duplicate, decomposition before and after).
+- Slow tests first: met in every rig with a material suite.
+- Extend before add: met (ci-ufxl74, seen to refuse). Bound: its runtime
+  half reads unmeasured on most closes.
+- Run once per landing: met (ci-cicsvc, ci-ms847d, gs-rvw5, gs-0y4d,
+  as-8384y, az-8ujz), the AGENTS.md text fixed by self-review finding 1.
+
+Conclusion block written with the status line unchanged. Write-up at
+engdocs/epics/bead-cycle-time.md (docs/epics link), no `closed:` line.
+summary_defects reports none with done=False, and only the missing date
+with done=True, as a gated rig expects.
+
+Promotion: none. No epic is `open`, so no DECOMP. pm-open #11 updated
+rather than duplicated: (a) gascity's half of the Target on a small
+sample, and (b) what gascity does next, #166's "nothing for now"
+standing.
+
+Rig store since last_seen: gs-hyos and gs-vlk5 closed (#194), and this
+summons.
+
+Source: roadmap bead-cycle-time

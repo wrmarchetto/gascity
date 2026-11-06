@@ -369,6 +369,17 @@ gascity's half of the Target is open here. It waits on city ci-cj9utx,
 the re-measurement deferred to 2026-11-02. Would settle it: that bead's
 report, read by the idle or epic-close summons that follows it.
 
+Update 2026-11-06 (pm-log #195): ci-cj9utx's cohort missed in city, sel4
+and zephyr, and their stage fixes shipped with no measurement after them.
+gascity and dart had no rows. Review g1 reads unmet:target, and city
+ci-71d5yl places the re-measure. Still open: (a) whether gascity's half
+can be accepted on a small or empty sample, since no gascity landings
+are queued. Would settle it: Willie's call, or enough gascity landings
+for ci-71d5yl's window. (b) is re-raised because bead-cycle-time is the
+last epic not done and no epic is open. #166's answer, "nothing for
+now", stands until Willie says otherwise. Would settle it: a
+`gc city pm plan gascity '<epic>'` sitting.
+
 
 ## 12. Operator-deferred review findings carry no epic home (2026-10-29)
 

@@ -269,6 +269,13 @@ and its own suite, each rig for its test entry points -- placed by the
 mayor at decomposition. The same extend-before-add line for Willie's own
 ~/.claude/CLAUDE.md is a proposal to him, not a bead (pm-log #152).
 
+Conclusion: Five of six criteria met per the self-review record (gs-q1ix,
+gs-hyos): baseline (ci-npfgao), merge queue first (ci-ms65m7, ci-cicsvc),
+slow tests first, extend before add (ci-ufxl74) and run once per landing.
+The Target missed at both measurements (ci-r81svr, ci-cj9utx), and the
+stage fixes for the second are unmeasured, so review g1 reads
+unmet:target with ci-71d5yl placing the re-measure (pm-log #195).
+
 ## Abandoned
 
 None yet.
