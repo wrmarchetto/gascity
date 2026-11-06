@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -118,6 +119,93 @@ func TestFindBareBDCommands(t *testing.T) {
 				t.Fatalf("findBareBDCommands() found %d commands, want %d in %q", got, tt.want, tt.body)
 			}
 		})
+	}
+}
+
+// grep -q and -m exit at their first match and close the pipe. Under
+// pipefail the writer's SIGPIPE then fails the pipeline, so a present line
+// reads as absent, intermittently and more often under load.
+var (
+	pipefailEnabled     = regexp.MustCompile(`(?m)^[ \t]*set[ \t][^#\n]*pipefail`)
+	earlyExitGrepInPipe = regexp.MustCompile(`(?:^|[^|])(\|&?[[:space:]\\]*(?:command[[:space:]]+)?grep[[:space:]]+(?:[^|;&\n]*[[:space:]])?(?:-[A-Za-z]*[qm]|--quiet|--silent|--max-count))`)
+	shellCommentLine    = regexp.MustCompile(`(?m)^[ \t]*#.*$`)
+)
+
+// findEarlyExitGrepPipes returns the offset of each pipe feeding an
+// early-exit grep, ignoring whole-line comments.
+func findEarlyExitGrepPipes(data []byte) []int {
+	code := shellCommentLine.ReplaceAllFunc(data, func(line []byte) []byte {
+		return bytes.Repeat([]byte{' '}, len(line))
+	})
+	var offsets []int
+	for _, match := range earlyExitGrepInPipe.FindAllSubmatchIndex(code, -1) {
+		offsets = append(offsets, match[2])
+	}
+	return offsets
+}
+
+func TestCorePipefailScriptsFeedNoPipeIntoEarlyExitGrep(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{name: "printf into grep -Fxq", body: `printf '%s\n' "$x" | grep -Fxq -- "$y"`, want: 1},
+		{name: "echo into grep -qiE", body: `echo "$x" | grep -qiE 'a|b'`, want: 1},
+		{name: "stderr pipe", body: `cmd |& grep -q x`, want: 1},
+		{name: "pipe ends the line", body: "cmd |\n    grep -q x", want: 1},
+		{name: "backslash continuation", body: "cmd \\\n    | grep -q x", want: 1},
+		{name: "max count", body: `cmd | grep -m1 x`, want: 1},
+		{name: "long quiet", body: `cmd | grep --quiet x`, want: 1},
+		{name: "command grep", body: `cmd | command grep -q x`, want: 1},
+		{name: "logical or before here-string", body: `[ "$n" -gt 0 ] || grep -q x <<<"$v"`},
+		{name: "here-string", body: `grep -Fxq -- "$y" <<<"$x"`},
+		{name: "count reads all input", body: `cmd | grep -c x`},
+		{name: "invert reads all input", body: `cmd | grep -v x`},
+		{name: "comment line", body: `    # never printf ... | grep -q`},
+	} {
+		t.Run("scanner/"+tt.name, func(t *testing.T) {
+			if got := len(findEarlyExitGrepPipes([]byte(tt.body))); got != tt.want {
+				t.Fatalf("findEarlyExitGrepPipes() found %d, want %d in %q", got, tt.want, tt.body)
+			}
+		})
+	}
+
+	var scanned []string
+	err := fs.WalkDir(PackFS, ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".sh") {
+			return nil
+		}
+		data, err := fs.ReadFile(PackFS, path)
+		if err != nil {
+			return err
+		}
+		if !pipefailEnabled.Match(data) {
+			return nil
+		}
+		scanned = append(scanned, path)
+		for _, offset := range findEarlyExitGrepPipes(data) {
+			lineNumber := bytes.Count(data[:offset], []byte{'\n'}) + 1
+			lineStart := bytes.LastIndexByte(data[:offset], '\n') + 1
+			lineEnd := bytes.IndexByte(data[offset:], '\n')
+			if lineEnd < 0 {
+				lineEnd = len(data)
+			} else {
+				lineEnd += offset
+			}
+			t.Errorf("%s:%d: pipe into an early-exit grep under pipefail: grep closes the pipe at its first match and the writer's SIGPIPE fails the pipeline, so a match reads as a miss. Feed grep a here-string instead, grep -q PATTERN <<<\"$VAR\": %s",
+				path, lineNumber, strings.TrimSpace(string(data[lineStart:lineEnd])))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking embedded core pack: %v", err)
+	}
+	if !slices.Contains(scanned, "assets/scripts/orphan-sweep.sh") {
+		t.Fatalf("pipefail scan never reached assets/scripts/orphan-sweep.sh; scanned %v", scanned)
 	}
 }
 
