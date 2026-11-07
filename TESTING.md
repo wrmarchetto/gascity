@@ -1197,7 +1197,13 @@ The forward cuts both ways. The recipe passes on whatever scope its caller's
 environment holds, so a scope exported in the pushing shell would narrow a
 `full` decision. The hook and `scripts/test-affected` unset
 `GC_SCOPED_TEST_PACKAGES` before deciding, and the `full` cases in
-`scripts/test-push-gate-select.sh` push from a shell exporting one.
+`scripts/test-push-gate-select.sh` push from a shell exporting one. The merge
+sweep's `make merge-gate` is the run those scoped pushes lean on, so
+`merge-gate-go` clears the scope with a make override, which also beats a
+scope given on the make command line. `scripts/merge-gate.test.sh` runs the
+gate with a scope passed both ways. Whenever the runner does honor a scope,
+its `Running` line ends `scoped to N package(s)`, so a narrowed run cannot
+read as a full one.
 
 **What the push gate's selection saves.** Before gs-rvw5, the city's
 cycle-time baseline (`docs/bead-cycle-time-baseline.md` in the city repo,

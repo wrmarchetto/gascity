@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # merge-gate.test.sh -- make merge-gate runs build, vet, dashboard-ci and the
-# fast suite once each, rebuilds dist/ before any Go step, and runs the
-# dashboard checks beside the Go side rather than after it.
+# fast suite once each, rebuilds dist/ before any Go step, runs the dashboard
+# checks beside the Go side rather than after it, and runs the suite unscoped
+# whatever GC_SCOPED_TEST_PACKAGES its caller exports or passes to make.
 #
 # Run: bash scripts/merge-gate.test.sh (scripts/test-local-concurrency.sh
 # runs it inside the local-concurrency-selftest job).
@@ -22,6 +23,7 @@ rendezvous() {
     cat <<STUB
 #!/bin/sh
 echo "start $2 \$*" >>"$1/calls.log"
+echo "scope $2 [\${GC_SCOPED_TEST_PACKAGES-<unset>}]" >>"$1/calls.log"
 : >"$1/marks/$3"
 i=0
 while [ ! -e "$1/marks/$4" ]; do
@@ -71,10 +73,11 @@ STUB
     printf '%s' "$dir"
 }
 
-# run_fixture <dir> <target>: make in the fixture, a caller's flags cleared.
+# run_fixture <dir> <target> [make args]: make in the fixture, a caller's
+# flags cleared.
 run_fixture() {
     (cd "$1" && env MAKEFLAGS= MFLAGS= PATH="$1/bin:$PATH" \
-        make --no-print-directory "$2") >"$1/run.log" 2>&1
+        make --no-print-directory "${@:2}") >"$1/run.log" 2>&1
 }
 
 # The sorted calls a run made, repetitions kept.
@@ -87,8 +90,11 @@ CONTROL="$(new_fixture)"
 if run_fixture "$CONTROL" dashboard-ci; then
     want="$( { calls "$CONTROL"
         printf '%s\n' "go build ./..." "go vet ./..." "suite fast"; } | sort)"
+    scope="./scope-leak-${RANDOM}$$"
     GATE="$(new_fixture)"
-    if run_fixture "$GATE" merge-gate; then
+    # Both routes at once: a fix missing either one leaks a visible scope.
+    if GC_SCOPED_TEST_PACKAGES="$scope" run_fixture "$GATE" merge-gate \
+        "GC_SCOPED_TEST_PACKAGES=$scope"; then
         record_pass "merge_gate.passes_over_green_stubs"
     else
         record_fail "merge_gate.passes_over_green_stubs" \
@@ -100,6 +106,13 @@ if run_fixture "$CONTROL" dashboard-ci; then
     else
         record_fail "merge_gate.runs_build_vet_suite_and_dashboard_ci_once_each" \
             "made a different call set: got: ${got} want: ${want}"
+    fi
+    got_scope="$(sed -n 's/^scope suite //p' "$GATE/calls.log")"
+    if [[ "$got_scope" == "[]" ]]; then
+        record_pass "merge_gate.suite_runs_unscoped_under_a_callers_scope"
+    else
+        record_fail "merge_gate.suite_runs_unscoped_under_a_callers_scope" \
+            "the suite saw '${got_scope}', the caller passed ${scope} both ways"
     fi
     rm -rf "$GATE"
 else

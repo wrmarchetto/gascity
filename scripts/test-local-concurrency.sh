@@ -279,6 +279,8 @@ check_unit_pool "layout.dealt_unit_pool_runs_each_package_once" "$LAYOUT_DIR" "$
 assert_eq "layout.dealt_unit_pool_job_count" "$(unit_core_jobs "$LAYOUT_DIR")" "3"
 assert_eq "layout.sharded_productmetrics_covers_every_index" \
     "$(cat "$LAYOUT_DIR"/logs/*.log | grep -c '^test-go-test-shard ./internal/productmetrics [123] 3$')" "3"
+assert_eq "layout.unscoped_running_line_names_no_scope" \
+    "$(grep -c '^Running .* LOCAL_TEST_YIELD=[01]$' "$LAYOUT_DIR/run.log")" "1"
 rm -rf "$LAYOUT_DIR"
 
 LAYOUT_DIR="$(new_layout_fixture)"
@@ -286,6 +288,8 @@ run_layout_fixture "$LAYOUT_DIR" UNIT_CORE_TOTAL=5 \
     GC_SCOPED_TEST_PACKAGES="./a${salt} ./cmd/gc ./internal/productmetrics ./b${salt}"
 check_unit_pool "layout.scoped_unit_pool_leaves_sharded_packages_out" "$LAYOUT_DIR" "./a${salt} ./b${salt}"
 assert_eq "layout.scoped_unit_pool_never_exceeds_its_packages" "$(unit_core_jobs "$LAYOUT_DIR")" "2"
+assert_contains "layout.scoped_running_line_names_its_scope" \
+    "$(grep '^Running' "$LAYOUT_DIR/run.log")" "scoped to 4 package(s)"
 rm -rf "$LAYOUT_DIR"
 
 # No list.txt: go list prints nothing and fails, which must stop the run.
