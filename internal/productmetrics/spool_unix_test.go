@@ -2737,7 +2737,9 @@ func TestPurgeSpoolPreservesFutureControlResidueShapesWithoutDescent(t *testing.
 				path := filepath.Join(home.Root(), name)
 				want := "future owner residue"
 				if shape == "symlink" || shape == "hardlink" {
-					target := filepath.Join(t.TempDir(), "sentinel")
+					// not t.TempDir(): it follows GOTMPDIR onto
+					// other filesystems, where os.Link fails EXDEV
+					target := filepath.Join(filepath.Dir(home.Root()), "sentinel")
 					if err := os.WriteFile(target, []byte(want), 0o600); err != nil {
 						t.Fatal(err)
 					}
@@ -10121,7 +10123,9 @@ func TestUnsafeQuotaShapesConvergeWithoutFollowingEntries(t *testing.T) {
 			t.Run(shape.name+"/"+operation.name, func(t *testing.T) {
 				home := newMetricsTestHome(t)
 				writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
-				sentinel := filepath.Join(t.TempDir(), "outside-sentinel")
+				// not t.TempDir(): it follows GOTMPDIR onto
+				// other filesystems, where os.Link fails EXDEV
+				sentinel := filepath.Join(filepath.Dir(home.Root()), "outside-sentinel")
 				if err := os.WriteFile(sentinel, []byte("outside"), 0o600); err != nil {
 					t.Fatal(err)
 				}
