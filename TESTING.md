@@ -666,11 +666,14 @@ reported success, which is why the syscall evidence came before the split.
 
 The same overlap works across goroutines, so the package's tests also run in
 parallel inside each process. Every top-level test calls `t.Parallel()` first
-unless it reaches state the whole process shares -- the environment, the
-temp-name counter, the descriptor table, or a raw close of a descriptor
-number production still owns -- directly or through a helper.
+unless it reaches state the whole process shares -- the temp-name counter,
+the descriptor table, a raw close of a descriptor number production still
+owns, or a call that changes the process itself, such as its environment or a
+resource limit -- directly or through a helper.
 `parallel_unix_test.go` derives that serial set from the source against its
-`processWideHazards` list and refuses any other split. The shared fixture
+`processWideHazards` list, plus the process-wide calls `parallelguard` names
+itself and follows into production code, and refuses any other split. What
+the derivation cannot see is in that package's doc comment. The shared fixture
 resolves its home through `gchome.ResolveReadOnlyFrom` instead of `t.Setenv`,
 which cannot run in a parallel test. Measured 2026-10-23, whole package in one
 process: 629s serial at load average 31-34, and 124-162s parallel over five

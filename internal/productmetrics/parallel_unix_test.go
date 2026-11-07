@@ -13,7 +13,6 @@ import (
 // Every other test calls t.Parallel first: the package's cost is fsync
 // latency, which overlaps across goroutines (TESTING.md).
 var processWideHazards = parallelguard.Hazards{
-	"Setenv":                    "the process environment",
 	"storageTempSequence":       "the process-wide temp-name counter",
 	"closeOpenFileMatchingPath": "a raw close of a descriptor number production still owns",
 	`"/proc/self/fd"`:           "the process descriptor table",

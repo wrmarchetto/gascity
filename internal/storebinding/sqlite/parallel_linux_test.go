@@ -11,8 +11,6 @@ import (
 // shares the parent's open file descriptions until exec, and with them the
 // OFD locks a concurrent writer fence holds or has just released.
 var processWideHazards = parallelguard.Hazards{
-	"Setenv":                 "the process environment",
-	"Chdir":                  "the process working directory",
 	"os/exec.Command":        "a fork that holds every open descriptor's OFD locks until exec",
 	"os/exec.CommandContext": "a fork that holds every open descriptor's OFD locks until exec",
 }

@@ -8273,13 +8273,13 @@ func purgeHelperCommand(test, env, mode string) *exec.Cmd {
 
 func TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit(t *testing.T) {
 	t.Parallel()
-	const helperEnvironment = "GC_PRODUCTMETRICS_LOW_NOFILE_HELPER"
-	if os.Getenv(helperEnvironment) != "1" {
-		runPurgeHelper(t, "low-NOFILE",
-			purgeHelperCommand("TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit", helperEnvironment, "1"))
-		return
-	}
+	runPurgeHelper(t, "low-NOFILE",
+		purgeHelperCommand("TestPurgeHelperProcess", purgeHelperEnvironment, lowNOFILEPurgeHelper))
+}
 
+// lowNOFILEDeepPurge is the low-NOFILE helper's body, run by
+// TestPurgeHelperProcess alone.
+func lowNOFILEDeepPurge(t *testing.T) {
 	limit := unix.Rlimit{Cur: 128, Max: 128}
 	if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
 		t.Fatalf("set low RLIMIT_NOFILE: %v", err)
@@ -8345,27 +8345,34 @@ func TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit(t *testing.T) {
 
 func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
 	t.Parallel()
-	const helperEnvironment = "GC_PRODUCTMETRICS_MIN_NOFILE_HELPER"
-	if os.Getenv(helperEnvironment) != "1" {
-		command := purgeHelperCommand("TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget", helperEnvironment, "1")
-		defer func() {
-			for _, inherited := range command.ExtraFiles {
-				if err := inherited.Close(); err != nil {
-					t.Errorf("close inherited descriptor fixture: %v", err)
-				}
-			}
-		}()
-		for range 2 {
-			inherited, err := os.Open(os.DevNull)
-			if err != nil {
-				t.Fatalf("open inherited descriptor fixture: %v", err)
-			}
-			command.ExtraFiles = append(command.ExtraFiles, inherited)
-		}
-		runPurgeHelper(t, "minimum-directory-budget", command)
-		return
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
+		t.Fatalf("read RLIMIT_NOFILE: %v", err)
 	}
+	if limit.Max < spoolFallbackDirectoryLimit {
+		t.Skipf("RLIMIT_NOFILE hard limit %d is below regression limit", limit.Max)
+	}
+	command := purgeHelperCommand("TestPurgeHelperProcess", purgeHelperEnvironment, minimumDirectoryBudgetPurgeHelper)
+	defer func() {
+		for _, inherited := range command.ExtraFiles {
+			if err := inherited.Close(); err != nil {
+				t.Errorf("close inherited descriptor fixture: %v", err)
+			}
+		}
+	}()
+	for range 2 {
+		inherited, err := os.Open(os.DevNull)
+		if err != nil {
+			t.Fatalf("open inherited descriptor fixture: %v", err)
+		}
+		command.ExtraFiles = append(command.ExtraFiles, inherited)
+	}
+	runPurgeHelper(t, "minimum-directory-budget", command)
+}
 
+// minimumDirectoryBudgetNestedPurge is the minimum-directory-budget
+// helper's body, run by TestPurgeHelperProcess alone.
+func minimumDirectoryBudgetNestedPurge(t *testing.T) {
 	home := newMetricsTestHome(t)
 	writeStateFixture(t, home, enabledState(7, 2, testInstallationID, testSpoolGeneration))
 	deep := filepath.Join(home.Root(), queueDirectoryName, testSpoolGeneration, "nested", "nonempty")
@@ -8397,12 +8404,9 @@ func TestSpoolNestedPurgeConvergesAtMinimumDirectoryBudget(t *testing.T) {
 	}
 	// The fallback limit still selects the minimum directory budget because
 	// 32/4 is below spoolMinimumDirectoryProgress, while leaving headroom for
-	// descriptors owned by the Go test harness.
-	const softLimit = spoolFallbackDirectoryLimit
-	if limit.Max < softLimit {
-		t.Skipf("RLIMIT_NOFILE hard limit %d is below regression limit", limit.Max)
-	}
-	limit.Cur = softLimit
+	// descriptors owned by the Go test harness. The parent skips a hard limit
+	// below it, so Setrlimit refusing one here is a failure.
+	limit.Cur = spoolFallbackDirectoryLimit
 	if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
 		t.Fatalf("set minimum-directory-budget RLIMIT_NOFILE: %v", err)
 	}

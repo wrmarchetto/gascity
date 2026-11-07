@@ -1,9 +1,9 @@
 # Proves parallelguard's derivation and both of Check's refusals are enforced,
 # through its own self-tests and through the two packages that call it.
 #
-# NOT SWEPT here: whether the hazard lists are complete. A hazard nobody named
-# and the derivation cannot see is invisible to every row below. That is a
-# reading question per caller package, answered in each one's commit body.
+# Not swept here: whether a package's own hazard list is complete. A hazard
+# nobody named and the derivation cannot see is invisible to every row below.
+# The guard's process-wide table is swept, one row per entry.
 
 [sweep]
 name = "parallelguard derives the serial set and refuses either wrong side"
@@ -17,6 +17,8 @@ argv = [
 ]
 timeout_s = 900
 
+# --- derivation ---
+
 [[mutation]]
 id = "package-var-assignment-not-derived"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
@@ -28,9 +30,23 @@ expect_output = ["Serial = map[", "make t.Parallel() its first statement"]
 id = "package-var-increment-not-derived"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
 find = '''		case *ast.IncDecStmt:
-			assigns(node.X)'''
+			writes(node.X)'''
 replace = '''		case *ast.IncDecStmt:
 			_ = node'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "taken-address-not-a-write"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''			if node.Op == token.AND {'''
+replace = '''			if false && node.Op == token.AND {'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "other-package-var-write-not-derived"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''			if path, ok := imports[e.Name]; ok && selected != "" {'''
+replace = '''			if path, ok := imports[e.Name]; false && ok && selected != "" {'''
 expect_output = ["Serial = map["]
 
 [[mutation]]
@@ -52,9 +68,165 @@ expect_output = ["Serial = map["]
 [[mutation]]
 id = "methods-not-followed"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
-find = '''if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {'''
-replace = '''if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil && fn.Recv == nil {'''
+find = '''				if decl.Body != nil {'''
+replace = '''				if decl.Body != nil && decl.Recv == nil {'''
 expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "package-consts-not-walked"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''					if !ok {
+						continue
+					}'''
+replace = '''					if !ok || decl.Tok == token.CONST {
+						continue
+					}'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "package-var-initializers-not-walked"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''					if !ok {
+						continue
+					}'''
+replace = '''					if !ok || decl.Tok == token.VAR {
+						continue
+					}'''
+expect_output = ["Serial = map["]
+
+# --- production code: process-wide calls only ---
+
+[[mutation]]
+id = "production-not-walked"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	collectBodies(bodies, production, false)'''
+replace = '''	_ = production'''
+expect_output = ["Serial = map[", "check failures = "]
+
+[[mutation]]
+id = "production-matched-against-package-hazards"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''				matched, vars := processWide, map[string]bool(nil)'''
+replace = '''				matched, vars := inTests, map[string]bool(nil)'''
+expect_output = ["Serial = map[", "TestCountedInProduction"]
+
+[[mutation]]
+id = "production-var-writes-derived"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''				matched, vars := processWide, map[string]bool(nil)'''
+replace = '''				matched, vars := processWide, declared'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "production-files-parsed-as-tests"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''		if strings.HasSuffix(name, "_test.go") {
+			tests = append(tests, file)'''
+replace = '''		if true || strings.HasSuffix(name, "_test.go") {
+			tests = append(tests, file)'''
+expect_output = ["check failures = ", "TestCountedInProduction"]
+
+[[mutation]]
+id = "process-wide-not-matched-in-tests"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	inTests := maps.Clone(processWide)'''
+replace = '''	inTests := Hazards{}'''
+expect_output = ["Serial = map["]
+
+# --- the process-wide table, one row per entry ---
+
+[[mutation]]
+id = "table-setenv-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Setenv":'''
+replace = '''	"SetenvDropped":'''
+expect_output = ["Serial = map["]
+
+[[mutation]]
+id = "table-unsetenv-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Unsetenv":'''
+replace = '''	"UnsetenvDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-clearenv-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Clearenv":'''
+replace = '''	"ClearenvDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-chdir-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Chdir":'''
+replace = '''	"ChdirDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-fchdir-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Fchdir":'''
+replace = '''	"FchdirDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-umask-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Umask":'''
+replace = '''	"UmaskDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-setrlimit-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Setrlimit":'''
+replace = '''	"SetrlimitDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:", "make t.Parallel() its first statement"]
+
+[[mutation]]
+id = "table-prlimit-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"Prlimit":'''
+replace = '''	"PrlimitDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-signal-notify-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"os/signal.Notify":'''
+replace = '''	"os/signal.NotifyDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-signal-notify-context-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"os/signal.NotifyContext":'''
+replace = '''	"os/signal.NotifyContextDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-signal-ignore-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"os/signal.Ignore":'''
+replace = '''	"os/signal.IgnoreDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-signal-reset-dropped"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"os/signal.Reset":'''
+replace = '''	"os/signal.ResetDropped":'''
+expect_output = ["Serial = map[], want map[TestReach:"]
+
+[[mutation]]
+id = "table-signal-matched-by-bare-name"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	"os/signal.Notify":'''
+replace = '''	"Notify":'''
+expect_output = ["want map[]"]
+
+# --- Check's refusals ---
 
 [[mutation]]
 id = "shared-but-parallel-accepted"
@@ -77,6 +249,8 @@ find = '''	if !found || len(serial) == 0 {'''
 replace = '''	if false && (!found || len(serial) == 0) {'''
 expect_output = ["check failures over an empty directory = "]
 
+# --- the callers ---
+
 [[mutation]]
 id = "forking-test-made-parallel"
 path = "internal/storebinding/sqlite/sqlite_fence_process_linux_test.go"
@@ -96,3 +270,194 @@ find = '''func TestBeadsProviderClassConformance(t *testing.T) {
 replace = '''func TestBeadsProviderClassConformance(t *testing.T) {
 '''
 expect_output = ["TestBeadsProviderClassConformance", "make t.Parallel() its first statement"]
+
+[[mutation]]
+id = "rlimit-helper-made-parallel"
+path = "internal/productmetrics/purge_helper_unix_test.go"
+find = '''func TestPurgeHelperProcess(t *testing.T) {
+'''
+replace = '''func TestPurgeHelperProcess(t *testing.T) {
+	t.Parallel()
+'''
+expect_output = ["TestPurgeHelperProcess", "reaches a process resource limit but calls t.Parallel"]
+
+# --- constructs that reach shared state without naming it in a test ---
+
+[[mutation]]
+id = "rlimit-body-run-in-its-parallel-parent"
+path = "internal/productmetrics/spool_unix_test.go"
+find = '''	runPurgeHelper(t, "low-NOFILE",
+		purgeHelperCommand("TestPurgeHelperProcess", purgeHelperEnvironment, lowNOFILEPurgeHelper))'''
+replace = '''	lowNOFILEDeepPurge(t)'''
+expect_output = ["TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit", "reaches a process resource limit but calls t.Parallel"]
+
+[[mutation]]
+id = "env-write-inside-production-function"
+path = "internal/productmetrics/storage_unix.go"
+find = '''func createPrivateTempFile(directoryFD int, directoryPath string, euid uint32, hooks storageTestHooks) (string, int, error) {'''
+replace = '''func createPrivateTempFile(directoryFD int, directoryPath string, euid uint32, hooks storageTestHooks) (string, int, error) {
+	_ = os.Setenv("GC_REVIEW_PROBE", "1")'''
+expect_output = ["reaches the process environment but calls t.Parallel"]
+
+[[mutation]]
+id = "proc-fd-literal-in-package-const"
+path = "internal/productmetrics/record_incarnation_unix_test.go"
+find = '''func TestReadOnlyStatusAndRejectedPermitCloseConfigRecordLeases(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("stable /proc fd count is Linux-specific")
+	}
+	home := newMetricsTestHome(t)
+	writeStateFixture(t, home, disabledState(4, 0, cleanupNone))
+	service := mustOpenTestService(t, defaultTestServiceDependencies(home, 2))
+	runtime.GC()
+	before, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("count process descriptors: %v", err)
+	}
+	for range 200 {
+		_ = service.Status(context.Background())
+		if permit := service.RecordingPermit(recordableInvocation()); permit.Valid() {
+			t.Fatalf("disabled state issued permit: %#v", permit)
+		}
+	}
+	runtime.GC()
+	after, err := os.ReadDir("/proc/self/fd")'''
+replace = '''const reviewProcSelfFD = "/proc/self/fd"
+
+func TestReadOnlyStatusAndRejectedPermitCloseConfigRecordLeases(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" {
+		t.Skip("stable /proc fd count is Linux-specific")
+	}
+	home := newMetricsTestHome(t)
+	writeStateFixture(t, home, disabledState(4, 0, cleanupNone))
+	service := mustOpenTestService(t, defaultTestServiceDependencies(home, 2))
+	runtime.GC()
+	before, err := os.ReadDir(reviewProcSelfFD)
+	if err != nil {
+		t.Skipf("count process descriptors: %v", err)
+	}
+	for range 200 {
+		_ = service.Status(context.Background())
+		if permit := service.RecordingPermit(recordableInvocation()); permit.Valid() {
+			t.Fatalf("disabled state issued permit: %#v", permit)
+		}
+	}
+	runtime.GC()
+	after, err := os.ReadDir(reviewProcSelfFD)'''
+expect_output = ["TestReadOnlyStatusAndRejectedPermitCloseConfigRecordLeases", "but calls t.Parallel"]
+
+[[mutation]]
+id = "temp-counter-read-in-package-func-literal"
+path = "internal/productmetrics/storage_unix_test.go"
+find = '''func TestRootAtomicWritePreservesPreexistingTempCollision(t *testing.T) {
+	inspection := inspectStorageTestHome(t, false)
+	setup, err := openStorageRootMutable(inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sequence := storageTempSequence.Load() + 1'''
+replace = '''var reviewNextTempSequence = func() uint64 { return storageTempSequence.Load() + 1 }
+
+func TestRootAtomicWritePreservesPreexistingTempCollision(t *testing.T) {
+	t.Parallel()
+	inspection := inspectStorageTestHome(t, false)
+	setup, err := openStorageRootMutable(inspection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sequence := reviewNextTempSequence()'''
+expect_output = ["TestRootAtomicWritePreservesPreexistingTempCollision", "but calls t.Parallel"]
+
+[[mutation]]
+id = "seam-swapped-through-pointer-helper"
+path = "internal/storebinding/sqlite/sqlite_fence_release_linux_test.go"
+find = '''func TestLinuxSQLiteWriterReservationReleaseRetriesInjectedCloseFailure(t *testing.T) {
+	path := filepath.Join(t.TempDir(), graphFilename)
+	if err := os.WriteFile(path, sqliteHeaderForTest(1, 1), 0o600); err != nil {
+		t.Fatalf("writing SQLite source: %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("opening SQLite source: %v", err)
+	}
+	reservation := &linuxSQLiteWriterReservation{database: file}
+	originalClose := closeSQLiteReservationFile
+	calls := 0
+	closeSQLiteReservationFile = func(candidate *os.File) error {
+		calls++
+		if calls == 1 {
+			return errors.New("injected close failure")
+		}
+		return originalClose(candidate)
+	}
+	t.Cleanup(func() {
+		closeSQLiteReservationFile = originalClose
+		_ = reservation.Release()
+	})'''
+replace = '''func reviewSwapSeam[T any](t *testing.T, seam *T, replacement T) T {
+	original := *seam
+	*seam = replacement
+	t.Cleanup(func() { *seam = original })
+	return original
+}
+
+func TestLinuxSQLiteWriterReservationReleaseRetriesInjectedCloseFailure(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), graphFilename)
+	if err := os.WriteFile(path, sqliteHeaderForTest(1, 1), 0o600); err != nil {
+		t.Fatalf("writing SQLite source: %v", err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("opening SQLite source: %v", err)
+	}
+	reservation := &linuxSQLiteWriterReservation{database: file}
+	calls := 0
+	var originalClose func(*os.File) error
+	originalClose = reviewSwapSeam(t, &closeSQLiteReservationFile, func(candidate *os.File) error {
+		calls++
+		if calls == 1 {
+			return errors.New("injected close failure")
+		}
+		return originalClose(candidate)
+	})
+	t.Cleanup(func() {
+		_ = reservation.Release()
+	})'''
+expect_output = ["TestLinuxSQLiteWriterReservationReleaseRetriesInjectedCloseFailure", "but calls t.Parallel"]
+
+# --- a re-executed helper must finish its body for its parent to pass ---
+
+[[mutation]]
+id = "parent-names-a-missing-helper-test"
+path = "internal/productmetrics/spool_unix_test.go"
+find = '''purgeHelperCommand("TestPurgeHelperProcess", purgeHelperEnvironment, lowNOFILEPurgeHelper)'''
+replace = '''purgeHelperCommand("TestPurgeHelperProcessMissing", purgeHelperEnvironment, lowNOFILEPurgeHelper)'''
+expect_output = ['''exited zero at progress step "none", not "done"''']
+gate = { argv = ["go", "test", "-count=1", "-run", "^TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit$", "./internal/productmetrics/"], timeout_s = 900 }
+
+[[mutation]]
+id = "helper-body-skips"
+path = "internal/productmetrics/spool_unix_test.go"
+find = '''func lowNOFILEDeepPurge(t *testing.T) {
+'''
+replace = '''func lowNOFILEDeepPurge(t *testing.T) {
+	t.Skip("probe")
+'''
+expect_output = ['''exited zero at progress step "none", not "done"''']
+gate = { argv = ["go", "test", "-count=1", "-run", "^TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit$", "./internal/productmetrics/"], timeout_s = 900 }
+
+[[mutation]]
+id = "helper-mode-unknown"
+path = "internal/productmetrics/purge_helper_unix_test.go"
+find = '''	case lowNOFILEPurgeHelper:'''
+replace = '''	case "low-nofile-renamed":'''
+expect_output = ['''"low-nofile" names no purge helper body''']
+gate = { argv = ["go", "test", "-count=1", "-run", "^TestSpoolDeepPurgeConvergesUnderLowFileDescriptorLimit$", "./internal/productmetrics/"], timeout_s = 900 }

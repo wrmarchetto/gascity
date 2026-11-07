@@ -23,6 +23,19 @@ const purgeHelperProgress = "purge-helper-progress: "
 // attempt is about 40 fsyncs, measured at up to 1.5s under shared disk load.
 const purgeHelperStall = 4 * testutil.ExecRaceTimeout
 
+// purgeHelperEnvironment names the body TestPurgeHelperProcess runs in a
+// re-executed test binary, one of the purge helper modes below.
+const purgeHelperEnvironment = "GC_PRODUCTMETRICS_PURGE_HELPER"
+
+const (
+	lowNOFILEPurgeHelper              = "low-nofile"
+	minimumDirectoryBudgetPurgeHelper = "minimum-directory-budget"
+)
+
+// purgeHelperDone is the step a helper reports after its whole body, so a
+// child that skipped or ran nothing cannot pass for one that converged.
+const purgeHelperDone = "done"
+
 // errPurgeHelperStalled is returned when a helper prints no progress line
 // within the stall bound. The helper has been killed.
 var errPurgeHelperStalled = errors.New("purge helper reported no progress")
@@ -96,13 +109,35 @@ func watchPurgeHelper(command *exec.Cmd, stall time.Duration) (string, string, e
 	return last, output, waitErr
 }
 
-// runPurgeHelper fails t unless command exits zero without stalling.
+// runPurgeHelper fails t unless command reports purgeHelperDone and exits
+// zero without stalling.
 func runPurgeHelper(t *testing.T, name string, command *exec.Cmd) {
 	t.Helper()
 	last, output, err := watchPurgeHelper(command, purgeHelperStall)
 	if err != nil {
 		t.Fatalf("%s purge helper failed at its last progress step %q: %v\n%s", name, last, err, output)
 	}
+	if last != purgeHelperDone {
+		t.Fatalf("%s purge helper exited zero at progress step %q, not %q: it skipped or ran "+
+			"no body, so check the test name and mode the parent passes purgeHelperCommand\n%s",
+			name, last, purgeHelperDone, output)
+	}
+}
+
+// Runs a purge body only in a parent's re-executed child: each body lowers
+// RLIMIT_NOFILE, which the whole process shares.
+func TestPurgeHelperProcess(t *testing.T) {
+	switch mode := os.Getenv(purgeHelperEnvironment); mode {
+	case "":
+		return
+	case lowNOFILEPurgeHelper:
+		lowNOFILEDeepPurge(t)
+	case minimumDirectoryBudgetPurgeHelper:
+		minimumDirectoryBudgetNestedPurge(t)
+	default:
+		t.Fatalf("%s=%q names no purge helper body", purgeHelperEnvironment, mode)
+	}
+	reportPurgeHelperProgress(purgeHelperDone)
 }
 
 func TestPurgeHelperWatchBoundsSilenceNotTotalTime(t *testing.T) {
