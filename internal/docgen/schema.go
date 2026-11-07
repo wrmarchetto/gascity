@@ -99,7 +99,8 @@ func addGoCommentsFiltered(r *jsonschema.Reflector, module, root string) error {
 }
 
 // newReflector creates a jsonschema.Reflector configured for TOML field
-// names with Go doc comments extracted from the source tree.
+// names with Go doc comments extracted from the source tree. Each reflector
+// gets its own copy of the cached comments.
 func newReflector() (*jsonschema.Reflector, error) {
 	comments, err := goComments()
 	if err != nil {
@@ -111,24 +112,43 @@ func newReflector() (*jsonschema.Reflector, error) {
 	}, nil
 }
 
-// goComments extracts the module's doc comments once per process: the walk
-// parses every package in the tree, and each schema reflected in one process
-// reads the same sources.
-var goComments = sync.OnceValues(extractGoComments)
+// commentCache holds each module root's doc comments for the life of the
+// process, since the walk parses every package in the tree. The lock also
+// serializes extractions, which chdir the whole process.
+var commentCache struct {
+	sync.Mutex
+	byRoot map[string]map[string]string
+}
 
-// extractGoComments maps the module's Go declarations to their doc comments.
-//
-// AddGoComments requires CWD to be set to the module root so that
-// filepath.Walk produces paths like "internal/config" which map to the
-// correct import paths. Hidden directories (names beginning with ".") are
-// excluded via addGoCommentsFiltered.
-func extractGoComments() (map[string]string, error) {
+// goComments returns the doc comments of the module enclosing the working
+// directory, extracting them on the first call for that root. A failed
+// extraction is not cached.
+func goComments() (map[string]string, error) {
+	commentCache.Lock()
+	defer commentCache.Unlock()
 	root, err := ModuleRoot()
 	if err != nil {
 		return nil, err
 	}
+	if comments, ok := commentCache.byRoot[root]; ok {
+		return comments, nil
+	}
+	comments, err := extractGoComments(root)
+	if err != nil {
+		return nil, err
+	}
+	if commentCache.byRoot == nil {
+		commentCache.byRoot = make(map[string]map[string]string)
+	}
+	commentCache.byRoot[root] = comments
+	return comments, nil
+}
 
-	// Save and restore CWD — AddGoComments needs CWD at module root.
+// extractGoComments maps the Go declarations under root to their doc
+// comments. AddGoComments needs CWD at root so walked paths such as
+// "internal/config" map to import paths. Hidden directories are excluded
+// via addGoCommentsFiltered.
+func extractGoComments(root string) (map[string]string, error) {
 	orig, err := os.Getwd()
 	if err != nil {
 		return nil, fmt.Errorf("getting working directory: %w", err)
@@ -145,9 +165,10 @@ func extractGoComments() (map[string]string, error) {
 	return r.CommentMap, nil
 }
 
-// GenerateCitySchema produces a JSON Schema for the city.toml config format.
-// It reflects the config.City struct using TOML field names and extracts
-// doc comments as descriptions.
+// GenerateCitySchema produces a JSON Schema for city.toml from config.City,
+// with TOML field names and Go doc comments as descriptions. Comments are
+// cached per module root for the process (goComments), so a source edit
+// after the first call for that root is not seen.
 func GenerateCitySchema() (*jsonschema.Schema, error) {
 	r, err := newReflector()
 	if err != nil {
@@ -164,9 +185,10 @@ func GenerateCitySchema() (*jsonschema.Schema, error) {
 	return s, nil
 }
 
-// GeneratePackSchema produces a JSON Schema for the pack.toml manifest format.
-// It reflects the config.PackConfig struct using TOML field names and extracts
-// doc comments as descriptions.
+// GeneratePackSchema produces a JSON Schema for pack.toml from
+// config.PackConfig, with TOML field names and Go doc comments as
+// descriptions. Comments are cached per module root for the process
+// (goComments), so a source edit after the first call is not seen.
 func GeneratePackSchema() (*jsonschema.Schema, error) {
 	r, err := newReflector()
 	if err != nil {

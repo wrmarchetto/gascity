@@ -1,0 +1,53 @@
+# Proves the doc-comment cache serves each module root its own comments,
+# retries a failed extraction, and hands each reflector a private copy
+# (schema.go goComments and newReflector, schema_test.go TestGenerateCitySchema).
+#
+# Run: assets/scripts/mutation-sweep.py (city repo) on this file.
+
+[sweep]
+name = "the docgen comment cache is keyed by module root and never shared"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./internal/docgen/", "-count=1", "-run", "TestGenerateCitySchema"]
+timeout_s = 600
+
+# Any cached root answers every lookup: the unkeyed cache F06 found.
+[[mutation]]
+id = "cache-ignores-the-module-root"
+path = "internal/docgen/schema.go"
+find = '''	if comments, ok := commentCache.byRoot[root]; ok {
+'''
+replace = '''	for _, comments := range commentCache.byRoot {
+'''
+expect_output = ["City description from root-b ="]
+
+# A failed extraction pins its root to an empty comment set.
+[[mutation]]
+id = "failed-extraction-is-cached"
+path = "internal/docgen/schema.go"
+find = '''	comments, err := extractGoComments(root)
+	if err != nil {
+		return nil, err
+	}
+'''
+replace = '''	comments, err := extractGoComments(root)
+	if err != nil {
+		if commentCache.byRoot == nil {
+			commentCache.byRoot = make(map[string]map[string]string)
+		}
+		commentCache.byRoot[root] = comments
+		return nil, err
+	}
+'''
+expect_output = ["City description after repair ="]
+
+# The reflector aliases the cached map; maps stays imported so it compiles.
+[[mutation]]
+id = "reflector-shares-the-cached-map"
+path = "internal/docgen/schema.go"
+find = '''		CommentMap:   maps.Clone(comments),
+'''
+replace = '''		CommentMap:   func() map[string]string { _ = maps.Clone(comments); return comments }(),
+'''
+expect_output = ["second reflector's github.com/gastownhall/gascity/internal/config.City ="]
