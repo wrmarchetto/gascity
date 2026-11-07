@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -685,6 +686,7 @@ type t3BridgeTestServer struct {
 	authRequestCount  int
 	wsAuthorization   []string
 	wsRequestCount    int
+	wsRefusals        int
 }
 
 func newT3BridgeTestServer(t *testing.T, snapshot map[string]interface{}) *t3BridgeTestServer {
@@ -719,7 +721,28 @@ func newT3BridgeTestServer(t *testing.T, snapshot map[string]interface{}) *t3Bri
 		ts.mu.Lock()
 		ts.wsRequestCount++
 		ts.wsAuthorization = append(ts.wsAuthorization, r.Header.Get("Authorization"))
+		refuse := ts.wsRefusals > 0
+		if refuse {
+			ts.wsRefusals--
+		}
 		ts.mu.Unlock()
+		if refuse {
+			// Closed before the upgrade reply, so the dial fails with EOF, a
+			// transient error. A status reply would fail as a bad handshake,
+			// which rpcCall does not retry.
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Errorf("refuse websocket: %T cannot be hijacked", w)
+				return
+			}
+			raw, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Errorf("hijack refused websocket: %v", err)
+				return
+			}
+			_ = raw.Close()
+			return
+		}
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			t.Errorf("upgrade websocket: %v", err)
@@ -791,6 +814,12 @@ func (ts *t3BridgeTestServer) setAuthFailures(count, status int, body string) {
 	ts.authFailures = count
 	ts.authFailureStatus = status
 	ts.authFailureBody = body
+}
+
+func (ts *t3BridgeTestServer) refuseWS(count int) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.wsRefusals = count
 }
 
 func (ts *t3BridgeTestServer) authCalls() int {
@@ -922,8 +951,42 @@ func TestRPCSnapshot_FallsBackToWSURLFileWhenEnvStale(t *testing.T) {
 	}
 }
 
-// shrinkBridgeConnectRetryWindow keeps rpcCall's retry loop, which still
-// retries at least once, but stops a dead-port test waiting out 8s per call.
+func TestRPCCall_RetriesATransientRefusalUntilTheBridgeAnswers(t *testing.T) {
+	oldDefaults := defaultWSURLCandidates
+	defaultWSURLCandidates = nil
+	t.Cleanup(func() {
+		defaultWSURLCandidates = oldDefaults
+	})
+
+	salt := fmt.Sprint(time.Now().UnixNano())
+	server := newT3BridgeTestServer(t, map[string]interface{}{"salt": salt})
+	server.refuseWS(1)
+	defer server.Close()
+
+	t.Setenv("T3_HOME", t.TempDir())
+	t.Setenv("T3_WS_URL", server.wsURL())
+	t.Setenv("GC_T3BRIDGE_STATE_DIR", t.TempDir())
+
+	p := &Provider{
+		watchers:     make(map[string]context.CancelFunc),
+		recentStarts: make(map[string]time.Time),
+	}
+
+	got, err := p.rpcCall("orchestration.getSnapshot", nil)
+	if err != nil {
+		t.Fatalf("rpcCall after one refusal: %v", err)
+	}
+	if got["salt"] != salt {
+		t.Fatalf("rpcCall result salt = %v, want %s", got["salt"], salt)
+	}
+	if calls := server.wsCalls(); calls != 2 {
+		t.Fatalf("ws calls = %d, want 2 (one refused, one answered)", calls)
+	}
+}
+
+// shrinkBridgeConnectRetryWindow stops a dead-port test waiting out 8s per
+// call. The window opens before the first attempt, so an attempt slower than
+// 150ms gets no retry at all: a test that needs a retry keeps the default.
 func shrinkBridgeConnectRetryWindow(t *testing.T) {
 	t.Helper()
 	prev := bridgeConnectRetryWindow
