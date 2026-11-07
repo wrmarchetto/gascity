@@ -55,10 +55,10 @@ lays out criterion by criterion. The one-hour target is not met. At the
 last measurement it missed in city, astoria-sel4 and astoria-zephyr. The
 fixes for each of those misses have since landed, but nothing has
 measured a window after them, so whether they close the gap is still a
-prediction. A follow-up bead places that re-measurement. gascity's own
-half of the target waits on gascity landings, and none are queued because
-no further gascity epic is planned. Whether it can be judged on a small
-sample is an open question for Willie. The test-growth gate's runtime
+prediction. City bead ci-71d5yl places that re-measurement. gascity's own
+half of the target may be accepted on a small or empty sample, so it does
+not hold the epic open waiting on gascity landings, and no further gascity
+epic is planned (pm-log #196). The test-growth gate's runtime
 half reads as unmeasured on most closes, since only a full local run
 writes the record it reads. sel4's affected-test table is stale enough
 that its affected runs still select most of the suite until it is
