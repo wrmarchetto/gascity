@@ -1,0 +1,32 @@
+# Proves rpcCall retries a transient bridge error inside its window and stops
+# once the window closes, and that the test bridge's refusal is real.
+
+[sweep]
+name = "t3bridge rpcCall retries a transient refusal and stops at its window"
+repo = ".."
+
+[sweep.gate]
+argv = ["go", "test", "-count=1", "-timeout", "120s", "./internal/runtime/t3bridge/"]
+timeout_s = 600
+
+[[mutation]]
+id = "t3-rpccall-never-retries"
+path = "internal/runtime/t3bridge/provider.go"
+find = '''		if !isTransientBridgeError(err) || time.Now().After(deadline) {'''
+replace = '''		if !isTransientBridgeError(err) || time.Now().After(deadline.Add(-time.Hour)) {'''
+expect_output = ["--- FAIL: TestRPCCall_RetriesATransientRefusalUntilTheBridgeAnswers"]
+
+[[mutation]]
+id = "t3-rpccall-retries-past-window"
+path = "internal/runtime/t3bridge/provider.go"
+find = '''		if !isTransientBridgeError(err) || time.Now().After(deadline) {'''
+replace = '''		if !isTransientBridgeError(err) || time.Now().After(deadline.Add(time.Hour)) {'''
+expect_output = ["test timed out"]
+gate = { argv = ["go", "test", "-count=1", "-timeout", "90s", "./internal/runtime/t3bridge/"], timeout_s = 600 }
+
+[[mutation]]
+id = "test-bridge-never-refuses"
+path = "internal/runtime/t3bridge/provider_test.go"
+find = '''		refuse := ts.wsRefusals > 0'''
+replace = '''		refuse := ts.wsRefusals < 0'''
+expect_output = ["ws calls = 1, want 2"]
