@@ -5,8 +5,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/invopop/jsonschema"
 )
@@ -61,6 +63,95 @@ func TestGenerateCitySchema(t *testing.T) {
 			t.Errorf("found Go-style property %q, expected TOML name", bad)
 		}
 	}
+
+	salt := strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	t.Run("each module root gets its own comments", func(t *testing.T) {
+		for _, name := range []string{"root-a", "root-b"} {
+			want := name + "-" + salt
+			t.Chdir(writeFixtureModule(t, "City is "+want+"."))
+			if got := fixtureCityDoc(t); !strings.Contains(got, want) {
+				t.Errorf("City description from %s = %q, want it to contain %q", name, got, want)
+			}
+		}
+	})
+
+	t.Run("a failed extraction is retried", func(t *testing.T) {
+		root := writeFixtureModule(t, "City is unreachable.")
+		broken := filepath.Join(root, "internal", "config", "broken.go")
+		if err := os.WriteFile(broken, []byte("package config\n\nfunc {\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(root)
+		if _, err := GenerateCitySchema(); err == nil {
+			t.Fatal("GenerateCitySchema succeeded over a source tree that does not parse")
+		}
+
+		want := "root-c-" + salt
+		writeFixtureSource(t, root, "City is "+want+".")
+		if err := os.Remove(broken); err != nil {
+			t.Fatal(err)
+		}
+		if got := fixtureCityDoc(t); !strings.Contains(got, want) {
+			t.Errorf("City description after repair = %q, want it to contain %q", got, want)
+		}
+	})
+
+	t.Run("a reflector cannot write the shared comments", func(t *testing.T) {
+		want := "root-d-" + salt
+		t.Chdir(writeFixtureModule(t, "City is "+want+"."))
+		const key = "github.com/gastownhall/gascity/internal/config.City"
+		first, err := newReflector()
+		if err != nil {
+			t.Fatalf("newReflector: %v", err)
+		}
+		first.CommentMap[key] = "overwritten"
+		second, err := newReflector()
+		if err != nil {
+			t.Fatalf("newReflector: %v", err)
+		}
+		if got := second.CommentMap[key]; !strings.Contains(got, want) {
+			t.Errorf("second reflector's %s = %q, want it to contain %q", key, got, want)
+		}
+	})
+}
+
+// writeFixtureModule makes a module root whose internal/config.City carries
+// cityDoc as its doc comment. Returns the root.
+func writeFixtureModule(t *testing.T, cityDoc string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/gastownhall/gascity\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureSource(t, root, cityDoc)
+	return root
+}
+
+func writeFixtureSource(t *testing.T, root, cityDoc string) {
+	t.Helper()
+	src := "package config\n\n// " + cityDoc + "\ntype City struct{}\n"
+	if err := os.WriteFile(filepath.Join(root, "internal", "config", "city.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// fixtureCityDoc generates the city schema from the current directory and
+// returns the City definition's description.
+func fixtureCityDoc(t *testing.T) string {
+	t.Helper()
+	s, err := GenerateCitySchema()
+	if err != nil {
+		t.Fatalf("GenerateCitySchema: %v", err)
+	}
+	def := s.Definitions["City"]
+	if def == nil {
+		t.Fatal("no City definition in the generated schema")
+	}
+	return def.Description
 }
 
 func TestCitySchemaDescriptions(t *testing.T) {
