@@ -16,8 +16,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/storebinding"
@@ -45,6 +47,12 @@ const (
 	sqliteFenceChildRollbackSource = "rollback-source"
 	sqliteFenceChildRollbackCrash  = "rollback-crash"
 )
+
+// sqliteFenceHangBudget is the hang detector for child protocol lines and exits
+// (TESTING.md "Floors, ceilings, and inputs"). Both waits return the moment the
+// child answers, so it never slows a pass. A re-exec'd child on a loaded host
+// overran the ExecRaceTimeout floor before printing ready.
+const sqliteFenceHangBudget = 6 * testutil.ExecRaceTimeout
 
 // TestSQLiteFenceHelperProcess is entered only by the real-process fence
 // composition test below. The parent and source never share SQLite descriptors.
@@ -1077,6 +1085,40 @@ func equalGraphSourceSnapshots(left, right graphSourceSnapshot) bool {
 	return left.Directory == right.Directory && strings.Join(left.Entries, "\x00") == strings.Join(right.Entries, "\x00") && reflect.DeepEqual(left.Files, right.Files)
 }
 
+func TestSQLiteFenceChildWaitsAcceptChildSlowerThanExecRaceFloor(t *testing.T) {
+	// Exceeds the 10s a re-exec'd child overran on a loaded host.
+	const delay = 12 * time.Second
+	requireOutlastedFloor := func(t *testing.T, elapsed time.Duration) {
+		t.Helper()
+		if elapsed <= testutil.ExecRaceTimeout {
+			t.Fatalf("stand-in answered after %s, want longer than the %s floor", elapsed, testutil.ExecRaceTimeout)
+		}
+	}
+	t.Run("protocol line", func(t *testing.T) {
+		t.Parallel()
+		stdout, stand := io.Pipe()
+		t.Cleanup(func() { _ = stdout.Close() })
+		started := time.Now()
+		time.AfterFunc(delay, func() { _, _ = io.WriteString(stand, "ready\n") })
+		line := (&sqliteFenceChild{stdout: bufio.NewScanner(stdout)}).line(t)
+		requireOutlastedFloor(t, time.Since(started))
+		if line != "ready" {
+			t.Fatalf("protocol line = %q, want ready", line)
+		}
+	})
+	t.Run("exit", func(t *testing.T) {
+		t.Parallel()
+		// Wait reads a real exit status, so only a real child exercises it.
+		sleep := exec.Command("sleep", strconv.Itoa(int(delay/time.Second)))
+		child := startSQLiteFenceChild(t, sleep, "stand-in", t.TempDir(), false)
+		started := time.Now()
+		if err := child.wait(t); err != nil {
+			t.Fatalf("waiting for stand-in exit: %v", err)
+		}
+		requireOutlastedFloor(t, time.Since(started))
+	})
+}
+
 type sqliteFenceChild struct {
 	cmd      *exec.Cmd
 	stdin    io.WriteCloser
@@ -1139,7 +1181,7 @@ func (c *sqliteFenceChild) line(t *testing.T) string {
 			ok   bool
 		}{line: c.stdout.Text(), ok: ok}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.ExecRaceTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteFenceHangBudget)
 	defer cancel()
 	select {
 	case result := <-lines:
@@ -1148,7 +1190,7 @@ func (c *sqliteFenceChild) line(t *testing.T) string {
 		}
 		return result.line
 	case <-ctx.Done():
-		t.Fatalf("timed out waiting for SQLite child protocol line after %s", testutil.ExecRaceTimeout)
+		t.Fatalf("timed out waiting for SQLite child protocol line after %s", sqliteFenceHangBudget)
 		return ""
 	}
 }
@@ -1191,14 +1233,14 @@ func (c *sqliteFenceChild) wait(t *testing.T) error {
 	}
 	waited := make(chan error, 1)
 	go func() { waited <- c.cmd.Wait() }()
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.ExecRaceTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), sqliteFenceHangBudget)
 	defer cancel()
 	select {
 	case err := <-waited:
 		c.finished = true
 		return err
 	case <-ctx.Done():
-		return fmt.Errorf("timed out after %s", testutil.ExecRaceTimeout)
+		return fmt.Errorf("timed out after %s", sqliteFenceHangBudget)
 	}
 }
 

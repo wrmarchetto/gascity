@@ -241,7 +241,10 @@ var bootstrapPolicy = Ledger{
 			// under test, and only a real process carries its exit code.
 			// -1 call (ci-4ycjfo): the two productmetrics purge helpers
 			// share one re-exec site, purgeHelperCommand.
-			BaselineCalls:   629,
+			// +1 call (gs-avhd): the SQLite fence child exit-wait proof runs a
+			// real `sleep` child. cmd.Wait reads a real exit status, so no
+			// stand-in reaches the budgeted wait.
+			BaselineCalls:   630,
 			BaselineFiles:   187,
 			ReportedCalls:   495,
 			ReportedFiles:   135,
