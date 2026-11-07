@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-ogj6 2026-11-06T15:06:04Z
+last_seen: gs-3h5r 2026-11-07T23:51:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6201,3 +6201,20 @@ the third disposition again: the rig waits on something outside it.
 Rig store since last_seen: gs-amn4 closed (#196), and this summons.
 
 Source: pm-log #196
+
+## 198. Summons gs-3h5r: bead-cycle-time self-review refresh filed as gs-g0m7 (2026-11-07)
+
+Every epic:bead-cycle-time member is closed, and the review cannot open:
+`--check` exits 6 naming three city members its Covers block does not
+list -- ci-71d5yl (the re-measure placement filed at #195), ci-m5pd91
+and ci-mozmau (the per-rig stage beads it produced, closed 11-07). No
+open epic:bead-cycle-time bead existed, so `--file` filed gs-g0m7,
+assigned to gascity/lab.engineer. No acceptance verdict and no promotion
+here: the pm-epic-close summons that asks for both follows the review
+opening.
+
+Rig store since last_seen: gs-ogj6 closed (#197), gs-avhd closed, the ten
+g1 deferred findings F01-F10 closed (operator: defer all findings to the
+gascity engineer and close the epic), this summons, and gs-g0m7.
+
+Source: pm-log #194
