@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-#
 # merge-gate.test.sh -- make merge-gate runs build, vet, dashboard-ci and the
-# fast suite once each, rebuilds dist/ before any Go step, runs the dashboard
-# checks beside the Go side rather than after it, and runs the suite unscoped
-# whatever GC_SCOPED_TEST_PACKAGES its caller exports or passes to make.
+# fast suite once each and fails when any of them fails, rebuilds dist/ before
+# any Go step, runs the dashboard checks beside the Go side, and runs the
+# suite unscoped whatever GC_SCOPED_TEST_PACKAGES its caller exports or passes.
 #
 # Run: bash scripts/merge-gate.test.sh (scripts/test-local-concurrency.sh
 # runs it inside the local-concurrency-selftest job).
@@ -19,18 +18,31 @@ pass=0; fail=0
 record_pass() { echo "  ok   $1"; pass=$((pass + 1)); }
 record_fail() { echo "  FAIL $1 -- $2"; fail=$((fail + 1)); }
 
+# stub_head <dir> <name>: a stub's lines that log the call as "<name> <args>"
+# and exit 7 when it matches the glob in <dir>/fail.
+stub_head() {
+    cat <<HEAD
+call="$2\${1+ \$*}"
+echo "start \$call" >>"$1/calls.log"
+case "\$call" in \$(cat "$1/fail" 2>/dev/null))
+  echo "fail \$call" >>"$1/calls.log"; exit 7 ;;
+esac
+HEAD
+}
+
 # rendezvous <dir> <name> <my mark> <their mark>: a stub that waits up to
 # 30 s for the other side to have started.
 rendezvous() {
     cat <<STUB
 #!/bin/sh
-echo "start $2 \$*" >>"$1/calls.log"
+$(stub_head "$1" "$2")
 echo "scope $2 [\${GC_SCOPED_TEST_PACKAGES-<unset>}]" >>"$1/calls.log"
 : >"$1/marks/$3"
 i=0
 while [ ! -e "$1/marks/$4" ]; do
   i=\$((i + 1))
-  [ "\$i" -gt 300 ] && { echo "$2 never ran beside the other side" >>"$1/calls.log"; exit 4; }
+  [ "\$i" -gt 300 ] && {
+    echo "$2 never ran beside the other side" >>"$1/calls.log"; exit 4; }
   sleep 0.1
 done
 STUB
@@ -49,13 +61,13 @@ new_fixture() {
     cat >"$dir/bin/go" <<STUB
 #!/bin/sh
 [ "\$1" = env ] && { echo stub; exit 0; }
-echo "start go \$*" >>"$dir/calls.log"
+$(stub_head "$dir" go)
 [ -f "$dir/internal/api/dashboardspa/dist/bundle" ] ||
   { echo "go \$* ran before dist was rebuilt" >>"$dir/calls.log"; exit 3; }
 STUB
     cat >"$dir/bin/npm" <<STUB
 #!/bin/sh
-echo "start npm \$*" >>"$dir/calls.log"
+$(stub_head "$dir" npm)
 case "\$*" in
   "ci --silent") sleep 0.5 ;;
   "run build") mkdir -p frontend/dist && echo bundle >frontend/dist/bundle ;;
@@ -68,7 +80,7 @@ STUB
         >"$dir/scripts/test-local-parallel"
     rendezvous "$dir" drift drift-started suite-started \
         >"$dir/scripts/check-artifact-drift.sh"
-    printf '#!/bin/sh\necho "start shared-tests" >>"%s/calls.log"\n' "$dir" \
+    printf '#!/bin/sh\n%s\n' "$(stub_head "$dir" shared-tests)" \
         >"$dir/scripts/dashboard-shared-tests.sh"
     printf '#!/bin/sh\necho 2\n' >"$dir/scripts/test-local-job-count"
     chmod +x "$dir"/bin/* "$dir"/scripts/*
@@ -122,6 +134,34 @@ else
         "$(tail -20 "$CONTROL/run.log")"
 fi
 rm -rf "$CONTROL"
+
+# Each child failing alone fails the gate, through both makes. Every mark is
+# set ahead so no rendezvous waits on a side the failure stopped.
+while read -r name glob; do
+    FAILING="$(new_fixture)"
+    : >"$FAILING/marks/suite-started"
+    : >"$FAILING/marks/dashboard-started"
+    : >"$FAILING/marks/drift-started"
+    printf '%s\n' "$glob" >"$FAILING/fail"
+    run_fixture "$FAILING" merge-gate </dev/null
+    status=$?
+    if ! grep -q '^fail ' "$FAILING/calls.log" 2>/dev/null; then
+        record_fail "merge_gate.fails_when_${name}_fails" \
+            "no call matched '${glob}': $(calls "$FAILING" | tr '\n' ',')"
+    elif [[ "$status" -eq 0 ]]; then
+        record_fail "merge_gate.fails_when_${name}_fails" \
+            "the gate exited 0 over a failing '${glob}'"
+    else
+        record_pass "merge_gate.fails_when_${name}_fails"
+    fi
+    rm -rf "$FAILING"
+done <<'CASES'
+go_build                  go build *
+go_vet                    go vet *
+the_suite                 suite *
+a_dashboard_check         shared-tests
+the_dashboard_drift_check drift --label dashboard bundle *
+CASES
 
 echo
 echo "merge-gate tests: $pass passed, $fail failed"
