@@ -6,7 +6,9 @@
 #
 # Run: bash scripts/merge-gate.test.sh (scripts/test-local-concurrency.sh
 # runs it inside the local-concurrency-selftest job).
-# hands off to: the sweep's own run logs, for the wall time it buys.
+# hands off to: the sweep's own run logs, for the wall time it buys. The stubs
+# touch no tree, so a Go test reading what dashboard-ci rewrites mid-run is
+# not represented (internal/api/dashboard_label_literal_gate_test.go).
 
 set -uo pipefail
 
