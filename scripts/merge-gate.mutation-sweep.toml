@@ -1,7 +1,8 @@
 # Proves make merge-gate keeps the gate's coverage and its one ordering rule:
 # dist/ is rebuilt once before any Go step, and the dashboard checks run
 # beside the Go side. docs/pm-log.md #167. Also that the suite runs unscoped
-# whichever route a caller's GC_SCOPED_TEST_PACKAGES takes.
+# whichever route a caller's GC_SCOPED_TEST_PACKAGES takes, and that a failing
+# child fails the gate through both makes.
 
 [sweep]
 name = "the merge gate rebuilds dist once, first, then runs both sides at once"
@@ -53,3 +54,68 @@ path = "Makefile"
 find = '''	$(MAKE) --no-print-directory test-fast-parallel GC_SCOPED_TEST_PACKAGES='''
 replace = '''	GC_SCOPED_TEST_PACKAGES= $(MAKE) --no-print-directory test-fast-parallel'''
 expect_output = ["FAIL merge_gate.suite_runs_unscoped_under_a_callers_scope"]
+
+[[mutation]]
+id = "build-failure-accepted"
+path = "Makefile"
+find = '''	go build ./...'''
+replace = '''	go build ./... || true'''
+expect_output = ["FAIL merge_gate.fails_when_go_build_fails -- the gate exited 0"]
+
+[[mutation]]
+id = "vet-failure-accepted"
+path = "Makefile"
+find = '''	go vet ./...
+	$(MAKE) --no-print-directory test-fast-parallel'''
+replace = '''	go vet ./... || true
+	$(MAKE) --no-print-directory test-fast-parallel'''
+expect_output = ["FAIL merge_gate.fails_when_go_vet_fails -- the gate exited 0"]
+
+[[mutation]]
+id = "suite-failure-accepted"
+path = "Makefile"
+find = '''	$(MAKE) --no-print-directory test-fast-parallel GC_SCOPED_TEST_PACKAGES='''
+replace = '''	$(MAKE) --no-print-directory test-fast-parallel GC_SCOPED_TEST_PACKAGES= || true'''
+expect_output = ["FAIL merge_gate.fails_when_the_suite_fails -- the gate exited 0"]
+
+[[mutation]]
+id = "dashboard-check-failure-accepted"
+path = "Makefile"
+find = '''	./scripts/dashboard-shared-tests.sh'''
+replace = '''	-./scripts/dashboard-shared-tests.sh'''
+expect_output = ["FAIL merge_gate.fails_when_a_dashboard_check_fails -- the gate exited 0"]
+
+[[mutation]]
+id = "dashboard-drift-failure-accepted"
+path = "Makefile"
+find = '''	@./scripts/check-artifact-drift.sh \
+		--label 'dashboard bundle' \'''
+replace = '''	@-./scripts/check-artifact-drift.sh \
+		--label 'dashboard bundle' \'''
+expect_output = ["FAIL merge_gate.fails_when_the_dashboard_drift_check_fails -- the gate exited 0"]
+
+[[mutation]]
+id = "whole-merge-gate-failure-accepted"
+path = "Makefile"
+find = '''	$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci'''
+replace = '''	$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci || true'''
+expect_output = [
+    "FAIL merge_gate.fails_when_go_build_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_go_vet_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_the_suite_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_a_dashboard_check_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_the_dashboard_drift_check_fails -- the gate exited 0",
+]
+
+[[mutation]]
+id = "both-sides-ignore-errors"
+path = "Makefile"
+find = '''	$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci'''
+replace = '''	$(MAKE) --no-print-directory -i -j2 merge-gate-go dashboard-ci'''
+expect_output = [
+    "FAIL merge_gate.fails_when_go_build_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_go_vet_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_the_suite_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_a_dashboard_check_fails -- the gate exited 0",
+    "FAIL merge_gate.fails_when_the_dashboard_drift_check_fails -- the gate exited 0",
+]
