@@ -1,6 +1,7 @@
 # Proves make merge-gate keeps the gate's coverage and its one ordering rule:
 # dist/ is rebuilt once before any Go step, and the dashboard checks run
-# beside the Go side. docs/pm-log.md #167.
+# beside the Go side. docs/pm-log.md #167. Also that the suite runs unscoped
+# whichever route a caller's GC_SCOPED_TEST_PACKAGES takes.
 
 [sweep]
 name = "the merge gate rebuilds dist once, first, then runs both sides at once"
@@ -38,3 +39,17 @@ path = "Makefile"
 find = '''$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci'''
 replace = '''$(MAKE) --no-print-directory merge-gate-go & $(MAKE) --no-print-directory dashboard-ci; wait'''
 expect_output = ["made a different call set"]
+
+[[mutation]]
+id = "go-side-keeps-a-callers-scope"
+path = "Makefile"
+find = '''	$(MAKE) --no-print-directory test-fast-parallel GC_SCOPED_TEST_PACKAGES='''
+replace = '''	$(MAKE) --no-print-directory test-fast-parallel'''
+expect_output = ["FAIL merge_gate.suite_runs_unscoped_under_a_callers_scope"]
+
+[[mutation]]
+id = "go-side-clears-only-the-env-scope"
+path = "Makefile"
+find = '''	$(MAKE) --no-print-directory test-fast-parallel GC_SCOPED_TEST_PACKAGES='''
+replace = '''	GC_SCOPED_TEST_PACKAGES= $(MAKE) --no-print-directory test-fast-parallel'''
+expect_output = ["FAIL merge_gate.suite_runs_unscoped_under_a_callers_scope"]

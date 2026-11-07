@@ -1,7 +1,8 @@
 # Proves the fast suite's job layout is enforced: unit-core is dealt into
 # several jobs that run every package exactly once, productmetrics runs as one
 # unsharded job with its Fuzz seed corpora, and a missing package list or a
-# malformed job count stops the run before any job starts.
+# malformed job count stops the run before any job starts. The Running line
+# names a scope exactly when the run honors one.
 
 [sweep]
 name = "unit-core is dealt into several jobs and productmetrics runs unsharded"
@@ -57,6 +58,22 @@ find = '''  if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then
 replace = '''  if false; then
     read -ra scoped <<<"$scoped_unit_packages"'''
 expect_output = ["FAIL layout.scoped_unit_pool_leaves_sharded_packages_out"]
+
+[[mutation]]
+id = "scoped-run-banner-silent"
+path = "scripts/test-local-parallel"
+find = '''    scope_note=" scoped to ${#scoped_all[@]} package(s)"'''
+replace = '''    scope_note=""'''
+expect_output = ["FAIL layout.scoped_running_line_names_its_scope"]
+
+[[mutation]]
+id = "unscoped-run-banner-claims-a-scope"
+path = "scripts/test-local-parallel"
+find = '''scope_note=""
+if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then'''
+replace = '''scope_note=" scoped to 0 package(s)"
+if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then'''
+expect_output = ["FAIL layout.unscoped_running_line_names_no_scope"]
 
 [[mutation]]
 id = "failed-go-list-accepted"

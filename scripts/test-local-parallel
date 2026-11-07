@@ -141,17 +141,20 @@ if ! [[ "$local_test_yield" =~ ^[01]$ ]]; then
 fi
 
 # GC_SCOPED_TEST_PACKAGES, from scripts/push-gate-select, narrows fast mode
-# alone so the merge-baseline modes stay complete. ./cmd/gc and
-# ./internal/productmetrics leave it for their own jobs, and an empty remainder
-# adds no unit-core job: TESTING.md, "Scoping the push gate".
+# alone so the merge-baseline modes stay complete, and the Running line names
+# it. ./cmd/gc and ./internal/productmetrics leave it for their own jobs, and an
+# empty remainder adds no unit-core job: TESTING.md, "Scoping the push gate".
 scoped_unit_packages=""
 scoped_has_cmd_gc=0
 scoped_has_productmetrics=0
+scope_note=""
 if [[ -n "${GC_SCOPED_TEST_PACKAGES:-}" ]]; then
   if [[ "$mode" != "fast" ]]; then
     echo "GC_SCOPED_TEST_PACKAGES is only honored by the fast target; ignoring it for ${mode}" >&2
     unset GC_SCOPED_TEST_PACKAGES
   else
+    read -ra scoped_all <<<"$GC_SCOPED_TEST_PACKAGES"
+    scope_note=" scoped to ${#scoped_all[@]} package(s)"
     for pkg in ${GC_SCOPED_TEST_PACKAGES}; do
       if [[ "$pkg" == "./cmd/gc" ]]; then
         scoped_has_cmd_gc=1
@@ -408,7 +411,7 @@ if [[ "$local_test_yield" -eq 1 ]]; then
 fi
 export TEST_LOCAL_NICE="$nice_prefix"
 
-echo "Running ${#jobspecs[@]} ${mode} job(s) with LOCAL_TEST_JOBS=${local_jobs} inner_p=${inner_p} LOCAL_TEST_YIELD=${local_test_yield}"
+echo "Running ${#jobspecs[@]} ${mode} job(s) with LOCAL_TEST_JOBS=${local_jobs} inner_p=${inner_p} LOCAL_TEST_YIELD=${local_test_yield}${scope_note}"
 
 set +e
 # Sever gate-FD inheritance at the fan-out boundary (ga-owh20p): the slot FD

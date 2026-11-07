@@ -1038,10 +1038,13 @@ dashboard-ci: dashboard-check
 merge-gate:
 	$(MAKE) --no-print-directory -j2 merge-gate-go dashboard-ci
 
+# The once-per-landing full run, so it clears a caller's scope as
+# .githooks/pre-push does. An override, not an env reset, beats a scope
+# passed on the make command line too.
 merge-gate-go: dashboard-build
 	go build ./...
 	go vet ./...
-	$(MAKE) --no-print-directory test-fast-parallel
+	$(MAKE) --no-print-directory test-fast-parallel GC_SCOPED_TEST_PACKAGES=
 
 .PHONY: merge-gate merge-gate-go
 
