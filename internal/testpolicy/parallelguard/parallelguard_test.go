@@ -5,9 +5,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,6 +28,8 @@ func TestSerialFollowsPackageHelpersToEveryHazardKind(t *testing.T) {
 	import osexec "os/exec"
 	var seam = func() {}
 	var table = map[string]int{}
+	var cfg struct{ n int }
+	var ptr = new(int)
 	const fdTable = "/proc/self/fd"
 	var predict = func() uint64 { return storageTempSequence.Load() + 1 }
 	type fixture struct{}
@@ -40,6 +44,9 @@ func TestSerialFollowsPackageHelpersToEveryHazardKind(t *testing.T) {
 	func TestFork(t *testing.T)     { fixture{}.start() }
 	func TestSeam(t *testing.T)     { prev := seam; seam = func() {}; _ = prev }
 	func TestEntry(t *testing.T)    { table["k"]++ }
+	func TestField(t *testing.T)    { cfg.n = 1 }
+	func TestDeref(t *testing.T)    { *ptr = 1 }
+	func TestParen(t *testing.T)    { (*ptr)++ }
 	func TestConst(t *testing.T)    { os.ReadDir(fdTable) }
 	func TestPredict(t *testing.T)  { _ = predict() }
 	func TestSwap(t *testing.T)     { swap(&seam, nil) }
@@ -68,6 +75,9 @@ func TestSerialFollowsPackageHelpersToEveryHazardKind(t *testing.T) {
 		"TestFork":    hazards["os/exec.Command"],
 		"TestSeam":    "package var seam",
 		"TestEntry":   "package var table",
+		"TestField":   "package var cfg",
+		"TestDeref":   "package var ptr",
+		"TestParen":   "package var ptr",
 		"TestConst":   hazards[`"/proc/self/fd"`],
 		"TestPredict": hazards["storageTempSequence"],
 		"TestSwap":    "package var seam",
@@ -119,14 +129,22 @@ func serialOf(t *testing.T, hazards Hazards, tests, production string) map[strin
 	return Serial([]*ast.File{testFile}, []*ast.File{productionFile}, hazards)
 }
 
+// requireSerial reports each wrong name on its own line, since the summary
+// echoes every wanted name and so cannot attribute a failure to one.
 func requireSerial(t *testing.T, got, want map[string]string) {
 	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("Serial = %v, want %v", got, want)
+	if maps.Equal(got, want) {
+		return
 	}
-	for name, hazard := range want {
-		if got[name] != hazard {
-			t.Errorf("Serial[%s] = %q, want %q", name, got[name], hazard)
+	t.Errorf("Serial = %v, want %v", got, want)
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		if got[name] != want[name] {
+			t.Errorf("Serial[%s] = %q, want %q", name, got[name], want[name])
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(got)) {
+		if _, ok := want[name]; !ok {
+			t.Errorf("Serial[%s] = %q, want it absent", name, got[name])
 		}
 	}
 }
@@ -151,7 +169,6 @@ func (r *recorder) Fatalf(format string, args ...any) {
 
 func TestCheckRefusesATestOnEitherWrongSide(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
 	const source = `package p
 	import "testing"
 	func TestGuard(t *testing.T)               { t.Parallel() }
@@ -166,27 +183,61 @@ func TestCheckRefusesATestOnEitherWrongSide(t *testing.T) {
 	func write() { os.Setenv("A", "") }
 	func count() { counter.Add(1) }
 	`
-	for name, content := range map[string]string{"p_test.go": source, "p.go": production} {
+	hazards := Hazards{"counter": "a counter the tests predict"}
+	dir := writePackage(t, map[string]string{"p_test.go": source, "p.go": production})
+	want := []string{"TestSharedButParallel", "TestUnsharedButSerial", "TestSharedInProduction"}
+	refused := map[string]bool{}
+	for _, failure := range checkFailures(t, dir, hazards) {
+		name, _, _ := strings.Cut(failure, " ")
+		if !slices.Contains(want, name) || refused[name] {
+			t.Errorf("unexpected refusal %q", failure)
+		}
+		refused[name] = true
+	}
+	// One line per name: a sweep row expecting it is met by its own
+	// mutation alone.
+	for _, name := range want {
+		if !refused[name] {
+			t.Errorf("missing refusal for %s", name)
+		}
+	}
+
+	// A scan that found no caller, or derived nothing serial, saw nothing
+	// worth trusting. Each half of that refusal has a package of its own.
+	const missingCaller = `package p
+	import "testing"
+	func TestRight(t *testing.T) { t.Setenv("A", "") }
+	`
+	const nothingSerial = `package p
+	import "testing"
+	func TestGuard(t *testing.T) { t.Parallel() }
+	func TestPure(t *testing.T)  { t.Parallel(); _ = 1 }
+	`
+	for _, scan := range []struct {
+		label   string
+		files   map[string]string
+		refusal string
+	}{
+		{"an empty directory", nil, "parsed 0 test files"},
+		{"a package missing its caller", map[string]string{"p_test.go": missingCaller}, "found TestGuard false"},
+		{"a package with nothing serial", map[string]string{"p_test.go": nothingSerial}, "derived 0 serial tests"},
+	} {
+		failures := checkFailures(t, writePackage(t, scan.files), hazards)
+		if len(failures) != 1 || !strings.Contains(failures[0], scan.refusal) {
+			t.Errorf("check failures over %s = %q, want one refusal containing %q", scan.label, failures, scan.refusal)
+		}
+	}
+}
+
+func writePackage(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	hazards := Hazards{"counter": "a counter the tests predict"}
-	failures := checkFailures(t, dir, hazards)
-	want := []string{"TestSharedButParallel", "TestUnsharedButSerial", "TestSharedInProduction"}
-	if len(failures) != len(want) {
-		t.Fatalf("check failures = %q, want one each for %v", failures, want)
-	}
-	for index, name := range want {
-		if !strings.HasPrefix(failures[index], name+" ") {
-			t.Errorf("failure %d = %q, want it to name %s", index, failures[index], name)
-		}
-	}
-	// A scan of the wrong directory sees no tests, which must not read as
-	// a package with nothing to refuse.
-	if failures := checkFailures(t, t.TempDir(), hazards); len(failures) != 1 || !strings.HasPrefix(failures[0], "parsed 0 test files") {
-		t.Errorf("check failures over an empty directory = %q, want one empty-scan refusal", failures)
-	}
+	return dir
 }
 
 func checkFailures(t *testing.T, dir string, hazards Hazards) []string {

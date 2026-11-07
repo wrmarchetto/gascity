@@ -50,6 +50,31 @@ replace = '''			if path, ok := imports[e.Name]; false && ok && selected != "" {'
 expect_output = ["Serial = map["]
 
 [[mutation]]
+id = "field-write-root-not-followed"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''			if vars[e.Name] {'''
+replace = '''			if vars[e.Name] && selected == "" {'''
+expect_output = ['''Serial[TestField] = ""''']
+
+[[mutation]]
+id = "deref-write-root-not-followed"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''		case *ast.StarExpr:
+			expr = e.X'''
+replace = '''		case *ast.StarExpr:
+			return ""'''
+expect_output = ['''Serial[TestDeref] = ""''']
+
+[[mutation]]
+id = "paren-write-root-not-followed"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''		case *ast.ParenExpr:
+			expr = e.X'''
+replace = '''		case *ast.ParenExpr:
+			return ""'''
+expect_output = ['''Serial[TestParen] = ""''']
+
+[[mutation]]
 id = "qualified-call-matched-by-bare-name"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
 find = '''if reason, ok := hazards[path+"."+node.Sel.Name]; ok {'''
@@ -101,14 +126,14 @@ id = "production-not-walked"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
 find = '''	collectBodies(bodies, production, false)'''
 replace = '''	_ = production'''
-expect_output = ["Serial = map[", "check failures = "]
+expect_output = ["Serial = map[", "missing refusal for TestSharedInProduction"]
 
 [[mutation]]
 id = "production-matched-against-package-hazards"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
 find = '''				matched, vars := processWide, map[string]bool(nil)'''
 replace = '''				matched, vars := inTests, map[string]bool(nil)'''
-expect_output = ["Serial = map[", "TestCountedInProduction"]
+expect_output = ["Serial = map[", '''unexpected refusal "TestCountedInProduction''']
 
 [[mutation]]
 id = "production-var-writes-derived"
@@ -124,7 +149,7 @@ find = '''		if strings.HasSuffix(name, "_test.go") {
 			tests = append(tests, file)'''
 replace = '''		if true || strings.HasSuffix(name, "_test.go") {
 			tests = append(tests, file)'''
-expect_output = ["check failures = ", "TestCountedInProduction"]
+expect_output = ['''unexpected refusal "TestCountedInProduction''']
 
 [[mutation]]
 id = "process-wide-not-matched-in-tests"
@@ -233,21 +258,39 @@ id = "shared-but-parallel-accepted"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
 find = '''			if mustBeSerial && parallel {'''
 replace = '''			if false && mustBeSerial && parallel {'''
-expect_output = ["check failures = ", "TestUnsharedButSerial"]
+expect_output = ["missing refusal for TestSharedButParallel", "missing refusal for TestSharedInProduction"]
 
 [[mutation]]
 id = "unshared-but-serial-accepted"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
 find = '''			if !mustBeSerial && !parallel {'''
 replace = '''			if false && !mustBeSerial && !parallel {'''
-expect_output = ["check failures = ", "TestSharedButParallel"]
+expect_output = ["missing refusal for TestUnsharedButSerial"]
 
 [[mutation]]
 id = "empty-scan-accepted"
 path = "internal/testpolicy/parallelguard/parallelguard.go"
 find = '''	if !found || len(serial) == 0 {'''
 replace = '''	if false && (!found || len(serial) == 0) {'''
-expect_output = ["check failures over an empty directory = "]
+expect_output = [
+  "check failures over an empty directory = []",
+  "check failures over a package missing its caller = []",
+  "check failures over a package with nothing serial = []",
+]
+
+[[mutation]]
+id = "caller-not-found-accepted"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	if !found || len(serial) == 0 {'''
+replace = '''	if len(serial) == 0 {'''
+expect_output = ["check failures over a package missing its caller = []"]
+
+[[mutation]]
+id = "empty-serial-set-accepted"
+path = "internal/testpolicy/parallelguard/parallelguard.go"
+find = '''	if !found || len(serial) == 0 {'''
+replace = '''	if !found {'''
+expect_output = ["check failures over a package with nothing serial = []"]
 
 # --- the callers ---
 
