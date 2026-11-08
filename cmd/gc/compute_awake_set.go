@@ -1,6 +1,7 @@
 package main
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -77,6 +78,11 @@ type AwakeSessionBead struct {
 	RestartRequested          bool      // restart_requested metadata is still active
 	ContinuationResetPending  bool      // continuation_reset_pending metadata is set
 	CurrentlyProcessingBeadID string    // work bead the session is currently processing
+	// AssigneeIdentities is session.AssigneeIdentities for this bead: every
+	// spelling a work bead's assignee may use, alias and alias history
+	// included. The drain-ack refusal checks the same set, so the two cannot
+	// disagree about whether a session owns its work.
+	AssigneeIdentities []string
 }
 
 // AwakeWorkBead represents a work bead with an assignee.
@@ -726,6 +732,9 @@ func sessionAssigneeMatches(named []AwakeNamedSession, bead AwakeSessionBead, as
 		return false
 	}
 	if assignee == bead.ID || assignee == bead.SessionName {
+		return true
+	}
+	if slices.Contains(bead.AssigneeIdentities, assignee) {
 		return true
 	}
 	if bead.NamedIdentity != "" {
