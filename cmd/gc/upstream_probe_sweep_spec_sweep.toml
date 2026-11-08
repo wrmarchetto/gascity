@@ -95,7 +95,7 @@ expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/deleted-sweep-spec-co
 [[mutation]]
 id = "spec-always-read-at-base"
 path = "cmd/gc/upstream_probe_behavior_free.go"
-find = '''	rev := "HEAD"'''
+find = '''	rev := head'''
 replace = '''	rev := base'''
 expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/present-sweep-spec-is-judged-at-head-not-base"]
 
@@ -104,6 +104,6 @@ expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/present-sweep-spec-is
 [[mutation]]
 id = "split-ignores-sweep-specs"
 path = "cmd/gc/upstream_probe_behavior_free.go"
-find = '''		if upstreamProbeTestPath(p) || upstreamProbeSweepSpec(repoDir, base, p, embeds) {'''
+find = '''		if upstreamProbeTestPath(p) || upstreamProbeSweepSpec(repoDir, base, head, p, embeds) {'''
 replace = '''		if upstreamProbeTestPath(p) {'''
 expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-docs-and-sweep-spec/green-probe"]
