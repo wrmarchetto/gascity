@@ -311,6 +311,17 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 		{name: "comment-docs-and-test/vacuous-probe", branch: behaviorFree, probe: "echo 'ok pkg [no test files]'", wantMsg: "ran no test"},
 		{name: "comment-docs-and-test/no-probe", branch: behaviorFree, wantMsg: "edits only test paths or behavior-free paths"},
 		{
+			name:   "comment-docs-and-sweep-spec/green-probe",
+			branch: with(map[string]string{"cmd/gc/tier_sweep.toml": "[sweep]\nname = \"t\"\n\n[sweep.gate]\nargv = [\"true\"]\n"}),
+			probe:  "test -f fork_test.go",
+		},
+		{
+			name:    "sweep-name-without-sweep-table-keeps-full-experiment",
+			branch:  with(map[string]string{"cmd/gc/tier_sweep.toml": "[gate]\nargv = [\"true\"]\n"}),
+			probe:   "test -f fork_test.go",
+			wantMsg: "(behavioral: cmd/gc/tier_sweep.toml)",
+		},
+		{
 			name:   "comment-only-without-test/green-probe",
 			branch: map[string]string{"owned.go": commentGo},
 			probe:  "test -f owned.go",

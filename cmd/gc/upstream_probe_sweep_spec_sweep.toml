@@ -1,0 +1,109 @@
+# Proves the upstream-probe close gate keeps a mutation-sweep spec as test
+# material only when its name, [sweep]/[sweep.gate] content and embed check
+# all hold, judging a deleted spec by its base version (ci-6brgy7).
+#
+# UNSWEPT, deliberately: the toml.Decode error check. Decode parses the whole
+# document before filling the map, so on any error doc stays empty and the
+# [sweep] assertion refuses it anyway. The flip changes no verdict.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of. See the mutation-sweep skill.
+
+[sweep]
+name = "ci-6brgy7: a mutation-sweep spec is a test path only when it is one"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestUpstreamProbeClassifyPaths|TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly",
+]
+timeout_s = 900
+
+# --- the name check ---
+
+[[mutation]]
+id = "any-toml-name-is-a-spec-name"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {'''
+replace = '''	if !strings.HasSuffix(p, ".toml") {'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-content-under-another-toml-name-is-behavioral"]
+
+[[mutation]]
+id = "any-toml-is-a-spec"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {
+		return false
+	}'''
+replace = '''	if strings.HasSuffix(p, ".toml") {
+		return true
+	}'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-spec-name-without-sweep-table-is-behavioral"]
+
+# --- the content check ---
+
+[[mutation]]
+id = "drop-sweep-table-check"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	sweep, ok := doc["sweep"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, ok := sweep["gate"].(map[string]any); !ok {
+		return false
+	}'''
+replace = ''''''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-spec-name-without-sweep-table-is-behavioral"]
+
+[[mutation]]
+id = "drop-gate-table-check"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	if _, ok := sweep["gate"].(map[string]any); !ok {
+		return false
+	}'''
+replace = '''	_ = sweep'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-table-without-gate-table-is-behavioral"]
+
+# --- the embed check ---
+
+[[mutation]]
+id = "drop-embed-check"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	return embeds.unembedded(p)
+}'''
+replace = '''	return true
+}'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/embedded-sweep-spec-is-behavioral"]
+
+[[mutation]]
+id = "unresolved-embeds-read-as-none"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)'''
+replace = '''	return !upstreamProbeEmbedded(x.embeds, file)'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-spec-is-behavioral-when-embeds-cannot-be-resolved"]
+
+# --- the ref the spec is judged at ---
+
+[[mutation]]
+id = "deleted-spec-not-read-at-base"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''		rev = base'''
+replace = '''		return false'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/deleted-sweep-spec-counts-by-its-base-version"]
+
+[[mutation]]
+id = "spec-always-read-at-base"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	rev := "HEAD"'''
+replace = '''	rev := base'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/present-sweep-spec-is-judged-at-head-not-base"]
+
+# --- the close gate consults it ---
+
+[[mutation]]
+id = "split-ignores-sweep-specs"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''		if upstreamProbeTestPath(p) || upstreamProbeSweepSpec(repoDir, base, p, embeds) {'''
+replace = '''		if upstreamProbeTestPath(p) {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-docs-and-sweep-spec/green-probe"]

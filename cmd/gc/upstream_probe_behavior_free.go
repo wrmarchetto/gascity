@@ -11,38 +11,96 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/BurntSushi/toml"
 )
 
-// upstreamProbeBehavioralPaths returns the subset of paths whose change
-// between base and HEAD in repoDir can alter behavior. Only two kinds of path
-// are behavior-free: a .go file whose code tokens, directives and cgo
-// preamble are unchanged, and Markdown under engdocs/ or docs/ that no
-// //go:embed pattern at HEAD reaches. Anything unreadable counts as behavior.
-func upstreamProbeBehavioralPaths(repoDir, base string, paths []string) []string {
-	var behavioral []string
-	var embeds []upstreamProbeEmbed
-	var embedsErr error
-	embedsRead := false
+// upstreamProbeClassifyPaths splits a branch's changed paths for the
+// retirement experiment. Returns (kept, reverted, behavioral): kept are test
+// material the experiment leaves in place, reverted is everything else, and
+// behavioral the reverted paths whose change can alter behavior.
+func upstreamProbeClassifyPaths(repoDir, base string, paths []string) (kept, reverted, behavioral []string) {
+	embeds := &upstreamProbeEmbedIndex{repoDir: repoDir}
 	for _, p := range paths {
-		free := false
-		switch {
-		case strings.HasSuffix(p, ".go"):
-			baseSrc, baseErr := upstreamProbeGitOutput(repoDir, "show", base+":"+p)
-			headSrc, headErr := upstreamProbeGitOutput(repoDir, "show", "HEAD:"+p)
-			free = baseErr == nil && headErr == nil &&
-				upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))
-		case upstreamProbeDocsMarkdown(p):
-			if !embedsRead {
-				embeds, embedsErr = upstreamProbeEmbedPatterns(repoDir, "HEAD")
-				embedsRead = true
-			}
-			free = embedsErr == nil && !upstreamProbeEmbedded(embeds, p)
+		if upstreamProbeTestPath(p) || upstreamProbeSweepSpec(repoDir, base, p, embeds) {
+			kept = append(kept, p)
+			continue
 		}
-		if !free {
+		reverted = append(reverted, p)
+		if !upstreamProbeBehaviorFree(repoDir, base, p, embeds) {
 			behavioral = append(behavioral, p)
 		}
 	}
-	return behavioral
+	return kept, reverted, behavioral
+}
+
+// upstreamProbeSweepSpec reports whether p is a mutation-sweep spec, which
+// only the sweep driver reads, so it is test material like a _test.go. That
+// is a _sweep.toml or .mutation-sweep.toml with a [sweep] table holding
+// [sweep.gate], read at HEAD or at base when the branch deleted it, and
+// reached by no //go:embed at HEAD.
+func upstreamProbeSweepSpec(repoDir, base, p string, embeds *upstreamProbeEmbedIndex) bool {
+	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {
+		return false
+	}
+	rev := "HEAD"
+	if !upstreamProbeGitOK(repoDir, "cat-file", "-e", "HEAD:"+p) {
+		rev = base
+	}
+	src, err := upstreamProbeGitOutput(repoDir, "show", rev+":"+p)
+	if err != nil {
+		return false
+	}
+	var doc map[string]any
+	if _, err := toml.Decode(src, &doc); err != nil {
+		return false
+	}
+	sweep, ok := doc["sweep"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, ok := sweep["gate"].(map[string]any); !ok {
+		return false
+	}
+	return embeds.unembedded(p)
+}
+
+// upstreamProbeBehaviorFree reports whether p's change between base and HEAD
+// cannot alter behavior. Only two kinds of path qualify: a .go file whose
+// code tokens, directives and cgo preamble are unchanged, and Markdown under
+// engdocs/ or docs/ that no //go:embed pattern at HEAD reaches. Anything
+// unreadable counts as behavior.
+func upstreamProbeBehaviorFree(repoDir, base, p string, embeds *upstreamProbeEmbedIndex) bool {
+	switch {
+	case strings.HasSuffix(p, ".go"):
+		baseSrc, baseErr := upstreamProbeGitOutput(repoDir, "show", base+":"+p)
+		headSrc, headErr := upstreamProbeGitOutput(repoDir, "show", "HEAD:"+p)
+		return baseErr == nil && headErr == nil &&
+			upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))
+	case upstreamProbeDocsMarkdown(p):
+		return embeds.unembedded(p)
+	}
+	return false
+}
+
+// upstreamProbeEmbedIndex reads the //go:embed patterns at HEAD once, on
+// first use.
+type upstreamProbeEmbedIndex struct {
+	repoDir string
+	read    bool
+	embeds  []upstreamProbeEmbed
+	err     error
+}
+
+// unembedded reports whether no //go:embed at HEAD reaches file. It is false
+// when any pattern could not be resolved, so nothing is called unembedded on
+// a partial reading.
+func (x *upstreamProbeEmbedIndex) unembedded(file string) bool {
+	if !x.read {
+		x.embeds, x.err = upstreamProbeEmbedPatterns(x.repoDir, "HEAD")
+		x.read = true
+	}
+	return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)
 }
 
 func upstreamProbeDocsMarkdown(p string) bool {

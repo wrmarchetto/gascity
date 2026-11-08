@@ -112,17 +112,83 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 	}
 }
 
-// TestUpstreamProbeBehavioralPaths classifies real git paths. The branch
-// writes each changed path, and embeds are the //go:embed lines at HEAD.
-func TestUpstreamProbeBehavioralPaths(t *testing.T) {
+// TestUpstreamProbeClassifyPaths classifies real git paths. The branch
+// writes or deletes each changed path, and embeds are the //go:embed lines
+// at HEAD.
+func TestUpstreamProbeClassifyPaths(t *testing.T) {
 	const goBase = "package p\n\n// Doc a.\nfunc F() {}\n"
 	const goComment = "package p\n\n// Doc b.\nfunc F() {}\n"
+	const spec = "[sweep]\nname = \"s\"\n\n[sweep.gate]\nargv = [\"go\", \"test\"]\n"
+	const embedCmd = "package main\n\nimport \"embed\"\n\n//go:embed *.toml\nvar F embed.FS\n"
 	for _, tc := range []struct {
-		name   string
-		base   map[string]string // committed on the base branch
-		branch map[string]string // committed on top of base
-		want   []string          // behavioral subset of branch paths
+		name    string
+		base    map[string]string // committed on the base branch
+		branch  map[string]string // committed on top of base
+		deleted []string          // removed on top of base
+		kept    []string          // changed paths kept as test material
+		want    []string          // behavioral subset of the reverted paths
 	}{
+		{
+			name:   "sweep-spec-with-sweep-and-gate-tables-is-a-test-path",
+			branch: map[string]string{"cmd/gc/pool_sweep.toml": spec},
+			kept:   []string{"cmd/gc/pool_sweep.toml"},
+		},
+		{
+			name:   "mutation-sweep-spec-is-a-test-path",
+			branch: map[string]string{"scripts/gate.mutation-sweep.toml": spec},
+			kept:   []string{"scripts/gate.mutation-sweep.toml"},
+		},
+		{
+			name:   "sweep-spec-name-without-sweep-table-is-behavioral",
+			branch: map[string]string{"cmd/gc/pool_sweep.toml": "[gate]\nargv = [\"go\"]\n"},
+			want:   []string{"cmd/gc/pool_sweep.toml"},
+		},
+		{
+			name:   "sweep-table-without-gate-table-is-behavioral",
+			branch: map[string]string{"cmd/gc/pool_sweep.toml": "[sweep]\nname = \"s\"\n"},
+			want:   []string{"cmd/gc/pool_sweep.toml"},
+		},
+		{
+			name:   "sweep-content-under-another-toml-name-is-behavioral",
+			branch: map[string]string{"cmd/gc/pool.toml": spec, "cmd/gc/sweep.toml": spec},
+			want:   []string{"cmd/gc/pool.toml", "cmd/gc/sweep.toml"},
+		},
+		{
+			name:   "unparseable-sweep-spec-is-behavioral",
+			branch: map[string]string{"cmd/gc/pool_sweep.toml": spec + "[sweep\n"},
+			want:   []string{"cmd/gc/pool_sweep.toml"},
+		},
+		{
+			name:   "embedded-sweep-spec-is-behavioral",
+			base:   map[string]string{"cmd/gc/embed.go": embedCmd},
+			branch: map[string]string{"cmd/gc/pool_sweep.toml": spec},
+			want:   []string{"cmd/gc/pool_sweep.toml"},
+		},
+		{
+			name:   "sweep-spec-is-behavioral-when-embeds-cannot-be-resolved",
+			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n"},
+			branch: map[string]string{"cmd/gc/pool_sweep.toml": spec},
+			want:   []string{"cmd/gc/pool_sweep.toml"},
+		},
+		{
+			name:    "deleted-sweep-spec-counts-by-its-base-version",
+			base:    map[string]string{"cmd/gc/pool_sweep.toml": spec, "cmd/gc/old_sweep.toml": "[gate]\n"},
+			deleted: []string{"cmd/gc/old_sweep.toml", "cmd/gc/pool_sweep.toml"},
+			kept:    []string{"cmd/gc/pool_sweep.toml"},
+			want:    []string{"cmd/gc/old_sweep.toml"},
+		},
+		{
+			name:   "present-sweep-spec-is-judged-at-head-not-base",
+			base:   map[string]string{"cmd/gc/pool_sweep.toml": spec, "cmd/gc/new_sweep.toml": "[gate]\n"},
+			branch: map[string]string{"cmd/gc/pool_sweep.toml": "[gate]\n", "cmd/gc/new_sweep.toml": spec},
+			kept:   []string{"cmd/gc/new_sweep.toml"},
+			want:   []string{"cmd/gc/pool_sweep.toml"},
+		},
+		{
+			name:   "named-test-paths-are-kept",
+			branch: map[string]string{"x_test.go": "package p\n", "testdata/a.txt": "a\n"},
+			kept:   []string{"testdata/a.txt", "x_test.go"},
+		},
 		{
 			name:   "unembedded-engdocs-and-docs-markdown-is-behavior-free",
 			base:   map[string]string{"engdocs/a.md": "a\n", "docs/b.md": "b\n"},
@@ -218,23 +284,36 @@ func TestUpstreamProbeBehavioralPaths(t *testing.T) {
 			}
 			commit(tc.base, "base")
 			runUpstreamProbeCloseGateGit(t, repoDir, "tag", "base")
+			for _, path := range tc.deleted {
+				if err := os.Remove(filepath.Join(repoDir, path)); err != nil {
+					t.Fatal(err)
+				}
+			}
 			commit(tc.branch, "branch")
 
-			var paths []string
+			paths := slices.Clone(tc.deleted)
 			for path := range tc.branch {
 				paths = append(paths, path)
 			}
 			slices.Sort(paths)
-			got := upstreamProbeBehavioralPaths(repoDir, "base", paths)
-			want := tc.want
-			if want == nil {
-				want = []string{}
+			kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, "base", paths)
+			wantReverted := []string{}
+			for _, path := range paths {
+				if !slices.Contains(tc.kept, path) {
+					wantReverted = append(wantReverted, path)
+				}
 			}
-			if got == nil {
-				got = []string{}
-			}
-			if !slices.Equal(got, want) {
-				t.Fatalf("behavioral = %q, want %q", got, want)
+			for _, check := range []struct {
+				label     string
+				got, want []string
+			}{
+				{"kept", kept, tc.kept},
+				{"reverted", reverted, wantReverted},
+				{"behavioral", behavioral, tc.want},
+			} {
+				if !slices.Equal(nonNilStrings(check.got), nonNilStrings(check.want)) {
+					t.Errorf("%s = %q, want %q", check.label, check.got, check.want)
+				}
 			}
 		})
 	}
