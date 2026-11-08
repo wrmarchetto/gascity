@@ -370,46 +370,83 @@ func TestBuildAwakeInputFromReconciler_ReadyAssignedOpenBeadWakesSession(t *test
 // TestBuildAwakeInputFromReconciler_InProgressAssignedBeadStillWakes is the
 // regression guard: in-progress assigned work keeps its session awake
 // regardless of readyAssignedFlags (workBeadHasAwakeDemand returns true for
-// in_progress unconditionally).
+// in_progress unconditionally), under every identity in
+// session.AssigneeIdentities. A pool claim is stamped with the alias, and
+// missing it let a scale-down drain the holder mid-turn and hand the slot to an
+// idle sibling, which the drain-ack check then refused (ci-05ilst).
 func TestBuildAwakeInputFromReconciler_InProgressAssignedBeadStillWakes(t *testing.T) {
-	now := time.Now().UTC()
-	cfg := &config.City{Agents: []config.Agent{{Name: "gc.run-operator"}}}
-	sessionBead := beads.Bead{
-		ID:     "mc-session-1",
-		Status: "open",
-		Type:   "session",
-		Metadata: map[string]string{
-			"state":        "active",
-			"session_name": "gc__run-operator-mc-1",
-			"template":     "gc.run-operator",
-		},
+	tests := []struct {
+		name     string
+		assignee string
+	}{
+		{name: "session name", assignee: "gc__run-operator-mc-1"},
+		{name: "bead id", assignee: "mc-session-1"},
+		{name: "alias", assignee: "run-operator-2"},
+		{name: "prior alias", assignee: "run-operator-old"},
 	}
-	inProgressWork := beads.Bead{
-		ID:       "ga-active",
-		Status:   "in_progress",
-		Assignee: "gc__run-operator-mc-1",
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now().UTC()
+			cfg := &config.City{Agents: []config.Agent{{Name: "gc.run-operator"}}}
+			holder := beads.Bead{
+				ID:     "mc-session-1",
+				Status: "open",
+				Type:   "session",
+				Metadata: map[string]string{
+					"state":         "active",
+					"session_name":  "gc__run-operator-mc-1",
+					"template":      "gc.run-operator",
+					"alias":         "run-operator-2",
+					"alias_history": "run-operator-old",
+				},
+			}
+			sibling := beads.Bead{
+				ID:     "mc-session-2",
+				Status: "open",
+				Type:   "session",
+				Metadata: map[string]string{
+					"state":        "active",
+					"session_name": "gc__run-operator-mc-2",
+					"template":     "gc.run-operator",
+					"alias":        "run-operator-1",
+				},
+			}
+			inProgressWork := beads.Bead{
+				ID:       "ga-active",
+				Status:   "in_progress",
+				Assignee: tt.assignee,
+			}
 
-	input := buildAwakeInputFromReconciler(
-		cfg,
-		"",
-		[]session.Info{sessiontest.SeedBead(t, sessionBead)},
-		nil,
-		nil,
-		nil,
-		nil,
-		nil,
-		[]beads.Bead{inProgressWork},
-		nil, // readyAssignedFlags omitted entirely: in_progress must still wake
-		nil,
-		runtime.NewFake(),
-		now,
-	)
+			input := buildAwakeInputFromReconciler(
+				cfg,
+				"",
+				// Sibling first: scale demand goes to the first
+				// candidate, so only assigned-work can keep the holder.
+				[]session.Info{
+					sessiontest.SeedBead(t, sibling),
+					sessiontest.SeedBead(t, holder),
+				},
+				map[string]int{"gc.run-operator": 1},
+				nil,
+				nil,
+				nil,
+				nil,
+				[]beads.Bead{inProgressWork},
+				nil, // readyAssignedFlags omitted entirely: in_progress must still wake
+				nil,
+				runtime.NewFake(),
+				now,
+			)
 
-	decisions := ComputeAwakeSet(input)
-	got := decisions["gc__run-operator-mc-1"]
-	if !got.ShouldWake || got.Reason != "assigned-work" {
-		t.Fatalf("in-progress assigned bead should wake session; got decision = %+v", got)
+			decisions := ComputeAwakeSet(input)
+			got := decisions["gc__run-operator-mc-1"]
+			if !got.ShouldWake || got.Reason != "assigned-work" {
+				t.Fatalf("in-progress bead assigned to %q should wake its holder; got decision = %+v", tt.assignee, got)
+			}
+			if idle := decisions["gc__run-operator-mc-2"]; idle.ShouldWake {
+				t.Fatalf("the holder fills the one pool slot, so the idle sibling must not wake; got decision = %+v", idle)
+			}
+		})
 	}
 }
 
