@@ -240,9 +240,8 @@ func legacyEphemeralPoolDemandShell(limit int, includeEphemeralReady, quiet bool
 }
 
 // poolDemandFirstRowFunctionScript emits the work_query Tier 3 function: it
-// reads the first ready, unassigned, routed bead for the supplied target,
-// prints it, and exits 0. The caller appends a terminal fallthrough
-// (printf "[]") for the empty case.
+// prints the ready pool queue for the supplied target and exits 0. The caller
+// appends a terminal fallthrough (printf "[]") for the empty case.
 //
 // No tier here caps its row count: a cap decides which beads are candidates at
 // all, which is the ci-rzq2 defect (see routedReadyTierCommand). The lone
@@ -253,9 +252,7 @@ func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
 	return `probe_pool_demand() { ` +
 		`target="$1"; ` +
 		`[ -z "$target" ] && return 1; ` +
-		`r=$(` + routedReadyTierCommand(includeEphemeralReady) + `); ` +
-		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
-		`r=$(` + poolAliasReadyTierCommand(includeEphemeralReady) + `); ` +
+		`r=$(` + poolReadyQueueCommand(includeEphemeralReady) + `); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		`legacy_candidates=$(` + bdReadyPoolDemandMigrationShell(includeEphemeralReady) + ` 2>/dev/null); ` +
 		`r=$(printf "%s" "$legacy_candidates" | ` + poolDemandMigrationFilterJQ(1) + ` 2>/dev/null); ` +
@@ -265,6 +262,23 @@ func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		`return 1; ` +
 		`}; `
+}
+
+// poolReadyQueueMergeJQ joins the two pool tiers' arrays into one created_at
+// order. Each tier arrives oldest-first, and the tiebreak on id keeps the
+// merge deterministic. A tier that printed no JSON fails the merge, which
+// falls through to the legacy tiers like an empty queue.
+const poolReadyQueueMergeJQ = `[.[][]] | sort_by(.created_at // "", .id // "")`
+
+// poolReadyQueueCommand is the pool queue: the routed and pool-alias tiers
+// merged into ONE oldest-first line. Answered in turn, any ready routed bead
+// hid every bead parked on the pool name, whatever its age (ci-mozmau). The
+// tiers are disjoint, one --unassigned and one --assignee, so no row is
+// doubled, including an alias row that also carries gc.routed_to.
+func poolReadyQueueCommand(includeEphemeralReady bool) string {
+	return `{ ` + routedReadyTierCommand(includeEphemeralReady) + `; ` +
+		poolAliasReadyTierCommand(includeEphemeralReady) + `; } | ` +
+		`jq -cs ` + shellquote.Quote(poolReadyQueueMergeJQ) + ` 2>/dev/null`
 }
 
 // poolAliasReadyTierCommand is the worker first-row form of the pool-alias tier.

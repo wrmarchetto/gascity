@@ -456,6 +456,7 @@ func TestHookClaimOrderingTakesOldestRoutedBeadAheadOfNewerHigherPriority(t *tes
 
 	rig := newOrderingRig(t)
 	rig.serveTier("routed", rows)
+	rig.serveTier("alias", nil)
 	var probe orderingClaimProbe
 	result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
 
@@ -484,19 +485,26 @@ func TestHookClaimOrderingTakesHighestPriorityOnceTheOldestSortIsDropped(t *test
 	// The flag is stripped from every tier rather than from the routed tier's
 	// exact invocation on purpose -- only the routed tier is scripted here, so
 	// the two are equivalent, and a blanket strip does not rot when the tier's
-	// flag order changes.
+	// flag order changes. The tier merge's created_at sort goes too: left in,
+	// it restores oldest-first by itself (ci-mozmau).
 	rows := routedQueueFixture(routedQueueFixtureRows)
 	assertFixtureDiscriminates(t, rows)
 
 	query := routedQueuePoolSlotQuery()
-	unsorted := strings.ReplaceAll(query, " --sort oldest", "")
-	if unsorted == query {
-		t.Fatalf("work_query carries no --sort oldest to strip, so this control cannot run; "+
-			"if the ordering flag moved, this test and its sibling must both be re-derived.\nquery: %s", query)
+	for _, ordering := range []string{" --sort oldest", ` | sort_by(.created_at // "", .id // "")`} {
+		unsorted := strings.ReplaceAll(query, ordering, "")
+		if unsorted == query {
+			t.Fatalf("work_query carries no %q to strip, so this control cannot run; "+
+				"if the ordering moved, this test and its sibling must both be re-derived.\nquery: %s",
+				ordering, query)
+		}
+		query = unsorted
 	}
+	unsorted := query
 
 	rig := newOrderingRig(t)
 	rig.serveTier("routed", rows)
+	rig.serveTier("alias", nil)
 	var probe orderingClaimProbe
 	result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), unsorted)
 
@@ -516,6 +524,7 @@ func TestHookClaimOrderingSeesEveryRoutedCandidate(t *testing.T) {
 
 	rig := newOrderingRig(t)
 	rig.serveTier("routed", rows)
+	rig.serveTier("alias", nil)
 	var probe orderingClaimProbe
 	claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
 	rig.assertTierCandidateLimit("routed")
@@ -558,44 +567,63 @@ func TestHookClaimOrderingTakesOldestPoolParkedBeadAheadOfNewerHigherPriority(t 
 	rig.assertCandidatesInclude("alias", rows)
 }
 
-func TestHookClaimOrderingPrefersRoutedTierOverHigherPriorityPoolAlias(t *testing.T) {
-	// Cross-tier precedence, which is decided by `exit 0` placement in the
-	// generated shell alone -- nothing in Go compares the two tiers. The routed
-	// bead here is strictly worse by both keys the tiers sort on (newer AND lower
-	// priority) and must still win, because its tier is tried first and the first
-	// non-empty tier ends the ladder.
-	routed := []orderingFixtureRow{{
-		ID:        "routed-newest-p3",
-		Status:    "open",
-		Priority:  3,
-		CreatedAt: "2026-05-21T06:09:30Z",
-		Metadata:  map[string]string{"gc.routed_to": orderingFixtureTarget},
-	}}
-	// Hand-assigned pool work carries the pool name as its assignee and no
-	// gc.routed_to at all, which is the shape ci-c000 measured.
-	alias := []orderingFixtureRow{{
-		ID:        "alias-oldest-p0",
-		Status:    "open",
-		Priority:  0,
-		CreatedAt: "2026-05-20T06:09:30Z",
-		Assignee:  orderingFixtureTarget,
-	}}
-
-	rig := newOrderingRig(t)
-	rig.serveTier("routed", routed)
-	rig.serveTier("alias", alias)
-	var probe orderingClaimProbe
-	result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
-
-	if result.BeadID != "routed-newest-p3" {
-		t.Fatalf("claimed %q, want routed-newest-p3; the routed tier is tried first and ends the ladder, "+
-			"so an older P0 parked on the pool alias must still wait", result.BeadID)
+func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
+	// The two pool tiers are one oldest-first queue (ci-mozmau). In each case
+	// the winner is the older row but loses on priority and on id, so a ladder
+	// in either tier order, a priority sort or an id sort all claim the other.
+	// The alias row also carries gc.routed_to, as a released pool claim does.
+	routedRow := func(id, created string, priority int) orderingFixtureRow {
+		return orderingFixtureRow{
+			ID: id, Status: "open", Priority: priority, CreatedAt: created,
+			Metadata: map[string]string{"gc.routed_to": orderingFixtureTarget},
+		}
 	}
-	if len(probe.poolClaimed) > 0 {
-		t.Fatalf("pool transfer ran on %v while the routed tier had work", probe.poolClaimed)
+	aliasRow := func(id, created string, priority int) orderingFixtureRow {
+		return orderingFixtureRow{
+			ID: id, Status: "open", Priority: priority, CreatedAt: created,
+			Assignee: orderingFixtureTarget, Metadata: map[string]string{"gc.routed_to": orderingFixtureTarget},
+		}
 	}
-	if !strings.Contains(rig.log(), "served: tier=routed") || strings.Contains(rig.log(), "served: tier=alias") {
-		t.Fatalf("expected the ladder to stop at the routed tier; bd log:\n%s", rig.log())
+	cases := []struct {
+		name     string
+		routed   orderingFixtureRow
+		alias    orderingFixtureRow
+		want     string
+		wantPool bool
+	}{
+		{
+			name:     "older pool-alias bead beats a newer routed bead",
+			routed:   routedRow("newer-routed-p0", "2026-05-21T06:09:30Z", 0),
+			alias:    aliasRow("pool-older-p3", "2026-05-20T06:09:30Z", 3),
+			want:     "pool-older-p3",
+			wantPool: true,
+		},
+		{
+			name:   "older routed bead beats a newer pool-alias bead",
+			routed: routedRow("routed-older-p3", "2026-05-20T06:09:30Z", 3),
+			alias:  aliasRow("alias-newer-p0", "2026-05-21T06:09:30Z", 0),
+			want:   "routed-older-p3",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newOrderingRig(t)
+			rig.serveTier("routed", []orderingFixtureRow{tc.routed})
+			rig.serveTier("alias", []orderingFixtureRow{tc.alias})
+			var probe orderingClaimProbe
+			result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
+
+			if result.BeadID != tc.want {
+				t.Fatalf("claimed %q, want %q; the routed and pool-alias tiers must merge into one "+
+					"created_at order, not end at the first tier with work.\nbd log:\n%s",
+					result.BeadID, tc.want, rig.log())
+			}
+			if tookPool := len(probe.poolClaimed) > 0; tookPool != tc.wantPool {
+				t.Fatalf("pool transfers = %v, plain claims = %v; work parked on the pool name is taken "+
+					"by the compare-and-swap transfer, routed work by the plain claim",
+					probe.poolClaimed, probe.claimed)
+			}
+		})
 	}
 }
 

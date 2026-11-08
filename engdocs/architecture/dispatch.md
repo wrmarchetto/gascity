@@ -165,8 +165,14 @@ the first match, then filters the migration probe to roots with empty
 unassigned routed pool work is FIFO before priority, so newer
 high-priority work does not jump ahead of older ready work already queued
 for the same target. The pool-alias tier (`--assignee=<pool>`) carries the
-same `--sort oldest`, so the policy governs both pool-demand forms; the
-own-identity tiers pass no `--sort` at all and therefore keep bd's
+same `--sort oldest`, and the two forms are merged into ONE queue ordered by
+`created_at` (`poolReadyQueueCommand`) rather than answered in turn. Answered
+in turn, any ready routed bead hid every bead parked on the pool name however
+old. Measured on the city store (ci-mozmau): an escalation filed by
+`escalate-bead.py` on the `toolsmith` alias at 18:43Z waited 6.6 h for its
+first claim, and about 2.6 h of that was a slot spent on a bead slung to the
+same pool at 21:44Z. The rest was a full pool and older alias work ahead of it.
+The own-identity tiers pass no `--sort` at all and therefore keep bd's
 priority-first default. The count form unions canonical and migration
 probes and deduplicates by bead ID before piping through `jq 'length'`.
 Targets resolve to `Agent.PoolName` when set and
