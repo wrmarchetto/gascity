@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -112,9 +114,9 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 	}
 }
 
-// TestUpstreamProbeClassifyPaths classifies real git paths. The branch
-// writes or deletes each changed path, and embeds are the //go:embed lines
-// at HEAD.
+// TestUpstreamProbeClassifyPaths classifies real git paths through
+// `gc internal upstream-classify --head branch`. A later commit rewrites
+// every path and embeds them all, so a HEAD read flips the answer.
 func TestUpstreamProbeClassifyPaths(t *testing.T) {
 	const goBase = "package p\n\n// Doc a.\nfunc F() {}\n"
 	const goComment = "package p\n\n// Doc b.\nfunc F() {}\n"
@@ -290,13 +292,29 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 				}
 			}
 			commit(tc.branch, "branch")
+			runUpstreamProbeCloseGateGit(t, repoDir, "tag", "branch")
 
 			paths := slices.Clone(tc.deleted)
 			for path := range tc.branch {
 				paths = append(paths, path)
 			}
 			slices.Sort(paths)
-			kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, "base", paths)
+			later := map[string]string{}
+			var patterns []string
+			for _, path := range paths {
+				later[path] = "later\n"
+				if body, ok := tc.branch[path]; ok && strings.HasSuffix(path, ".go") {
+					later[path] = body + "\nvar later = 1\n"
+				}
+				top, _, _ := strings.Cut(path, "/")
+				if !slices.Contains(patterns, top) {
+					patterns = append(patterns, top)
+				}
+			}
+			later["zz_later.go"] = "package p\n\nimport \"embed\"\n\n//go:embed " + strings.Join(patterns, " ") + "\nvar Later embed.FS\n"
+			commit(later, "later")
+
+			kept, reverted, behavioral := runUpstreamClassify(t, 0, append([]string{"--repo", repoDir, "--base", "base", "--head", "branch"}, paths...))
 			wantReverted := []string{}
 			for _, path := range paths {
 				if !slices.Contains(tc.kept, path) {
@@ -317,4 +335,49 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			}
 		})
 	}
+
+	repoDir := t.TempDir()
+	runUpstreamProbeCloseGateGit(t, repoDir, "init", "-q", "-b", "main")
+	runUpstreamProbeCloseGateGit(t, repoDir, "-c", "user.email=f@example.invalid", "-c", "user.name=f", "commit", "-q", "--allow-empty", "-m", "base")
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"missing-repo-refused", []string{"--base", "HEAD", "--head", "HEAD"}},
+		{"missing-base-refused", []string{"--repo", repoDir, "--head", "HEAD"}},
+		{"missing-head-refused", []string{"--repo", repoDir, "--base", "HEAD"}},
+		{"unresolvable-base-refused", []string{"--repo", repoDir, "--base", "nope", "--head", "HEAD"}},
+		{"unresolvable-head-refused", []string{"--repo", repoDir, "--base", "HEAD", "--head", "nope"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runUpstreamClassify(t, 1, tc.args)
+		})
+	}
+}
+
+// runUpstreamClassify runs the subcommand, failing unless it exits wantCode,
+// and returns (kept, reverted, behavioral). Every list must be present.
+func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, reverted, behavioral []string) {
+	t.Helper()
+	clearGCEnv(t)
+	t.Setenv("GC_HOME", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	if code := run(append([]string{"internal", "upstream-classify"}, args...), &stdout, &stderr); code != wantCode {
+		t.Fatalf("exit %d, want %d: stderr=%q stdout=%q", code, wantCode, stderr.String(), stdout.String())
+	}
+	if wantCode != 0 {
+		if strings.TrimSpace(stderr.String()) == "" || stdout.Len() != 0 {
+			t.Fatalf("refusal must explain itself on stderr only: stderr=%q stdout=%q", stderr.String(), stdout.String())
+		}
+		return nil, nil, nil
+	}
+	var doc struct {
+		Kept       *[]string `json:"kept"`
+		Reverted   *[]string `json:"reverted"`
+		Behavioral *[]string `json:"behavioral"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil || doc.Kept == nil || doc.Reverted == nil || doc.Behavioral == nil {
+		t.Fatalf("stdout lacks a kept, reverted or behavioral list: %v %q", err, stdout.String())
+	}
+	return *doc.Kept, *doc.Reverted, *doc.Behavioral
 }

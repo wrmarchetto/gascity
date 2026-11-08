@@ -15,19 +15,19 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// upstreamProbeClassifyPaths splits a branch's changed paths for the
-// retirement experiment. Returns (kept, reverted, behavioral): kept are test
-// material the experiment leaves in place, reverted is everything else, and
-// behavioral the reverted paths whose change can alter behavior.
-func upstreamProbeClassifyPaths(repoDir, base string, paths []string) (kept, reverted, behavioral []string) {
-	embeds := &upstreamProbeEmbedIndex{repoDir: repoDir}
+// upstreamProbeClassifyPaths splits the paths changed from base to head for
+// the retirement experiment. Returns (kept, reverted, behavioral): kept are
+// test material the experiment leaves in place, reverted is everything else,
+// and behavioral the reverted paths whose change can alter behavior.
+func upstreamProbeClassifyPaths(repoDir, base, head string, paths []string) (kept, reverted, behavioral []string) {
+	embeds := &upstreamProbeEmbedIndex{repoDir: repoDir, rev: head}
 	for _, p := range paths {
-		if upstreamProbeTestPath(p) || upstreamProbeSweepSpec(repoDir, base, p, embeds) {
+		if upstreamProbeTestPath(p) || upstreamProbeSweepSpec(repoDir, base, head, p, embeds) {
 			kept = append(kept, p)
 			continue
 		}
 		reverted = append(reverted, p)
-		if !upstreamProbeBehaviorFree(repoDir, base, p, embeds) {
+		if !upstreamProbeBehaviorFree(repoDir, base, head, p, embeds) {
 			behavioral = append(behavioral, p)
 		}
 	}
@@ -37,14 +37,14 @@ func upstreamProbeClassifyPaths(repoDir, base string, paths []string) (kept, rev
 // upstreamProbeSweepSpec reports whether p is a mutation-sweep spec, which
 // only the sweep driver reads, so it is test material like a _test.go. That
 // is a _sweep.toml or .mutation-sweep.toml with a [sweep] table holding
-// [sweep.gate], read at HEAD or at base when the branch deleted it, and
-// reached by no //go:embed at HEAD.
-func upstreamProbeSweepSpec(repoDir, base, p string, embeds *upstreamProbeEmbedIndex) bool {
+// [sweep.gate], read at head or at base when the branch deleted it, and
+// reached by no //go:embed at head.
+func upstreamProbeSweepSpec(repoDir, base, head, p string, embeds *upstreamProbeEmbedIndex) bool {
 	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {
 		return false
 	}
-	rev := "HEAD"
-	if !upstreamProbeGitOK(repoDir, "cat-file", "-e", "HEAD:"+p) {
+	rev := head
+	if !upstreamProbeGitOK(repoDir, "cat-file", "-e", head+":"+p) {
 		rev = base
 	}
 	src, err := upstreamProbeGitOutput(repoDir, "show", rev+":"+p)
@@ -65,16 +65,16 @@ func upstreamProbeSweepSpec(repoDir, base, p string, embeds *upstreamProbeEmbedI
 	return embeds.unembedded(p)
 }
 
-// upstreamProbeBehaviorFree reports whether p's change between base and HEAD
+// upstreamProbeBehaviorFree reports whether p's change between base and head
 // cannot alter behavior. Only two kinds of path qualify: a .go file whose
 // code tokens, directives and cgo preamble are unchanged, and Markdown under
-// engdocs/ or docs/ that no //go:embed pattern at HEAD reaches. Anything
+// engdocs/ or docs/ that no //go:embed pattern at head reaches. Anything
 // unreadable counts as behavior.
-func upstreamProbeBehaviorFree(repoDir, base, p string, embeds *upstreamProbeEmbedIndex) bool {
+func upstreamProbeBehaviorFree(repoDir, base, head, p string, embeds *upstreamProbeEmbedIndex) bool {
 	switch {
 	case strings.HasSuffix(p, ".go"):
 		baseSrc, baseErr := upstreamProbeGitOutput(repoDir, "show", base+":"+p)
-		headSrc, headErr := upstreamProbeGitOutput(repoDir, "show", "HEAD:"+p)
+		headSrc, headErr := upstreamProbeGitOutput(repoDir, "show", head+":"+p)
 		return baseErr == nil && headErr == nil &&
 			upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))
 	case upstreamProbeDocsMarkdown(p):
@@ -83,21 +83,22 @@ func upstreamProbeBehaviorFree(repoDir, base, p string, embeds *upstreamProbeEmb
 	return false
 }
 
-// upstreamProbeEmbedIndex reads the //go:embed patterns at HEAD once, on
+// upstreamProbeEmbedIndex reads the //go:embed patterns at rev once, on
 // first use.
 type upstreamProbeEmbedIndex struct {
 	repoDir string
+	rev     string
 	read    bool
 	embeds  []upstreamProbeEmbed
 	err     error
 }
 
-// unembedded reports whether no //go:embed at HEAD reaches file. It is false
+// unembedded reports whether no //go:embed at rev reaches file. It is false
 // when any pattern could not be resolved, so nothing is called unembedded on
 // a partial reading.
 func (x *upstreamProbeEmbedIndex) unembedded(file string) bool {
 	if !x.read {
-		x.embeds, x.err = upstreamProbeEmbedPatterns(x.repoDir, "HEAD")
+		x.embeds, x.err = upstreamProbeEmbedPatterns(x.repoDir, x.rev)
 		x.read = true
 	}
 	return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)

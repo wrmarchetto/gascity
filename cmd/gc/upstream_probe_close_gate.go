@@ -140,7 +140,7 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 		return fmt.Sprintf("could not find the merge base with %s: %v", upstreamProbeBaseRef, err)
 	}
 	mergeBase = strings.TrimSpace(mergeBase)
-	kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, mergeBase, changed)
+	kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, mergeBase, "HEAD", changed)
 	probe = strings.TrimSpace(probe)
 	if probe == "" && len(behavioral) == 0 {
 		return fmt.Sprintf("edits only test paths or behavior-free paths (comments, unembedded docs), so no command can fail without this patch; set %s to the command that runs the branch's tests, which the merge sweep still requires", upstreamProbeMetadataKey)
@@ -249,9 +249,8 @@ func exitCode(err error) int {
 // pre-patch suite green, so the gate refuses a correct probe. contrib/
 // openclaw-bridge tests are Node modules under a nested test/, which the
 // top-level test/ prefix does not reach, hence .test.mjs and .test.cjs.
-// The city's upstream-patch audit keeps the same list in
-// assets/scripts/upstreampatch.py and must change with this one. It has no
-// counterpart for upstreamProbeSweepSpec, which reads file content.
+// The city's upstream-patch audit reads this split through
+// `gc internal upstream-classify` and keeps no copy of it.
 func upstreamProbeTestPath(path string) bool {
 	return strings.HasSuffix(path, "_test.go") ||
 		strings.HasSuffix(path, ".test.ts") || strings.HasSuffix(path, ".test.tsx") ||
