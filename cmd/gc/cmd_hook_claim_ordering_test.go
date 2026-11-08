@@ -255,6 +255,17 @@ func (r *orderingRig) serveTier(tier string, rows []orderingFixtureRow) {
 	}
 }
 
+// failTier scripts tier to fail as bd does, nothing on stdout and exit 1. The
+// fake logs it as "failed", not "refused", so claimOnce still proves the query
+// made no unscripted call.
+func (r *orderingRig) failTier(tier string) {
+	r.t.Helper()
+	path := filepath.Join(r.fixtureDir, tier+".fail")
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		r.t.Fatalf("write fail marker %s: %v", path, err)
+	}
+}
+
 // run is the WorkQueryRunner the claim loop is given. It goes through the
 // production shellWorkQueryWithEnv rather than a bespoke exec so the query
 // crosses the same process boundary, quoting and env handling it does in a real
@@ -349,6 +360,10 @@ for arg in "$@"; do
     --limit=*) limit=${arg#--limit=} ;;
   esac
 done
+if [ -n "$tier" ] && [ -f "$GC_FIXTURE_DIR/$tier.fail" ]; then
+  printf 'failed: tier=%s\n' "$tier" >>"$GC_FIXTURE_LOG"
+  exit 1
+fi
 fixture="$GC_FIXTURE_DIR/$tier.$order.jsonl"
 if [ -z "$tier" ] || [ ! -f "$fixture" ]; then
   printf 'refused: bd %s\n' "$argv" >>"$GC_FIXTURE_LOG"
@@ -627,11 +642,10 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 	}
 }
 
-func TestHookClaimOrderingTakesPoolAliasWorkWhenTheRoutedTierIsEmpty(t *testing.T) {
-	// The control for the case above. It proves the pool-alias bead is reachable
-	// and claimable through this rig, so the routed tier winning there is
-	// attributable to tier precedence and not to a fixture the query could never
-	// have served or a bead the claim loop would have refused anyway.
+func TestHookClaimOrderingTakesPoolAliasWorkWhenTheRoutedTierYieldsNothing(t *testing.T) {
+	// The control for the case above: the alias bead is claimable through this
+	// rig on its own. The failing row pins the merge's separator, which must
+	// let one tier's failure leave the other's rows claimable.
 	alias := []orderingFixtureRow{{
 		ID:        "alias-oldest-p0",
 		Status:    "open",
@@ -639,19 +653,34 @@ func TestHookClaimOrderingTakesPoolAliasWorkWhenTheRoutedTierIsEmpty(t *testing.
 		CreatedAt: "2026-05-20T06:09:30Z",
 		Assignee:  orderingFixtureTarget,
 	}}
-
-	rig := newOrderingRig(t)
-	rig.serveTier("routed", nil)
-	rig.serveTier("alias", alias)
-	var probe orderingClaimProbe
-	result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
-
-	if result.BeadID != "alias-oldest-p0" {
-		t.Fatalf("claimed %q, want the pool-parked alias-oldest-p0 once the routed tier is empty", result.BeadID)
+	cases := []struct {
+		name   string
+		routed func(*orderingRig)
+		logged string
+	}{
+		{"empty", func(r *orderingRig) { r.serveTier("routed", nil) }, "served: tier=routed order=oldest"},
+		{"failing", func(r *orderingRig) { r.failTier("routed") }, "failed: tier=routed"},
 	}
-	// A bead parked on the pool name is taken by the compare-and-swap transfer,
-	// not the plain claim: bd refuses --claim on a bead assigned to another name.
-	if len(probe.poolClaimed) != 1 || probe.poolClaimed[0] != "alias-oldest-p0" {
-		t.Fatalf("pool transfers = %v, want exactly [alias-oldest-p0]", probe.poolClaimed)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rig := newOrderingRig(t)
+			tc.routed(rig)
+			rig.serveTier("alias", alias)
+			var probe orderingClaimProbe
+			result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
+
+			if !strings.Contains(rig.log(), tc.logged) {
+				t.Fatalf("the routed tier never ran as scripted (want %q); bd log:\n%s", tc.logged, rig.log())
+			}
+			if result.BeadID != "alias-oldest-p0" {
+				t.Fatalf("claimed %q, want the pool-parked alias-oldest-p0 when the routed tier is %s",
+					result.BeadID, tc.name)
+			}
+			// bd refuses --claim on a bead assigned to another name, so a bead
+			// parked on the pool name is taken by the compare-and-swap transfer.
+			if len(probe.poolClaimed) != 1 || probe.poolClaimed[0] != "alias-oldest-p0" {
+				t.Fatalf("pool transfers = %v, want exactly [alias-oldest-p0]", probe.poolClaimed)
+			}
+		})
 	}
 }
