@@ -63,9 +63,10 @@ func TestReaperWorkflowRootCleanupRealDoltSemantics(t *testing.T) {
 	})
 }
 
-// The stale-issue sweep keys on updated_at alone, and an extmsg membership is
-// written once at bind time and never again (city bead ci-8auztj).
-func TestReaperStaleSweepSparesExtmsgControlRecords(t *testing.T) {
+// The stale-issue sweep keys on updated_at alone, yet an extmsg membership is
+// written once at bind time (city bead ci-8auztj) and an operator gate or a
+// parked bead idles by design (city bead ci-3la5wv).
+func TestReaperStaleSweepSparesControlRecordsAndOperatorGates(t *testing.T) {
 	seed := `
 INSERT INTO issues (id, title, status, issue_type, priority, created_at, updated_at, assignee, metadata) VALUES
   ('stale-plain', 'ordinary stale task', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
@@ -75,7 +76,11 @@ INSERT INTO issues (id, title, status, issue_type, priority, created_at, updated
   ('stale-transcript-state', 'slack/default/C1/state', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
   ('stale-delivery', 'delivery route', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
   ('stale-group', 'group root', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
-  ('stale-group-participant', 'group participant', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}');
+  ('stale-group-participant', 'group participant', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-agent-claim', 'abandoned agent claim', 'in_progress', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', 'toolsmith-1', '{}'),
+  ('stale-human-gate', 'block this on my signal', 'open', 'task', 3, '2026-01-01 00:00:00', '2026-01-01 00:00:00', 'human', '{}'),
+  ('stale-held', 'parked on the mayor', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}'),
+  ('stale-operator', 'operator act', 'open', 'task', 2, '2026-01-01 00:00:00', '2026-01-01 00:00:00', '', '{}');
 INSERT INTO labels (issue_id, label) VALUES
   ('stale-transcript-row', 'gc:extmsg-transcript'),
   ('stale-membership', 'gc:extmsg-membership'),
@@ -84,7 +89,9 @@ INSERT INTO labels (issue_id, label) VALUES
   ('stale-transcript-state', 'gc:extmsg-transcript-state'),
   ('stale-delivery', 'gc:extmsg-delivery'),
   ('stale-group', 'gc:extmsg-group'),
-  ('stale-group-participant', 'gc:extmsg-group-participant');
+  ('stale-group-participant', 'gc:extmsg-group-participant'),
+  ('stale-held', 'hold:mayor'),
+  ('stale-operator', 'operator:bench-act');
 `
 	doltPath, port, _ := runReaperAgainstRealDolt(t, seed, maintenanceReaperRigSeedSQL())
 
@@ -97,6 +104,10 @@ INSERT INTO labels (issue_id, label) VALUES
 		"stale-delivery":          "open",
 		"stale-group":             "open",
 		"stale-group-participant": "open",
+		"stale-agent-claim":       "closed",
+		"stale-human-gate":        "open",
+		"stale-held":              "open",
+		"stale-operator":          "open",
 	})
 }
 

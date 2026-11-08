@@ -1044,6 +1044,7 @@ while IFS= read -r DB; do
     # extmsg control records (bindings, memberships, routes) are written once
     # and stay idle while live, so age says nothing about them. Transcript
     # rows stay eligible: closing one is how retention bounds them.
+    # Human-assigned, hold:* and operator:* beads are gates that idle by design.
     # not a second NOT IN: dolt 2.2.3 inverts two ANDed NOT IN subqueries.
     DB_ISSUES_CLOSED=0
     get_sql_rows "$DB" "stale issue" "
@@ -1053,6 +1054,7 @@ while IFS= read -r DB; do
         AND updated_at < DATE_SUB(NOW(), INTERVAL $STALE_AGE_H HOUR)
         AND priority > 1
         AND issue_type != 'epic'
+        AND COALESCE(assignee, '') != 'human'
         AND (
             JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.expires_at')) IS NULL
             OR JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.expires_at')) = ''
@@ -1060,8 +1062,12 @@ while IFS= read -r DB; do
         AND NOT EXISTS (
             SELECT 1 FROM \`$DB\`.labels lbl
             WHERE lbl.issue_id = issues.id
-            AND lbl.label LIKE 'gc:extmsg-%'
-            AND lbl.label != 'gc:extmsg-transcript'
+            AND (
+                (lbl.label LIKE 'gc:extmsg-%'
+                    AND lbl.label != 'gc:extmsg-transcript')
+                OR lbl.label LIKE 'hold:%'
+                OR lbl.label LIKE 'operator:%'
+            )
         )
         AND id NOT IN (
             SELECT DISTINCT d.issue_id FROM \`$DB\`.dependencies d
