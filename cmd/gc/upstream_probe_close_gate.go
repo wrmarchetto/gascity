@@ -90,10 +90,11 @@ func isUpstreamProbeGatedBead(bead beads.Bead) bool {
 
 // upstreamProbeCloseViolation returns an empty string when no upstream-probe
 // contract applies, when probe distinguishes the branch from its production
-// changes, or when a branch with no production changes has a probe that runs
-// its tests green. A non-empty result is a close refusal explaining the failed
-// experiment. The experiment runs in a worktree this function creates and
-// removes, never in the worker's checkout.
+// changes, or when a branch with no behavioral production change (only tests,
+// comments or unembedded docs) has a probe that runs its tests green. A
+// non-empty result is a close refusal explaining the failed experiment. The
+// experiment runs in a worktree this function creates and removes, never in
+// the worker's checkout.
 func upstreamProbeCloseViolation(repoDir, probe string) string {
 	repoDir = strings.TrimSpace(repoDir)
 	if repoDir == "" || !upstreamProbeGitOK(repoDir, "rev-parse", "--is-inside-work-tree") {
@@ -124,44 +125,45 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 	for _, path := range upstreamTree {
 		owned[path] = struct{}{}
 	}
-	var touchesUpstream bool
-	var kept, reverted []string
+	touchesUpstream := false
 	for _, path := range changed {
 		if _, ok := owned[path]; ok {
 			touchesUpstream = true
-		}
-		if upstreamProbeTestPath(path) {
-			kept = append(kept, path)
-		} else {
-			reverted = append(reverted, path)
+			break
 		}
 	}
 	if !touchesUpstream {
 		return ""
 	}
+	mergeBase, err := upstreamProbeGitOutput(repoDir, "merge-base", upstreamProbeBaseRef, "HEAD")
+	if err != nil {
+		return fmt.Sprintf("could not find the merge base with %s: %v", upstreamProbeBaseRef, err)
+	}
+	mergeBase = strings.TrimSpace(mergeBase)
+	kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, mergeBase, changed)
 	probe = strings.TrimSpace(probe)
-	if probe == "" && len(reverted) == 0 {
-		return fmt.Sprintf("edits only test paths, so no command can fail without this patch; set %s to the command that runs the edited tests, which the merge sweep still requires", upstreamProbeMetadataKey)
+	if probe == "" && len(behavioral) == 0 {
+		return fmt.Sprintf("edits only test paths or behavior-free paths (comments, unembedded docs), so no command can fail without this patch; set %s to the command that runs the branch's tests, which the merge sweep still requires", upstreamProbeMetadataKey)
 	}
 	if probe == "" {
 		return fmt.Sprintf("edits upstream-owned code; set %s to the test command that fails without this patch", upstreamProbeMetadataKey)
+	}
+	if len(behavioral) == 0 {
+		return runUpstreamProbeExperiment(repoDir, mergeBase, probe, nil, nil)
 	}
 	if len(kept) == 0 {
 		return "edits upstream-owned code but adds no test path to keep for its retirement experiment"
 	}
 
-	return runUpstreamProbeExperiment(repoDir, probe, reverted)
+	return runUpstreamProbeExperiment(repoDir, mergeBase, probe, reverted, behavioral)
 }
 
 // runUpstreamProbeExperiment requires probe to run a test and pass on the
 // branch tip, then to fail once reverted is undone. An empty reverted (a
-// test-only branch) stops after the first half: the city's upstream audit
-// reports such a patch inconclusive and leaves it to reading.
-func runUpstreamProbeExperiment(repoDir, probe string, reverted []string) string {
-	mergeBase, err := upstreamProbeGitOutput(repoDir, "merge-base", upstreamProbeBaseRef, "HEAD")
-	if err != nil {
-		return fmt.Sprintf("could not find the merge base with %s: %v", upstreamProbeBaseRef, err)
-	}
+// branch with no behavioral production change) stops after the first half:
+// the city's upstream audit reports such a patch inconclusive and leaves it
+// to reading. behavioral only names the reason in a "still passes" refusal.
+func runUpstreamProbeExperiment(repoDir, mergeBase, probe string, reverted, behavioral []string) string {
 	tmpDir, err := os.MkdirTemp("/var/tmp", "gc-upstream-probe-")
 	if err != nil {
 		return fmt.Sprintf("could not create isolated probe worktree: %v", err)
@@ -184,7 +186,7 @@ func runUpstreamProbeExperiment(repoDir, probe string, reverted []string) string
 		return ""
 	}
 
-	patch, err := upstreamProbeGitOutput(repoDir, append([]string{"diff", "--binary", "HEAD", strings.TrimSpace(mergeBase), "--"}, reverted...)...)
+	patch, err := upstreamProbeGitOutput(repoDir, append([]string{"diff", "--binary", "HEAD", mergeBase, "--"}, reverted...)...)
 	if err != nil || strings.TrimSpace(patch) == "" {
 		return "could not build the reverse patch for this branch's production changes"
 	}
@@ -199,7 +201,7 @@ func runUpstreamProbeExperiment(repoDir, probe string, reverted []string) string
 		if upstreamProbeVacuous(output) {
 			return fmt.Sprintf("%s ran no test after production changes were reverted; point it at the regression test", upstreamProbeMetadataKey)
 		}
-		return fmt.Sprintf("%s still passes after this branch's production changes are reverted; use the regression command that fails without the patch", upstreamProbeMetadataKey)
+		return fmt.Sprintf("%s still passes after this branch's production changes are reverted (behavioral: %s); use the regression command that fails without the patch", upstreamProbeMetadataKey, strings.Join(behavioral, ", "))
 	}
 	return ""
 }
@@ -248,7 +250,8 @@ func exitCode(err error) int {
 // openclaw-bridge tests are Node modules under a nested test/, which the
 // top-level test/ prefix does not reach, hence .test.mjs and .test.cjs.
 // The city's upstream-patch audit keeps the same list in
-// assets/scripts/upstreampatch.py and must change with this one.
+// assets/scripts/upstreampatch.py and must change with this one. It has no
+// counterpart for upstreamProbeSweepSpec, which reads file content.
 func upstreamProbeTestPath(path string) bool {
 	return strings.HasSuffix(path, "_test.go") ||
 		strings.HasSuffix(path, ".test.ts") || strings.HasSuffix(path, ".test.tsx") ||

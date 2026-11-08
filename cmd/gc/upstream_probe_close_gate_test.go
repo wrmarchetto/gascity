@@ -271,3 +271,136 @@ func TestEvaluateUpstreamProbeCloseGateKeepsNodeTestModules(t *testing.T) {
 		})
 	}
 }
+
+// TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly pins
+// the gs-g0m7 shape: a branch whose reverted paths are all comment-only Go or
+// unembedded engdocs owes only a probe green on the tip. One behavioral path
+// restores the full experiment, with the behavior-free paths reverted too.
+func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *testing.T) {
+	const ownedGo = "package p\n\n// F returns one.\nfunc F() int { return 1 }\n"
+	const commentGo = "package p\n\n// F returns one, as the fork documents.\nfunc F() int { return 1 }\n"
+	upstream := map[string]string{
+		"owned.go":                 ownedGo,
+		"engdocs/arch/dispatch.md": "upstream prose\n",
+		"upstream_owned.txt":       "base\n",
+	}
+	behaviorFree := map[string]string{
+		"owned.go":                 commentGo,
+		"engdocs/arch/dispatch.md": "fork prose\n",
+		"fork_test.go":             "test fixture\n",
+	}
+	with := func(extra map[string]string) map[string]string {
+		out := map[string]string{}
+		for k, v := range behaviorFree {
+			out[k] = v
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		name     string
+		upstream map[string]string // committed and pinned as upstream/main and main
+		branch   map[string]string // committed on the work branch
+		probe    string
+		wantMsg  string // empty when the close must be accepted
+	}{
+		{name: "comment-docs-and-test/green-probe", branch: behaviorFree, probe: "test -f fork_test.go"},
+		{name: "comment-docs-and-test/red-probe", branch: behaviorFree, probe: "grep -q never-written fork_test.go", wantMsg: "fails on the branch tip"},
+		{name: "comment-docs-and-test/vacuous-probe", branch: behaviorFree, probe: "echo 'ok pkg [no test files]'", wantMsg: "ran no test"},
+		{name: "comment-docs-and-test/no-probe", branch: behaviorFree, wantMsg: "edits only test paths or behavior-free paths"},
+		{
+			name:   "comment-docs-and-sweep-spec/green-probe",
+			branch: with(map[string]string{"cmd/gc/tier_sweep.toml": "[sweep]\nname = \"t\"\n\n[sweep.gate]\nargv = [\"true\"]\n"}),
+			probe:  "test -f fork_test.go",
+		},
+		{
+			name:    "sweep-name-without-sweep-table-keeps-full-experiment",
+			branch:  with(map[string]string{"cmd/gc/tier_sweep.toml": "[gate]\nargv = [\"true\"]\n"}),
+			probe:   "test -f fork_test.go",
+			wantMsg: "(behavioral: cmd/gc/tier_sweep.toml)",
+		},
+		{
+			name:   "comment-only-without-test/green-probe",
+			branch: map[string]string{"owned.go": commentGo},
+			probe:  "test -f owned.go",
+		},
+		{
+			name:    "behavioral-path-keeps-full-experiment",
+			branch:  with(map[string]string{"upstream_owned.txt": "fixed\n"}),
+			probe:   "test -f fork_test.go",
+			wantMsg: "still passes after this branch's production changes are reverted (behavioral: upstream_owned.txt)",
+		},
+		{
+			name:   "behavioral-path-reverts-comment-paths-alongside",
+			branch: with(map[string]string{"upstream_owned.txt": "fixed\n"}),
+			probe:  "grep -q 'as the fork documents' owned.go",
+		},
+		{
+			name:    "behavioral-path-without-probe-still-owes-one",
+			branch:  with(map[string]string{"upstream_owned.txt": "fixed\n"}),
+			wantMsg: "edits upstream-owned code; set gc.upstream_probe",
+		},
+		{
+			name: "embedded-markdown-keeps-full-experiment",
+			upstream: map[string]string{
+				"owned.go":                 ownedGo,
+				"engdocs/arch/dispatch.md": "upstream prose\n",
+				"embed.go":                 "package p\n\nimport \"embed\"\n\n//go:embed engdocs\nvar Docs embed.FS\n",
+			},
+			branch:  behaviorFree,
+			probe:   "test -f fork_test.go",
+			wantMsg: "(behavioral: engdocs/arch/dispatch.md)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := t.TempDir()
+			runUpstreamProbeCloseGateGit(t, repoDir, "init", "-q", "-b", "main")
+			runUpstreamProbeCloseGateGit(t, repoDir, "config", "user.email", "fixture@example.invalid")
+			runUpstreamProbeCloseGateGit(t, repoDir, "config", "user.name", "fixture")
+			commit := func(files map[string]string, msg string) {
+				t.Helper()
+				for path, content := range files {
+					full := filepath.Join(repoDir, path)
+					if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				runUpstreamProbeCloseGateGit(t, repoDir, "add", "-A")
+				runUpstreamProbeCloseGateGit(t, repoDir, "commit", "-q", "-m", msg)
+			}
+			base := tc.upstream
+			if base == nil {
+				base = upstream
+			}
+			commit(base, "upstream base")
+			runUpstreamProbeCloseGateGit(t, repoDir, "update-ref", "refs/remotes/upstream/main", "HEAD")
+			runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-b", "fix/ci-probe")
+			commit(tc.branch, "branch work")
+
+			bead := beads.Bead{ID: "ci-probe", Type: "task"}
+			if tc.probe != "" {
+				bead.Metadata = map[string]string{upstreamProbeMetadataKey: tc.probe}
+			}
+			store := beads.NewMemStoreFrom(1, []beads.Bead{bead}, nil)
+			var stderr strings.Builder
+			blocked := evaluateUpstreamProbeCloseGate([]string{"close", "ci-probe"}, store, nil, repoDir, &stderr)
+			if tc.wantMsg == "" {
+				if blocked {
+					t.Fatalf("close was blocked: %s", stderr.String())
+				}
+				return
+			}
+			if !blocked {
+				t.Fatalf("close was accepted, want refusal containing %q", tc.wantMsg)
+			}
+			if got := stderr.String(); !strings.Contains(got, tc.wantMsg) {
+				t.Fatalf("refusal = %q, want it to contain %q", got, tc.wantMsg)
+			}
+		})
+	}
+}
