@@ -265,9 +265,9 @@ func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
 }
 
 // poolReadyQueueMergeJQ joins the two pool tiers' arrays into one created_at
-// order. Each tier arrives oldest-first, and the tiebreak on id keeps the
-// merge deterministic. A tier that printed no JSON fails the merge, which
-// falls through to the legacy tiers like an empty queue.
+// order, id breaking ties. A failing tier prints nothing and adds no rows.
+// Output that is not an array of beads fails the merge, losing both tiers'
+// rows, and the query falls through to the legacy tiers like an empty queue.
 const poolReadyQueueMergeJQ = `[.[][]] | sort_by(.created_at // "", .id // "")`
 
 // poolReadyQueueCommand is the pool queue: the routed and pool-alias tiers

@@ -160,7 +160,7 @@ canonical `gc.routed_to=<target>` route with `--include-ephemeral`, and
 the temporary migration predicate reads `gc.run_target=<target>` only on
 `gc.kind=workflow` roots that predate root `gc.routed_to` stamping. The
 work-query form appends `--sort oldest` to the canonical probe and prints
-the first match, then filters the migration probe to roots with empty
+its matches oldest first, then filters the migration probe to roots with empty
 `gc.routed_to`. That is an intentional routed-queue policy:
 unassigned routed pool work is FIFO before priority, so newer
 high-priority work does not jump ahead of older ready work already queued
@@ -170,8 +170,10 @@ same `--sort oldest`, and the two forms are merged into ONE queue ordered by
 in turn, any ready routed bead hid every bead parked on the pool name however
 old. Measured on the city store (ci-mozmau): an escalation filed by
 `escalate-bead.py` on the `toolsmith` alias at 18:43Z waited 6.6 h for its
-first claim, and about 2.6 h of that was a slot spent on a bead slung to the
-same pool at 21:44Z. The rest was a full pool and older alias work ahead of it.
+first claim. The slot that took it had spent the 2.8 h before on a bead slung
+to the same pool at 21:44Z, and before that the pool was full or taking older
+alias work. Predicted from a replay holding service times fixed, not
+measured: one queue claims the escalation about 2.6 h sooner.
 The own-identity tiers pass no `--sort` at all and therefore keep bd's
 priority-first default. The count form unions canonical and migration
 probes and deduplicates by bead ID before piping through `jq 'length'`.

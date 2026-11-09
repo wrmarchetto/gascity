@@ -7,6 +7,7 @@ Covers:
 - az-r41s 36e259ea94a453761c4428bb074eea6d2ac7b999
 - ci-3imbeu 1fe0ea1eadf6e1facb89848ecbb0041c0f888b65
 - ci-5c95j4 4f0d887e5de9193420692dbd356b48b4db5afe27
+- ci-71d5yl 0f658224c993efa246d056b75e72bb86ed2dfaf8
 - ci-7npmly none
 - ci-bq7qvz 19bb445c50af6f5ab55ef445313e50d98686e41c
 - ci-ce84ou 682d890b5e63205e6d3ea3191e187015f35649bd
@@ -15,7 +16,9 @@ Covers:
 - ci-cu1tu3 none
 - ci-f9cj1b 61b49df5a2f8788ee92a822debcd3434f4f40595
 - ci-fb3uff 3fe364d77072c6b72bea8bdaf55868a74133fdc0
+- ci-m5pd91 8ab57c3655330678dc7cdce048e7cd0d6b783440
 - ci-m6ifdq 1c4026399dc9a119a46cd2ac79e95b2c2b9cfc32
+- ci-mozmau 712dea4269ab9ee07c0b009b7d224934d412cff4
 - ci-ms65m7 6094f34cdb83f9a5aa8e7d3af4ad377b5c20e2c0
 - ci-ms847d 2df7e0b6da96d6f0f47dae4302c74ff649a799ae
 - ci-npfgao 22b77062daf687db1a5e74f672a66b1f7c2671c9
@@ -51,6 +54,15 @@ as-hq04p's `08b314a9` in sel4, az-r41s's `e687d003` and az-8ujz's
 `173729bb` in zephyr, the last carrying az-10ry's `c0d1eb8d` after the
 listed commit. Their tools were run at the astoria shas above, in scratch
 worktrees, and the gs-q1ix bullets stand as written unless amended here.
+
+Refreshed again by gs-g0m7 over gascity `17c9657d7`, city `df79a5f81` and
+ci-mozmau's branch tip `712dea426`, after review g1's `unmet:target`
+(pm-log #195) placed ci-71d5yl, whose re-measure filed ci-m5pd91 and
+ci-mozmau. ci-71d5yl's `0f658224c` and ci-m5pd91's `8ab57c365` are on city
+main in `5461080e2` and `df79a5f81`. ci-mozmau's `712dea426` is on gascity
+branch `fix/ci-mozmau-pool-tiers-one-fifo`, queued in the sweep and on no
+main at this pass, so it was read and run there. The earlier bullets stand
+as written unless amended here.
 
 ## Code against docs
 
@@ -135,6 +147,40 @@ worktrees, and the gs-q1ix bullets stand as written unless amended here.
   them, and the 890 s cap as `ZEPHYR_GATE_TIMEOUT` still reads on city
   main. The merge's `docs/invariant-provenance.md` paragraphs are a comment
   block `5408f992` moved there, as its body says.
+- ci-71d5yl, city `docs/bead-cycle-time-remeasure.md` (ci-ozsp1r's
+  report). Its second re-run command over the committed passes file
+  reproduces the queue-decomposition table, the gate table and the load
+  paragraph cell for cell. Its first, over a copy of the 220 run-log files
+  retained at this pass, reproduces the Finding and Stages tables, every
+  call and every p90. That CSV differs from the committed one only in
+  `passes_passed_over`, by 1 on three city rows (ci-pl7szb, ci-qr8hlr,
+  ci-pqa4fn), because the oldest retained log is now 11-07T03:45:13Z
+  against the report's 01:31:38Z. The anchors the page reads from outside
+  the tools hold: city main's reflog puts `7487c4c89` at 11-05T21:57:31Z
+  and `0becc0ea9` at 11-06T11:38:02Z, the 2.1.319 binary was born at
+  11-06T01:30:31Z, and zephyr's `77cef984`, `7230e5c6` and `3a617a98`
+  carry 19:30:36Z, 19:31:49Z and 17:41:04Z.
+- ci-m5pd91, city `docs/fleet-review-gate.md` "After the relay fix". The
+  Claude reader's cap of 1 is `agents/adversarial-reader-claude/agent.toml`,
+  `c11223729` cites ci-t1m2c5, the attestation clause is
+  `agents/adversarial-reader/prompt.template.md`'s, and the cross-model
+  rule is the 08-31 paragraph of `docs/codex-rig-engineer-brake.md`.
+  Recounted from the city store: 33 reader reviews keyed
+  `gc.fleet_review_of` were filed in the window, 32 on the Claude reader
+  and 1 on Codex, and 27 flagged (7 attested, 20 withheld) and 6 passed,
+  as the page says. Its claim-wait minutes and slot-busy shares were not
+  re-derived. It cited the re-measure on a branch that had already landed
+  (finding 11).
+- ci-mozmau, gascity `internal/config/workquery.go` and
+  `engdocs/architecture/dispatch.md`. The generated query runs both pool
+  tiers and sorts the merged rows by `created_at`, then `id`. bd prints
+  `created_at` as whole-second UTC (`2026-11-07T23:51:42Z` on gs-g0m7), so
+  the string sort is the time sort. The city store's times for ci-x1o46h,
+  ci-qr8hlr, ci-p27qhl, ci-6uq71o, ci-uon713 and the three beads that
+  filled the pool match the commit body. The merge's comment misdescribed
+  a failing tier (finding 12). The page reported the replay's 2.6 h as
+  measured, and said the work-query form prints the first match
+  (finding 13).
 
 ## Docs against spec
 
@@ -183,6 +229,27 @@ pm-log #150 to #193.
   `docs/bead-cycle-time-post-change.md` counts each rig's in-session full
   and scoped runs per landing since, but times none of them, so az-8ujz's
   and as-8384y's savings in time are still their own predictions.
+- Target, at this refresh, read against `docs/roadmap.md` at `17c9657d7`
+  and pm-log #194 to #198: unmet at the third measurement. ci-71d5yl's
+  re-measure (cohort 11-05T21:57:31Z to 11-06T23:58:52Z, measured at
+  11-07T22:21Z) misses in city, astoria-sel4 and astoria-zephyr. gascity
+  misses as found at n=7, and its half is accepted on that sample by the
+  operator's ruling (pm-log #196). dart is unmeasured at n=1. ci-71d5yl's
+  done-criterion, a committed report and every rig's verdict in its close,
+  is met. City's stage bead ci-m5pd91 closed as a finding. The mayor's
+  routing of Claude-authored reviews to the Codex reader followed it, held
+  in `gc bd remember` and in no mechanism, and the attestation question
+  is with the operator. sel4's ci-mozmau is on its branch. zephyr has no
+  stage bead of its own, its red main waiting on the operator through
+  ci-t7q8kp. Every stage line is predicted, untested, and the next
+  re-measure that ci-71d5yl's close calls for is placed by no bead yet.
+- The other four criteria are unchanged by the three new members.
+  ci-mozmau changes claim order, not the sweep, and its test change and
+  this pass's are each net 0 test functions.
+- Left for the pm-epic-close this review leads to: the roadmap's
+  Conclusion and `engdocs/epics/bead-cycle-time.md` still call the stage
+  fixes unmeasured and ci-71d5yl open. Both were true at #195, and both
+  are the PM's to rewrite with the verdict.
 
 ## Run twice
 
@@ -237,6 +304,19 @@ pm-log #150 to #193.
   bead-cycle-time and merge-queue-wait OK, test-growth-gate 29/29,
   notify-on-close OK, epic-review-drive 57/57, merge-closed-features 1819
   checks in 464 tests.
+- ci-71d5yl changed no tool. Its report's second command,
+  `merge-queue-wait.py` over `docs/bead-cycle-time-remeasure-passes.json`,
+  twice: stdout and CSV byte-identical, and equal to the page (Code
+  against docs). Its first, `bead-cycle-time.py` over one frozen copy of
+  the 220 retained run-log files, twice: CSV and stdout byte-identical,
+  109 s and 178 s at load 45 on 24 cores.
+- ci-mozmau's subset, `go test ./cmd/gc/ -run
+  'HookClaimOrdering|PoolAlias|WorkQuery|PoolDemand'` at `712dea426`,
+  twice: 90 tests pass each time,
+  `TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers` and both its
+  cases among them. `./internal/config/` and `./test/docsync/` pass.
+- ci-m5pd91 added no tool. Its counts were re-derived from the store
+  instead (Code against docs).
 
 ## Wrong input
 
@@ -277,6 +357,16 @@ pm-log #150 to #193.
 - zephyr `affected_tests.py audit no-such-gate` printed "0 target(s), 0
   uncovered read(s)" and exited 0, which is what a clean audit of a real
   gate prints (finding 9).
+- ci-mozmau's generated query (`pool_Work_bd105.golden`) under `sh`,
+  against a stub bd that serves the two pool tiers from the environment
+  and refuses every other call. Both tiers served: the older alias row
+  first, where main's query returns the newer routed row alone. A tier
+  printing text, an error object or `null`: `[]`, losing the other tier's
+  valid row with it. main's query passed such output through for the
+  claim to fail on. bd printed nothing on stdout for every failure tried
+  (a missing store, a malformed `--metadata-field`, an unknown `--sort`),
+  so this shape needs a bd that writes non-JSON to stdout. Left, and the
+  comment now states it (finding 12).
 
 ## Missing input
 
@@ -305,6 +395,17 @@ pm-log #150 to #193.
   foreign `(recorded at)` stamp: full, with the refresh remedy.
 - zephyr `affected_tests.py audit --root` at a missing directory: a
   CalledProcessError traceback, exit 1. Nonzero, so left, unnamed as it is.
+- ci-mozmau's query with one tier printing nothing and exiting 1, as bd
+  does: the other tier's row is served alone, as main's ladder served it.
+  Nothing pinned that. ` && ` for `; ` between the tiers left all 90
+  tests green and failed only the string goldens (finding 12).
+- The same query with both tiers printing nothing: `[]`, and it falls to
+  the legacy tiers. With `jq` absent from PATH: `[]` with a row in each
+  tier, where main's query served the routed row. jq is doctor-checked,
+  and the other pool tiers already pipe through it. Left.
+- ci-71d5yl's first re-run command over this pass's log copy, the
+  report's own copy having aged out: the one-column drift under Code
+  against docs.
 
 ## Findings
 
@@ -351,10 +452,29 @@ pm-log #150 to #193.
     serial subset at about 2.9 times the concurrent one. A runner change
     with its own sweeps and timing, so filed as zephyr az-20v1f
     (astoria-zephyr/lab.engineer), not as a member of this epic.
+11. City `docs/fleet-review-gate.md` (ci-m5pd91) cited the re-measure "on
+    city branch `fix/ci-ozsp1r-cohort-remeasure`". That branch reached
+    city main in `5461080e2` nine minutes before ci-m5pd91's own merge.
+    Fixed in city `6389dab50`.
+12. gascity `internal/config/workquery.go` (ci-mozmau): the merge's
+    comment said a tier printing no JSON fails the merge. A tier failing
+    as bd does prints nothing, and the other tier's rows survive, which no
+    test pinned. The control test's comment still credited the ladder.
+    Fixed in gascity `8b780781b`: the fake bd scripts a tier failure, the
+    control runs with the routed tier empty and failing, and
+    `cmd/gc/pool_queue_tier_merge_sweep.toml` records the ` && `
+    mutation, 1/1 died.
+13. gascity `engdocs/architecture/dispatch.md` (ci-mozmau) gave the
+    replay's 2.6 h as measured, beside the 2.8 h the slot actually held
+    the slung bead, and said the work-query form prints the first match.
+    Fixed in gascity `52f515a83`.
 
-gs-q1ix's city fixes landed on city main in `fa46fcac4`. The sel4 and
-zephyr fixes are on branch `fix/gs-hyos-bead-cycle-time-self-review` in
-each rig, for the sweep to land after gs-hyos closes. Noted and left:
+gs-q1ix's city fixes landed on city main in `fa46fcac4`. gs-hyos's sel4
+and zephyr fixes are on each rig's main since, `6eebd80c` and
+`4254e039`. gs-g0m7's city fix is on city branch
+`docs/gs-g0m7-bead-cycle-time-self-review`, and its gascity commits are on
+the gascity branch of that name, cut from ci-mozmau's tip, so it carries
+`712dea426` if the sweep has not landed it first. Noted and left:
 PUSH_SELECT reads the hook's catch-all line as unknown, zephyr's `plan`
 blames the base for a missing `--root`, sel4's `fold` writes no recording
 stamp, and fold accepts logs from another checkout. Each errs toward
