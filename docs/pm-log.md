@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-3h5r 2026-11-07T23:51:00Z
+last_seen: gs-fyn9 2026-11-09T16:14:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6218,3 +6218,46 @@ g1 deferred findings F01-F10 closed (operator: defer all findings to the
 gascity engineer and close the epic), this summons, and gs-g0m7.
 
 Source: pm-log #194
+
+## 199. pm-epic-close gs-fyn9: bead-cycle-time review g2, verdict unmet:target, no new member (2026-11-09)
+
+Summons: every epic:bead-cycle-time member is closed in every store, and
+review generation city ci-rvfb303a39b96f (g2, closure mode) is open. g1
+(ci-rv64454c4a9350) is superseded by it. gascity is gated, so no status
+edit here. Self-review `--check` printed `covered` (gs-g0m7 refreshed it
+for ci-71d5yl, ci-m5pd91 and ci-mozmau, with findings 11 to 13 fixed).
+
+Verified from the new members' close reasons:
+
+- Target: UNMET. Recorded `review.pm_acceptance=unmet:target` on g2.
+  ci-71d5yl's re-measure (ci-ozsp1r, city docs/bead-cycle-time-remeasure.md)
+  missed in city, astoria-sel4 and astoria-zephyr, gascity missed as found
+  but is accepted on its small sample (#196), dart unmeasured. Its stage
+  beads: ci-m5pd91 is a finding, not a tuning (fleet-review reviewer claim
+  waits and review rounds, two decisions mailed to the mayor), ci-mozmau a
+  landed gc fix (one oldest-first pool queue, 712dea4269 on gascity main
+  and in the running gc). Both carry predicted, untested lines. Zephyr's
+  red main has cleared (ci-t7q8kp, no-op close 11-09).
+- Every other criterion: met, unchanged from #195.
+
+No new `epic:bead-cycle-time` member filed for the gap, which departs
+from the summons body. The operator saw g1 with `unmet:target` and
+directed "defer all findings to the gascity engineer and close the epic"
+(#198). A new member would supersede g2 once it closed, as ci-71d5yl's
+closing superseded g1, and would override that direction. The operator's
+review is what decides it now: approval closes the epic as it stands, and
+a fix request puts the gap back inside it. Recorded as pm-open #13.
+
+Conclusion block and engdocs/epics/bead-cycle-time.md (docs/epics link)
+updated for the third measurement, status line unchanged, no `closed:`
+line. summary_defects reports none with done=False, and only the missing
+date with done=True, as a gated rig expects.
+
+Promotion: none. No epic is `open`, and the operator ruled no next epic
+for gascity (#196, pm-open #11), so the what-next question is not
+re-appended and no DECOMP is sent.
+
+Rig store since last_seen: gs-3h5r closed (#198), gs-g0m7 closed with its
+hold set and cleared three times, and this summons.
+
+Source: roadmap bead-cycle-time

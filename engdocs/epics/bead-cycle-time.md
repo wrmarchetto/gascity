@@ -28,8 +28,9 @@ before anything was pruned, and gascity's whole merge gate was brought
 under the time a sweep pass can give it. A close gate now refuses a bead
 that adds test functions without saying why no existing test could be
 extended, and the engineer and toolsmith prompts carry the same rule.
-The end-to-end time was then measured twice after the changes, and each
-rig still over the hour got a fix aimed at the stage carrying its miss.
+The end-to-end time was then measured three times after the changes, and
+after each of the first two every rig still over the hour got a bead aimed
+at the stage carrying its miss.
 
 ## what was found
 
@@ -48,14 +49,28 @@ has. That holds for this host and that load, as the post-change report
 states. gascity and dart had too few landings in the second window to be
 measured at all, so their verdicts are absent rather than passing.
 
+The third window, after those fixes, still missed in the same three rigs.
+The review-round relay fix held, and what city now waits on is the review
+itself: a single reviewer slot taking almost every read, and rounds that
+flag real defects. That was recorded as a finding and handed to the mayor
+as two decisions, routing and the bar a review attests to, rather than
+tuned away. sel4's largest share was an escalation that waited hours
+because the toolsmith queue served freshly assigned work ahead of older
+escalations, and gc now serves both from one oldest-first queue. Zephyr's
+broken main has since cleared. gascity's own sample was small and is
+accepted as it stands.
+
 ## where it ended
 
 Five of the six acceptance criteria are met, as the self-review record
 lays out criterion by criterion. The one-hour target is not met. At the
-last measurement it missed in city, astoria-sel4 and astoria-zephyr. The
-fixes for each of those misses have since landed, but nothing has
-measured a window after them, so whether they close the gap is still a
-prediction. City bead ci-71d5yl places that re-measurement. gascity's own
+last of three measurements it missed in city, astoria-sel4 and
+astoria-zephyr. The queue fix from that round has landed and city's
+reviewer routing has changed, but no window after them has been measured,
+so whether they close the gap is still a prediction. When the operator
+reviewed this epic with the target unmet, the direction was to defer the
+review's findings and close the epic, so no fourth measurement was placed
+inside it (pm-log #199). gascity's own
 half of the target may be accepted on a small or empty sample, so it does
 not hold the epic open waiting on gascity landings, and no further gascity
 epic is planned (pm-log #196). The test-growth gate's runtime
@@ -87,6 +102,11 @@ which a separate zephyr bead covers outside this epic.
   merge-gate speed work
 - as-8384y, as-hq04p, az-8ujz, az-r41s -- astoria affected runs and suite
   speed
-- ci-71d5yl -- the open re-measurement of the target
+- city docs/bead-cycle-time-remeasure.md -- third window, per-rig misses
+  (ci-71d5yl, ci-ozsp1r)
+- city docs/fleet-review-gate.md, "After the relay fix" -- reviewer claim
+  waits and review rounds (ci-m5pd91)
+- gascity engdocs/architecture/dispatch.md -- one oldest-first pool queue
+  (ci-mozmau)
 - az-20v1f -- zephyr serial affected runs, outside this epic
-- pm-log #148 to #195 -- the rulings that shaped the criteria
+- pm-log #148 to #199 -- the rulings that shaped the criteria

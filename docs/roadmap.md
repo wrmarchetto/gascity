@@ -272,11 +272,13 @@ mayor at decomposition. The same extend-before-add line for Willie's own
 ~/.claude/CLAUDE.md is a proposal to him, not a bead (pm-log #152).
 
 Conclusion: Five of six criteria met per the self-review record (gs-q1ix,
-gs-hyos): baseline (ci-npfgao), merge queue first (ci-ms65m7, ci-cicsvc),
-slow tests first, extend before add (ci-ufxl74) and run once per landing.
-The Target missed at both measurements (ci-r81svr, ci-cj9utx), and the
-stage fixes for the second are unmeasured, so review g1 reads
-unmet:target with ci-71d5yl placing the re-measure (pm-log #195).
+gs-hyos, gs-g0m7): baseline (ci-npfgao), merge queue first (ci-ms65m7,
+ci-cicsvc), slow tests first, extend before add (ci-ufxl74) and run once per
+landing. The Target missed at all three measurements (ci-r81svr, ci-cj9utx,
+ci-71d5yl): the last missed in city, astoria-sel4 and astoria-zephyr, and
+gascity's thin sample is accepted under pm-log #196. Its stage beads
+ci-m5pd91 and ci-mozmau are a finding and a landed fix, both unmeasured, so
+review g2 reads unmet:target (pm-log #199).
 
 ## Abandoned
 

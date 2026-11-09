@@ -416,3 +416,27 @@ Partial answer (mayor mail ci-wisp-ceebg0p, pm-log #174): (a) yes. The
 sweep is to read `epic-deferred:<slug>` as placed, city toolsmith bead
 ci-m2x0km. Until it lands, the mayor has labeled F01 and F03 through F16
 `standalone`. (b) is still open.
+
+## 13. Does "close the epic" stand for bead-cycle-time g2 with the Target still unmet? (2026-11-09)
+
+Review g1 of bead-cycle-time carried `unmet:target`, and the operator
+deferred its ten findings with "defer all findings to the gascity engineer
+and close the epic" (gs-rv64454c4a9350-f01-deferred to -f10). g1 was then
+superseded by g2, because the re-measure ci-71d5yl and its stage beads
+ci-m5pd91 and ci-mozmau joined the epic. ci-71d5yl missed again in city,
+astoria-sel4 and astoria-zephyr, and its close says a further re-measure
+belongs after ci-mozmau and the zephyr repair land.
+
+Ruling (pm-log #199): g2 records `unmet:target`, and no new
+`epic:bead-cycle-time` member is filed for the gap. A new member would
+supersede g2 once it closed, which is how g1 ended, and would override the
+operator's direction to close. If the operator wants the gap carried
+inside the epic, requesting fixes on g2 is the path.
+
+Question: does the operator's close direction still hold with ci-71d5yl's
+third miss on the packet, and is a further re-measure wanted outside the
+epic once ci-mozmau and city's reviewer routing have a window behind them?
+
+Would settle it: the operator approving g2 (close stands), or requesting
+fixes on it (the gap goes back inside the epic), and a word on whether a
+re-measure is wanted after close.
