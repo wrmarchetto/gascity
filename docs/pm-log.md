@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-fyn9 2026-11-09T16:14:00Z
+last_seen: gs-5zdc 2026-11-11T05:25:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6261,3 +6261,37 @@ Rig store since last_seen: gs-3h5r closed (#198), gs-g0m7 closed with its
 hold set and cleared three times, and this summons.
 
 Source: roadmap bead-cycle-time
+
+## 200. Close report gs-5zdc: operator approved bead-cycle-time g2, PM acceptance released to met (2026-11-10)
+
+The operator approved review g2 (city ci-rvfb303a39b96f) at
+2026-11-11T03:43Z. Decision record: city
+docs/reviews/decisions/gascity-bead-cycle-time/g2-fb303a39b96f/001.json
+(city commit 9cc55cf3a). His words: "bead-cycle-time: defer all findings
+to the city engineers and close the epic". All sixteen findings deferred,
+owner the city engineers.
+
+The approval was held only by the `review.pm_acceptance=unmet:target`
+that #199 recorded. #199 said the operator's review decides the gap:
+approval closes the epic as it stands. The g2 packet's walkthrough and
+packet.md both state the `unmet:target` verdict, so he approved with the
+miss in front of him. That accepts the Target as unmet. No other hold
+remains, and no new member is filed.
+
+Actions, in order: this entry; `review.pm_acceptance=met` on
+ci-rvfb303a39b96f; `gc city epic-review close gascity bead-cycle-time`;
+`closed:` added to docs/epics/bead-cycle-time.md. The Conclusion block
+keeps saying the Target was missed. `met` here records his acceptance,
+not a measurement.
+
+pm-open #13: the close half is settled. The re-measure half is not
+answered by his words beyond deferring the findings to the city
+engineers, so it is left with them and #13 notes that.
+
+Promotion: none. No epic is `open`, and the operator ruled no next epic
+for gascity (#196).
+
+Rig store since last_seen: gs-fyn9 closed (#199), the g2 deferred
+findings filed, and this summons.
+
+Source: pm-log #199

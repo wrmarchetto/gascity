@@ -440,3 +440,8 @@ epic once ci-mozmau and city's reviewer routing have a window behind them?
 Would settle it: the operator approving g2 (close stands), or requesting
 fixes on it (the gap goes back inside the epic), and a word on whether a
 re-measure is wanted after close.
+
+RESOLVED in part (pm-log #200): the operator approved g2 with the Target
+unmet ("defer all findings to the city engineers and close the epic"),
+so the close stands. A re-measure after close was not named. It sits with
+the deferred findings and their owner, the city engineers.
