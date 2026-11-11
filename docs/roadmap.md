@@ -212,7 +212,8 @@ paired read in its close reason. Approval is the operator's (pm-log #188).
 
 ## epic:bead-cycle-time -- City bead cycle time: the non-development time to main
 
-status: in-progress
+status: done
+Review: ci-rvfb303a39b96f/001
 
 Work takes a very long time to land, and most of that time is not
 development. This epic measures where a bead's time goes between its last
