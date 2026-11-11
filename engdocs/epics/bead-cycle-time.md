@@ -1,6 +1,7 @@
 # City bead cycle time: the non-development time to main
 
 epic: bead-cycle-time
+closed: 2026-11-10
 
 ## what this was for
 
