@@ -67,9 +67,9 @@ func upstreamProbeSweepSpec(repoDir, base, head, p string, embeds *upstreamProbe
 
 // upstreamProbeBehaviorFree reports whether p's change between base and head
 // cannot alter behavior. Only two kinds of path qualify: a .go file whose
-// code tokens, directives and cgo preamble are unchanged, and Markdown under
-// engdocs/ or docs/ that no //go:embed pattern at head reaches. Anything
-// unreadable counts as behavior.
+// code tokens, directives and cgo preamble are unchanged, and any other file
+// under engdocs/ or docs/ that no //go:embed pattern at head reaches.
+// Anything unreadable counts as behavior.
 func upstreamProbeBehaviorFree(repoDir, base, head, p string, embeds *upstreamProbeEmbedIndex) bool {
 	switch {
 	case strings.HasSuffix(p, ".go"):
@@ -77,7 +77,7 @@ func upstreamProbeBehaviorFree(repoDir, base, head, p string, embeds *upstreamPr
 		headSrc, headErr := upstreamProbeGitOutput(repoDir, "show", head+":"+p)
 		return baseErr == nil && headErr == nil &&
 			upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))
-	case upstreamProbeDocsMarkdown(p):
+	case upstreamProbeDocsPath(p):
 		return embeds.unembedded(p)
 	}
 	return false
@@ -104,9 +104,11 @@ func (x *upstreamProbeEmbedIndex) unembedded(file string) bool {
 	return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)
 }
 
-func upstreamProbeDocsMarkdown(p string) bool {
-	return strings.HasSuffix(p, ".md") &&
-		(strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/"))
+// upstreamProbeDocsPath takes any extension: the generated schema under
+// docs/reference/schema is .json and .txt, and the embed check is what
+// separates shipped content from prose.
+func upstreamProbeDocsPath(p string) bool {
+	return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")
 }
 
 // upstreamProbeGoBehaviorFree reports whether two versions of a Go file
