@@ -151,7 +151,7 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 	if len(behavioral) == 0 {
 		return runUpstreamProbeExperiment(repoDir, mergeBase, probe, nil, nil)
 	}
-	if len(kept) == 0 {
+	if len(upstreamProbeKeptTests(kept)) == 0 {
 		return "edits upstream-owned code but adds no test path to keep for its retirement experiment"
 	}
 
@@ -260,6 +260,19 @@ func upstreamProbeTestPath(path string) bool {
 		strings.HasSuffix(path, ".test.sh") ||
 		strings.HasPrefix(path, "test/") || strings.HasPrefix(path, "testdata/") ||
 		strings.Contains(path, "/testdata/")
+}
+
+// upstreamProbeKeptTests returns the kept paths that are tests. A sweep spec
+// is kept so the revert leaves it alone, but no probe runs it, so it cannot
+// stand in for the test a behavioral patch owes its retirement experiment.
+func upstreamProbeKeptTests(kept []string) []string {
+	var tests []string
+	for _, path := range kept {
+		if upstreamProbeTestPath(path) {
+			tests = append(tests, path)
+		}
+	}
+	return tests
 }
 
 func upstreamProbeVacuous(output string) bool {
