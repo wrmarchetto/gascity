@@ -45,6 +45,28 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			head: "// +build darwin\n\npackage p\n",
 		},
 		{
+			name: "deleting-blank-line-after-plus-build-is-behavioral",
+			base: "// +build ignore\n\npackage p\n",
+			head: "// +build ignore\npackage p\n",
+		},
+		{
+			name: "inserting-blank-line-after-plus-build-is-behavioral",
+			base: "// +build ignore\n// Package p is p.\npackage p\n",
+			head: "// +build ignore\n\n// Package p is p.\npackage p\n",
+		},
+		{
+			name: "comment-change-after-package-clause-of-plus-build-file-is-behavior-free",
+			base: "// +build ignore\n\npackage p\n\n// F does a.\nfunc F() {}\n",
+			head: "// +build ignore\n\npackage p\n\n// F does b.\nfunc F() {}\n",
+			want: true,
+		},
+		{
+			name: "header-comment-change-without-plus-build-is-behavior-free",
+			base: "//go:build ignore\n\n// Package p does a.\npackage p\n",
+			head: "//go:build ignore\n// Package p does b.\npackage p\n",
+			want: true,
+		},
+		{
 			name: "go-embed-text-change-is-behavioral",
 			base: "package p\n\nimport _ \"embed\"\n\n//go:embed a.txt\nvar s string\n",
 			head: "package p\n\nimport _ \"embed\"\n\n//go:embed b.txt\nvar s string\n",
