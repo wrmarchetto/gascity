@@ -1,8 +1,9 @@
 # Proves the upstream-probe classifier's behavior-free arms are enforced: a
 # docs/ or engdocs/ file, or a comment-only .go change, is behavior-free only
-# while no //go:embed reaches it, and Go source under docs/ is judged as Go.
-# Each row flips one guard to its accepting counterpart and names the subtest
-# that must go red.
+# while no //go:embed reaches it, Go source under docs/ is judged as Go, and a
+# .go file carrying a +build line keeps every byte before its package clause.
+# Each row flips one guard to its accepting counterpart, or a narrowing to its
+# wide form, and names the subtest that must go red.
 
 [sweep]
 name = "upstream-probe arms: unembedded docs and Go only, Go judged first"
@@ -98,4 +99,45 @@ replace = "return !upstreamProbeEmbedded(x.embeds, file)"
 expect_output = [
   "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
   "sweep-spec-is-behavioral-when-embeds-cannot-be-resolved",
+]
+
+# --- a +build file's header is behavior, since blank lines are not tokens ---
+
+[[mutation]]
+id = "go-arm-ignores-plus-build-header"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if !bytes.Equal(baseHeader, headHeader) {"
+replace = "if false && !bytes.Equal(baseHeader, headHeader) {"
+expect_output = [
+  "deleting-blank-line-after-plus-build-is-behavioral",
+  "inserting-blank-line-after-plus-build-is-behavioral",
+]
+
+[[mutation]]
+id = "plus-build-match-refuses-every-comment"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "func upstreamProbePlusBuild(comment string) bool {\n\treturn strings.HasPrefix"
+replace = "func upstreamProbePlusBuild(comment string) bool {\n\treturn false && strings.HasPrefix"
+expect_output = [
+  "plus-build-text-change-is-behavioral",
+  "deleting-blank-line-after-plus-build-is-behavioral",
+  "inserting-blank-line-after-plus-build-is-behavioral",
+]
+
+# --- the header rule's narrowing: +build files only, bytes before package ---
+
+[[mutation]]
+id = "header-kept-for-every-file"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if c.Slash < parsed.Package && upstreamProbePlusBuild(c.Text) {"
+replace = "if c.Slash < parsed.Package {"
+expect_output = ["header-comment-change-without-plus-build-is-behavior-free"]
+
+[[mutation]]
+id = "header-spans-whole-file"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "header = src[:fset.File(parsed.Package).Offset(parsed.Package)]"
+replace = "header = src"
+expect_output = [
+  "comment-change-after-package-clause-of-plus-build-file-is-behavior-free",
 ]
