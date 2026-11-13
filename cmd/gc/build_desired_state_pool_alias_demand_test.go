@@ -199,10 +199,12 @@ func TestPoolAliasDemandLeavesTheAssigneeInPlace(t *testing.T) {
 //     recovered by the slot-orphan wake path (ci-rdbw), not pool-door demand.
 //   - unknown assignee: names no configured agent at all.
 //
-// Verified by mutation, and the results are not uniform -- recorded so a reader
-// knows which rows pin THIS tier. Dropping the type exclusions fails `epic`,
-// dropping the hold check fails `hold`, and normalizing the assignee before the
-// template lookup fails `slot identity`. `unknown` is not enforced here at all:
+// Verified by mutation (pool_alias_demand_sweep.toml), and the results are not
+// uniform -- recorded so a reader knows which rows pin THIS tier. Dropping the
+// type exclusions fails `epic`, and normalizing the assignee before the
+// template lookup fails `slot identity`. `hold` pins the demand reader's own
+// check in build_desired_state.go, which drops held beads ahead of both demand
+// routes, because this tier has none. `unknown` is not enforced here at all:
 // it falls out of the template-set membership test above this tier, so that row
 // pins the outcome rather than any line in pool_alias_demand.go.
 func TestPoolAliasDemandExclusionsMatchTheShellPredicate(t *testing.T) {
