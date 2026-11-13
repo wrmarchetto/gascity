@@ -7,7 +7,7 @@
 // Why this exists as a second admission rule beside the routed one rather than
 // as a normalization pass over the beads: ci-c000 already taught the generated
 // shell predicates this shape (bdReadyPoolAliasDemandShell, unioned into
-// poolDemandCountShell for the reconciler and poolDemandFirstRowFunctionScript
+// poolDemandCountShell for the reconciler and poolDemandProbeFunctionScript
 // for the worker), and built the claim side to match -- hookCandidatePoolAlias
 // plus BdStore.ReassignIfAssignee, which takes the bead by compare-and-swap so
 // two slots cannot both win it. The reconciler only shells out for a pool with a

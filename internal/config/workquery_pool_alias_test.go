@@ -16,7 +16,7 @@ import (
 // the three identity tiers never probe the bare pool name, the bead is invisible,
 // and the session drain-acks as if the queue were empty. There is no error to
 // assert on, so the tests assert on the generated shell instead, and they assert
-// the tier is present in BOTH the worker first-row form and the reconciler
+// the tier is present in BOTH the worker queue form and the reconciler
 // count-form: a fix in only the first leaves the reconciler blind to the demand
 // and no slot is ever spawned to run the query (ci-rdbw), while a fix in only the
 // second is the spawn-storm class of PR #1516.

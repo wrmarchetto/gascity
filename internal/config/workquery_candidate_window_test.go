@@ -26,8 +26,8 @@ import (
 //
 // Delegated elsewhere: the FIFO sort key is
 // TestRoutedQueueOrderingPolicyMatchesEmittedWorkQuery (test/docsync), which
-// also holds the doc's copy of this window claim; that the worker first-row
-// form and the reconciler count form derive from one predicate is
+// also holds the doc's copy of this window claim; that the worker queue form
+// and the reconciler count form derive from one predicate is
 // TestPoolDemandPredicateSharedWithWorkQuery; the byte-for-byte generated
 // shell is TestWorkQueryGolden.
 //
