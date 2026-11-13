@@ -12,8 +12,8 @@ import (
 // newInternalUpstreamClassifyCmd exposes the upstream-probe close gate's path
 // split, so the city's upstream audit judges a landed patch by the rule the
 // gate closed it under instead of a second copy that drifts. It prints
-// {"kept": [...], "reverted": [...], "behavioral": [...]} for the given
-// paths changed from --base to --head.
+// {"kept", "tests", "reverted", "behavioral"} lists for the given paths
+// changed from --base to --head, tests being the kept paths that are tests.
 func newInternalUpstreamClassifyCmd(stdout, stderr io.Writer) *cobra.Command {
 	var repoDir, base, head string
 	cmd := &cobra.Command{
@@ -37,9 +37,10 @@ func newInternalUpstreamClassifyCmd(stdout, stderr io.Writer) *cobra.Command {
 			kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, base, head, paths)
 			out, err := json.Marshal(struct {
 				Kept       []string `json:"kept"`
+				Tests      []string `json:"tests"`
 				Reverted   []string `json:"reverted"`
 				Behavioral []string `json:"behavioral"`
-			}{nonNilStrings(kept), nonNilStrings(reverted), nonNilStrings(behavioral)})
+			}{nonNilStrings(kept), nonNilStrings(upstreamProbeKeptTests(kept)), nonNilStrings(reverted), nonNilStrings(behavioral)})
 			if err != nil {
 				fmt.Fprintf(stderr, "gc internal upstream-classify: encoding result: %v\n", err) //nolint:errcheck // best-effort stderr
 				return errExit
