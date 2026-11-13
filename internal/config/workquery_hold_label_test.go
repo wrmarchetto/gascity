@@ -34,7 +34,7 @@ func TestBdReadyPoolDemandMigrationShellExcludesDispatchHoldLabels(t *testing.T)
 }
 
 func TestLegacyEphemeralPoolDemandShellRouteScopedExcludesDispatchHoldLabels(t *testing.T) {
-	got := legacyEphemeralPoolDemandShell(20, false, true)
+	got := legacyEphemeralPoolDemandShell(ephemeralPoolDemandMatchJQ(), 20, false, true)
 	if !strings.Contains(got, ".labels") {
 		t.Errorf("legacyEphemeralPoolDemandShell() = %q, missing a .labels reference", got)
 	}

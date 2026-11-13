@@ -174,6 +174,18 @@ first claim. The slot that took it had spent the 2.8 h before on a bead slung
 to the same pool at 21:44Z, and before that the pool was full or taking older
 alias work. Predicted from a replay holding service times fixed, not
 measured: one queue claims the escalation about 2.6 h sooner.
+
+`--include-ephemeral` is the `bd_compatibility = "1.0.5"` shape. At the
+default 1.0.4, `bd ready` returns no wisps, so the pool tiers read them with
+`bd query 'ephemeral=true AND status=open'` and filter in jq. Routed wisps
+join the same merged queue as a third leg, and wisp workflow roots of the
+migration shape are read after the migration probe, the place the migration
+tier returns them at 1.0.5. The queue is therefore one oldest-first line at
+both levels. Exposure of the earlier 1.0.4 shape, which served routed wisps
+only once the merged queue was empty: no wisp in any store's retained
+history has carried `gc.routed_to`, measured over the city store and the
+four rig stores.
+
 The own-identity tiers pass no `--sort` at all and therefore keep bd's
 priority-first default. The count form unions canonical and migration
 probes and deduplicates by bead ID before piping through `jq 'length'`.
