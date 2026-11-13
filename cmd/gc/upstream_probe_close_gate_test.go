@@ -280,9 +280,17 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 	const ownedGo = "package p\n\n// F returns one.\nfunc F() int { return 1 }\n"
 	const commentGo = "package p\n\n// F returns one, as the fork documents.\nfunc F() int { return 1 }\n"
 	upstream := map[string]string{
-		"owned.go":                 ownedGo,
-		"engdocs/arch/dispatch.md": "upstream prose\n",
-		"upstream_owned.txt":       "base\n",
+		"owned.go":                               ownedGo,
+		"engdocs/arch/dispatch.md":               "upstream prose\n",
+		"upstream_owned.txt":                     "base\n",
+		"docs/reference/schema/city-schema.json": "{}\n",
+		"docs/reference/schema/city-schema.txt":  "upstream\n",
+	}
+	// What .githooks/pre-commit stages beside a comment on a config type.
+	schemaComment := map[string]string{
+		"owned.go":                               commentGo,
+		"docs/reference/schema/city-schema.json": "{\"description\": \"fork\"}\n",
+		"docs/reference/schema/city-schema.txt":  "fork\n",
 	}
 	behaviorFree := map[string]string{
 		"owned.go":                 commentGo,
@@ -325,6 +333,28 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 			name:   "comment-only-without-test/green-probe",
 			branch: map[string]string{"owned.go": commentGo},
 			probe:  "test -f owned.go",
+		},
+		{
+			name:   "comment-and-generated-schema-without-test/green-probe",
+			branch: schemaComment,
+			probe:  "test -f owned.go",
+		},
+		{
+			name:   "comment-generated-schema-and-test/green-probe",
+			branch: with(schemaComment),
+			probe:  "test -f fork_test.go",
+		},
+		{
+			name: "embedded-schema-keeps-full-experiment",
+			upstream: map[string]string{
+				"owned.go":                               ownedGo,
+				"docs/reference/schema/city-schema.json": "{}\n",
+				"docs/reference/schema/city-schema.txt":  "upstream\n",
+				"embed.go":                               "package p\n\nimport \"embed\"\n\n//go:embed docs/reference/schema/*.json\nvar Schema embed.FS\n",
+			},
+			branch:  with(schemaComment),
+			probe:   "test -f fork_test.go",
+			wantMsg: "(behavioral: docs/reference/schema/city-schema.json)",
 		},
 		{
 			name:    "behavioral-path-keeps-full-experiment",

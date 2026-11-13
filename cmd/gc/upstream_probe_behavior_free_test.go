@@ -192,19 +192,34 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			kept:   []string{"testdata/a.txt", "x_test.go"},
 		},
 		{
-			name:   "unembedded-engdocs-and-docs-markdown-is-behavior-free",
-			base:   map[string]string{"engdocs/a.md": "a\n", "docs/b.md": "b\n"},
-			branch: map[string]string{"engdocs/a.md": "a2\n", "docs/b.md": "b2\n", "docs/new.md": "n\n"},
+			name: "unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free",
+			base: map[string]string{
+				"engdocs/a.md":                           "a\n",
+				"docs/b.md":                              "b\n",
+				"docs/reference/schema/city-schema.json": "{}\n",
+			},
+			branch: map[string]string{
+				"engdocs/a.md":                           "a2\n",
+				"docs/b.md":                              "b2\n",
+				"docs/new.md":                            "n\n",
+				"docs/reference/schema/city-schema.json": "{\"a\": 1}\n",
+				"docs/reference/schema/city-schema.txt":  "a\n",
+				"engdocs/spec.toml":                      "a = 1\n",
+			},
 		},
 		{
-			name:   "markdown-outside-engdocs-and-docs-is-behavioral",
-			branch: map[string]string{"README.md": "r\n", "internal/x/docs/a.md": "a\n"},
-			want:   []string{"README.md", "internal/x/docs/a.md"},
+			name:   "file-outside-engdocs-and-docs-is-behavioral",
+			branch: map[string]string{"README.md": "r\n", "internal/x/docs/a.md": "a\n", "internal/x/docs/a.json": "{}\n"},
+			want:   []string{"README.md", "internal/x/docs/a.json", "internal/x/docs/a.md"},
 		},
 		{
-			name:   "other-extension-under-docs-is-behavioral",
-			branch: map[string]string{"docs/a.txt": "a\n", "engdocs/spec.toml": "a = 1\n"},
-			want:   []string{"docs/a.txt", "engdocs/spec.toml"},
+			name: "docs-file-matched-by-embed-pattern-is-behavioral-whatever-its-extension",
+			base: map[string]string{"embed.go": "package p\n\nimport \"embed\"\n\n//go:embed docs/reference/schema/*.json\nvar F embed.FS\n"},
+			branch: map[string]string{
+				"docs/reference/schema/city-schema.json": "{}\n",
+				"docs/reference/schema/city-schema.txt":  "a\n",
+			},
+			want: []string{"docs/reference/schema/city-schema.json"},
 		},
 		{
 			name: "markdown-matched-by-file-pattern-is-behavioral",
@@ -260,9 +275,10 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			branch: map[string]string{"x.go": goComment},
 		},
 		{
+			// Under docs/ too: Go source is judged as Go before as docs.
 			name:   "added-go-file-is-behavioral-even-if-comment-only",
-			branch: map[string]string{"x.go": goComment},
-			want:   []string{"x.go"},
+			branch: map[string]string{"x.go": goComment, "docs/x.go": goComment},
+			want:   []string{"docs/x.go", "x.go"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
