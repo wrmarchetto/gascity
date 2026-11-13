@@ -36,9 +36,9 @@ expect_output = [
 id = "alias-tier-failure-skips-the-routed-tier"
 path = "internal/config/workquery.go"
 find = '''	return `{ ` + routedReadyTierCommand(includeEphemeralReady) + `; ` +
-		poolAliasReadyTierCommand(includeEphemeralReady) + `; } | ` +'''
+		poolAliasReadyTierCommand(includeEphemeralReady) + `; ` +'''
 replace = '''	return `{ ` + poolAliasReadyTierCommand(includeEphemeralReady) + ` && ` +
-		routedReadyTierCommand(includeEphemeralReady) + `; } | ` +'''
+		routedReadyTierCommand(includeEphemeralReady) + `; ` +'''
 expect_output = [
   "--- FAIL: TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing/alias_failing_silently",
   "--- FAIL: TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing/alias_failing_with_an_error_object",

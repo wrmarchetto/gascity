@@ -619,8 +619,10 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 			Assignee: orderingFixtureTarget, Metadata: map[string]string{"gc.routed_to": orderingFixtureTarget},
 		}
 	}
-	// A wisp row reaches bd 1.0.4 only through `bd query`, so the jq filter
-	// must also drop the older decoys: another pool's wisp and an owned one.
+	// A wisp row reaches bd 1.0.4 only through `bd query`. The older decoys,
+	// another pool's wisp and an owned one, are dropped by the jq filter and
+	// again by hookCandidateClaimable, so the jq half is pinned in
+	// internal/config (TestEffectiveWorkQueryBD104SurfacesLegacyEphemeralRoutedWork).
 	wispRow := func(id, created string, priority int, route, assignee string) orderingFixtureRow {
 		return orderingFixtureRow{
 			ID: id, Status: "open", Priority: priority, CreatedAt: created, Assignee: assignee,

@@ -1890,8 +1890,12 @@ func TestEffectiveWorkQueryBD105CompatibilityOptIn(t *testing.T) {
 
 func TestEffectiveWorkQueryBD104SurfacesLegacyEphemeralRoutedWork(t *testing.T) {
 	// Each wisp shape must reach both the claim and the reconciler count,
-	// whichever rung of the work query reads it.
+	// whichever rung of the work query reads it. The older decoys must reach
+	// neither: the count has no Go-side route or assignee check behind it.
 	a := Agent{Name: "worker", Dir: "foundations"}
+	decoys := `{"id":"ga-decoy-other-pool","issue_type":"task","status":"open","ephemeral":true,"created_at":"2026-04-30T00:00:00Z","metadata":{"gc.routed_to":"foundations/other"}},` +
+		`{"id":"ga-decoy-owned","issue_type":"task","status":"open","ephemeral":true,"assignee":"foundations/worker-2","created_at":"2026-04-30T00:00:00Z","metadata":{"gc.routed_to":"foundations/worker"}},` +
+		`{"id":"ga-decoy-rerouted-root","issue_type":"task","status":"open","ephemeral":true,"created_at":"2026-04-30T00:00:00Z","metadata":{"gc.routed_to":"foundations/other","gc.run_target":"foundations/worker","gc.kind":"workflow"}},`
 	for _, tc := range []struct {
 		name     string
 		metadata string
@@ -1912,7 +1916,7 @@ case "$1" in
   query)
     case "$*" in
       *"ephemeral=true AND status=open"*)
-        printf '[{"id":"ga-legacy-wisp","issue_type":"task","status":"open","ephemeral":true,"created_at":"2026-05-01T00:00:00Z","metadata":` + tc.metadata + `}]'
+        printf '[` + decoys + `{"id":"ga-legacy-wisp","issue_type":"task","status":"open","ephemeral":true,"created_at":"2026-05-01T00:00:00Z","metadata":` + tc.metadata + `}]'
         ;;
       *)
         printf '[]'
@@ -1928,6 +1932,9 @@ esac
 			out := runEffectiveWorkQuery(t, a, nil, bdScript)
 			if !strings.Contains(out, "ga-legacy-wisp") {
 				t.Fatalf("EffectiveWorkQuery() = %q, want legacy ephemeral %s work", out, tc.name)
+			}
+			if strings.Contains(out, "ga-decoy") {
+				t.Fatalf("EffectiveWorkQuery() = %q, served a decoy wisp alongside the %s one", out, tc.name)
 			}
 
 			demandOut := strings.TrimSpace(runShellWithFakeBd(t, a.EffectivePoolDemandQuery(), nil, bdScript))
