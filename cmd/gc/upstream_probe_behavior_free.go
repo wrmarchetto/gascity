@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -113,15 +114,19 @@ func upstreamProbeDocsPath(p string) bool {
 }
 
 // upstreamProbeGoBehaviorFree reports whether two versions of a Go file
-// differ only in comments that are neither directives nor cgo preamble.
+// differ only in comments that are neither directives nor cgo preamble, nor
+// precede the package clause of a file carrying a +build line.
 // Source that does not scan or parse is never behavior-free.
 func upstreamProbeGoBehaviorFree(base, head []byte) bool {
-	baseStream, ok := upstreamProbeGoStream(base)
+	baseStream, baseHeader, ok := upstreamProbeGoStream(base)
 	if !ok {
 		return false
 	}
-	headStream, ok := upstreamProbeGoStream(head)
+	headStream, headHeader, ok := upstreamProbeGoStream(head)
 	if !ok {
+		return false
+	}
+	if !bytes.Equal(baseHeader, headHeader) {
 		return false
 	}
 	if len(baseStream) != len(headStream) {
@@ -142,11 +147,24 @@ type upstreamProbeGoToken struct {
 
 // upstreamProbeGoStream is the file's token stream with every comment
 // dropped except directives and cgo preamble lines, which keep their place.
-func upstreamProbeGoStream(src []byte) ([]upstreamProbeGoToken, bool) {
+// Returns (stream, header, ok), header being the source before the package
+// clause when a +build line precedes it, and nil otherwise.
+func upstreamProbeGoStream(src []byte) ([]upstreamProbeGoToken, []byte, bool) {
 	fset := token.NewFileSet()
 	parsed, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
+	}
+	// go/build honors a +build line only when a blank line follows it before
+	// the package clause (go/build parseFileHeader), and blank lines are not
+	// tokens, so every byte of that header is behavior.
+	var header []byte
+	for _, group := range parsed.Comments {
+		for _, c := range group.List {
+			if c.Slash < parsed.Package && upstreamProbePlusBuild(c.Text) {
+				header = src[:fset.File(parsed.Package).Offset(parsed.Package)]
+			}
+		}
 	}
 	preamble := map[token.Pos]bool{}
 	for _, decl := range parsed.Decls {
@@ -193,7 +211,7 @@ func upstreamProbeGoStream(src []byte) ([]upstreamProbeGoToken, bool) {
 		}
 		stream = append(stream, upstreamProbeGoToken{tok: tok, lit: lit})
 	}
-	return stream, true
+	return stream, header, true
 }
 
 // upstreamProbeGoDirective covers the //go: family, //line, +build
@@ -204,6 +222,11 @@ func upstreamProbeGoDirective(comment string) bool {
 			return true
 		}
 	}
+	return upstreamProbePlusBuild(comment)
+}
+
+// upstreamProbePlusBuild matches a // +build constraint line.
+func upstreamProbePlusBuild(comment string) bool {
 	return strings.HasPrefix(comment, "//") &&
 		strings.HasPrefix(strings.TrimLeft(comment[2:], " \t"), "+build")
 }
