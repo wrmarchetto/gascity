@@ -104,7 +104,7 @@ id = "unresolved-embeds-read-as-none"
 path = "cmd/gc/upstream_probe_behavior_free.go"
 find = '''	return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)'''
 replace = '''	return !upstreamProbeEmbedded(x.embeds, file)'''
-expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-spec-is-behavioral-when-embeds-cannot-be-resolved"]
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/unscannable-embed-is-named-beside-the-behavioral-paths"]
 
 # --- the ref the spec is judged at ---
 

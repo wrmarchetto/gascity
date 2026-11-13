@@ -140,8 +140,18 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 		return fmt.Sprintf("could not find the merge base with %s: %v", upstreamProbeBaseRef, err)
 	}
 	mergeBase = strings.TrimSpace(mergeBase)
-	kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, mergeBase, "HEAD", changed)
-	probe = strings.TrimSpace(probe)
+	kept, reverted, behavioral, embedErr := upstreamProbeClassifyPaths(repoDir, mergeBase, "HEAD", changed)
+	violation := upstreamProbeSplitViolation(repoDir, mergeBase, strings.TrimSpace(probe), kept, reverted, behavioral)
+	if violation != "" && embedErr != nil {
+		// The paths the refusal names are innocent, so the cause travels too.
+		violation += fmt.Sprintf("; the //go:embed scan of HEAD failed, so no comment, doc or sweep spec could be read as unembedded: %v; correct that directive and close again", embedErr)
+	}
+	return violation
+}
+
+// upstreamProbeSplitViolation judges probe against the branch's classified
+// paths, returning the close refusal or "" as upstreamProbeCloseViolation does.
+func upstreamProbeSplitViolation(repoDir, mergeBase, probe string, kept, reverted, behavioral []string) string {
 	if probe == "" && len(behavioral) == 0 {
 		return fmt.Sprintf("edits only test paths or behavior-free paths (comments, unembedded docs), so no command can fail without this patch; set %s to the command that runs the branch's tests, which the merge sweep still requires", upstreamProbeMetadataKey)
 	}
@@ -258,8 +268,13 @@ func upstreamProbeTestPath(path string) bool {
 		strings.HasSuffix(path, ".test.mjs") || strings.HasSuffix(path, ".test.cjs") ||
 		strings.HasSuffix(path, ".test.py") || strings.HasSuffix(path, "_test.py") ||
 		strings.HasSuffix(path, ".test.sh") ||
-		strings.HasPrefix(path, "test/") || strings.HasPrefix(path, "testdata/") ||
-		strings.Contains(path, "/testdata/")
+		strings.HasPrefix(path, "test/") || upstreamProbeTestdataPath(path)
+}
+
+// upstreamProbeTestdataPath reports whether path lies under a directory named
+// testdata. The //go:embed scan skips these because the experiment keeps them.
+func upstreamProbeTestdataPath(path string) bool {
+	return strings.HasPrefix(path, "testdata/") || strings.Contains(path, "/testdata/")
 }
 
 // upstreamProbeKeptTests returns the kept paths that are tests. A sweep spec

@@ -175,6 +175,7 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 		kept    []string          // changed paths kept as test material
 		tests   []string          // subset of kept that are tests, not sweep specs
 		want    []string          // behavioral subset of the reverted paths
+		refused string            // stderr of a refusal, which prints no split
 	}{
 		{
 			name:   "sweep-spec-with-sweep-and-gate-tables-is-kept-but-not-a-test",
@@ -213,10 +214,10 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			want:   []string{"cmd/gc/pool_sweep.toml"},
 		},
 		{
-			name:   "sweep-spec-is-behavioral-when-embeds-cannot-be-resolved",
-			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n"},
-			branch: map[string]string{"cmd/gc/pool_sweep.toml": spec},
-			want:   []string{"cmd/gc/pool_sweep.toml"},
+			name:    "sweep-spec-split-is-refused-when-embeds-cannot-be-resolved",
+			base:    map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n"},
+			branch:  map[string]string{"cmd/gc/pool_sweep.toml": spec},
+			refused: `internal/x/embed.go: invalid //go:embed pattern "other/["`,
 		},
 		{
 			name:    "deleted-sweep-spec-counts-by-its-base-version",
@@ -305,24 +306,40 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 		},
 		{
 			// Here and in the next two rows the bad pattern's package reaches
-			// none of the changed files, so only the refusal to resolve
-			// partially makes any of them behavioral.
-			name:   "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
-			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n", "y.go": goBase},
-			branch: map[string]string{"engdocs/a.md": "a\n", "y.go": goComment},
-			want:   []string{"engdocs/a.md", "y.go"},
+			// none of the changed files, so only the failed scan decides them.
+			name:    "go-comment-split-is-refused-when-embeds-cannot-be-resolved",
+			base:    map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n", "y.go": goBase},
+			branch:  map[string]string{"y.go": goComment},
+			refused: `internal/x/embed.go: invalid //go:embed pattern "other/["`,
 		},
 		{
-			name:   "embed-with-no-pattern-makes-markdown-behavioral",
-			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed\nvar F embed.FS\n"},
-			branch: map[string]string{"engdocs/a.md": "a\n"},
-			want:   []string{"engdocs/a.md"},
+			name:    "markdown-split-is-refused-when-an-embed-has-no-pattern",
+			base:    map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed\nvar F embed.FS\n"},
+			branch:  map[string]string{"engdocs/a.md": "a\n"},
+			refused: "internal/x/embed.go: //go:embed with no pattern",
 		},
 		{
-			name:   "embed-pattern-leaving-its-package-makes-markdown-behavioral",
-			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed ../other\nvar F embed.FS\n"},
+			name:    "markdown-split-is-refused-when-an-embed-pattern-leaves-its-package",
+			base:    map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed ../other\nvar F embed.FS\n"},
+			branch:  map[string]string{"engdocs/a.md": "a\n"},
+			refused: `internal/x/embed.go: invalid //go:embed pattern "../other"`,
+		},
+		{
+			// A pattern reaches only its package's subtree, and every path
+			// under testdata/ is kept, so a testdata directive decides nothing.
+			name:   "embed-in-a-testdata-package-is-outside-the-scan",
+			base:   map[string]string{"internal/x/testdata/fixture.go": "package fixture\n\nimport \"embed\"\n\n//go:embed ../../outside.txt\nvar F embed.FS\n"},
 			branch: map[string]string{"engdocs/a.md": "a\n"},
-			want:   []string{"engdocs/a.md"},
+		},
+		{
+			// go build compiles a _ or . directory that is imported by path.
+			name: "embeds-in-underscore-and-dot-packages-are-scanned",
+			base: map[string]string{
+				"docs/_pkg/embed.go": "package pkg\n\nimport \"embed\"\n\n//go:embed *.md\nvar F embed.FS\n",
+				"docs/.pkg/embed.go": "package pkg\n\nimport \"embed\"\n\n//go:embed *.md\nvar F embed.FS\n",
+			},
+			branch: map[string]string{"docs/_pkg/a.md": "a\n", "docs/.pkg/a.md": "a\n"},
+			want:   []string{"docs/.pkg/a.md", "docs/_pkg/a.md"},
 		},
 		{
 			name:   "longer-directive-sharing-the-embed-prefix-embeds-nothing",
@@ -410,7 +427,12 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			later["zz_later.go"] = "package p\n\nimport \"embed\"\n\n//go:embed " + strings.Join(patterns, " ") + "\nvar Later embed.FS\n"
 			commit(later, "later")
 
-			kept, tests, reverted, behavioral := runUpstreamClassify(t, 0, append([]string{"--repo", repoDir, "--base", "base", "--head", "branch"}, paths...))
+			args := append([]string{"--repo", repoDir, "--base", "base", "--head", "branch"}, paths...)
+			if tc.refused != "" {
+				runUpstreamClassify(t, 1, tc.refused, args)
+				return
+			}
+			kept, tests, reverted, behavioral := runUpstreamClassify(t, 0, "", args)
 			wantReverted := []string{}
 			for _, path := range paths {
 				if !slices.Contains(tc.kept, path) {
@@ -447,7 +469,7 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 		{"unresolvable-head-refused", []string{"--repo", repoDir, "--base", "HEAD", "--head", "nope"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runUpstreamClassify(t, 1, tc.args)
+			runUpstreamClassify(t, 1, "", tc.args)
 		})
 	}
 
@@ -485,7 +507,8 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 
 // runUpstreamClassify runs the subcommand, failing unless it exits wantCode,
 // and returns (kept, tests, reverted, behavioral). Every list must be present.
-func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, tests, reverted, behavioral []string) {
+// A refusal's first line must hold wantCause: the city audit reports only it.
+func runUpstreamClassify(t *testing.T, wantCode int, wantCause string, args []string) (kept, tests, reverted, behavioral []string) {
 	t.Helper()
 	clearGCEnv(t)
 	t.Setenv("GC_HOME", t.TempDir())
@@ -496,6 +519,9 @@ func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, tests
 	if wantCode != 0 {
 		if strings.TrimSpace(stderr.String()) == "" || stdout.Len() != 0 {
 			t.Fatalf("refusal must explain itself on stderr only: stderr=%q stdout=%q", stderr.String(), stdout.String())
+		}
+		if first, _, _ := strings.Cut(stderr.String(), "\n"); !strings.Contains(first, wantCause) {
+			t.Fatalf("refusal's first line = %q, want it to name %q", first, wantCause)
 		}
 		return nil, nil, nil, nil
 	}

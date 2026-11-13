@@ -3,9 +3,11 @@
 # while no //go:embed reaches it, Go source under docs/ is judged as Go, and a
 # .go file carrying a +build line keeps every byte before its package clause.
 # Comment-only means equal token streams, //extern kept and only import "C"
-# carrying a preamble, and a //go:embed that go build rejects refuses the
-# whole reading. Each row flips one guard to its accepting counterpart, or a
-# narrowing to its wide form, and names the subtest that must go red.
+# carrying a preamble. A //go:embed outside testdata/ that go build rejects
+# voids the whole reading, which the close gate's refusal and the
+# upstream-classify subcommand's both name. Each row flips one guard to its
+# accepting counterpart, or a narrowing to its wide form, and names the
+# subtest that must go red.
 
 [sweep]
 name = "upstream-probe arms: unembedded docs and Go only, Go judged first"
@@ -88,7 +90,7 @@ find = "upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc)) &&\n\t\t\t
 replace = "upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))"
 expect_output = [
   "comment-only-go-change-reached-by-embed-is-behavioral",
-  "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
+  "go-comment-split-is-refused-when-embeds-cannot-be-resolved",
 ]
 
 # --- a partial embed reading proves no file unembedded ---
@@ -99,8 +101,8 @@ path = "cmd/gc/upstream_probe_behavior_free.go"
 find = "return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)"
 replace = "return !upstreamProbeEmbedded(x.embeds, file)"
 expect_output = [
-  "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
-  "sweep-spec-is-behavioral-when-embeds-cannot-be-resolved",
+  "unscannable-embed-is-named-beside-the-behavioral-paths",
+  "unscannable-embed-is-named-when-no-probe-is-set",
 ]
 
 [[mutation]]
@@ -108,14 +110,72 @@ id = "embed-with-no-pattern-accepted"
 path = "cmd/gc/upstream_probe_behavior_free.go"
 find = "if len(patterns) == 0 {"
 replace = "if false && len(patterns) == 0 {"
-expect_output = ["embed-with-no-pattern-makes-markdown-behavioral"]
+expect_output = ["markdown-split-is-refused-when-an-embed-has-no-pattern"]
 
 [[mutation]]
 id = "embed-pattern-leaving-its-package-accepted"
 path = "cmd/gc/upstream_probe_behavior_free.go"
 find = '''if !fs.ValidPath(strings.TrimPrefix(pattern, "all:")) {'''
 replace = '''if false && !fs.ValidPath(strings.TrimPrefix(pattern, "all:")) {'''
-expect_output = ["embed-pattern-leaving-its-package-makes-markdown-behavioral"]
+expect_output = ["markdown-split-is-refused-when-an-embed-pattern-leaves-its-package"]
+
+# --- a failed scan is named, and voids the subcommand's split ---
+
+[[mutation]]
+id = "classifier-drops-the-scan-error"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "return kept, reverted, behavioral, embeds.err"
+replace = "return kept, reverted, behavioral, nil"
+expect_output = [
+  "sweep-spec-split-is-refused-when-embeds-cannot-be-resolved",
+  "unscannable-embed-is-named-beside-the-behavioral-paths",
+]
+
+[[mutation]]
+id = "close-gate-hides-the-scan-error"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''if violation != "" && embedErr != nil {'''
+replace = '''if false && violation != "" && embedErr != nil {'''
+expect_output = [
+  "unscannable-embed-is-named-beside-the-behavioral-paths",
+  "unscannable-embed-is-named-when-no-probe-is-set",
+]
+
+[[mutation]]
+id = "close-gate-blames-every-refusal-on-the-scan"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''if violation != "" && embedErr != nil {'''
+replace = '''if violation != "" {'''
+expect_output = ["behavioral-path-keeps-full-experiment"]
+
+[[mutation]]
+id = "subcommand-prints-a-split-from-a-failed-scan"
+path = "cmd/gc/cmd_internal_upstream_classify.go"
+find = "if embedErr != nil {"
+replace = "if false && embedErr != nil {"
+expect_output = [
+  "sweep-spec-split-is-refused-when-embeds-cannot-be-resolved",
+  "markdown-split-is-refused-when-an-embed-has-no-pattern",
+]
+
+# --- testdata/ is outside the scan, _ and . packages are not ---
+
+[[mutation]]
+id = "testdata-packages-scanned"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if file == "" || upstreamProbeTestdataPath(file) {'''
+replace = '''if file == "" {'''
+expect_output = [
+  "embed-in-a-testdata-package-is-outside-the-scan",
+  "invalid-embed-in-testdata-fixture-is-outside-the-scan",
+]
+
+[[mutation]]
+id = "underscore-and-dot-packages-skipped"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if file == "" || upstreamProbeTestdataPath(file) {'''
+replace = '''if file == "" || upstreamProbeTestdataPath(file) || strings.Contains("/"+file, "/_") || strings.Contains("/"+file, "/.") {'''
+expect_output = ["embeds-in-underscore-and-dot-packages-are-scanned"]
 
 # --- the //go:embed directive is that word, not a prefix of a longer one ---
 

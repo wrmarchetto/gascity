@@ -317,12 +317,22 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 		}
 		return out
 	}
+	withSpec := with(map[string]string{"cmd/gc/tier_sweep.toml": "[sweep]\nname = \"t\"\n\n[sweep.gate]\nargv = [\"true\"]\n"})
+	// An unrelated file whose //go:embed go build rejects.
+	unscannableAt := func(path string) map[string]string {
+		out := map[string]string{path: "package x\n\nimport \"embed\"\n\n//go:embed ../../outside.txt\nvar F embed.FS\n"}
+		for k, v := range upstream {
+			out[k] = v
+		}
+		return out
+	}
 	for _, tc := range []struct {
-		name     string
-		upstream map[string]string // committed and pinned as upstream/main and main
-		branch   map[string]string // committed on the work branch
-		probe    string
-		wantMsg  string // empty when the close must be accepted
+		name      string
+		upstream  map[string]string // committed and pinned as upstream/main and main
+		branch    map[string]string // committed on the work branch
+		probe     string
+		wantMsg   string // empty when the close must be accepted
+		wantCause string // the failed //go:embed scan, which the refusal must name
 	}{
 		{name: "comment-docs-and-test/green-probe", branch: behaviorFree, probe: "test -f fork_test.go"},
 		{name: "comment-docs-and-test/red-probe", branch: behaviorFree, probe: "grep -q never-written fork_test.go", wantMsg: "fails on the branch tip"},
@@ -393,6 +403,27 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 			probe:   "test -f fork_test.go",
 			wantMsg: "(behavioral: engdocs/arch/dispatch.md)",
 		},
+		{
+			name:     "invalid-embed-in-testdata-fixture-is-outside-the-scan",
+			upstream: unscannableAt("internal/x/testdata/fixture.go"),
+			branch:   withSpec,
+			probe:    "test -f fork_test.go",
+		},
+		{
+			name:      "unscannable-embed-is-named-beside-the-behavioral-paths",
+			upstream:  unscannableAt("internal/x/embed.go"),
+			branch:    withSpec,
+			probe:     "test -f fork_test.go",
+			wantMsg:   "(behavioral: cmd/gc/tier_sweep.toml, engdocs/arch/dispatch.md, owned.go)",
+			wantCause: `internal/x/embed.go: invalid //go:embed pattern "../../outside.txt"`,
+		},
+		{
+			name:      "unscannable-embed-is-named-when-no-probe-is-set",
+			upstream:  unscannableAt("internal/x/embed.go"),
+			branch:    withSpec,
+			wantMsg:   "edits upstream-owned code; set gc.upstream_probe",
+			wantCause: `internal/x/embed.go: invalid //go:embed pattern "../../outside.txt"`,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoDir := t.TempDir()
@@ -438,8 +469,14 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 			if !blocked {
 				t.Fatalf("close was accepted, want refusal containing %q", tc.wantMsg)
 			}
-			if got := stderr.String(); !strings.Contains(got, tc.wantMsg) {
-				t.Fatalf("refusal = %q, want it to contain %q", got, tc.wantMsg)
+			got := stderr.String()
+			for _, want := range []string{tc.wantMsg, tc.wantCause} {
+				if !strings.Contains(got, want) {
+					t.Fatalf("refusal = %q, want it to contain %q", got, want)
+				}
+			}
+			if tc.wantCause == "" && strings.Contains(got, "//go:embed scan") {
+				t.Fatalf("refusal = %q blames a //go:embed scan that succeeded", got)
 			}
 		})
 	}
