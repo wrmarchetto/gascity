@@ -265,10 +265,10 @@ func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
 }
 
 // poolReadyQueueMergeJQ joins the two pool tiers' arrays into one created_at
-// order, id breaking ties. A failing tier prints nothing and adds no rows.
-// Output that is not an array of beads fails the merge, losing both tiers'
-// rows, and the query falls through to the legacy tiers like an empty queue.
-const poolReadyQueueMergeJQ = `[.[][]] | sort_by(.created_at // "", .id // "")`
+// order, id breaking ties. A failing tier adds no rows, whether it printed
+// nothing or bd's --json error object (beads cmd/bd/errors.go) or null. Text
+// that is not JSON still fails the merge and loses both tiers' rows.
+const poolReadyQueueMergeJQ = `[.[] | arrays | .[]] | sort_by(.created_at // "", .id // "")`
 
 // poolReadyQueueCommand is the pool queue: the routed and pool-alias tiers
 // merged into ONE oldest-first line. Answered in turn, any ready routed bead
