@@ -172,7 +172,7 @@ func bdReadyPoolAliasDemandShell(limitFlag string, includeEphemeralReady bool) s
 // Go-side legacy candidates after the backfill completion tracked by ga-dhf44.
 //
 // The window is written here rather than taken from the caller, so both the
-// count and first-row paths are unbounded by construction. This tier is the
+// count and worker paths are unbounded by construction. This tier is the
 // one that cannot survive a ceiling at all: its routed_to filter runs in jq
 // AFTER bd applies the window, so a window filled entirely with
 // already-backfilled roots reports an EMPTY queue while a pre-backfill root
@@ -239,16 +239,17 @@ func legacyEphemeralPoolDemandShell(limit int, includeEphemeralReady, quiet bool
 	return `{ ` + query + ` | jq --arg target "$target" ` + shellquote.Quote(filter) + jqStderr + `; } || printf "[]"`
 }
 
-// poolDemandFirstRowFunctionScript emits the work_query Tier 3 function: it
-// prints the ready pool queue for the supplied target and exits 0. The caller
-// appends a terminal fallthrough (printf "[]") for the empty case.
+// poolDemandProbeFunctionScript emits the work_query Tier 3 function: it
+// prints the whole merged pool queue for the supplied target and exits 0.
+// Only when that queue is empty does it try the migration and legacy
+// ephemeral tiers, which print one row. The caller appends printf "[]".
 //
 // No tier here caps its row count: a cap decides which beads are candidates at
 // all, which is the ci-rzq2 defect (see routedReadyTierCommand). The lone
 // surviving 20 is legacyEphemeralPoolDemandShell's, and it is deliberately left
 // -- jq applies it AFTER the readiness filter and the caller then slices
 // `.[0:1]`, so raising it would change no output, only the golden fixtures.
-func poolDemandFirstRowFunctionScript(includeEphemeralReady bool) string {
+func poolDemandProbeFunctionScript(includeEphemeralReady bool) string {
 	return `probe_pool_demand() { ` +
 		`target="$1"; ` +
 		`[ -z "$target" ] && return 1; ` +
@@ -281,7 +282,8 @@ func poolReadyQueueCommand(includeEphemeralReady bool) string {
 		`jq -cs ` + shellquote.Quote(poolReadyQueueMergeJQ) + ` 2>/dev/null`
 }
 
-// poolAliasReadyTierCommand is the worker first-row form of the pool-alias tier.
+// poolAliasReadyTierCommand is the worker's pool-alias tier, the half of the
+// queue poolReadyQueueCommand merges with routedReadyTierCommand's rows.
 // It carries no row ceiling for the same reason as routedReadyTierCommand,
 // stated there: a ceiling here decides candidacy, not just how much is read.
 //
@@ -301,7 +303,7 @@ func poolAliasReadyTierCommand(includeEphemeralReady bool) string {
 
 func routedReadyTierCommand(includeEphemeralReady bool) string {
 	// The shared predicate stays order-free so the count-form does no wasted
-	// sorting; the worker first-row path asks bd for the oldest candidates.
+	// sorting; the worker path asks bd to sort its candidates oldest first.
 	//
 	// `--sort oldest` is policy, not a default: it overrides bd's own
 	// (priority, created_at, id) ready order so newer high-priority work does
@@ -330,7 +332,7 @@ func routedReadyTierCommand(includeEphemeralReady bool) string {
 // poolDemandCountShell emits the reconciler count-form for target: it counts
 // ready routed demand -- unassigned, plus beads hand-assigned to the pool name
 // itself -- and prints the array length. It shares the canonical, pool-alias and
-// migration predicates with poolDemandFirstRowFunctionScript so the reconciler's
+// migration predicates with poolDemandProbeFunctionScript so the reconciler's
 // spawn decision and the worker's claim decision read the same demand shape.
 // Counting a shape the worker can claim but the reconciler cannot see leaves the
 // bead unworked with no session ever spawned (ci-rdbw); counting one the worker
@@ -499,7 +501,7 @@ func poolDemandOriginGateScript() string {
 }
 
 func routedPoolWorkQueryProbeScript(includeEphemeralReady bool, targetCount int) string {
-	script := poolDemandOriginGateScript() + poolDemandFirstRowFunctionScript(includeEphemeralReady)
+	script := poolDemandOriginGateScript() + poolDemandProbeFunctionScript(includeEphemeralReady)
 	for i := 1; i <= targetCount; i++ {
 		script += fmt.Sprintf(`probe_pool_demand "$%d"; `, i)
 	}
@@ -576,10 +578,10 @@ func (a *Agent) effectiveQueryForBeads(kind queryKind, beads BeadsConfig) string
 // was used when assigning.
 //
 // State priority: in_progress+assigned (crash recovery) >
-// ready+assigned (pre-assigned) > ready+unassigned+routed_to (pool) >
-// ready+assigned-to-the-pool-name (hand-assigned pool work; see
-// bdReadyPoolAliasDemandShell for why that last tier is route-scoped rather
-// than a fourth identity in the assigned loop).
+// ready+assigned (pre-assigned) > the pool queue, ready+unassigned+routed_to
+// and ready+assigned-to-the-pool-name merged oldest first (see
+// bdReadyPoolAliasDemandShell for why the pool-name half is route-scoped
+// rather than a fourth identity in the assigned loop).
 // Executable formula roots can be epic-typed; the bead storage policy decides
 // whether those roots are history-backed, no-history, or ephemeral for the
 // configured bd compatibility mode. Molecule containers are not routable
@@ -600,9 +602,9 @@ func (a *Agent) effectiveQueryForBeads(kind queryKind, beads BeadsConfig) string
 //
 // When the reconciler runs the query for demand detection (no session
 // context), all identity vars are empty → assignee tiers skip → only
-// the routed_to tier fires to detect new demand.
+// Tier 3 fires to detect new demand.
 //
-// Tier 3's canonical and migration predicates are shared with
+// Tier 3's canonical, pool-alias and migration predicates are shared with
 // EffectivePoolDemandQuery so reconciler spawn decisions and worker claim
 // decisions stay symmetric.
 func (a *Agent) EffectiveWorkQuery() string {
@@ -621,14 +623,14 @@ func buildWorkQuery(a *Agent, includeEphemeralReady bool) string {
 	if legacyTarget == "" {
 		script := standardAssignedWorkQueryScript(includeEphemeralReady) +
 			poolDemandOriginGateScript() +
-			poolDemandFirstRowFunctionScript(includeEphemeralReady) +
+			poolDemandProbeFunctionScript(includeEphemeralReady) +
 			`probe_pool_demand "$1"; ` +
 			`printf "[]"`
 		return shellquote.Join([]string{"sh", "-c", script, "--", target})
 	}
 	script := legacyControlAssignedWorkQueryScript(includeEphemeralReady) +
 		poolDemandOriginGateScript() +
-		poolDemandFirstRowFunctionScript(includeEphemeralReady) +
+		poolDemandProbeFunctionScript(includeEphemeralReady) +
 		`probe_pool_demand "$1"; ` +
 		`probe_pool_demand "$2"; ` +
 		`printf "[]"`

@@ -1,0 +1,64 @@
+# Proves the upstream-probe close gate's "adds no test path" refusal counts
+# kept tests alone, so a kept sweep spec cannot satisfy it, and that
+# `gc internal upstream-classify` prints the same tests list the gate reads.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of. See the mutation-sweep skill.
+
+[sweep]
+name = "a kept sweep spec is not the test a behavioral patch owes"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape|TestUpstreamProbeClassifyPaths",
+]
+timeout_s = 900
+
+# --- the close gate ---
+
+[[mutation]]
+id = "refusal-counts-every-kept-path"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''	if len(upstreamProbeKeptTests(kept)) == 0 {'''
+replace = '''	if len(kept) == 0 {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/upstream-code-and-sweep-spec-only/probe"]
+
+[[mutation]]
+id = "every-kept-path-is-a-test"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''		if upstreamProbeTestPath(path) {'''
+replace = '''		if true {'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-spec-with-sweep-and-gate-tables-is-kept-but-not-a-test"]
+
+[[mutation]]
+id = "no-kept-path-is-a-test"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''		if upstreamProbeTestPath(path) {'''
+replace = '''		if false {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/upstream-code-and-test/vacuous-after-revert"]
+
+# --- the audit interface ---
+
+[[mutation]]
+id = "classify-prints-kept-as-tests"
+path = "cmd/gc/cmd_internal_upstream_classify.go"
+find = '''nonNilStrings(upstreamProbeKeptTests(kept))'''
+replace = '''nonNilStrings(kept)'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/mutation-sweep-spec-is-kept-but-not-a-test"]
+
+[[mutation]]
+id = "classify-prints-no-tests"
+path = "cmd/gc/cmd_internal_upstream_classify.go"
+find = '''nonNilStrings(upstreamProbeKeptTests(kept))'''
+replace = '''nonNilStrings(nil)'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/named-test-paths-are-kept"]
+
+[[mutation]]
+id = "classify-prints-null-tests"
+path = "cmd/gc/cmd_internal_upstream_classify.go"
+find = '''nonNilStrings(upstreamProbeKeptTests(kept))'''
+replace = '''upstreamProbeKeptTests(nil)'''
+expect_output = ["stdout lacks a kept, tests, reverted or behavioral list"]

@@ -1,6 +1,6 @@
 # Proves the upstream-probe close gate keeps a mutation-sweep spec as test
-# material only when its name, [sweep]/[sweep.gate] content and embed check
-# all hold, judging a deleted spec by its base version (ci-6brgy7).
+# material only when name, content and embed check all hold (a deleted spec
+# read at base), and that no tracked spec escapes the name rule (ci-6brgy7).
 #
 # UNSWEPT, deliberately: the toml.Decode error check. Decode parses the whole
 # document before filling the map, so on any error doc stays empty and the
@@ -26,20 +26,43 @@ timeout_s = 900
 [[mutation]]
 id = "any-toml-name-is-a-spec-name"
 path = "cmd/gc/upstream_probe_behavior_free.go"
-find = '''	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {'''
-replace = '''	if !strings.HasSuffix(p, ".toml") {'''
+find = '''	return strings.HasSuffix(p, "_sweep.toml") || strings.HasSuffix(p, ".mutation-sweep.toml")'''
+replace = '''	return strings.HasSuffix(p, ".toml")'''
 expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-content-under-another-toml-name-is-behavioral"]
 
 [[mutation]]
 id = "any-toml-is-a-spec"
 path = "cmd/gc/upstream_probe_behavior_free.go"
-find = '''	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {
+find = '''	if !upstreamProbeSweepSpecName(p) {
 		return false
 	}'''
 replace = '''	if strings.HasSuffix(p, ".toml") {
 		return true
 	}'''
 expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/sweep-spec-name-without-sweep-table-is-behavioral"]
+
+# --- the census of tracked specs ---
+
+[[mutation]]
+id = "name-rule-drops-a-suffix-the-tree-uses"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''	return strings.HasSuffix(p, "_sweep.toml") || strings.HasSuffix(p, ".mutation-sweep.toml")'''
+replace = '''	return strings.HasSuffix(p, "_sweep.toml")'''
+expect_output = ["--- FAIL: TestUpstreamProbeClassifyPaths/every-tracked-sweep-spec-carries-a-spec-name"]
+
+[[mutation]]
+id = "census-lists-the-package-dir-only"
+path = "cmd/gc/upstream_probe_behavior_free_test.go"
+find = '''		const root = "../.."'''
+replace = '''		const root = "."'''
+expect_output = ["which lacks this test's own sweep spec"]
+
+[[mutation]]
+id = "census-lists-nothing"
+path = "cmd/gc/upstream_probe_behavior_free_test.go"
+find = '''"ls-files", "-z", "--", "*.toml")'''
+replace = '''"ls-files", "-z", "--", "*.toml.absent")'''
+expect_output = ["which lacks this test's own sweep spec"]
 
 # --- the content check ---
 

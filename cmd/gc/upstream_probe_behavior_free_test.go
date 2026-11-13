@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
@@ -150,15 +152,16 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 		branch  map[string]string // committed on top of base
 		deleted []string          // removed on top of base
 		kept    []string          // changed paths kept as test material
+		tests   []string          // subset of kept that are tests, not sweep specs
 		want    []string          // behavioral subset of the reverted paths
 	}{
 		{
-			name:   "sweep-spec-with-sweep-and-gate-tables-is-a-test-path",
+			name:   "sweep-spec-with-sweep-and-gate-tables-is-kept-but-not-a-test",
 			branch: map[string]string{"cmd/gc/pool_sweep.toml": spec},
 			kept:   []string{"cmd/gc/pool_sweep.toml"},
 		},
 		{
-			name:   "mutation-sweep-spec-is-a-test-path",
+			name:   "mutation-sweep-spec-is-kept-but-not-a-test",
 			branch: map[string]string{"scripts/gate.mutation-sweep.toml": spec},
 			kept:   []string{"scripts/gate.mutation-sweep.toml"},
 		},
@@ -212,6 +215,7 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			name:   "named-test-paths-are-kept",
 			branch: map[string]string{"x_test.go": "package p\n", "testdata/a.txt": "a\n"},
 			kept:   []string{"testdata/a.txt", "x_test.go"},
+			tests:  []string{"testdata/a.txt", "x_test.go"},
 		},
 		{
 			name: "unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free",
@@ -367,7 +371,7 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			later["zz_later.go"] = "package p\n\nimport \"embed\"\n\n//go:embed " + strings.Join(patterns, " ") + "\nvar Later embed.FS\n"
 			commit(later, "later")
 
-			kept, reverted, behavioral := runUpstreamClassify(t, 0, append([]string{"--repo", repoDir, "--base", "base", "--head", "branch"}, paths...))
+			kept, tests, reverted, behavioral := runUpstreamClassify(t, 0, append([]string{"--repo", repoDir, "--base", "base", "--head", "branch"}, paths...))
 			wantReverted := []string{}
 			for _, path := range paths {
 				if !slices.Contains(tc.kept, path) {
@@ -379,6 +383,7 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 				got, want []string
 			}{
 				{"kept", kept, tc.kept},
+				{"tests", tests, tc.tests},
 				{"reverted", reverted, wantReverted},
 				{"behavioral", behavioral, tc.want},
 			} {
@@ -406,11 +411,42 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			runUpstreamClassify(t, 1, tc.args)
 		})
 	}
+
+	// Content selects the census, so a spec the name rule misses is named
+	// here rather than reverted by the experiment.
+	t.Run("every-tracked-sweep-spec-carries-a-spec-name", func(t *testing.T) {
+		const root = "../.."
+		out, err := upstreamProbeGitOutput(root, "ls-files", "-z", "--", "*.toml")
+		if err != nil {
+			t.Fatalf("listing tracked TOML in %s: %v", root, err)
+		}
+		var specs []string
+		for _, rel := range strings.FieldsFunc(out, func(r rune) bool { return r == 0 }) {
+			var doc map[string]any
+			if _, err := toml.DecodeFile(filepath.Join(root, rel), &doc); err != nil {
+				t.Fatalf("census cannot read %s: %v", rel, err)
+			}
+			if sweep, ok := doc["sweep"].(map[string]any); ok {
+				if _, ok := sweep["gate"].(map[string]any); ok {
+					specs = append(specs, rel)
+				}
+			}
+		}
+		if !slices.Contains(specs, "cmd/gc/upstream_probe_sweep_spec_sweep.toml") {
+			t.Fatalf("census found %q, which lacks this test's own sweep spec", specs)
+		}
+		for _, rel := range specs {
+			if !upstreamProbeSweepSpecName(rel) {
+				t.Errorf("%s holds [sweep.gate] but fails the sweep spec name rule; "+
+					"rename it to end in .mutation-sweep.toml or _sweep.toml", rel)
+			}
+		}
+	})
 }
 
 // runUpstreamClassify runs the subcommand, failing unless it exits wantCode,
-// and returns (kept, reverted, behavioral). Every list must be present.
-func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, reverted, behavioral []string) {
+// and returns (kept, tests, reverted, behavioral). Every list must be present.
+func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, tests, reverted, behavioral []string) {
 	t.Helper()
 	clearGCEnv(t)
 	t.Setenv("GC_HOME", t.TempDir())
@@ -422,15 +458,16 @@ func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, rever
 		if strings.TrimSpace(stderr.String()) == "" || stdout.Len() != 0 {
 			t.Fatalf("refusal must explain itself on stderr only: stderr=%q stdout=%q", stderr.String(), stdout.String())
 		}
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	var doc struct {
 		Kept       *[]string `json:"kept"`
+		Tests      *[]string `json:"tests"`
 		Reverted   *[]string `json:"reverted"`
 		Behavioral *[]string `json:"behavioral"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil || doc.Kept == nil || doc.Reverted == nil || doc.Behavioral == nil {
-		t.Fatalf("stdout lacks a kept, reverted or behavioral list: %v %q", err, stdout.String())
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil || doc.Kept == nil || doc.Tests == nil || doc.Reverted == nil || doc.Behavioral == nil {
+		t.Fatalf("stdout lacks a kept, tests, reverted or behavioral list: %v %q", err, stdout.String())
 	}
-	return *doc.Kept, *doc.Reverted, *doc.Behavioral
+	return *doc.Kept, *doc.Tests, *doc.Reverted, *doc.Behavioral
 }

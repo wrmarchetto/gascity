@@ -1,0 +1,67 @@
+# Mutation sweep for the pool-alias demand exclusions.
+#
+# Each row flips one exclusion to its accepting counterpart and requires the
+# test named in its expect_output to fail. The hold rows mutate the caller in
+# build_desired_state.go, which drops held beads ahead of both demand routes,
+# because pool_alias_demand.go carries no hold check of its own.
+#
+# Run: assets/scripts/mutation-sweep.py cmd/gc/pool_alias_demand_sweep.toml
+
+[sweep]
+name = "pool-alias demand exclusions are enforced"
+repo = "../.."
+
+[sweep.gate]
+argv = ["go", "test", "./cmd/gc/", "-count=1", "-run", "PoolAliasDemand"]
+timeout_s = 600
+
+[[mutation]]
+id = "demand-reader-admits-held-beads"
+path = "cmd/gc/build_desired_state.go"
+find = '''if hasDispatchHoldLabel(b.Labels) {'''
+replace = '''if len(b.Labels) < 0 {'''
+expect_output = ["--- FAIL: TestPoolAliasDemandExclusionsMatchTheShellPredicate/hold"]
+
+# The hold check narrowed to the routed tier, as if the alias tier held its own.
+[[mutation]]
+id = "demand-reader-holds-routed-tier-only"
+path = "cmd/gc/build_desired_state.go"
+find = '''if hasDispatchHoldLabel(b.Labels) {'''
+replace = '''if hasDispatchHoldLabel(b.Labels) && strings.TrimSpace(b.Assignee) == "" {'''
+expect_output = ["--- FAIL: TestPoolAliasDemandExclusionsMatchTheShellPredicate/hold"]
+
+[[mutation]]
+id = "demand-reader-holds-alias-tier-only"
+path = "cmd/gc/build_desired_state.go"
+find = '''if hasDispatchHoldLabel(b.Labels) {'''
+replace = '''if hasDispatchHoldLabel(b.Labels) && strings.TrimSpace(b.Assignee) != "" {'''
+expect_output = ["--- FAIL: TestRoutedPoolDemandSkipsDispatchHoldLabels"]
+gate = { argv = ["go", "test", "./cmd/gc/", "-count=1", "-run", "RoutedPoolDemandSkipsDispatchHoldLabels"], timeout_s = 600 }
+
+[[mutation]]
+id = "alias-demand-admits-epic"
+path = "cmd/gc/pool_alias_demand.go"
+find = '''if beads.IsReadyExcludedType(b.Type) || beads.IsMoleculeType(b.Type) || b.Type == controlReadyExcludeType {'''
+replace = '''if beads.IsMoleculeType(b.Type) {'''
+expect_output = ["--- FAIL: TestPoolAliasDemandExclusionsMatchTheShellPredicate/epic"]
+
+[[mutation]]
+id = "alias-demand-admits-named-session-identity"
+path = "cmd/gc/pool_alias_demand.go"
+find = '''return !isConfiguredNamedSessionIdentity(cfg, assignee)'''
+replace = '''return true'''
+expect_output = ["--- FAIL: TestPoolAliasDemandSkipsNamedSessionIdentity"]
+
+[[mutation]]
+id = "alias-demand-counts-own-route-non-wisp"
+path = "cmd/gc/pool_alias_demand.go"
+find = '''(routed != assignee || b.Metadata[beadmeta.KindMetadataKey] != beadmeta.KindWisp)'''
+replace = '''(routed != assignee)'''
+expect_output = ["--- FAIL: TestPoolAliasDemandStillIgnoresAssignedRoutedWork"]
+
+[[mutation]]
+id = "alias-demand-refuses-own-route-wisp"
+path = "cmd/gc/pool_alias_demand.go"
+find = '''(routed != assignee || b.Metadata[beadmeta.KindMetadataKey] != beadmeta.KindWisp)'''
+replace = '''(true)'''
+expect_output = ["--- FAIL: TestPoolAliasDemandCountsAssignedAndRoutedPoolWork/routed_to_the_same_pool"]
