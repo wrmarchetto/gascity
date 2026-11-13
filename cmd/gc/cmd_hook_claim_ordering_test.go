@@ -596,16 +596,17 @@ func TestHookClaimOrderingTakesOldestPoolParkedBeadAheadOfNewerHigherPriority(t 
 }
 
 func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
-	// The two pool tiers are one oldest-first queue (ci-mozmau). In each case
-	// the winner is the older row but loses on priority and on id, so a ladder
-	// in either tier order, a priority sort or an id sort all claim the other.
-	// The alias row also carries gc.routed_to, as a released pool claim does.
+	// The two pool tiers are one oldest-first queue (ci-mozmau), a same-second
+	// tie going to the lower id (beads internal/storage/sqlbuild/ready.go, at
+	// the go.mod pin). Every winner loses on priority, and between them the rows
+	// refute a ladder in either tier order, an id sort and a tie in tier order.
 	routedRow := func(id, created string, priority int) orderingFixtureRow {
 		return orderingFixtureRow{
 			ID: id, Status: "open", Priority: priority, CreatedAt: created,
 			Metadata: map[string]string{"gc.routed_to": orderingFixtureTarget},
 		}
 	}
+	// gc.routed_to on an alias row is the shape a released pool claim leaves.
 	aliasRow := func(id, created string, priority int) orderingFixtureRow {
 		return orderingFixtureRow{
 			ID: id, Status: "open", Priority: priority, CreatedAt: created,
@@ -632,6 +633,16 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 			alias:  aliasRow("alias-newer-p0", "2026-05-21T06:09:30Z", 0),
 			want:   "routed-older-p3",
 		},
+		{
+			// bd's created_at is a whole-second DATETIME (beads migration
+			// 0001_create_issues.up.sql), so a filing and a sling in one second
+			// tie. The routed tier is merged first.
+			name:     "same-second tie goes to the lower id over the earlier tier",
+			routed:   routedRow("z-routed-tied-p0", "2026-05-20T06:09:30Z", 0),
+			alias:    aliasRow("a-pool-tied-p3", "2026-05-20T06:09:30Z", 3),
+			want:     "a-pool-tied-p3",
+			wantPool: true,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -643,7 +654,7 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 
 			if result.BeadID != tc.want {
 				t.Fatalf("claimed %q, want %q; the routed and pool-alias tiers must merge into one "+
-					"created_at order, not end at the first tier with work.\nbd log:\n%s",
+					"(created_at, id) order, not end at the first tier with work.\nbd log:\n%s",
 					result.BeadID, tc.want, rig.log())
 			}
 			if tookPool := len(probe.poolClaimed) > 0; tookPool != tc.wantPool {
