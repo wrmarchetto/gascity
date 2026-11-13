@@ -1,4 +1,4 @@
-# Proves the merged pool queue keeps one tier's rows when the other tier's
+# Proves the merged pool queue keeps either tier's rows when the other tier's
 # bd call fails, in both stdout shapes bd fails with: nothing, and the --json
 # error object a RunE failure prints (gs-g0m7, gs-rvfb303a39b96f-f07). The
 # string goldens in internal/config catch any edit to the query text, and are
@@ -28,6 +28,20 @@ replace = '''routedReadyTierCommand(includeEphemeralReady) + ` && ` +'''
 expect_output = [
   "--- FAIL: TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing/routed_failing_silently",
   "--- FAIL: TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing/routed_failing_with_an_error_object",
+]
+
+# The same coupling written alias-first, so a failing alias tier skips the
+# routed tier. The row above cannot see it.
+[[mutation]]
+id = "alias-tier-failure-skips-the-routed-tier"
+path = "internal/config/workquery.go"
+find = '''	return `{ ` + routedReadyTierCommand(includeEphemeralReady) + `; ` +
+		poolAliasReadyTierCommand(includeEphemeralReady) + `; } | ` +'''
+replace = '''	return `{ ` + poolAliasReadyTierCommand(includeEphemeralReady) + ` && ` +
+		routedReadyTierCommand(includeEphemeralReady) + `; } | ` +'''
+expect_output = [
+  "--- FAIL: TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing/alias_failing_silently",
+  "--- FAIL: TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing/alias_failing_with_an_error_object",
 ]
 
 [[mutation]]
