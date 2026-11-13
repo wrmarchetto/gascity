@@ -1118,7 +1118,8 @@ func TestControllerReloadsNamedSessionModeAndAppliesIdleTimeout(t *testing.T) {
 	if err := sp.Start(context.Background(), "mayor", runtime.Config{Command: "echo hello"}); err != nil {
 		t.Fatalf("fake start mayor: %v", err)
 	}
-	sp.SetActivity("mayor", time.Now().Add(-10*time.Minute))
+	mayorActivity := time.Now().Add(-10 * time.Minute)
+	sp.SetActivity("mayor", mayorActivity)
 	var lastIdleTimeout atomic.Value
 
 	store, err := openCityStoreAt(dir)
@@ -1245,12 +1246,22 @@ func TestControllerReloadsNamedSessionModeAndAppliesIdleTimeout(t *testing.T) {
 	if got := parsedCfg.Agents[0].IdleTimeoutDuration(); got != 5*time.Second {
 		t.Fatalf("parsed idle_timeout duration = %v, want %v", got, 5*time.Second)
 	}
-	tracker, ok := buildIdleTracker(parsedCfg, "test", dir, sp).(*memoryIdleTracker)
+	awaitCond(t, func() bool { return !sp.IsRunning("mayor") },
+		"mayor session stopping after idle_timeout reload")
+	// The controller has already reaped mayor from sp, and the worker read
+	// reports activity only for a running session. So the fresh tracker is
+	// judged against a provider the controller does not own.
+	probe := runtime.NewFake()
+	if err := probe.Start(context.Background(), "mayor", runtime.Config{Command: "echo hello"}); err != nil {
+		t.Fatalf("fake start probe mayor: %v", err)
+	}
+	probe.SetActivity("mayor", mayorActivity)
+	tracker, ok := buildIdleTracker(parsedCfg, "test", dir, probe).(*memoryIdleTracker)
 	if !ok || tracker == nil {
 		t.Fatal("buildIdleTracker(parsedCfg) = nil, want tracker")
 	}
-	if !tracker.checkIdle("mayor", "", sp, time.Now(), runtime.Poke{}).Idle {
-		t.Fatalf("fresh idle tracker did not consider mayor idle; activity=%v timeouts=%v", sp.Activity["mayor"], tracker.idle.bySession)
+	if got := tracker.checkIdle("mayor", "", probe, time.Now(), runtime.Poke{}); !got.Idle {
+		t.Fatalf("fresh idle tracker did not consider mayor idle; check=%+v activity=%v timeouts=%v", got, mayorActivity, tracker.idle.bySession)
 	}
 
 	bead := waitForNamedMode("on_demand", hangBudget)
@@ -1261,8 +1272,6 @@ func TestControllerReloadsNamedSessionModeAndAppliesIdleTimeout(t *testing.T) {
 		t.Fatalf("controller buildFn idle_timeout = %q, want %q", got, "5s")
 	}
 
-	awaitCond(t, func() bool { return !sp.IsRunning("mayor") },
-		"mayor session stopping after idle_timeout reload")
 	if !strings.Contains(stdout.String(), "Config reloaded") {
 		t.Fatalf("stdout missing config reload marker: %q", stdout.String())
 	}
