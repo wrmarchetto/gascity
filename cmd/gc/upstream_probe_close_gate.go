@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -91,7 +92,7 @@ func isUpstreamProbeGatedBead(bead beads.Bead) bool {
 // upstreamProbeCloseViolation returns an empty string when no upstream-probe
 // contract applies, when probe distinguishes the branch from its production
 // changes, or when a branch with no behavioral production change (only tests,
-// comments or unembedded docs) has a probe that runs its tests green. A
+// comments or unembedded docs) has a probe that runs a test green. A
 // non-empty result is a close refusal explaining the failed experiment. The
 // experiment runs in a worktree this function creates and removes, never in
 // the worker's checkout.
@@ -153,6 +154,9 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 // paths, returning the close refusal or "" as upstreamProbeCloseViolation does.
 func upstreamProbeSplitViolation(repoDir, mergeBase, probe string, kept, reverted, behavioral []string) string {
 	if probe == "" && len(behavioral) == 0 {
+		if tests := upstreamProbeKeptTests(kept); len(tests) == 0 {
+			return upstreamProbeUntestedViolation(repoDir, reverted)
+		}
 		return fmt.Sprintf("edits only test paths or behavior-free paths (comments, unembedded docs), so no command can fail without this patch; set %s to the command that runs the branch's tests, which the merge sweep still requires", upstreamProbeMetadataKey)
 	}
 	if probe == "" {
@@ -166,6 +170,41 @@ func upstreamProbeSplitViolation(repoDir, mergeBase, probe string, kept, reverte
 	}
 
 	return runUpstreamProbeExperiment(repoDir, mergeBase, probe, reverted, behavioral)
+}
+
+// upstreamProbeUntestedViolation refuses a behavior-free branch that keeps no
+// test, so its remedy cannot be the branch's own tests. It names what this
+// gate checks and, where one exists, a touched package that holds tests.
+func upstreamProbeUntestedViolation(repoDir string, reverted []string) string {
+	msg := fmt.Sprintf("edits only behavior-free paths (comments, unembedded docs) and keeps no test, so no command can fail without this patch; the upstream audit reports it inconclusive without running %s, but the merge sweep requires one declared, and this gate accepts any command that exits 0 on the branch tip and runs at least one test", upstreamProbeMetadataKey)
+	pkg, err := upstreamProbeTestedPackage(repoDir, reverted)
+	switch {
+	case err != nil:
+		msg += fmt.Sprintf("; could not list HEAD to name a tested package: %v", err)
+	case pkg != "":
+		msg += ", such as go test -run <an existing test> " + pkg
+	}
+	return msg
+}
+
+// upstreamProbeTestedPackage returns, as a go test argument, the first
+// directory in HEAD's tree order that holds a _test.go and a reverted path, or
+// "" when no touched directory holds a test.
+func upstreamProbeTestedPackage(repoDir string, reverted []string) (string, error) {
+	touched := map[string]bool{}
+	for _, p := range reverted {
+		touched[path.Dir(p)] = true
+	}
+	tree, err := upstreamProbeGitLines(repoDir, "ls-tree", "-r", "--name-only", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for _, p := range tree {
+		if dir := path.Dir(p); strings.HasSuffix(p, "_test.go") && touched[dir] {
+			return "./" + strings.TrimPrefix(dir+"/", "./"), nil
+		}
+	}
+	return "", nil
 }
 
 // runUpstreamProbeExperiment requires probe to run a test and pass on the

@@ -327,12 +327,13 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 		return out
 	}
 	for _, tc := range []struct {
-		name      string
-		upstream  map[string]string // committed and pinned as upstream/main and main
-		branch    map[string]string // committed on the work branch
-		probe     string
-		wantMsg   string // empty when the close must be accepted
-		wantCause string // the failed //go:embed scan, which the refusal must name
+		name       string
+		upstream   map[string]string // committed and pinned as upstream/main and main
+		branch     map[string]string // committed on the work branch
+		probe      string
+		wantMsg    string // empty when the close must be accepted
+		wantCause  string // the failed //go:embed scan, which the refusal must name
+		wantAbsent string // a remedy the branch cannot meet, which the refusal must not name
 	}{
 		{name: "comment-docs-and-test/green-probe", branch: behaviorFree, probe: "test -f fork_test.go"},
 		{name: "comment-docs-and-test/red-probe", branch: behaviorFree, probe: "grep -q never-written fork_test.go", wantMsg: "fails on the branch tip"},
@@ -353,6 +354,36 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 			name:   "comment-only-without-test/green-probe",
 			branch: map[string]string{"owned.go": commentGo},
 			probe:  "test -f owned.go",
+		},
+		{
+			name: "comment-only-without-test/no-probe-names-the-touched-package-tests",
+			upstream: map[string]string{
+				"a/owned.go":  ownedGo,
+				"p/owned.go":  ownedGo,
+				"p/p_test.go": "package p\n",
+			},
+			branch:     map[string]string{"a/owned.go": commentGo, "p/owned.go": commentGo},
+			wantMsg:    "keeps no test, so no command can fail without this patch; the upstream audit reports it inconclusive without running gc.upstream_probe, but the merge sweep requires one declared, and this gate accepts any command that exits 0 on the branch tip and runs at least one test, such as go test -run <an existing test> ./p/",
+			wantAbsent: "./a/",
+		},
+		{
+			name:     "comment-only-without-test/no-probe-names-the-root-package-tests",
+			upstream: map[string]string{"owned.go": ownedGo, "owned_test.go": "package p\n"},
+			branch:   map[string]string{"owned.go": commentGo},
+			wantMsg:  "such as go test -run <an existing test> ./\n",
+		},
+		{
+			name:       "comment-only-without-test/no-probe-names-no-untested-package",
+			upstream:   map[string]string{"owned.go": ownedGo, "q/q_test.go": "package q\n"},
+			branch:     map[string]string{"owned.go": commentGo},
+			wantMsg:    "keeps no test, so no command can fail without this patch",
+			wantAbsent: "such as",
+		},
+		{
+			name:       "comment-and-sweep-spec-without-test/no-probe",
+			branch:     map[string]string{"owned.go": commentGo, "cmd/gc/tier_sweep.toml": "[sweep]\nname = \"t\"\n\n[sweep.gate]\nargv = [\"true\"]\n"},
+			wantMsg:    "keeps no test, so no command can fail without this patch",
+			wantAbsent: "runs the branch's tests",
 		},
 		{
 			name:   "comment-and-generated-schema-without-test/green-probe",
@@ -477,6 +508,9 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 			}
 			if tc.wantCause == "" && strings.Contains(got, "//go:embed scan") {
 				t.Fatalf("refusal = %q blames a //go:embed scan that succeeded", got)
+			}
+			if tc.wantAbsent != "" && strings.Contains(got, tc.wantAbsent) {
+				t.Fatalf("refusal = %q names %q, which the branch cannot meet", got, tc.wantAbsent)
 			}
 		})
 	}

@@ -1,5 +1,6 @@
 # Proves the upstream-probe close gate's "adds no test path" refusal counts
-# kept tests alone, so a kept sweep spec cannot satisfy it, and that
+# kept tests alone, so a kept sweep spec cannot satisfy it, that a
+# behavior-free branch keeping no test is told a remedy it can meet, and that
 # `gc internal upstream-classify` prints the same tests list the gate reads.
 #
 # repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
@@ -13,7 +14,7 @@ repo = "../.."
 argv = [
   "go", "test", "./cmd/gc/",
   "-count=1",
-  "-run", "TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape|TestUpstreamProbeClassifyPaths",
+  "-run", "TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape|TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly|TestUpstreamProbeClassifyPaths",
 ]
 timeout_s = 900
 
@@ -39,6 +40,60 @@ path = "cmd/gc/upstream_probe_close_gate.go"
 find = '''		if upstreamProbeTestPath(path) {'''
 replace = '''		if false {'''
 expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/upstream-code-and-test/vacuous-after-revert"]
+
+# --- the behavior-free branch keeping no test ---
+
+[[mutation]]
+id = "untested-remedy-counts-every-kept-path"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''if tests := upstreamProbeKeptTests(kept); len(tests) == 0 {'''
+replace = '''if tests := kept; len(tests) == 0 {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-and-sweep-spec-without-test/no-probe"]
+
+[[mutation]]
+id = "untested-branch-told-to-run-its-tests"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''if tests := upstreamProbeKeptTests(kept); len(tests) == 0 {'''
+replace = '''if false {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-only-without-test/no-probe-names-the-touched-package-tests"]
+
+[[mutation]]
+id = "tested-branch-told-it-keeps-no-test"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''if tests := upstreamProbeKeptTests(kept); len(tests) == 0 {'''
+replace = '''if true {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-docs-and-test/no-probe"]
+
+[[mutation]]
+id = "package-hint-dropped"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''	case pkg != "":'''
+replace = '''	case false:'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-only-without-test/no-probe-names-the-touched-package-tests"]
+
+[[mutation]]
+id = "package-hint-ignores-test-presence"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''strings.HasSuffix(p, "_test.go") && touched[dir]'''
+replace = '''touched[dir]'''
+expect_output = [
+  "--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-only-without-test/no-probe-names-the-touched-package-tests",
+  "--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-only-without-test/no-probe-names-no-untested-package",
+]
+
+[[mutation]]
+id = "package-hint-ignores-touch"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''strings.HasSuffix(p, "_test.go") && touched[dir]'''
+replace = '''strings.HasSuffix(p, "_test.go")'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-only-without-test/no-probe-names-no-untested-package"]
+
+[[mutation]]
+id = "root-package-hint-doubles-its-dot"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''"./" + strings.TrimPrefix(dir+"/", "./")'''
+replace = '''"./" + dir + "/"'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly/comment-only-without-test/no-probe-names-the-root-package-tests"]
 
 # --- the audit interface ---
 
