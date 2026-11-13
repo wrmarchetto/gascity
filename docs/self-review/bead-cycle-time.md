@@ -64,6 +64,26 @@ branch `fix/ci-mozmau-pool-tiers-one-fifo`, queued in the sweep and on no
 main at this pass, so it was read and run there. The earlier bullets stand
 as written unless amended here.
 
+Refreshed by gs-rvfb303a39b96f-f03-deferred over gascity `4b7f7ce5b`, after
+review g2's finding F03 found five commits in its range that landed after
+this record and appear nowhere in it. They are the upstream-probe close
+gate's, not this epic's, the class of finding 7: toolsmith beads in the
+city store, none carrying an epic label, provoked by gs-g0m7's own close.
+ci-vf7awf's `de91226441` lets a branch whose reverted paths are all
+comment-only Go or unembedded docs Markdown close as test-only, after the
+gate refused gs-g0m7 on its prose amendments to ci-mozmau. ci-6brgy7's
+`11a2795515` keeps a mutation-sweep spec as a test path, after the gate
+refused it again on `cmd/gc/pool_queue_tier_merge_sweep.toml`. ci-4ilccu's
+`c0f972abed` exposes the gate's split as hidden `gc internal
+upstream-classify`, which city `e9728080c` has `upstream-patch-audit.py`
+read. ci-weyak3's `5ab9fb93f4` adds it to the product-metrics census, and
+ci-12ip41's `39c7b36545` repoints two sweep rows `c0f972abed` left matching
+nothing. All five reached gascity main in `e786cde7a`, `f835333dd` and
+`547ca7dc8`, 11-08T01:41Z to 03:59Z, before gs-g0m7 closed. Review g2's
+partition B read them, and its F02, F04 to F06, F08 and F14 to F16 are
+theirs, each deferred to its own `gs-rvfb303a39b96f-f<NN>-deferred` bead.
+This refresh reads them for this record's sections below.
+
 ## Code against docs
 
 - City `docs/merge-queue-wait.md`: its re-run command, as written, over
@@ -181,6 +201,14 @@ as written unless amended here.
   a failing tier (finding 12). The page reported the replay's 2.6 h as
   measured, and said the work-query form prints the first match
   (finding 13).
+- The five close-gate commits touch only `cmd/gc/`, and no gascity page
+  describes the gate. Their doc is city `docs/upstream-patch-retirement.md`,
+  whose experiment, revert the production half, keep the tests and run the
+  probe, the gate and the audit still run. Its "Three things it will not
+  do" names the test-only patch but not the case `c0f972abed` and
+  `e9728080c` added beside it: a patch whose every reverted path is
+  behavior-free, which the audit reports INCONCLUSIVE, to be decided by
+  reading. Noted and left, below.
 
 ## Docs against spec
 
@@ -246,6 +274,11 @@ pm-log #150 to #193.
 - The other four criteria are unchanged by the three new members.
   ci-mozmau changes claim order, not the sweep, and its test change and
   this pass's are each net 0 test functions.
+- The five close-gate commits net +3 test functions, all added by
+  `de91226441`, and ci-vf7awf's close carries the `new-tests:` line the
+  extend-before-add gate asks for. `11a2795515` renames one (+1/-1), and
+  `c0f972abed`, `5ab9fb93f4` and `39c7b36545` add none. The net 0 bullet
+  above covers ci-mozmau and gs-g0m7's pass alone.
 - Left for the pm-epic-close this review leads to: the roadmap's
   Conclusion and `engdocs/epics/bead-cycle-time.md` still call the stage
   fixes unmeasured and ci-71d5yl open. Both were true at #195, and both
@@ -317,6 +350,11 @@ pm-log #150 to #193.
   cases among them. `./internal/config/` and `./test/docsync/` pass.
 - ci-m5pd91 added no tool. Its counts were re-derived from the store
   instead (Code against docs).
+- `gc internal upstream-classify --repo <gascity> --base de91226441^
+  --head 39c7b36545` over the nine paths the five commits touch, with the
+  installed gc, twice: exit 0 and byte-identical. The two test files and
+  the sweep spec are kept, and the other six are reverted and behavioral,
+  the census JSON among them.
 
 ## Wrong input
 
@@ -367,6 +405,13 @@ pm-log #150 to #193.
   (a missing store, a malformed `--metadata-field`, an unknown `--sort`),
   so this shape needs a bd that writes non-JSON to stdout. Left, and the
   comment now states it (finding 12).
+- `upstream-classify` with an unknown `--base`, or a gascity sha against
+  the city repo: exit 1, naming the flag, the value and the repository.
+  Base and head swapped: exit 0, and the sweep spec, absent at the new
+  head, is still kept from its read at the base. A nonexistent `.go` path
+  reads behavioral, and a nonexistent `docs/` Markdown path reads
+  behavior-free, partition B's aside. The gate and the audit pass only
+  paths from git.
 
 ## Missing input
 
@@ -406,6 +451,12 @@ pm-log #150 to #193.
 - ci-71d5yl's first re-run command over this pass's log copy, the
   report's own copy having aged out: the one-column drift under Code
   against docs.
+- `upstream-classify` without `--repo`: exit 1, "--repo is required".
+  Without `--base` or `--head`: exit 1, `--base ""` or `--head ""` "is not
+  a commit". With `--repo` at a missing directory it blames `--base`, the
+  class of zephyr `plan` blaming the base for a missing `--root`. With no
+  paths: exit 0 and an empty split, which the audit reads as "kept no test
+  path", INCONCLUSIVE, never a pass.
 
 ## Findings
 
@@ -479,3 +530,9 @@ PUSH_SELECT reads the hook's catch-all line as unknown, zephyr's `plan`
 blames the base for a missing `--root`, sel4's `fold` writes no recording
 stamp, and fold accepts logs from another checkout. Each errs toward
 counting or testing more.
+
+gs-rvfb303a39b96f-f03-deferred notes and leaves two more.
+`upstream-classify` blames `--base` for a missing `--repo` directory, which
+still exits 1. City `docs/upstream-patch-retirement.md` does not name the
+behavior-free INCONCLUSIVE case, a gap in the close machinery's own page,
+as finding 7 was in its code.
