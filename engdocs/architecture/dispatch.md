@@ -247,7 +247,10 @@ against a template set.
 - `bd ready --assignee="$target"` applies no route filter, so for a bead both
   assigned and routed to this same target the shell counts one where the Go
   reader counts zero. #2527's invariant is explicit and regression-tested, so
-  it wins for that shape, and ci-c000's tier has no producer of it.
+  it wins for that shape. The shape has a live non-wisp producer, the
+  refinery done-sequence handoff in `cmd_sling_test.go`, which must raise
+  zero. A root-only wisp is the one case the Go reader counts as well
+  (`controllerDemandPoolAliasTarget`).
 
 The shared predicate is the agreement substrate. Failure envelopes
 intentionally differ: the worker path suppresses `bd ready` stderr and
