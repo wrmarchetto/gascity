@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -36,11 +37,11 @@ func upstreamProbeClassifyPaths(repoDir, base, head string, paths []string) (kep
 
 // upstreamProbeSweepSpec reports whether p is a mutation-sweep spec, which
 // only the sweep driver reads, so it is test material like a _test.go. That
-// is a _sweep.toml or .mutation-sweep.toml with a [sweep] table holding
+// is a file passing upstreamProbeSweepSpecName with a [sweep] table holding
 // [sweep.gate], read at head or at base when the branch deleted it, and
 // reached by no //go:embed at head.
 func upstreamProbeSweepSpec(repoDir, base, head, p string, embeds *upstreamProbeEmbedIndex) bool {
-	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {
+	if !upstreamProbeSweepSpecName(p) {
 		return false
 	}
 	rev := head
@@ -65,19 +66,27 @@ func upstreamProbeSweepSpec(repoDir, base, head, p string, embeds *upstreamProbe
 	return embeds.unembedded(p)
 }
 
+// upstreamProbeSweepSpecName is the name rule of ci-6brgy7. A tracked file
+// holding [sweep.gate] under any other name is refused by
+// TestUpstreamProbeClassifyPaths, since the experiment would revert it.
+func upstreamProbeSweepSpecName(p string) bool {
+	return strings.HasSuffix(p, "_sweep.toml") || strings.HasSuffix(p, ".mutation-sweep.toml")
+}
+
 // upstreamProbeBehaviorFree reports whether p's change between base and head
-// cannot alter behavior. Only two kinds of path qualify: a .go file whose
-// code tokens, directives and cgo preamble are unchanged, and Markdown under
-// engdocs/ or docs/ that no //go:embed pattern at head reaches. Anything
-// unreadable counts as behavior.
+// cannot alter behavior. Only two kinds of path qualify, and no //go:embed
+// pattern at head may reach either: a .go file whose code tokens, directives
+// and cgo preamble are unchanged, and any other file under engdocs/ or docs/.
+// Anything unreadable counts as behavior.
 func upstreamProbeBehaviorFree(repoDir, base, head, p string, embeds *upstreamProbeEmbedIndex) bool {
 	switch {
 	case strings.HasSuffix(p, ".go"):
 		baseSrc, baseErr := upstreamProbeGitOutput(repoDir, "show", base+":"+p)
 		headSrc, headErr := upstreamProbeGitOutput(repoDir, "show", head+":"+p)
 		return baseErr == nil && headErr == nil &&
-			upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))
-	case upstreamProbeDocsMarkdown(p):
+			upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc)) &&
+			embeds.unembedded(p)
+	case upstreamProbeDocsPath(p):
 		return embeds.unembedded(p)
 	}
 	return false
@@ -104,21 +113,27 @@ func (x *upstreamProbeEmbedIndex) unembedded(file string) bool {
 	return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)
 }
 
-func upstreamProbeDocsMarkdown(p string) bool {
-	return strings.HasSuffix(p, ".md") &&
-		(strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/"))
+// upstreamProbeDocsPath takes any extension: the generated schema under
+// docs/reference/schema is .json and .txt, and the embed check is what
+// separates shipped content from prose.
+func upstreamProbeDocsPath(p string) bool {
+	return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")
 }
 
 // upstreamProbeGoBehaviorFree reports whether two versions of a Go file
-// differ only in comments that are neither directives nor cgo preamble.
+// differ only in comments that are neither directives nor cgo preamble, nor
+// precede the package clause of a file carrying a +build line.
 // Source that does not scan or parse is never behavior-free.
 func upstreamProbeGoBehaviorFree(base, head []byte) bool {
-	baseStream, ok := upstreamProbeGoStream(base)
+	baseStream, baseHeader, ok := upstreamProbeGoStream(base)
 	if !ok {
 		return false
 	}
-	headStream, ok := upstreamProbeGoStream(head)
+	headStream, headHeader, ok := upstreamProbeGoStream(head)
 	if !ok {
+		return false
+	}
+	if !bytes.Equal(baseHeader, headHeader) {
 		return false
 	}
 	if len(baseStream) != len(headStream) {
@@ -139,11 +154,24 @@ type upstreamProbeGoToken struct {
 
 // upstreamProbeGoStream is the file's token stream with every comment
 // dropped except directives and cgo preamble lines, which keep their place.
-func upstreamProbeGoStream(src []byte) ([]upstreamProbeGoToken, bool) {
+// Returns (stream, header, ok), header being the source before the package
+// clause when a +build line precedes it, and nil otherwise.
+func upstreamProbeGoStream(src []byte) ([]upstreamProbeGoToken, []byte, bool) {
 	fset := token.NewFileSet()
 	parsed, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
+	}
+	// go/build honors a +build line only when a blank line follows it before
+	// the package clause (go/build parseFileHeader), and blank lines are not
+	// tokens, so every byte of that header is behavior.
+	var header []byte
+	for _, group := range parsed.Comments {
+		for _, c := range group.List {
+			if c.Slash < parsed.Package && upstreamProbePlusBuild(c.Text) {
+				header = src[:fset.File(parsed.Package).Offset(parsed.Package)]
+			}
+		}
 	}
 	preamble := map[token.Pos]bool{}
 	for _, decl := range parsed.Decls {
@@ -190,7 +218,7 @@ func upstreamProbeGoStream(src []byte) ([]upstreamProbeGoToken, bool) {
 		}
 		stream = append(stream, upstreamProbeGoToken{tok: tok, lit: lit})
 	}
-	return stream, true
+	return stream, header, true
 }
 
 // upstreamProbeGoDirective covers the //go: family, //line, +build
@@ -201,6 +229,11 @@ func upstreamProbeGoDirective(comment string) bool {
 			return true
 		}
 	}
+	return upstreamProbePlusBuild(comment)
+}
+
+// upstreamProbePlusBuild matches a // +build constraint line.
+func upstreamProbePlusBuild(comment string) bool {
 	return strings.HasPrefix(comment, "//") &&
 		strings.HasPrefix(strings.TrimLeft(comment[2:], " \t"), "+build")
 }
@@ -214,7 +247,7 @@ type upstreamProbeEmbed struct {
 
 // upstreamProbeEmbedPatterns reads every //go:embed directive in the .go
 // files of rev. Any file it cannot parse, or any pattern it cannot read, is
-// an error, so no Markdown is called unembedded on a partial resolution.
+// an error, so no file is called unembedded on a partial resolution.
 func upstreamProbeEmbedPatterns(repoDir, rev string) ([]upstreamProbeEmbed, error) {
 	out, err := upstreamProbeGitOutput(repoDir, "grep", "-l", "-z", "-F", "//go:embed", rev, "--", "*.go")
 	if err != nil {

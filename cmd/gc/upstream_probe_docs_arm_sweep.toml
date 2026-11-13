@@ -1,0 +1,196 @@
+# Proves the upstream-probe classifier's behavior-free arms are enforced: a
+# docs/ or engdocs/ file, or a comment-only .go change, is behavior-free only
+# while no //go:embed reaches it, Go source under docs/ is judged as Go, and a
+# .go file carrying a +build line keeps every byte before its package clause.
+# Comment-only means equal token streams, //extern kept and only import "C"
+# carrying a preamble, and a //go:embed that go build rejects refuses the
+# whole reading. Each row flips one guard to its accepting counterpart, or a
+# narrowing to its wide form, and names the subtest that must go red.
+
+[sweep]
+name = "upstream-probe arms: unembedded docs and Go only, Go judged first"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-run", "TestUpstreamProbe|TestEvaluateUpstreamProbeCloseGate",
+  "-count=1",
+]
+timeout_s = 900
+
+# --- the extension test the docs arm dropped ---
+
+[[mutation]]
+id = "docs-arm-admits-markdown-only"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return strings.HasSuffix(p, ".md") && (strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/"))'''
+expect_output = [
+  "unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free",
+  "comment-and-generated-schema-without-test",
+  "comment-generated-schema-and-test",
+]
+
+# --- the prefix test ---
+
+[[mutation]]
+id = "docs-arm-admits-any-path"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return true'''
+expect_output = ["file-outside-engdocs-and-docs-is-behavioral"]
+
+[[mutation]]
+id = "docs-arm-drops-engdocs"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return strings.HasPrefix(p, "docs/")'''
+expect_output = ["unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free"]
+
+[[mutation]]
+id = "docs-arm-drops-docs"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return strings.HasPrefix(p, "engdocs/")'''
+expect_output = [
+  "unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free",
+  "comment-and-generated-schema-without-test",
+]
+
+# --- the embed check, now the only thing separating shipped content ---
+
+[[mutation]]
+id = "docs-arm-ignores-go-embed"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "case upstreamProbeDocsPath(p):\n\t\treturn embeds.unembedded(p)"
+replace = "case upstreamProbeDocsPath(p):\n\t\treturn true"
+expect_output = [
+  "docs-file-matched-by-embed-pattern-is-behavioral-whatever-its-extension",
+  "embedded-schema-keeps-full-experiment",
+]
+
+# --- Go source under docs/ is judged as Go ---
+
+[[mutation]]
+id = "docs-arm-judged-before-go"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "switch {\n\tcase strings.HasSuffix(p, \".go\"):"
+replace = "switch {\n\tcase upstreamProbeDocsPath(p):\n\t\treturn embeds.unembedded(p)\n\tcase strings.HasSuffix(p, \".go\"):"
+expect_output = ["added-go-file-is-behavioral-even-if-comment-only"]
+
+# --- the Go arm's embed check: embedded Go source is shipped bytes ---
+
+[[mutation]]
+id = "go-arm-ignores-go-embed"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc)) &&\n\t\t\tembeds.unembedded(p)"
+replace = "upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))"
+expect_output = [
+  "comment-only-go-change-reached-by-embed-is-behavioral",
+  "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
+]
+
+# --- a partial embed reading proves no file unembedded ---
+
+[[mutation]]
+id = "unembedded-trusts-a-partial-reading"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)"
+replace = "return !upstreamProbeEmbedded(x.embeds, file)"
+expect_output = [
+  "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
+  "sweep-spec-is-behavioral-when-embeds-cannot-be-resolved",
+]
+
+[[mutation]]
+id = "embed-with-no-pattern-accepted"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if len(patterns) == 0 {"
+replace = "if false && len(patterns) == 0 {"
+expect_output = ["embed-with-no-pattern-makes-markdown-behavioral"]
+
+[[mutation]]
+id = "embed-pattern-leaving-its-package-accepted"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if !fs.ValidPath(strings.TrimPrefix(pattern, "all:")) {'''
+replace = '''if false && !fs.ValidPath(strings.TrimPrefix(pattern, "all:")) {'''
+expect_output = ["embed-pattern-leaving-its-package-makes-markdown-behavioral"]
+
+# --- the //go:embed directive is that word, not a prefix of a longer one ---
+
+[[mutation]]
+id = "embed-directive-matches-a-longer-word"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if !ok || (rest != "" && rest[0] != ' ' && rest[0] != '\t') {'''
+replace = '''if !ok {'''
+expect_output = ["longer-directive-sharing-the-embed-prefix-embeds-nothing"]
+
+# --- comment-only means equal token streams, not a shared prefix ---
+
+[[mutation]]
+id = "token-stream-prefix-reads-equal"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if len(baseStream) != len(headStream) {"
+replace = "if false && len(baseStream) != len(headStream) {"
+expect_output = [
+  "appended-declaration-is-behavioral",
+  "truncated-file-is-behavioral",
+]
+
+# --- which comments are behavior: //extern, and import "C" docs alone ---
+
+[[mutation]]
+id = "extern-directive-read-as-prose"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''"//export ", "//extern "}'''
+replace = '''"//export "}'''
+expect_output = ["gccgo-extern-change-is-behavioral"]
+
+[[mutation]]
+id = "every-import-doc-is-cgo-preamble"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if p, err := strconv.Unquote(imp.Path.Value); err != nil || p != "C" {'''
+replace = '''if _, err := strconv.Unquote(imp.Path.Value); err != nil {'''
+expect_output = ["doc-comment-on-non-cgo-import-is-behavior-free"]
+
+# --- a +build file's header is behavior, since blank lines are not tokens ---
+
+[[mutation]]
+id = "go-arm-ignores-plus-build-header"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if !bytes.Equal(baseHeader, headHeader) {"
+replace = "if false && !bytes.Equal(baseHeader, headHeader) {"
+expect_output = [
+  "deleting-blank-line-after-plus-build-is-behavioral",
+  "inserting-blank-line-after-plus-build-is-behavioral",
+]
+
+[[mutation]]
+id = "plus-build-match-refuses-every-comment"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "func upstreamProbePlusBuild(comment string) bool {\n\treturn strings.HasPrefix"
+replace = "func upstreamProbePlusBuild(comment string) bool {\n\treturn false && strings.HasPrefix"
+expect_output = [
+  "plus-build-text-change-is-behavioral",
+  "deleting-blank-line-after-plus-build-is-behavioral",
+  "inserting-blank-line-after-plus-build-is-behavioral",
+]
+
+# --- the header rule's narrowing: +build files only, bytes before package ---
+
+[[mutation]]
+id = "header-kept-for-every-file"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if c.Slash < parsed.Package && upstreamProbePlusBuild(c.Text) {"
+replace = "if c.Slash < parsed.Package {"
+expect_output = ["header-comment-change-without-plus-build-is-behavior-free"]
+
+[[mutation]]
+id = "header-spans-whole-file"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "header = src[:fset.File(parsed.Package).Offset(parsed.Package)]"
+replace = "header = src"
+expect_output = [
+  "comment-change-after-package-clause-of-plus-build-file-is-behavior-free",
+]

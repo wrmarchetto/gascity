@@ -23,7 +23,7 @@
 //
 // The policy cases here are paired with controls that assert the rig can produce
 // the opposite answer -- the priority-first head when the sort flag is gone, and
-// the pool-alias bead when the routed tier is empty. Without them a fake that
+// each tier's bead when the other tier yields nothing. Without them a fake that
 // ignored --sort entirely, or a fixture whose two orderings happened to agree,
 // would read as a pass. One control covers both pool tiers' ordering because the
 // fake resolves every tier's fixture through one (tier, order) lookup.
@@ -255,13 +255,25 @@ func (r *orderingRig) serveTier(tier string, rows []orderingFixtureRow) {
 	}
 }
 
-// failTier scripts tier to fail as bd does, nothing on stdout and exit 1. The
+// The two stdouts of a failing `bd ready --json`, both with exit 1. An error
+// raised before RunE goes to stderr, one raised inside RunE is an indented
+// error object on stdout (beads cmd/bd/errors.go HandleErrorRespectJSON, at the
+// go.mod pin).
+const (
+	bdFailStdoutNothing     = ""
+	bdFailStdoutErrorObject = "{\n" +
+		"  \"error\": \"query failed: connection reset\",\n" +
+		"  \"schema_version\": 1\n" +
+		"}\n"
+)
+
+// failTier scripts tier to fail as bd does, printing stdout and exiting 1. The
 // fake logs it as "failed", not "refused", so claimOnce still proves the query
 // made no unscripted call.
-func (r *orderingRig) failTier(tier string) {
+func (r *orderingRig) failTier(tier, stdout string) {
 	r.t.Helper()
 	path := filepath.Join(r.fixtureDir, tier+".fail")
-	if err := os.WriteFile(path, nil, 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(stdout), 0o644); err != nil {
 		r.t.Fatalf("write fail marker %s: %v", path, err)
 	}
 }
@@ -364,6 +376,7 @@ for arg in "$@"; do
 done
 if [ -n "$tier" ] && [ -f "$GC_FIXTURE_DIR/$tier.fail" ]; then
   printf 'failed: tier=%s\n' "$tier" >>"$GC_FIXTURE_LOG"
+  cat "$GC_FIXTURE_DIR/$tier.fail"
   exit 1
 fi
 fixture="$GC_FIXTURE_DIR/$tier.$order.jsonl"
@@ -592,13 +605,14 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 	// The two pool tiers are one oldest-first queue (ci-mozmau). In each case
 	// the winner is the older row but loses on priority and on id, so a ladder
 	// in either tier order, a priority sort or an id sort all claim the other.
-	// The alias row also carries gc.routed_to, as a released pool claim does.
 	routedRow := func(id, created string, priority int) orderingFixtureRow {
 		return orderingFixtureRow{
 			ID: id, Status: "open", Priority: priority, CreatedAt: created,
 			Metadata: map[string]string{"gc.routed_to": orderingFixtureTarget},
 		}
 	}
+	// Routed to its own pool as well, so a claim choosing the plain claim by
+	// route rather than the pool transfer by assignee fails here.
 	aliasRow := func(id, created string, priority int) orderingFixtureRow {
 		return orderingFixtureRow{
 			ID: id, Status: "open", Priority: priority, CreatedAt: created,
@@ -678,10 +692,18 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 	}
 }
 
-func TestHookClaimOrderingTakesPoolAliasWorkWhenTheRoutedTierYieldsNothing(t *testing.T) {
-	// The control for the case above: the alias bead is claimable through this
-	// rig on its own. The failing row pins the merge's separator, which must
-	// let one tier's failure leave the other's rows claimable.
+func TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing(t *testing.T) {
+	// The control for the case above: each tier's bead is claimable through this
+	// rig on its own. The failing rows pin the merge, which must let either
+	// tier's failure, in either stdout shape bd fails with, leave the other
+	// tier's rows claimable.
+	routed := []orderingFixtureRow{{
+		ID:        "routed-oldest-p0",
+		Status:    "open",
+		Priority:  0,
+		CreatedAt: "2026-05-20T06:09:30Z",
+		Metadata:  map[string]string{"gc.routed_to": orderingFixtureTarget},
+	}}
 	alias := []orderingFixtureRow{{
 		ID:        "alias-oldest-p0",
 		Status:    "open",
@@ -689,35 +711,60 @@ func TestHookClaimOrderingTakesPoolAliasWorkWhenTheRoutedTierYieldsNothing(t *te
 		CreatedAt: "2026-05-20T06:09:30Z",
 		Assignee:  orderingFixtureTarget,
 	}}
-	cases := []struct {
+	yields := []struct {
 		name   string
-		routed func(*orderingRig)
-		logged string
+		failed bool   // false serves the tier with no rows
+		stdout string // what the failing bd printed
 	}{
-		{"empty", func(r *orderingRig) { r.serveTier("routed", nil) }, "served: tier=routed order=oldest"},
-		{"failing", func(r *orderingRig) { r.failTier("routed") }, "failed: tier=routed"},
+		{"empty", false, ""},
+		{"failing_silently", true, bdFailStdoutNothing},
+		{"failing_with_an_error_object", true, bdFailStdoutErrorObject},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			rig := newOrderingRig(t)
-			tc.routed(rig)
-			rig.serveTier("alias", alias)
-			rig.serveTier("ephemeral", nil)
-			var probe orderingClaimProbe
-			result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
+	serving := []struct {
+		tier, other string
+		rows        []orderingFixtureRow
+		pool        bool
+	}{
+		{"alias", "routed", alias, true},
+		{"routed", "alias", routed, false},
+	}
+	for _, sv := range serving {
+		for _, y := range yields {
+			t.Run(sv.other+"_"+y.name, func(t *testing.T) {
+				rig := newOrderingRig(t)
+				logged := "served: tier=" + sv.other + " order=oldest"
+				if y.failed {
+					rig.failTier(sv.other, y.stdout)
+					logged = "failed: tier=" + sv.other
+				} else {
+					rig.serveTier(sv.other, nil)
+				}
+				rig.serveTier(sv.tier, sv.rows)
+				rig.serveTier("ephemeral", nil)
+				var probe orderingClaimProbe
+				query := routedQueuePoolSlotQuery()
+				result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), query)
 
-			if !strings.Contains(rig.log(), tc.logged) {
-				t.Fatalf("the routed tier never ran as scripted (want %q); bd log:\n%s", tc.logged, rig.log())
-			}
-			if result.BeadID != "alias-oldest-p0" {
-				t.Fatalf("claimed %q, want the pool-parked alias-oldest-p0 when the routed tier is %s",
-					result.BeadID, tc.name)
-			}
-			// bd refuses --claim on a bead assigned to another name, so a bead
-			// parked on the pool name is taken by the compare-and-swap transfer.
-			if len(probe.poolClaimed) != 1 || probe.poolClaimed[0] != "alias-oldest-p0" {
-				t.Fatalf("pool transfers = %v, want exactly [alias-oldest-p0]", probe.poolClaimed)
-			}
-		})
+				if !strings.Contains(rig.log(), logged) {
+					t.Fatalf("the %s tier never ran as scripted (want %q); bd log:\n%s",
+						sv.other, logged, rig.log())
+				}
+				want := sv.rows[0].ID
+				if result.BeadID != want {
+					t.Fatalf("claimed %q, want the %s tier's %s when the %s tier is %s; work_query printed %q",
+						result.BeadID, sv.tier, want, sv.other, y.name, rig.lastOutput)
+				}
+				// bd refuses --claim on a bead assigned to another name, so a bead
+				// parked on the pool name is taken by the compare-and-swap transfer.
+				took, other, path := probe.claimed, probe.poolClaimed, "plain claim"
+				if sv.pool {
+					took, other, path = probe.poolClaimed, probe.claimed, "pool transfer"
+				}
+				if len(took) != 1 || took[0] != want || len(other) != 0 {
+					t.Fatalf("pool transfers = %v, plain claims = %v; want only %s, by %s",
+						probe.poolClaimed, probe.claimed, want, path)
+				}
+			})
+		}
 	}
 }

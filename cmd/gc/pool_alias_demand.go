@@ -7,7 +7,7 @@
 // Why this exists as a second admission rule beside the routed one rather than
 // as a normalization pass over the beads: ci-c000 already taught the generated
 // shell predicates this shape (bdReadyPoolAliasDemandShell, unioned into
-// poolDemandCountShell for the reconciler and poolDemandFirstRowFunctionScript
+// poolDemandCountShell for the reconciler and poolDemandProbeFunctionScript
 // for the worker), and built the claim side to match -- hookCandidatePoolAlias
 // plus BdStore.ReassignIfAssignee, which takes the bead by compare-and-swap so
 // two slots cannot both win it. The reconciler only shells out for a pool with a
@@ -27,7 +27,8 @@
 // Editing constraint: the exclusions below mirror bdReadyPoolAliasDemandShell
 // and each one creates SPAWN demand if dropped, so a miss is a pool that wakes,
 // finds nothing it may claim, drains, and is woken again next tick. They are
-// pinned by cmd/gc/build_desired_state_pool_alias_demand_test.go.
+// pinned by cmd/gc/build_desired_state_pool_alias_demand_test.go, and each pin
+// is proven by mutation in cmd/gc/pool_alias_demand_sweep.toml.
 package main
 
 import (
@@ -71,7 +72,8 @@ func controllerDemandPoolAliasTarget(cfg *config.City, b beads.Bead, templates m
 }
 
 // poolAliasDemandEligible reports whether a bead already matched to a template
-// may raise spawn demand for it.
+// may raise spawn demand for it. It has no dispatch-hold check because the
+// caller drops held beads ahead of both demand routes.
 //
 // beads.IsReadyExcludedType already hides mail and the bookkeeping types from
 // controllerDemandReady, so the message check is redundant TODAY. It is written
@@ -87,9 +89,6 @@ func poolAliasDemandEligible(cfg *config.City, b beads.Bead, assignee string) bo
 	// second explicit epic branch because the duplicate was measurably dead:
 	// removing it left every exclusion test green.
 	if beads.IsReadyExcludedType(b.Type) || beads.IsMoleculeType(b.Type) || b.Type == controlReadyExcludeType {
-		return false
-	}
-	if hasDispatchHoldLabel(b.Labels) {
 		return false
 	}
 	// A configured named session's identity is its OWN wake signal: namedWorkReady

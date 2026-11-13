@@ -92,13 +92,15 @@ func TestEvaluateUpstreamProbeCloseGateUsesProbeSetByAtomicClose(t *testing.T) {
 }
 
 // TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape pins what each
-// branch shape owes. Fork-only owes no probe. Upstream code owes a kept test
-// and a probe that runs a test both before and after the revert. Only
-// upstream-owned tests owe a probe that runs them green, as the merge sweep does.
+// branch shape owes. Fork-only owes no probe. Upstream code owes a kept test,
+// which a kept sweep spec is not, and a probe running a test before and after
+// the revert. Upstream-owned tests alone owe a probe that runs them green.
 func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
+	const spec = "[sweep]\nname = \"s\"\n\n[sweep.gate]\nargv = [\"go\", \"test\"]\n"
 	for _, tc := range []struct {
 		name     string
 		paths    []string // files the branch writes; upstream_owned.txt is upstream's
+		specs    []string // sweep specs the branch adds beside paths
 		upstream bool     // paths are committed to upstream/main first
 		probe    string
 		wantMsg  string // empty when the close must be accepted
@@ -110,6 +112,8 @@ func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
 		{name: "upstream-test-only/red-probe", paths: []string{"owned_test.go"}, upstream: true, probe: "grep -q never-written owned_test.go", wantMsg: "fails on the branch tip"},
 		{name: "upstream-test-only/vacuous-probe", paths: []string{"owned_test.go"}, upstream: true, probe: "echo 'ok pkg [no test files]'", wantMsg: "ran no test"},
 		{name: "upstream-code-without-test/probe", paths: []string{"upstream_owned.txt"}, probe: "true", wantMsg: "adds no test path"},
+		// The probe reads production code, so it goes red on the revert.
+		{name: "upstream-code-and-sweep-spec-only/probe", paths: []string{"upstream_owned.txt"}, specs: []string{"gate_sweep.toml"}, probe: "grep -q branch-edit upstream_owned.txt", wantMsg: "adds no test path"},
 		{
 			name:    "upstream-code-and-test/vacuous-after-revert",
 			paths:   []string{"upstream_owned.txt", "new_test.go"},
@@ -135,6 +139,12 @@ func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
 				runUpstreamProbeCloseGateGit(t, repoDir, "update-ref", "refs/remotes/upstream/main", "HEAD")
 			}
 			runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-b", "fix/shape")
+			for _, path := range tc.specs {
+				if err := os.WriteFile(filepath.Join(repoDir, path), []byte(spec), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				runUpstreamProbeCloseGateGit(t, repoDir, "add", path)
+			}
 			writeAndCommit("branch-edit\n", "branch work")
 
 			bead := beads.Bead{ID: "ci-probe", Type: "bug"}
@@ -280,9 +290,17 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 	const ownedGo = "package p\n\n// F returns one.\nfunc F() int { return 1 }\n"
 	const commentGo = "package p\n\n// F returns one, as the fork documents.\nfunc F() int { return 1 }\n"
 	upstream := map[string]string{
-		"owned.go":                 ownedGo,
-		"engdocs/arch/dispatch.md": "upstream prose\n",
-		"upstream_owned.txt":       "base\n",
+		"owned.go":                               ownedGo,
+		"engdocs/arch/dispatch.md":               "upstream prose\n",
+		"upstream_owned.txt":                     "base\n",
+		"docs/reference/schema/city-schema.json": "{}\n",
+		"docs/reference/schema/city-schema.txt":  "upstream\n",
+	}
+	// What .githooks/pre-commit stages beside a comment on a config type.
+	schemaComment := map[string]string{
+		"owned.go":                               commentGo,
+		"docs/reference/schema/city-schema.json": "{\"description\": \"fork\"}\n",
+		"docs/reference/schema/city-schema.txt":  "fork\n",
 	}
 	behaviorFree := map[string]string{
 		"owned.go":                 commentGo,
@@ -325,6 +343,28 @@ func TestEvaluateUpstreamProbeCloseGateTreatsBehaviorFreeBranchAsTestOnly(t *tes
 			name:   "comment-only-without-test/green-probe",
 			branch: map[string]string{"owned.go": commentGo},
 			probe:  "test -f owned.go",
+		},
+		{
+			name:   "comment-and-generated-schema-without-test/green-probe",
+			branch: schemaComment,
+			probe:  "test -f owned.go",
+		},
+		{
+			name:   "comment-generated-schema-and-test/green-probe",
+			branch: with(schemaComment),
+			probe:  "test -f fork_test.go",
+		},
+		{
+			name: "embedded-schema-keeps-full-experiment",
+			upstream: map[string]string{
+				"owned.go":                               ownedGo,
+				"docs/reference/schema/city-schema.json": "{}\n",
+				"docs/reference/schema/city-schema.txt":  "upstream\n",
+				"embed.go":                               "package p\n\nimport \"embed\"\n\n//go:embed docs/reference/schema/*.json\nvar Schema embed.FS\n",
+			},
+			branch:  with(schemaComment),
+			probe:   "test -f fork_test.go",
+			wantMsg: "(behavioral: docs/reference/schema/city-schema.json)",
 		},
 		{
 			name:    "behavioral-path-keeps-full-experiment",

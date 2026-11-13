@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
@@ -35,6 +37,16 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			head: strings.Replace(body, "return 1", "return 2", 1),
 		},
 		{
+			name: "appended-declaration-is-behavioral",
+			base: body,
+			head: body + "\nfunc G() {}\n",
+		},
+		{
+			name: "truncated-file-is-behavioral",
+			base: body + "\nfunc G() {}\n",
+			head: body,
+		},
+		{
 			name: "go-build-text-change-is-behavioral",
 			base: "//go:build linux\n\npackage p\n",
 			head: "//go:build darwin\n\npackage p\n",
@@ -43,6 +55,28 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			name: "plus-build-text-change-is-behavioral",
 			base: "// +build linux\n\npackage p\n",
 			head: "// +build darwin\n\npackage p\n",
+		},
+		{
+			name: "deleting-blank-line-after-plus-build-is-behavioral",
+			base: "// +build ignore\n\npackage p\n",
+			head: "// +build ignore\npackage p\n",
+		},
+		{
+			name: "inserting-blank-line-after-plus-build-is-behavioral",
+			base: "// +build ignore\n// Package p is p.\npackage p\n",
+			head: "// +build ignore\n\n// Package p is p.\npackage p\n",
+		},
+		{
+			name: "comment-change-after-package-clause-of-plus-build-file-is-behavior-free",
+			base: "// +build ignore\n\npackage p\n\n// F does a.\nfunc F() {}\n",
+			head: "// +build ignore\n\npackage p\n\n// F does b.\nfunc F() {}\n",
+			want: true,
+		},
+		{
+			name: "header-comment-change-without-plus-build-is-behavior-free",
+			base: "//go:build ignore\n\n// Package p does a.\npackage p\n",
+			head: "//go:build ignore\n// Package p does b.\npackage p\n",
+			want: true,
 		},
 		{
 			name: "go-embed-text-change-is-behavioral",
@@ -80,6 +114,11 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			head: "package p\n\nimport \"C\"\n\n//export G\nfunc F() {}\n",
 		},
 		{
+			name: "gccgo-extern-change-is-behavioral",
+			base: "package p\n\n//extern a\nfunc F()\n",
+			head: "package p\n\n//extern b\nfunc F()\n",
+		},
+		{
 			name: "cgo-preamble-comment-change-is-behavioral",
 			base: "package p\n\n// #include <stdio.h>\nimport \"C\"\n",
 			head: "package p\n\n// #include <stdlib.h>\nimport \"C\"\n",
@@ -98,6 +137,12 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			name: "comment-beside-cgo-import-but-not-preamble-is-behavior-free",
 			base: "package p\n\n// #define N 1\nimport \"C\"\n\n// F does a.\nfunc F() {}\n",
 			head: "package p\n\n// #define N 1\nimport \"C\"\n\n// F does b.\nfunc F() {}\n",
+			want: true,
+		},
+		{
+			name: "doc-comment-on-non-cgo-import-is-behavior-free",
+			base: "package p\n\n// a\nimport \"os\"\n\nimport (\n\t// b\n\t\"io\"\n)\n",
+			head: "package p\n\n// c\nimport \"os\"\n\nimport (\n\t// d\n\t\"io\"\n)\n",
 			want: true,
 		},
 		{
@@ -128,15 +173,16 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 		branch  map[string]string // committed on top of base
 		deleted []string          // removed on top of base
 		kept    []string          // changed paths kept as test material
+		tests   []string          // subset of kept that are tests, not sweep specs
 		want    []string          // behavioral subset of the reverted paths
 	}{
 		{
-			name:   "sweep-spec-with-sweep-and-gate-tables-is-a-test-path",
+			name:   "sweep-spec-with-sweep-and-gate-tables-is-kept-but-not-a-test",
 			branch: map[string]string{"cmd/gc/pool_sweep.toml": spec},
 			kept:   []string{"cmd/gc/pool_sweep.toml"},
 		},
 		{
-			name:   "mutation-sweep-spec-is-a-test-path",
+			name:   "mutation-sweep-spec-is-kept-but-not-a-test",
 			branch: map[string]string{"scripts/gate.mutation-sweep.toml": spec},
 			kept:   []string{"scripts/gate.mutation-sweep.toml"},
 		},
@@ -190,21 +236,37 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			name:   "named-test-paths-are-kept",
 			branch: map[string]string{"x_test.go": "package p\n", "testdata/a.txt": "a\n"},
 			kept:   []string{"testdata/a.txt", "x_test.go"},
+			tests:  []string{"testdata/a.txt", "x_test.go"},
 		},
 		{
-			name:   "unembedded-engdocs-and-docs-markdown-is-behavior-free",
-			base:   map[string]string{"engdocs/a.md": "a\n", "docs/b.md": "b\n"},
-			branch: map[string]string{"engdocs/a.md": "a2\n", "docs/b.md": "b2\n", "docs/new.md": "n\n"},
+			name: "unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free",
+			base: map[string]string{
+				"engdocs/a.md":                           "a\n",
+				"docs/b.md":                              "b\n",
+				"docs/reference/schema/city-schema.json": "{}\n",
+			},
+			branch: map[string]string{
+				"engdocs/a.md":                           "a2\n",
+				"docs/b.md":                              "b2\n",
+				"docs/new.md":                            "n\n",
+				"docs/reference/schema/city-schema.json": "{\"a\": 1}\n",
+				"docs/reference/schema/city-schema.txt":  "a\n",
+				"engdocs/spec.toml":                      "a = 1\n",
+			},
 		},
 		{
-			name:   "markdown-outside-engdocs-and-docs-is-behavioral",
-			branch: map[string]string{"README.md": "r\n", "internal/x/docs/a.md": "a\n"},
-			want:   []string{"README.md", "internal/x/docs/a.md"},
+			name:   "file-outside-engdocs-and-docs-is-behavioral",
+			branch: map[string]string{"README.md": "r\n", "internal/x/docs/a.md": "a\n", "internal/x/docs/a.json": "{}\n"},
+			want:   []string{"README.md", "internal/x/docs/a.json", "internal/x/docs/a.md"},
 		},
 		{
-			name:   "other-extension-under-docs-is-behavioral",
-			branch: map[string]string{"docs/a.txt": "a\n", "engdocs/spec.toml": "a = 1\n"},
-			want:   []string{"docs/a.txt", "engdocs/spec.toml"},
+			name: "docs-file-matched-by-embed-pattern-is-behavioral-whatever-its-extension",
+			base: map[string]string{"embed.go": "package p\n\nimport \"embed\"\n\n//go:embed docs/reference/schema/*.json\nvar F embed.FS\n"},
+			branch: map[string]string{
+				"docs/reference/schema/city-schema.json": "{}\n",
+				"docs/reference/schema/city-schema.txt":  "a\n",
+			},
+			want: []string{"docs/reference/schema/city-schema.json"},
 		},
 		{
 			name: "markdown-matched-by-file-pattern-is-behavioral",
@@ -242,12 +304,30 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			want: []string{"docs/a.md", "embed.go"},
 		},
 		{
-			// The bad pattern's package cannot reach engdocs/, so only the
-			// refusal to resolve partially makes the Markdown behavioral.
-			name:   "unresolvable-embed-pattern-makes-every-markdown-behavioral",
-			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n"},
+			// Here and in the next two rows the bad pattern's package reaches
+			// none of the changed files, so only the refusal to resolve
+			// partially makes any of them behavioral.
+			name:   "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
+			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n", "y.go": goBase},
+			branch: map[string]string{"engdocs/a.md": "a\n", "y.go": goComment},
+			want:   []string{"engdocs/a.md", "y.go"},
+		},
+		{
+			name:   "embed-with-no-pattern-makes-markdown-behavioral",
+			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed\nvar F embed.FS\n"},
 			branch: map[string]string{"engdocs/a.md": "a\n"},
 			want:   []string{"engdocs/a.md"},
+		},
+		{
+			name:   "embed-pattern-leaving-its-package-makes-markdown-behavioral",
+			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed ../other\nvar F embed.FS\n"},
+			branch: map[string]string{"engdocs/a.md": "a\n"},
+			want:   []string{"engdocs/a.md"},
+		},
+		{
+			name:   "longer-directive-sharing-the-embed-prefix-embeds-nothing",
+			base:   map[string]string{"embed.go": "package p\n\n//go:embedx engdocs\nvar F int\n"},
+			branch: map[string]string{"engdocs/a.md": "a\n"},
 		},
 		{
 			name:   "embed-text-inside-a-string-literal-is-not-a-pattern",
@@ -260,9 +340,25 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			branch: map[string]string{"x.go": goComment},
 		},
 		{
+			// The shape of internal/bootstrap: a directory embed reaching a
+			// pack's Go file, whose bytes are shipped content.
+			name: "comment-only-go-change-reached-by-embed-is-behavioral",
+			base: map[string]string{
+				"internal/b/b.go":                "package b\n\nimport \"embed\"\n\n//go:embed packs/**\nvar F embed.FS\n",
+				"internal/b/packs/core/embed.go": goBase,
+				"internal/b/x.go":                goBase,
+			},
+			branch: map[string]string{
+				"internal/b/packs/core/embed.go": goComment,
+				"internal/b/x.go":                goComment,
+			},
+			want: []string{"internal/b/packs/core/embed.go"},
+		},
+		{
+			// Under docs/ too: Go source is judged as Go before as docs.
 			name:   "added-go-file-is-behavioral-even-if-comment-only",
-			branch: map[string]string{"x.go": goComment},
-			want:   []string{"x.go"},
+			branch: map[string]string{"x.go": goComment, "docs/x.go": goComment},
+			want:   []string{"docs/x.go", "x.go"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,7 +410,7 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			later["zz_later.go"] = "package p\n\nimport \"embed\"\n\n//go:embed " + strings.Join(patterns, " ") + "\nvar Later embed.FS\n"
 			commit(later, "later")
 
-			kept, reverted, behavioral := runUpstreamClassify(t, 0, append([]string{"--repo", repoDir, "--base", "base", "--head", "branch"}, paths...))
+			kept, tests, reverted, behavioral := runUpstreamClassify(t, 0, append([]string{"--repo", repoDir, "--base", "base", "--head", "branch"}, paths...))
 			wantReverted := []string{}
 			for _, path := range paths {
 				if !slices.Contains(tc.kept, path) {
@@ -326,6 +422,7 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 				got, want []string
 			}{
 				{"kept", kept, tc.kept},
+				{"tests", tests, tc.tests},
 				{"reverted", reverted, wantReverted},
 				{"behavioral", behavioral, tc.want},
 			} {
@@ -353,11 +450,42 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			runUpstreamClassify(t, 1, tc.args)
 		})
 	}
+
+	// Content selects the census, so a spec the name rule misses is named
+	// here rather than reverted by the experiment.
+	t.Run("every-tracked-sweep-spec-carries-a-spec-name", func(t *testing.T) {
+		const root = "../.."
+		out, err := upstreamProbeGitOutput(root, "ls-files", "-z", "--", "*.toml")
+		if err != nil {
+			t.Fatalf("listing tracked TOML in %s: %v", root, err)
+		}
+		var specs []string
+		for _, rel := range strings.FieldsFunc(out, func(r rune) bool { return r == 0 }) {
+			var doc map[string]any
+			if _, err := toml.DecodeFile(filepath.Join(root, rel), &doc); err != nil {
+				t.Fatalf("census cannot read %s: %v", rel, err)
+			}
+			if sweep, ok := doc["sweep"].(map[string]any); ok {
+				if _, ok := sweep["gate"].(map[string]any); ok {
+					specs = append(specs, rel)
+				}
+			}
+		}
+		if !slices.Contains(specs, "cmd/gc/upstream_probe_sweep_spec_sweep.toml") {
+			t.Fatalf("census found %q, which lacks this test's own sweep spec", specs)
+		}
+		for _, rel := range specs {
+			if !upstreamProbeSweepSpecName(rel) {
+				t.Errorf("%s holds [sweep.gate] but fails the sweep spec name rule; "+
+					"rename it to end in .mutation-sweep.toml or _sweep.toml", rel)
+			}
+		}
+	})
 }
 
 // runUpstreamClassify runs the subcommand, failing unless it exits wantCode,
-// and returns (kept, reverted, behavioral). Every list must be present.
-func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, reverted, behavioral []string) {
+// and returns (kept, tests, reverted, behavioral). Every list must be present.
+func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, tests, reverted, behavioral []string) {
 	t.Helper()
 	clearGCEnv(t)
 	t.Setenv("GC_HOME", t.TempDir())
@@ -369,15 +497,16 @@ func runUpstreamClassify(t *testing.T, wantCode int, args []string) (kept, rever
 		if strings.TrimSpace(stderr.String()) == "" || stdout.Len() != 0 {
 			t.Fatalf("refusal must explain itself on stderr only: stderr=%q stdout=%q", stderr.String(), stdout.String())
 		}
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	var doc struct {
 		Kept       *[]string `json:"kept"`
+		Tests      *[]string `json:"tests"`
 		Reverted   *[]string `json:"reverted"`
 		Behavioral *[]string `json:"behavioral"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil || doc.Kept == nil || doc.Reverted == nil || doc.Behavioral == nil {
-		t.Fatalf("stdout lacks a kept, reverted or behavioral list: %v %q", err, stdout.String())
+	if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil || doc.Kept == nil || doc.Tests == nil || doc.Reverted == nil || doc.Behavioral == nil {
+		t.Fatalf("stdout lacks a kept, tests, reverted or behavioral list: %v %q", err, stdout.String())
 	}
-	return *doc.Kept, *doc.Reverted, *doc.Behavioral
+	return *doc.Kept, *doc.Tests, *doc.Reverted, *doc.Behavioral
 }

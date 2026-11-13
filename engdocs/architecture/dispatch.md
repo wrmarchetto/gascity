@@ -149,8 +149,9 @@ Dispatch has two read sides that must stay symmetric:
   `Agent.EffectivePoolDemandQuery` (a thin pass-through that
   `EffectiveScaleCheck` also returns) and parses the count.
 - **Worker (claim side)**: when an ephemeral session boots, `gc hook`
-  invokes `Agent.EffectiveWorkQuery`, whose Tier 3 fires for unassigned
-  routed work after the assignee tiers fall through.
+  invokes `Agent.EffectiveWorkQuery`. Once the assignee tiers fall through,
+  its Tier 3 prints the pool queue: unassigned routed work and work
+  hand-assigned to the pool name, merged into one queue oldest first.
 
 Both forms answer the same question — "is there ready, unassigned,
 non-epic work routed to this pool-demand target?" — and must therefore
@@ -259,7 +260,10 @@ against a template set.
 - `bd ready --assignee="$target"` applies no route filter, so for a bead both
   assigned and routed to this same target the shell counts one where the Go
   reader counts zero. #2527's invariant is explicit and regression-tested, so
-  it wins for that shape, and ci-c000's tier has no producer of it.
+  it wins for that shape. The shape has a live non-wisp producer, the
+  refinery done-sequence handoff in `cmd_sling_test.go`, which must raise
+  zero. A root-only wisp is the one case the Go reader counts as well
+  (`controllerDemandPoolAliasTarget`).
 
 The shared predicate is the agreement substrate. Failure envelopes
 intentionally differ: the worker path suppresses `bd ready` stderr and
@@ -336,18 +340,24 @@ regressions.
 
 11. **scale_check ↔ work_query correspondence.** The reconciler's
     pool-demand-detection path (`Agent.EffectivePoolDemandQuery`, count
-    form) and the worker's claim path (`Agent.EffectiveWorkQuery`, Tier
-    3 first-row form) MUST derive their `bd ready --include-ephemeral
-    --metadata-field gc.routed_to=<target> --unassigned --exclude-type=epic
-    --json` canonical predicate from the same target-resolution helper and
-    `bdReadyPoolDemandShell` helper in `internal/config/workquery.go`. The
-    worker and reconciler must also share the temporary migration predicate
-    for `gc.run_target=<target>` on `gc.kind=workflow` roots with empty
-    `gc.routed_to`; only the worker's first-row form adds native
-    `bd ready --sort oldest` selection to the canonical probe. The row limit
-    is NOT one of the differences: both forms pass `--limit 0`, because a
-    ceiling on one side alone makes the reconciler count demand the worker
-    cannot reach (ci-rzq2).
+    form) and the worker's claim path (`Agent.EffectiveWorkQuery` Tier 3,
+    which prints the merged pool queue oldest first) MUST derive their
+    `bd ready --include-ephemeral --metadata-field gc.routed_to=<target>
+    --unassigned --exclude-type=epic --json` canonical predicate from the
+    same target-resolution helper and `bdReadyPoolDemandShell` helper in
+    `internal/config/workquery.go`. The worker and reconciler must also
+    share the pool-alias predicate (`bdReadyPoolAliasDemandShell`) and the
+    temporary migration predicate for `gc.run_target=<target>` on
+    `gc.kind=workflow` roots with empty `gc.routed_to`.
+    Two differences are worker-only. The worker orders its rows, in two
+    steps: native `bd ready --sort oldest` on the canonical and pool-alias
+    probes, then the jq merge in `poolReadyQueueCommand` joining them into
+    one `created_at` queue. The worker also discards the exit status and
+    stderr of those probes and of the merge, so a failure there yields fewer
+    rows or none, where the count form must fail (`poolDemandCountShell`).
+    The row limit is NOT one of the differences: both forms pass
+    `--limit 0`, because a ceiling on one side alone makes the reconciler
+    count demand the worker cannot reach (ci-rzq2).
     Any pool-demand predicate change to one (added filter, modified target
     resolution, new state) MUST be reflected in the other. Diverging the two
     re-introduces the protocol-mismatch class — the reconciler
