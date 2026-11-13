@@ -37,6 +37,16 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			head: strings.Replace(body, "return 1", "return 2", 1),
 		},
 		{
+			name: "appended-declaration-is-behavioral",
+			base: body,
+			head: body + "\nfunc G() {}\n",
+		},
+		{
+			name: "truncated-file-is-behavioral",
+			base: body + "\nfunc G() {}\n",
+			head: body,
+		},
+		{
 			name: "go-build-text-change-is-behavioral",
 			base: "//go:build linux\n\npackage p\n",
 			head: "//go:build darwin\n\npackage p\n",
@@ -104,6 +114,11 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			head: "package p\n\nimport \"C\"\n\n//export G\nfunc F() {}\n",
 		},
 		{
+			name: "gccgo-extern-change-is-behavioral",
+			base: "package p\n\n//extern a\nfunc F()\n",
+			head: "package p\n\n//extern b\nfunc F()\n",
+		},
+		{
 			name: "cgo-preamble-comment-change-is-behavioral",
 			base: "package p\n\n// #include <stdio.h>\nimport \"C\"\n",
 			head: "package p\n\n// #include <stdlib.h>\nimport \"C\"\n",
@@ -122,6 +137,12 @@ func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
 			name: "comment-beside-cgo-import-but-not-preamble-is-behavior-free",
 			base: "package p\n\n// #define N 1\nimport \"C\"\n\n// F does a.\nfunc F() {}\n",
 			head: "package p\n\n// #define N 1\nimport \"C\"\n\n// F does b.\nfunc F() {}\n",
+			want: true,
+		},
+		{
+			name: "doc-comment-on-non-cgo-import-is-behavior-free",
+			base: "package p\n\n// a\nimport \"os\"\n\nimport (\n\t// b\n\t\"io\"\n)\n",
+			head: "package p\n\n// c\nimport \"os\"\n\nimport (\n\t// d\n\t\"io\"\n)\n",
 			want: true,
 		},
 		{
@@ -283,12 +304,30 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			want: []string{"docs/a.md", "embed.go"},
 		},
 		{
-			// The bad pattern's package cannot reach engdocs/ or y.go, so only
-			// the refusal to resolve partially makes either behavioral.
+			// Here and in the next two rows the bad pattern's package reaches
+			// none of the changed files, so only the refusal to resolve
+			// partially makes any of them behavioral.
 			name:   "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
 			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n", "y.go": goBase},
 			branch: map[string]string{"engdocs/a.md": "a\n", "y.go": goComment},
 			want:   []string{"engdocs/a.md", "y.go"},
+		},
+		{
+			name:   "embed-with-no-pattern-makes-markdown-behavioral",
+			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed\nvar F embed.FS\n"},
+			branch: map[string]string{"engdocs/a.md": "a\n"},
+			want:   []string{"engdocs/a.md"},
+		},
+		{
+			name:   "embed-pattern-leaving-its-package-makes-markdown-behavioral",
+			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed ../other\nvar F embed.FS\n"},
+			branch: map[string]string{"engdocs/a.md": "a\n"},
+			want:   []string{"engdocs/a.md"},
+		},
+		{
+			name:   "longer-directive-sharing-the-embed-prefix-embeds-nothing",
+			base:   map[string]string{"embed.go": "package p\n\n//go:embedx engdocs\nvar F int\n"},
+			branch: map[string]string{"engdocs/a.md": "a\n"},
 		},
 		{
 			name:   "embed-text-inside-a-string-literal-is-not-a-pattern",

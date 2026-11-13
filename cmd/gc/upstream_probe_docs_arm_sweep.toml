@@ -2,8 +2,10 @@
 # docs/ or engdocs/ file, or a comment-only .go change, is behavior-free only
 # while no //go:embed reaches it, Go source under docs/ is judged as Go, and a
 # .go file carrying a +build line keeps every byte before its package clause.
-# Each row flips one guard to its accepting counterpart, or a narrowing to its
-# wide form, and names the subtest that must go red.
+# Comment-only means equal token streams, //extern kept and only import "C"
+# carrying a preamble, and a //go:embed that go build rejects refuses the
+# whole reading. Each row flips one guard to its accepting counterpart, or a
+# narrowing to its wide form, and names the subtest that must go red.
 
 [sweep]
 name = "upstream-probe arms: unembedded docs and Go only, Go judged first"
@@ -100,6 +102,57 @@ expect_output = [
   "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
   "sweep-spec-is-behavioral-when-embeds-cannot-be-resolved",
 ]
+
+[[mutation]]
+id = "embed-with-no-pattern-accepted"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if len(patterns) == 0 {"
+replace = "if false && len(patterns) == 0 {"
+expect_output = ["embed-with-no-pattern-makes-markdown-behavioral"]
+
+[[mutation]]
+id = "embed-pattern-leaving-its-package-accepted"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if !fs.ValidPath(strings.TrimPrefix(pattern, "all:")) {'''
+replace = '''if false && !fs.ValidPath(strings.TrimPrefix(pattern, "all:")) {'''
+expect_output = ["embed-pattern-leaving-its-package-makes-markdown-behavioral"]
+
+# --- the //go:embed directive is that word, not a prefix of a longer one ---
+
+[[mutation]]
+id = "embed-directive-matches-a-longer-word"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if !ok || (rest != "" && rest[0] != ' ' && rest[0] != '\t') {'''
+replace = '''if !ok {'''
+expect_output = ["longer-directive-sharing-the-embed-prefix-embeds-nothing"]
+
+# --- comment-only means equal token streams, not a shared prefix ---
+
+[[mutation]]
+id = "token-stream-prefix-reads-equal"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "if len(baseStream) != len(headStream) {"
+replace = "if false && len(baseStream) != len(headStream) {"
+expect_output = [
+  "appended-declaration-is-behavioral",
+  "truncated-file-is-behavioral",
+]
+
+# --- which comments are behavior: //extern, and import "C" docs alone ---
+
+[[mutation]]
+id = "extern-directive-read-as-prose"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''"//export ", "//extern "}'''
+replace = '''"//export "}'''
+expect_output = ["gccgo-extern-change-is-behavioral"]
+
+[[mutation]]
+id = "every-import-doc-is-cgo-preamble"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''if p, err := strconv.Unquote(imp.Path.Value); err != nil || p != "C" {'''
+replace = '''if _, err := strconv.Unquote(imp.Path.Value); err != nil {'''
+expect_output = ["doc-comment-on-non-cgo-import-is-behavior-free"]
 
 # --- a +build file's header is behavior, since blank lines are not tokens ---
 
