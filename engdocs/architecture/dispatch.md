@@ -182,10 +182,7 @@ default 1.0.4, `bd ready` returns no wisps, so the pool tiers read them with
 join the same merged queue as a third leg, and wisp workflow roots of the
 migration shape are read after the migration probe, the place the migration
 tier returns them at 1.0.5. The queue is therefore one oldest-first line at
-both levels. Exposure of the earlier 1.0.4 shape, which served routed wisps
-only once the merged queue was empty: no wisp in any store's retained
-history has carried `gc.routed_to`, measured over the city store and the
-four rig stores.
+both levels.
 
 The own-identity tiers pass no `--sort` at all and therefore keep bd's
 priority-first default. The count form unions canonical and migration

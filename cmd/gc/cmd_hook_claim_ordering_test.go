@@ -602,7 +602,7 @@ func TestHookClaimOrderingTakesOldestPoolParkedBeadAheadOfNewerHigherPriority(t 
 }
 
 func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
-	// The two pool tiers are one oldest-first queue (ci-mozmau). In each case
+	// The pool tiers are one oldest-first queue (ci-mozmau). In each case
 	// the winner is the older row but loses on priority and on id, so a ladder
 	// in either tier order, a priority sort or an id sort all claim the other.
 	routedRow := func(id, created string, priority int) orderingFixtureRow {

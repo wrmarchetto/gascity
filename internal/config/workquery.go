@@ -284,10 +284,10 @@ func poolDemandProbeFunctionScript(includeEphemeralReady bool) string {
 		`}; `
 }
 
-// poolReadyQueueMergeJQ joins the two pool tiers' arrays into one created_at
-// order, id breaking ties. A failing tier adds no rows, whether it printed
+// poolReadyQueueMergeJQ joins the pool legs' arrays into one created_at
+// order, id breaking ties. A failing leg adds no rows, whether it printed
 // nothing or bd's --json error object (beads cmd/bd/errors.go) or null. Text
-// that is not JSON still fails the merge and loses both tiers' rows.
+// that is not JSON still fails the merge and loses every leg's rows.
 const poolReadyQueueMergeJQ = `[.[] | arrays | .[]] | sort_by(.created_at // "", .id // "")`
 
 // poolReadyQueueCommand is the pool queue, every pool leg merged into ONE
@@ -301,8 +301,8 @@ func poolReadyQueueCommand(includeEphemeralReady bool) string {
 		`jq -cs ` + shellquote.Quote(poolReadyQueueMergeJQ) + ` 2>/dev/null`
 }
 
-// poolAliasReadyTierCommand is the worker's pool-alias tier, the half of the
-// queue poolReadyQueueCommand merges with routedReadyTierCommand's rows.
+// poolAliasReadyTierCommand is the worker's pool-alias tier, one of the legs
+// poolReadyQueueCommand merges with routedReadyTierCommand's rows.
 // It carries no row ceiling for the same reason as routedReadyTierCommand,
 // stated there: a ceiling here decides candidacy, not just how much is read.
 //
