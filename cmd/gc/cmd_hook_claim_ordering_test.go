@@ -606,7 +606,8 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 			Metadata: map[string]string{"gc.routed_to": orderingFixtureTarget},
 		}
 	}
-	// gc.routed_to on an alias row is the shape a released pool claim leaves.
+	// Routed to its own pool as well, so a claim choosing the plain claim by
+	// route rather than the pool transfer by assignee fails here.
 	aliasRow := func(id, created string, priority int) orderingFixtureRow {
 		return orderingFixtureRow{
 			ID: id, Status: "open", Priority: priority, CreatedAt: created,
