@@ -32,14 +32,14 @@ func oldEffectiveWorkQuery(a *Agent, includeEphemeralReady bool) string {
 	if legacyTarget == "" {
 		script := standardAssignedWorkQueryScript(includeEphemeralReady) +
 			poolDemandOriginGateScript() +
-			poolDemandFirstRowFunctionScript(includeEphemeralReady) +
+			poolDemandProbeFunctionScript(includeEphemeralReady) +
 			`probe_pool_demand "$1"; ` +
 			`printf "[]"`
 		return shellquote.Join([]string{"sh", "-c", script, "--", target})
 	}
 	script := legacyControlAssignedWorkQueryScript(includeEphemeralReady) +
 		poolDemandOriginGateScript() +
-		poolDemandFirstRowFunctionScript(includeEphemeralReady) +
+		poolDemandProbeFunctionScript(includeEphemeralReady) +
 		`probe_pool_demand "$1"; ` +
 		`probe_pool_demand "$2"; ` +
 		`printf "[]"`

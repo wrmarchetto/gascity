@@ -19,7 +19,7 @@ import (
 // Why this suite exists as a peer to internal/config/workquery_pool_alias_test.go
 // rather than inside it: ci-c000 taught the two GENERATED SHELL predicates about
 // that shape (bdReadyPoolAliasDemandShell, unioned into poolDemandCountShell and
-// poolDemandFirstRowFunctionScript), but the reconciler does not shell out for a
+// poolDemandProbeFunctionScript), but the reconciler does not shell out for a
 // pool with no custom scale_check -- it counts in Go, here. That Go reader still
 // skipped every bead carrying an assignee, so the two disagreed: the shell form
 // counted a bead the in-process form could not see. dispatch.md invariant 11
