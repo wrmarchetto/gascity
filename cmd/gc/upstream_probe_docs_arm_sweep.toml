@@ -1,10 +1,11 @@
-# Proves the upstream-probe classifier's docs arm is enforced: any file under
-# docs/ or engdocs/ is behavior-free only while no //go:embed reaches it, and
-# Go source there is still judged as Go. Each row flips one guard to its
-# accepting counterpart and names the subtest that must go red.
+# Proves the upstream-probe classifier's behavior-free arms are enforced: a
+# docs/ or engdocs/ file, or a comment-only .go change, is behavior-free only
+# while no //go:embed reaches it, and Go source under docs/ is judged as Go.
+# Each row flips one guard to its accepting counterpart and names the subtest
+# that must go red.
 
 [sweep]
-name = "upstream-probe docs arm: any unembedded docs file, Go judged first"
+name = "upstream-probe arms: unembedded docs and Go only, Go judged first"
 repo = "../.."
 
 [sweep.gate]
@@ -74,3 +75,27 @@ path = "cmd/gc/upstream_probe_behavior_free.go"
 find = "switch {\n\tcase strings.HasSuffix(p, \".go\"):"
 replace = "switch {\n\tcase upstreamProbeDocsPath(p):\n\t\treturn embeds.unembedded(p)\n\tcase strings.HasSuffix(p, \".go\"):"
 expect_output = ["added-go-file-is-behavioral-even-if-comment-only"]
+
+# --- the Go arm's embed check: embedded Go source is shipped bytes ---
+
+[[mutation]]
+id = "go-arm-ignores-go-embed"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc)) &&\n\t\t\tembeds.unembedded(p)"
+replace = "upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))"
+expect_output = [
+  "comment-only-go-change-reached-by-embed-is-behavioral",
+  "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
+]
+
+# --- a partial embed reading proves no file unembedded ---
+
+[[mutation]]
+id = "unembedded-trusts-a-partial-reading"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "return x.err == nil && !upstreamProbeEmbedded(x.embeds, file)"
+replace = "return !upstreamProbeEmbedded(x.embeds, file)"
+expect_output = [
+  "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
+  "sweep-spec-is-behavioral-when-embeds-cannot-be-resolved",
+]
