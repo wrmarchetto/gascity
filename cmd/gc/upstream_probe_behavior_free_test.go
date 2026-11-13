@@ -257,12 +257,12 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			want: []string{"docs/a.md", "embed.go"},
 		},
 		{
-			// The bad pattern's package cannot reach engdocs/, so only the
-			// refusal to resolve partially makes the Markdown behavioral.
-			name:   "unresolvable-embed-pattern-makes-every-markdown-behavioral",
-			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n"},
-			branch: map[string]string{"engdocs/a.md": "a\n"},
-			want:   []string{"engdocs/a.md"},
+			// The bad pattern's package cannot reach engdocs/ or y.go, so only
+			// the refusal to resolve partially makes either behavioral.
+			name:   "unresolvable-embed-pattern-makes-markdown-and-go-comments-behavioral",
+			base:   map[string]string{"internal/x/embed.go": "package x\n\nimport \"embed\"\n\n//go:embed other/[\nvar F embed.FS\n", "y.go": goBase},
+			branch: map[string]string{"engdocs/a.md": "a\n", "y.go": goComment},
+			want:   []string{"engdocs/a.md", "y.go"},
 		},
 		{
 			name:   "embed-text-inside-a-string-literal-is-not-a-pattern",
@@ -273,6 +273,21 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			name:   "comment-only-go-change-is-behavior-free",
 			base:   map[string]string{"x.go": goBase},
 			branch: map[string]string{"x.go": goComment},
+		},
+		{
+			// The shape of internal/bootstrap: a directory embed reaching a
+			// pack's Go file, whose bytes are shipped content.
+			name: "comment-only-go-change-reached-by-embed-is-behavioral",
+			base: map[string]string{
+				"internal/b/b.go":                "package b\n\nimport \"embed\"\n\n//go:embed packs/**\nvar F embed.FS\n",
+				"internal/b/packs/core/embed.go": goBase,
+				"internal/b/x.go":                goBase,
+			},
+			branch: map[string]string{
+				"internal/b/packs/core/embed.go": goComment,
+				"internal/b/x.go":                goComment,
+			},
+			want: []string{"internal/b/packs/core/embed.go"},
 		},
 		{
 			// Under docs/ too: Go source is judged as Go before as docs.

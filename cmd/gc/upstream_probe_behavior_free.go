@@ -66,9 +66,9 @@ func upstreamProbeSweepSpec(repoDir, base, head, p string, embeds *upstreamProbe
 }
 
 // upstreamProbeBehaviorFree reports whether p's change between base and head
-// cannot alter behavior. Only two kinds of path qualify: a .go file whose
-// code tokens, directives and cgo preamble are unchanged, and any other file
-// under engdocs/ or docs/ that no //go:embed pattern at head reaches.
+// cannot alter behavior. Only two kinds of path qualify, and no //go:embed
+// pattern at head may reach either: a .go file whose code tokens, directives
+// and cgo preamble are unchanged, and any other file under engdocs/ or docs/.
 // Anything unreadable counts as behavior.
 func upstreamProbeBehaviorFree(repoDir, base, head, p string, embeds *upstreamProbeEmbedIndex) bool {
 	switch {
@@ -76,7 +76,8 @@ func upstreamProbeBehaviorFree(repoDir, base, head, p string, embeds *upstreamPr
 		baseSrc, baseErr := upstreamProbeGitOutput(repoDir, "show", base+":"+p)
 		headSrc, headErr := upstreamProbeGitOutput(repoDir, "show", head+":"+p)
 		return baseErr == nil && headErr == nil &&
-			upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc))
+			upstreamProbeGoBehaviorFree([]byte(baseSrc), []byte(headSrc)) &&
+			embeds.unembedded(p)
 	case upstreamProbeDocsPath(p):
 		return embeds.unembedded(p)
 	}
@@ -216,7 +217,7 @@ type upstreamProbeEmbed struct {
 
 // upstreamProbeEmbedPatterns reads every //go:embed directive in the .go
 // files of rev. Any file it cannot parse, or any pattern it cannot read, is
-// an error, so no Markdown is called unembedded on a partial resolution.
+// an error, so no file is called unembedded on a partial resolution.
 func upstreamProbeEmbedPatterns(repoDir, rev string) ([]upstreamProbeEmbed, error) {
 	out, err := upstreamProbeGitOutput(repoDir, "grep", "-l", "-z", "-F", "//go:embed", rev, "--", "*.go")
 	if err != nil {
