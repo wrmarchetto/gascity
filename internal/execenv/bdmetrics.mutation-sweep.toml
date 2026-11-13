@@ -2,14 +2,12 @@
 # (bead ci-lf9auf). Every row flips one refusal to its accepting counterpart
 # and requires the named test to go red.
 #
-# Each flip keeps the file COMPILING -- dropping a call outright would leave
-# the execenv import unused, and a build error is red for the wrong reason,
-# which the driver reports as UNATTRIBUTABLE rather than as a kill. So the
-# neutralizing rows keep a reference to the package alive and discard the
-# result, which is exactly the shape a careless edit would leave behind.
+# Each flip keeps the file compiling. A dropped call leaves an import unused,
+# and the driver reports that build error as unattributable, not a kill, so
+# neutralizing rows keep a package reference alive and discard the result.
 #
 # Run: /home/willie/projects/city/assets/scripts/mutation-sweep.py \
-#        internal/execenv/bdmetrics-mutation-sweep.toml
+#        internal/execenv/bdmetrics.mutation-sweep.toml
 
 [sweep]
 name = "bd telemetry stays off under every HOME gc substitutes"
@@ -77,7 +75,7 @@ expect_output = ["TestExecEnvForBd_InheritedHomeKeepsTheOperatorsMetricsChoice"]
 # The structural guard's own row: a HOME-rewriting site that stops carrying
 # the opt-out must be caught by the repo scan, not only by a site test. The
 # dashboard BFF is the right subject because it has no site test of its own,
-# so the scan is the ONLY thing that can catch it.
+# so the scan is the only thing that can catch it.
 [[mutation]]
 id = "a-home-rewriting-site-stops-carrying-the-optout"
 path = "internal/api/dashboardbff/exec.go"

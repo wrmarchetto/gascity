@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestUpstreamProbeGoBehaviorFree(t *testing.T) {
@@ -406,6 +408,37 @@ func TestUpstreamProbeClassifyPaths(t *testing.T) {
 			runUpstreamClassify(t, 1, tc.args)
 		})
 	}
+
+	// Content selects the census, so a spec the name rule misses is named
+	// here rather than reverted by the experiment.
+	t.Run("every-tracked-sweep-spec-carries-a-spec-name", func(t *testing.T) {
+		const root = "../.."
+		out, err := upstreamProbeGitOutput(root, "ls-files", "-z", "--", "*.toml")
+		if err != nil {
+			t.Fatalf("listing tracked TOML in %s: %v", root, err)
+		}
+		var specs []string
+		for _, rel := range strings.FieldsFunc(out, func(r rune) bool { return r == 0 }) {
+			var doc map[string]any
+			if _, err := toml.DecodeFile(filepath.Join(root, rel), &doc); err != nil {
+				t.Fatalf("census cannot read %s: %v", rel, err)
+			}
+			if sweep, ok := doc["sweep"].(map[string]any); ok {
+				if _, ok := sweep["gate"].(map[string]any); ok {
+					specs = append(specs, rel)
+				}
+			}
+		}
+		if !slices.Contains(specs, "cmd/gc/upstream_probe_sweep_spec_sweep.toml") {
+			t.Fatalf("census found %q, which lacks this test's own sweep spec", specs)
+		}
+		for _, rel := range specs {
+			if !upstreamProbeSweepSpecName(rel) {
+				t.Errorf("%s holds [sweep.gate] but fails the sweep spec name rule; "+
+					"rename it to end in .mutation-sweep.toml or _sweep.toml", rel)
+			}
+		}
+	})
 }
 
 // runUpstreamClassify runs the subcommand, failing unless it exits wantCode,

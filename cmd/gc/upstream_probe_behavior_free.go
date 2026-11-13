@@ -37,11 +37,11 @@ func upstreamProbeClassifyPaths(repoDir, base, head string, paths []string) (kep
 
 // upstreamProbeSweepSpec reports whether p is a mutation-sweep spec, which
 // only the sweep driver reads, so it is test material like a _test.go. That
-// is a _sweep.toml or .mutation-sweep.toml with a [sweep] table holding
+// is a file passing upstreamProbeSweepSpecName with a [sweep] table holding
 // [sweep.gate], read at head or at base when the branch deleted it, and
 // reached by no //go:embed at head.
 func upstreamProbeSweepSpec(repoDir, base, head, p string, embeds *upstreamProbeEmbedIndex) bool {
-	if !strings.HasSuffix(p, "_sweep.toml") && !strings.HasSuffix(p, ".mutation-sweep.toml") {
+	if !upstreamProbeSweepSpecName(p) {
 		return false
 	}
 	rev := head
@@ -64,6 +64,13 @@ func upstreamProbeSweepSpec(repoDir, base, head, p string, embeds *upstreamProbe
 		return false
 	}
 	return embeds.unembedded(p)
+}
+
+// upstreamProbeSweepSpecName is the name rule of ci-6brgy7. A tracked file
+// holding [sweep.gate] under any other name is refused by
+// TestUpstreamProbeClassifyPaths, since the experiment would revert it.
+func upstreamProbeSweepSpecName(p string) bool {
+	return strings.HasSuffix(p, "_sweep.toml") || strings.HasSuffix(p, ".mutation-sweep.toml")
 }
 
 // upstreamProbeBehaviorFree reports whether p's change between base and head
