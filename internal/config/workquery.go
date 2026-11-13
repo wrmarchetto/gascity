@@ -218,13 +218,32 @@ func legacyEphemeralReadyFilterJQ(selector string, limit int, excludeHoldLabels 
 	return filter
 }
 
-func legacyEphemeralPoolDemandShell(limit int, includeEphemeralReady, quiet bool) string {
+// ephemeralRoutedMatchJQ matches a wisp routed to $target, the row the routed
+// tier returns under --include-ephemeral.
+func ephemeralRoutedMatchJQ() string {
+	return `(` + jqMeta(beadmeta.RoutedToMetadataKey) + ` == $target)`
+}
+
+// ephemeralMigrationMatchJQ matches a wisp workflow root that predates
+// gc.routed_to stamping, the row the migration tier returns.
+func ephemeralMigrationMatchJQ() string {
+	return `((` + jqMeta(beadmeta.RoutedToMetadataKey) + ` == "") and (` + jqMeta(beadmeta.RunTargetMetadataKey) + ` == $target) and (` + jqMeta(beadmeta.KindMetadataKey) + ` == "` + beadmeta.KindWorkflow + `"))`
+}
+
+func ephemeralPoolDemandMatchJQ() string {
+	return ephemeralRoutedMatchJQ() + ` or ` + ephemeralMigrationMatchJQ()
+}
+
+// legacyEphemeralPoolDemandShell prints the ready unassigned wisps that match
+// for $target, oldest first. bd 1.0.4's `bd ready` returns no wisps, so they
+// are read with `bd query`. At 1.0.5 the tiers pass --include-ephemeral and
+// this prints [].
+func legacyEphemeralPoolDemandShell(match string, limit int, includeEphemeralReady, quiet bool) string {
 	if includeEphemeralReady {
 		return `printf "[]"`
 	}
 	filter := legacyEphemeralReadyFilterJQ(
-		`select((.assignee // "") == "")`+
-			` | select((`+jqMeta(beadmeta.RoutedToMetadataKey)+` == $target) or ((`+jqMeta(beadmeta.RoutedToMetadataKey)+` == "") and (`+jqMeta(beadmeta.RunTargetMetadataKey)+` == $target) and (`+jqMeta(beadmeta.KindMetadataKey)+` == "`+beadmeta.KindWorkflow+`")))`,
+		`select((.assignee // "") == "") | select(`+match+`)`,
 		limit,
 		true,
 	)
@@ -246,7 +265,7 @@ func legacyEphemeralPoolDemandShell(limit int, includeEphemeralReady, quiet bool
 //
 // No tier here caps its row count: a cap decides which beads are candidates at
 // all, which is the ci-rzq2 defect (see routedReadyTierCommand). The lone
-// surviving 20 is legacyEphemeralPoolDemandShell's, and it is deliberately left
+// surviving 20 is the migration-wisp rung's, and it is deliberately left
 // -- jq applies it AFTER the readiness filter and the caller then slices
 // `.[0:1]`, so raising it would change no output, only the golden fixtures.
 func poolDemandProbeFunctionScript(includeEphemeralReady bool) string {
@@ -258,32 +277,32 @@ func poolDemandProbeFunctionScript(includeEphemeralReady bool) string {
 		`legacy_candidates=$(` + bdReadyPoolDemandMigrationShell(includeEphemeralReady) + ` 2>/dev/null); ` +
 		`r=$(printf "%s" "$legacy_candidates" | ` + poolDemandMigrationFilterJQ(1) + ` 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
-		`legacy_ephemeral_candidates=$(` + legacyEphemeralPoolDemandShell(20, includeEphemeralReady, true) + `); ` +
+		`legacy_ephemeral_candidates=$(` + legacyEphemeralPoolDemandShell(ephemeralMigrationMatchJQ(), 20, includeEphemeralReady, true) + `); ` +
 		`r=$(printf "%s" "$legacy_ephemeral_candidates" | jq '.[0:1]' 2>/dev/null); ` +
 		`[ -n "$r" ] && [ "$r" != "[]" ] && printf "%s" "$r" && exit 0; ` +
 		`return 1; ` +
 		`}; `
 }
 
-// poolReadyQueueMergeJQ joins the two pool tiers' arrays into one created_at
-// order, id breaking ties. A failing tier adds no rows, whether it printed
+// poolReadyQueueMergeJQ joins the pool legs' arrays into one created_at
+// order, id breaking ties. A failing leg adds no rows, whether it printed
 // nothing or bd's --json error object (beads cmd/bd/errors.go) or null. Text
-// that is not JSON still fails the merge and loses both tiers' rows.
+// that is not JSON still fails the merge and loses every leg's rows.
 const poolReadyQueueMergeJQ = `[.[] | arrays | .[]] | sort_by(.created_at // "", .id // "")`
 
-// poolReadyQueueCommand is the pool queue: the routed and pool-alias tiers
-// merged into ONE oldest-first line. Answered in turn, any ready routed bead
-// hid every bead parked on the pool name, whatever its age (ci-mozmau). The
-// tiers are disjoint, one --unassigned and one --assignee, so no row is
-// doubled, including an alias row that also carries gc.routed_to.
+// poolReadyQueueCommand is the pool queue, every pool leg merged into ONE
+// oldest-first line, because a ladder lets newer work hide older (ci-mozmau).
+// The routed tier's wisps are a third leg at bd 1.0.4. No row is in two legs:
+// one is --unassigned, one --assignee, and the third reads wisps alone.
 func poolReadyQueueCommand(includeEphemeralReady bool) string {
 	return `{ ` + routedReadyTierCommand(includeEphemeralReady) + `; ` +
-		poolAliasReadyTierCommand(includeEphemeralReady) + `; } | ` +
+		poolAliasReadyTierCommand(includeEphemeralReady) + `; ` +
+		legacyEphemeralPoolDemandShell(ephemeralRoutedMatchJQ(), 0, includeEphemeralReady, true) + `; } | ` +
 		`jq -cs ` + shellquote.Quote(poolReadyQueueMergeJQ) + ` 2>/dev/null`
 }
 
-// poolAliasReadyTierCommand is the worker's pool-alias tier, the half of the
-// queue poolReadyQueueCommand merges with routedReadyTierCommand's rows.
+// poolAliasReadyTierCommand is the worker's pool-alias tier, one of the legs
+// poolReadyQueueCommand merges with routedReadyTierCommand's rows.
 // It carries no row ceiling for the same reason as routedReadyTierCommand,
 // stated there: a ceiling here decides candidacy, not just how much is read.
 //
@@ -349,7 +368,7 @@ func poolDemandCountShell(target string, includeEphemeralReady bool) string {
 		`alias_json=$(` + bdReadyPoolAliasDemandShell("--limit 0", includeEphemeralReady) + `) || exit $?; ` +
 		`legacy_candidates=$(` + bdReadyPoolDemandMigrationShell(includeEphemeralReady) + `) || exit $?; ` +
 		`legacy_json=$(printf "%s" "$legacy_candidates" | ` + poolDemandMigrationFilterJQ(0) + `) || exit $?; ` +
-		`legacy_ephemeral_json=$(` + legacyEphemeralPoolDemandShell(0, includeEphemeralReady, false) + `); ` +
+		`legacy_ephemeral_json=$(` + legacyEphemeralPoolDemandShell(ephemeralPoolDemandMatchJQ(), 0, includeEphemeralReady, false) + `); ` +
 		`printf "%s\n%s\n%s\n%s\n" "$ready_json" "$alias_json" "$legacy_json" "$legacy_ephemeral_json" | jq -s "(add // []) | unique_by(.id) | length"`
 	return shellquote.Join([]string{"sh", "-c", script, "--", target})
 }

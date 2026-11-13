@@ -14,12 +14,12 @@
 // from "claimed the highest priority" at all (ci-27eo, found while
 // establishing ci-q2vx).
 //
-// Scope is the claim outcome for the two pool tiers -- routed (gc.routed_to)
-// and pool-alias (assignee == the pool name) -- plus their unbounded candidate
-// set. The migration fallback tier
-// (gc.run_target + gc.kind=workflow) stays with internal/config, which owns the
-// jq filter it depends on. Whether the ordering policy is still WRITTEN DOWN
-// stays with test/docsync.
+// Scope is the claim outcome for the two pool tiers -- routed (gc.routed_to,
+// whose wisps bd 1.0.4 serves only through `bd query`) and pool-alias
+// (assignee == the pool name) -- plus their unbounded candidate set. The
+// migration fallback tier (gc.run_target + gc.kind=workflow) stays with
+// internal/config, which owns the jq filter it depends on. Whether the
+// ordering policy is still WRITTEN DOWN stays with test/docsync.
 //
 // The policy cases here are paired with controls that assert the rig can produce
 // the opposite answer -- the priority-first head when the sort flag is gone, and
@@ -350,17 +350,19 @@ func (r *orderingRig) assertCandidatesInclude(tier string, rows []orderingFixtur
 // orderingFakeBdScript is the fake bd. It resolves a tier from the argv, picks
 // the fixture matching the sort the query asked for, and truncates to --limit.
 //
-// Only the two pool tiers are scripted. The migration and legacy-ephemeral
-// tiers below them are deliberately left unscripted so that falling through to
-// them is recorded as a refusal -- reaching them means the case under test lost
-// the tier it meant to exercise. Written in POSIX sh with no jq, awk or paste so
-// the rig cannot fail for a reason unrelated to what it is measuring.
+// Only the pool queue is scripted: the routed and pool-alias tiers and the
+// routed wisps' `bd query`. The migration tiers below it are deliberately left
+// unscripted so that falling through to them is recorded as a refusal --
+// reaching them means the case under test lost the tier it meant to exercise.
+// Written in POSIX sh with no jq, awk or paste so the rig cannot fail for a
+// reason unrelated to what it is measuring.
 const orderingFakeBdScript = `#!/bin/sh
 argv="$*"
 tier=""
 case " $argv " in
   *" --metadata-field gc.routed_to=$GC_FIXTURE_TARGET "*) tier=routed ;;
   *" --assignee=$GC_FIXTURE_TARGET "*) tier=alias ;;
+  *" query --json ephemeral=true AND status=open "*) tier=ephemeral ;;
 esac
 order=priority
 case " $argv " in
@@ -485,6 +487,7 @@ func TestHookClaimOrderingTakesOldestRoutedBeadAheadOfNewerHigherPriority(t *tes
 	rig := newOrderingRig(t)
 	rig.serveTier("routed", rows)
 	rig.serveTier("alias", nil)
+	rig.serveTier("ephemeral", nil)
 	var probe orderingClaimProbe
 	result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
 
@@ -533,6 +536,7 @@ func TestHookClaimOrderingTakesHighestPriorityOnceTheOldestSortIsDropped(t *test
 	rig := newOrderingRig(t)
 	rig.serveTier("routed", rows)
 	rig.serveTier("alias", nil)
+	rig.serveTier("ephemeral", nil)
 	var probe orderingClaimProbe
 	result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), unsorted)
 
@@ -553,6 +557,7 @@ func TestHookClaimOrderingSeesEveryRoutedCandidate(t *testing.T) {
 	rig := newOrderingRig(t)
 	rig.serveTier("routed", rows)
 	rig.serveTier("alias", nil)
+	rig.serveTier("ephemeral", nil)
 	var probe orderingClaimProbe
 	claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
 	rig.assertTierCandidateLimit("routed")
@@ -578,6 +583,7 @@ func TestHookClaimOrderingTakesOldestPoolParkedBeadAheadOfNewerHigherPriority(t 
 	// first, and an unscripted tier is a refusal, which claimOnce fails on.
 	rig.serveTier("routed", nil)
 	rig.serveTier("alias", rows)
+	rig.serveTier("ephemeral", nil)
 	var probe orderingClaimProbe
 	result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
 
@@ -596,7 +602,7 @@ func TestHookClaimOrderingTakesOldestPoolParkedBeadAheadOfNewerHigherPriority(t 
 }
 
 func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
-	// The two pool tiers are one oldest-first queue (ci-mozmau), a same-second
+	// The pool tiers are one oldest-first queue (ci-mozmau), a same-second
 	// tie going to the lower id (beads internal/storage/sqlbuild/ready.go, at
 	// the go.mod pin). Every winner loses on priority, and between them the rows
 	// refute a ladder in either tier order, an id sort and a tie in tier order.
@@ -614,12 +620,23 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 			Assignee: orderingFixtureTarget, Metadata: map[string]string{"gc.routed_to": orderingFixtureTarget},
 		}
 	}
+	// A wisp row reaches bd 1.0.4 only through `bd query`. The older decoys,
+	// another pool's wisp and an owned one, are dropped by the jq filter and
+	// again by hookCandidateClaimable, so the jq half is pinned in
+	// internal/config (TestEffectiveWorkQueryBD104SurfacesLegacyEphemeralRoutedWork).
+	wispRow := func(id, created string, priority int, route, assignee string) orderingFixtureRow {
+		return orderingFixtureRow{
+			ID: id, Status: "open", Priority: priority, CreatedAt: created, Assignee: assignee,
+			Metadata: map[string]string{"gc.routed_to": route},
+		}
+	}
 	cases := []struct {
-		name     string
-		routed   orderingFixtureRow
-		alias    orderingFixtureRow
-		want     string
-		wantPool bool
+		name      string
+		routed    orderingFixtureRow
+		alias     orderingFixtureRow
+		ephemeral []orderingFixtureRow
+		want      string
+		wantPool  bool
 	}{
 		{
 			name:     "older pool-alias bead beats a newer routed bead",
@@ -633,6 +650,26 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 			routed: routedRow("routed-older-p3", "2026-05-20T06:09:30Z", 3),
 			alias:  aliasRow("alias-newer-p0", "2026-05-21T06:09:30Z", 0),
 			want:   "routed-older-p3",
+		},
+		{
+			name:   "older routed wisp beats newer routed and pool-alias beads",
+			routed: routedRow("routed-newer-p0", "2026-05-21T06:09:30Z", 0),
+			alias:  aliasRow("alias-newest-p0", "2026-05-22T06:09:30Z", 0),
+			ephemeral: []orderingFixtureRow{
+				wispRow("wisp-older-p3", "2026-05-20T06:09:30Z", 3, orderingFixtureTarget, ""),
+				wispRow("wisp-other-pool", "2026-05-19T06:09:30Z", 3, "hello-world/other", ""),
+				wispRow("wisp-owned", "2026-05-19T06:09:30Z", 3, orderingFixtureTarget, "hello-world/worker-9"),
+			},
+			want: "wisp-older-p3",
+		},
+		{
+			name:   "older routed bead beats a newer routed wisp",
+			routed: routedRow("routed-older-p3", "2026-05-20T06:09:30Z", 3),
+			alias:  aliasRow("alias-newest-p0", "2026-05-22T06:09:30Z", 0),
+			ephemeral: []orderingFixtureRow{
+				wispRow("wisp-newer-p0", "2026-05-21T06:09:30Z", 0, orderingFixtureTarget, ""),
+			},
+			want: "routed-older-p3",
 		},
 		{
 			// bd's created_at is a whole-second DATETIME (beads migration
@@ -650,6 +687,7 @@ func TestHookClaimOrderingTakesTheOlderBeadAcrossBothPoolTiers(t *testing.T) {
 			rig := newOrderingRig(t)
 			rig.serveTier("routed", []orderingFixtureRow{tc.routed})
 			rig.serveTier("alias", []orderingFixtureRow{tc.alias})
+			rig.serveTier("ephemeral", tc.ephemeral)
 			var probe orderingClaimProbe
 			result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), routedQueuePoolSlotQuery())
 
@@ -715,6 +753,7 @@ func TestHookClaimOrderingTakesOneTiersWorkWhenTheOtherTierYieldsNothing(t *test
 					rig.serveTier(sv.other, nil)
 				}
 				rig.serveTier(sv.tier, sv.rows)
+				rig.serveTier("ephemeral", nil)
 				var probe orderingClaimProbe
 				query := routedQueuePoolSlotQuery()
 				result := claimOnce(t, rig, orderingClaimOps(t, rig, &probe), query)
