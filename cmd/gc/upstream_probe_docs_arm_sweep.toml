@@ -1,0 +1,76 @@
+# Proves the upstream-probe classifier's docs arm is enforced: any file under
+# docs/ or engdocs/ is behavior-free only while no //go:embed reaches it, and
+# Go source there is still judged as Go. Each row flips one guard to its
+# accepting counterpart and names the subtest that must go red.
+
+[sweep]
+name = "upstream-probe docs arm: any unembedded docs file, Go judged first"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-run", "TestUpstreamProbe|TestEvaluateUpstreamProbeCloseGate",
+  "-count=1",
+]
+timeout_s = 900
+
+# --- the extension test the docs arm dropped ---
+
+[[mutation]]
+id = "docs-arm-admits-markdown-only"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return strings.HasSuffix(p, ".md") && (strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/"))'''
+expect_output = [
+  "unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free",
+  "comment-and-generated-schema-without-test",
+  "comment-generated-schema-and-test",
+]
+
+# --- the prefix test ---
+
+[[mutation]]
+id = "docs-arm-admits-any-path"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return true'''
+expect_output = ["file-outside-engdocs-and-docs-is-behavioral"]
+
+[[mutation]]
+id = "docs-arm-drops-engdocs"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return strings.HasPrefix(p, "docs/")'''
+expect_output = ["unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free"]
+
+[[mutation]]
+id = "docs-arm-drops-docs"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = '''return strings.HasPrefix(p, "engdocs/") || strings.HasPrefix(p, "docs/")'''
+replace = '''return strings.HasPrefix(p, "engdocs/")'''
+expect_output = [
+  "unembedded-file-of-any-extension-under-engdocs-and-docs-is-behavior-free",
+  "comment-and-generated-schema-without-test",
+]
+
+# --- the embed check, now the only thing separating shipped content ---
+
+[[mutation]]
+id = "docs-arm-ignores-go-embed"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "case upstreamProbeDocsPath(p):\n\t\treturn embeds.unembedded(p)"
+replace = "case upstreamProbeDocsPath(p):\n\t\treturn true"
+expect_output = [
+  "docs-file-matched-by-embed-pattern-is-behavioral-whatever-its-extension",
+  "embedded-schema-keeps-full-experiment",
+]
+
+# --- Go source under docs/ is judged as Go ---
+
+[[mutation]]
+id = "docs-arm-judged-before-go"
+path = "cmd/gc/upstream_probe_behavior_free.go"
+find = "switch {\n\tcase strings.HasSuffix(p, \".go\"):"
+replace = "switch {\n\tcase upstreamProbeDocsPath(p):\n\t\treturn embeds.unembedded(p)\n\tcase strings.HasSuffix(p, \".go\"):"
+expect_output = ["added-go-file-is-behavioral-even-if-comment-only"]
