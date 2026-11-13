@@ -34,7 +34,13 @@ func newInternalUpstreamClassifyCmd(stdout, stderr io.Writer) *cobra.Command {
 					return errExit
 				}
 			}
-			kept, reverted, behavioral := upstreamProbeClassifyPaths(repoDir, base, head, paths)
+			kept, reverted, behavioral, embedErr := upstreamProbeClassifyPaths(repoDir, base, head, paths)
+			// A failed //go:embed scan reads comments and docs as behavioral,
+			// which the audit's experiment then answers as if they were code.
+			if embedErr != nil {
+				fmt.Fprintf(stderr, "gc internal upstream-classify: the //go:embed scan of %s in %s failed, so no path can be read as unembedded: %v\n", head, repoDir, embedErr) //nolint:errcheck // best-effort stderr
+				return errExit
+			}
 			out, err := json.Marshal(struct {
 				Kept       []string `json:"kept"`
 				Tests      []string `json:"tests"`

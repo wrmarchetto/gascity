@@ -16,11 +16,11 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// upstreamProbeClassifyPaths splits the paths changed from base to head for
-// the retirement experiment. Returns (kept, reverted, behavioral): kept are
-// test material the experiment leaves in place, reverted is everything else,
-// and behavioral the reverted paths whose change can alter behavior.
-func upstreamProbeClassifyPaths(repoDir, base, head string, paths []string) (kept, reverted, behavioral []string) {
+// upstreamProbeClassifyPaths splits paths changed from base to head. Returns
+// (kept, reverted, behavioral, embedErr): test material the experiment keeps,
+// everything else, the reverted paths that can alter behavior, and the
+// //go:embed scan failure that made some path read as embedded, or nil.
+func upstreamProbeClassifyPaths(repoDir, base, head string, paths []string) (kept, reverted, behavioral []string, embedErr error) {
 	embeds := &upstreamProbeEmbedIndex{repoDir: repoDir, rev: head}
 	for _, p := range paths {
 		if upstreamProbeTestPath(p) || upstreamProbeSweepSpec(repoDir, base, head, p, embeds) {
@@ -32,7 +32,7 @@ func upstreamProbeClassifyPaths(repoDir, base, head string, paths []string) (kep
 			behavioral = append(behavioral, p)
 		}
 	}
-	return kept, reverted, behavioral
+	return kept, reverted, behavioral, embeds.err
 }
 
 // upstreamProbeSweepSpec reports whether p is a mutation-sweep spec, which
@@ -246,8 +246,9 @@ type upstreamProbeEmbed struct {
 }
 
 // upstreamProbeEmbedPatterns reads every //go:embed directive in the .go
-// files of rev. Any file it cannot parse, or any pattern it cannot read, is
-// an error, so no file is called unembedded on a partial resolution.
+// files of rev outside testdata/. Any file it cannot parse, or any pattern it
+// cannot read, is an error, so no file is called unembedded on a partial
+// resolution.
 func upstreamProbeEmbedPatterns(repoDir, rev string) ([]upstreamProbeEmbed, error) {
 	out, err := upstreamProbeGitOutput(repoDir, "grep", "-l", "-z", "-F", "//go:embed", rev, "--", "*.go")
 	if err != nil {
@@ -260,7 +261,10 @@ func upstreamProbeEmbedPatterns(repoDir, rev string) ([]upstreamProbeEmbed, erro
 	var embeds []upstreamProbeEmbed
 	for _, entry := range strings.Split(out, "\x00") {
 		file := strings.TrimPrefix(entry, rev+":")
-		if file == "" {
+		// A pattern reaches only its package's subtree, which under testdata/
+		// is all kept, so no reverted path's answer rests on such a directive.
+		// Not _ or . directories: go build compiles one imported by path.
+		if file == "" || upstreamProbeTestdataPath(file) {
 			continue
 		}
 		src, err := upstreamProbeGitOutput(repoDir, "show", rev+":"+file)
