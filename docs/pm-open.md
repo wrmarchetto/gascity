@@ -171,6 +171,15 @@ shape, and neither epic's acceptance closes over what follows
 bead-cycle-time. Its content answers pm-open #11(b), which the session
 working gs-338t records. The standing question below is unchanged.
 
+Update 2026-11-13 (pm-log #201): gs-9lri (remind the bench liaison that
+the one batched supervisor rebuild can be scheduled once bead-cycle-time
+g2 findings F01, F15 and F16 land on main) joins the class, eleventh
+after the ten above. Summons gs-oxbr ruled it standalone: a mayor-owned
+operational reminder, the gs-eep and gs-hzrg shape, proposing no gascity
+code change. bead-cycle-time is done and its deferred findings went to
+the city engineers (pm-log #200), and the roadmap holds no open epic. The
+standing question below is unchanged.
+
 Question: should the roadmap carry a standing epic (or an explicit
 standalone policy line) for gc substrate maintenance, so off-roadmap fixes
 have a declared home?

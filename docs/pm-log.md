@@ -1,6 +1,6 @@
 # gascity pm log
 
-last_seen: gs-5zdc 2026-11-11T05:25:00Z
+last_seen: gs-oxbr 2026-11-14T00:05:00Z
 
 Numbered entries below, newest last. Each carries a `Source:` line.
 
@@ -6295,3 +6295,23 @@ Rig store since last_seen: gs-fyn9 closed (#199), the g2 deferred
 findings filed, and this summons.
 
 Source: pm-log #199
+
+## 201. Sweep summons gs-oxbr: gs-9lri ruled standalone (2026-11-13)
+
+gs-9lri is the mayor's reminder to tell the bench liaison that the one
+batched supervisor rebuild can be scheduled once bead-cycle-time g2
+findings F01, F15 and F16 are on gascity main. It changes no gascity
+code, its assignee is the mayor, and rebuilding stays the operator's.
+No epic's acceptance closes over it: bead-cycle-time is done and its
+findings were deferred to the city engineers (#200), and the roadmap
+holds no open epic (#196). Labeled `standalone`, the operational-record
+shape #38 and #131 placed the same way. pm-open #3 gains the update.
+
+At ruling time all three commits (107f28e629, 3a90d7d7b6, b8f844f9df)
+are ancestors of main and gs-9lri reads open again, so its park
+condition has cleared and it is the mayor's to act on.
+
+Rig store since last_seen: the sixteen g2 deferred findings closed,
+gs-9lri, this summons, and gs-xdih (in progress, not placed here).
+
+Source: pm-log #131
