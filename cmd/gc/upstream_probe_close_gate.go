@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -111,9 +112,20 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 		return ""
 	}
 
-	changed, err := upstreamProbeGitLines(repoDir, "diff", "--name-only", upstreamProbeBaseRef+"...HEAD")
+	// A criss-cross has several bases and A...B silently picks one. The paths
+	// are read against each: a branch touching no upstream-owned path stays
+	// exempt, and any other is refused below rather than judged on git's pick.
+	bases, err := upstreamProbeGitLines(repoDir, "merge-base", "--all", upstreamProbeBaseRef, "HEAD")
 	if err != nil {
-		return fmt.Sprintf("could not inspect this branch against %s: %v", upstreamProbeBaseRef, err)
+		return fmt.Sprintf("could not find the merge base with %s: %v", upstreamProbeBaseRef, err)
+	}
+	var changed []string
+	for _, base := range bases {
+		paths, err := upstreamProbeGitLines(repoDir, "diff", "--name-only", base, "HEAD")
+		if err != nil {
+			return fmt.Sprintf("could not inspect this branch against %s: %v", upstreamProbeBaseRef, err)
+		}
+		changed = append(changed, paths...)
 	}
 	if len(changed) == 0 {
 		return ""
@@ -136,11 +148,14 @@ func upstreamProbeCloseViolation(repoDir, probe string) string {
 	if !touchesUpstream {
 		return ""
 	}
-	mergeBase, err := upstreamProbeGitOutput(repoDir, "merge-base", upstreamProbeBaseRef, "HEAD")
-	if err != nil {
-		return fmt.Sprintf("could not find the merge base with %s: %v", upstreamProbeBaseRef, err)
+	if len(bases) != 1 {
+		short := make([]string, len(bases))
+		for i, base := range bases {
+			short[i] = base[:min(10, len(base))]
+		}
+		return fmt.Sprintf("%[1]s and HEAD have %[2]d merge bases (%[3]s), so no single diff is this branch's own change; merge %[1]s into this branch (git merge %[1]s) so it is an ancestor, then close again", upstreamProbeBaseRef, len(bases), strings.Join(short, ", "))
 	}
-	mergeBase = strings.TrimSpace(mergeBase)
+	mergeBase := bases[0]
 	kept, reverted, behavioral, embedErr := upstreamProbeClassifyPaths(repoDir, mergeBase, "HEAD", changed)
 	violation := upstreamProbeSplitViolation(repoDir, mergeBase, strings.TrimSpace(probe), kept, reverted, behavioral)
 	if violation != "" && embedErr != nil {
@@ -268,10 +283,16 @@ func upstreamProbeGitLines(repoDir string, args ...string) ([]string, error) {
 	return strings.Fields(out), nil
 }
 
+// upstreamProbeGitOutput returns git's stdout alone. Its stderr can carry a
+// warning on success (a second merge base under A...B), which a path list
+// would read as paths, so stderr travels only in the error.
 func upstreamProbeGitOutput(repoDir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
-	out, err := cmd.CombinedOutput()
+	out, err := exec.Command("git", append([]string{"-C", repoDir}, args...)...).Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(bytes.TrimSpace(exitErr.Stderr)) > 0 {
+			return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, bytes.TrimSpace(exitErr.Stderr))
+		}
 		return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	}
 	return string(out), nil

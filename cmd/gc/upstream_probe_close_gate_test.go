@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
 )
@@ -104,8 +107,36 @@ func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
 		upstream bool     // paths are committed to upstream/main first
 		probe    string
 		wantMsg  string // empty when the close must be accepted
+		// Set: main merges sibling A and sibling B (editing this file) apart,
+		// and the branch is cut from B after merging A, a criss-cross. git
+		// lists the newer base, B, first, and a diff from B lacks this file.
+		siblingFile string
+		mergeMain   bool // the branch then merges main, the criss-cross remedy
 	}{
 		{name: "fork-only/no-probe", paths: []string{"fork_only.txt"}},
+		{name: "criss-cross/fork-only-siblings/no-probe", paths: []string{"fork_only.txt"}, siblingFile: "sibling_b.txt"},
+		{
+			name:        "criss-cross/upstream-sibling/fork-only-branch/no-probe",
+			paths:       []string{"fork_only.txt"},
+			siblingFile: "upstream_owned.txt",
+			wantMsg:     "main and HEAD have 2 merge bases",
+		},
+		{
+			name:        "criss-cross/upstream-sibling/passing-probe",
+			paths:       []string{"owned_test.go"},
+			upstream:    true,
+			probe:       "test -f owned_test.go",
+			siblingFile: "upstream_owned.txt",
+			wantMsg:     "main and HEAD have 2 merge bases",
+		},
+		{
+			name:        "criss-cross/upstream-sibling/main-merged/passing-probe",
+			paths:       []string{"owned_test.go"},
+			upstream:    true,
+			probe:       "test -f owned_test.go",
+			siblingFile: "upstream_owned.txt",
+			mergeMain:   true,
+		},
 		// Green on upstream's tree too, as a flaky-test fix's own test run is.
 		{name: "upstream-test-only/passing-probe", paths: []string{"owned_test.go"}, upstream: true, probe: "test -f owned_test.go"},
 		{name: "upstream-test-only/no-probe", paths: []string{"owned_test.go"}, upstream: true, wantMsg: "edits only test paths"},
@@ -138,6 +169,30 @@ func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
 				writeAndCommit("upstream\n", "upstream files")
 				runUpstreamProbeCloseGateGit(t, repoDir, "update-ref", "refs/remotes/upstream/main", "HEAD")
 			}
+			if tc.siblingFile != "" {
+				sibling := func(name, file string) {
+					t.Helper()
+					runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-b", name, "main")
+					if err := os.WriteFile(filepath.Join(repoDir, file), []byte(name+"\n"), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					runUpstreamProbeCloseGateGit(t, repoDir, "add", file)
+					runUpstreamProbeCloseGateGit(t, repoDir, "commit", "-q", "-m", name)
+				}
+				// git lists the newest base first, and its order for a tie
+				// varies with the history, so B is dated a second after A.
+				// Every later commit in the subtest keeps B's date.
+				now := time.Now().Unix()
+				t.Setenv("GIT_COMMITTER_DATE", fmt.Sprintf("%d +0000", now+1))
+				sibling("sibling-a", "sibling_a.txt")
+				t.Setenv("GIT_COMMITTER_DATE", fmt.Sprintf("%d +0000", now+2))
+				sibling("sibling-b", tc.siblingFile)
+				runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "main")
+				runUpstreamProbeCloseGateGit(t, repoDir, "merge", "-q", "--no-ff", "-m", "merge a", "sibling-a")
+				runUpstreamProbeCloseGateGit(t, repoDir, "merge", "-q", "--no-ff", "-m", "merge b", "sibling-b")
+				runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-b", "stack", "sibling-b")
+				runUpstreamProbeCloseGateGit(t, repoDir, "merge", "-q", "--no-ff", "-m", "stack on a", "sibling-a")
+			}
 			runUpstreamProbeCloseGateGit(t, repoDir, "checkout", "-q", "-b", "fix/shape")
 			for _, path := range tc.specs {
 				if err := os.WriteFile(filepath.Join(repoDir, path), []byte(spec), 0o644); err != nil {
@@ -146,6 +201,20 @@ func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
 				runUpstreamProbeCloseGateGit(t, repoDir, "add", path)
 			}
 			writeAndCommit("branch-edit\n", "branch work")
+			if tc.mergeMain {
+				runUpstreamProbeCloseGateGit(t, repoDir, "merge", "-q", "--no-ff", "-m", "merge main", "main")
+			}
+			if tc.siblingFile != "" && !tc.mergeMain {
+				// git warns of the second base on stderr, which no path list may hold.
+				paths, err := upstreamProbeGitLines(repoDir, "diff", "--name-only", "main...HEAD")
+				if err != nil || slices.Contains(paths, "warning:") {
+					t.Fatalf("diff main...HEAD read as %q (err %v), want paths only", paths, err)
+				}
+				_, err = upstreamProbeGitOutput(repoDir, "show", "main:absent.txt")
+				if err == nil || !strings.Contains(err.Error(), "does not exist in 'main'") {
+					t.Fatalf("git show error = %v, want git's own stderr in it", err)
+				}
+			}
 
 			bead := beads.Bead{ID: "ci-probe", Type: "bug"}
 			if tc.probe != "" {
@@ -163,8 +232,25 @@ func TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape(t *testing.T) {
 			if !blocked {
 				t.Fatalf("close was accepted, want refusal containing %q", tc.wantMsg)
 			}
-			if got := stderr.String(); !strings.Contains(got, tc.wantMsg) {
+			got := stderr.String()
+			if !strings.Contains(got, tc.wantMsg) {
 				t.Fatalf("refusal = %q, want it to contain %q", got, tc.wantMsg)
+			}
+			if tc.siblingFile == "" {
+				return
+			}
+			// Each base by name, read from the fixture's refs, then the remedy.
+			for _, ref := range []string{"sibling-a", "sibling-b"} {
+				sha, err := upstreamProbeGitOutput(repoDir, "rev-parse", "--short=10", ref)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if want := strings.TrimSpace(sha); !strings.Contains(got, want) {
+					t.Fatalf("refusal = %q, want it to name base %s (%s)", got, ref, want)
+				}
+			}
+			if !strings.Contains(got, "git merge main") {
+				t.Fatalf("refusal = %q, want the remedy git merge main", got)
 			}
 		})
 	}

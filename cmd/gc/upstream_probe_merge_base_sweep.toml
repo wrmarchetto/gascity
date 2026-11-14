@@ -1,0 +1,75 @@
+# Proves the upstream-probe close gate reads git's stdout alone, keeps git's
+# stderr for its errors, and refuses a criss-cross branch touching an
+# upstream-owned path by naming its merge bases, instead of judging the paths
+# of whichever base git picked. A fork-only criss-cross stays exempt.
+#
+# repo = "../.." resolves against THIS file's directory (cmd/gc/), so it always
+# means the checkout the spec was read out of. See the mutation-sweep skill.
+
+[sweep]
+name = "a criss-cross merge base is named, not guessed"
+repo = "../.."
+
+[sweep.gate]
+argv = [
+  "go", "test", "./cmd/gc/",
+  "-count=1",
+  "-run", "TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape",
+]
+timeout_s = 900
+
+# --- reading git ---
+
+[[mutation]]
+id = "stderr-read-as-output"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''args...)...).Output()'''
+replace = '''args...)...).CombinedOutput()'''
+expect_output = ["want paths only"]
+
+[[mutation]]
+id = "stderr-dropped-from-error"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''if errors.As(err, &exitErr) && len(bytes.TrimSpace(exitErr.Stderr)) > 0 {'''
+replace = '''if errors.As(err, &exitErr) && false {'''
+expect_output = ["want git's own stderr in it"]
+
+# --- the merge bases ---
+
+[[mutation]]
+id = "git-picks-the-base"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''"merge-base", "--all", upstreamProbeBaseRef, "HEAD"'''
+replace = '''"merge-base", upstreamProbeBaseRef, "HEAD"'''
+expect_output = [
+  "--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/criss-cross/upstream-sibling/fork-only-branch/no-probe",
+  "--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/criss-cross/upstream-sibling/passing-probe",
+]
+
+[[mutation]]
+id = "paths-read-against-the-first-base-only"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''for _, base := range bases {'''
+replace = '''for _, base := range bases[:1] {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/criss-cross/upstream-sibling/fork-only-branch/no-probe"]
+
+[[mutation]]
+id = "criss-cross-judged-on-the-first-base"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''	if len(bases) != 1 {'''
+replace = '''	if false {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/criss-cross/upstream-sibling/passing-probe"]
+
+[[mutation]]
+id = "fork-only-criss-cross-refused"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''	if !touchesUpstream {'''
+replace = '''	if !touchesUpstream && len(bases) == 1 {'''
+expect_output = ["--- FAIL: TestEvaluateUpstreamProbeCloseGateScopesProbeByBranchShape/criss-cross/fork-only-siblings/no-probe"]
+
+[[mutation]]
+id = "bases-not-named"
+path = "cmd/gc/upstream_probe_close_gate.go"
+find = '''short[i] = base[:min(10, len(base))]'''
+replace = '''short[i] = base[:0]'''
+expect_output = ["want it to name base sibling-a"]
