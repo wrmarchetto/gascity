@@ -230,7 +230,7 @@ prefix = "fe"
 	})
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, false, false, false, 0, 0, &stdout, &stderr)
+	_ = doDoctor(false, false, false, false, 0, 0, nil, &stdout, &stderr)
 
 	if citySkip == nil || *citySkip {
 		t.Fatalf("city dolt check skip = %v, want false when a bd-backed rig inherits the city endpoint", citySkip)
@@ -481,7 +481,7 @@ dolt_port = "3308"
 	})
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, false, false, false, 0, 0, &stdout, &stderr)
+	_ = doDoctor(false, false, false, false, 0, 0, nil, &stdout, &stderr)
 
 	if !strings.Contains(stdout.String(), "canonical/compat Dolt drift") {
 		t.Fatalf("doctor output missing Dolt topology drift:\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
@@ -513,7 +513,7 @@ source = "https://github.com/gastownhall/gc-actual-packs"
 	cleanupManagedDoltTestCity(t, cityDir)
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, true, false, false, 0, 0, &stdout, &stderr)
+	_ = doDoctor(false, true, false, false, 0, 0, nil, &stdout, &stderr)
 	out := stdout.String() + stderr.String()
 	if !strings.Contains(out, "stale-local-pack-dirs") {
 		t.Fatalf("doctor output missing stale-local-pack-dirs check:\n%s", out)
@@ -702,7 +702,7 @@ func runDoctorForStaleLocalPackDirTest(t *testing.T, cityDir string) string {
 	cleanupManagedDoltTestCity(t, cityDir)
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, true, false, false, 0, 0, &stdout, &stderr)
+	_ = doDoctor(false, true, false, false, 0, 0, nil, &stdout, &stderr)
 	return stdout.String() + stderr.String()
 }
 
@@ -730,7 +730,7 @@ func TestDoDoctorReportsLegacyBDSplitStore(t *testing.T) {
 	t.Cleanup(func() { cityFlag = origCityFlag })
 
 	var stdout, stderr bytes.Buffer
-	_ = doDoctor(false, false, false, false, 0, 0, &stdout, &stderr)
+	_ = doDoctor(false, false, false, false, 0, 0, nil, &stdout, &stderr)
 	out := stdout.String() + stderr.String()
 	if !strings.Contains(out, "bd-split-store") {
 		t.Fatalf("doctor output missing bd-split-store check:\n%s", out)
@@ -1128,5 +1128,103 @@ script = "checks/b.sh"
 		if !strings.Contains(out, "✓ "+name+" — met") {
 			t.Fatalf("%s did not meet its partner: default --jobs did not pool local checks\n%s", name, out)
 		}
+	}
+}
+
+func TestDoctorCheckSelectorRunsOnlyTheNamedChecks(t *testing.T) {
+	cityDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(`[workspace]
+name = "demo"
+
+[[doctor.check]]
+name = "a"
+script = "checks/a.sh"
+
+[[doctor.check]]
+name = "b"
+script = "checks/b.sh"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityDir, "checks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ran := func(name string) string { return filepath.Join(cityDir, name+".ran") }
+	for _, name := range []string{"a", "b"} {
+		body := "#!/bin/sh\ntouch '" + ran(name) + "'\necho ok\n"
+		if err := os.WriteFile(filepath.Join(cityDir, "checks", name+".sh"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	origCityFlag := cityFlag
+	cityFlag = cityDir
+	t.Cleanup(func() { cityFlag = origCityFlag })
+
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		wantRan  []string
+		wantSkip []string
+		wantErr  string
+	}{
+		{"one", []string{"--check", "local:a"}, []string{"a"}, []string{"b"}, ""},
+		{"repeated", []string{"--check", "local:a", "--check", "local:b"}, []string{"a", "b"}, nil, ""},
+		{"unknown refuses before running anything", []string{"--check", "local:a", "--check", "local:nope"}, nil, []string{"a", "b"}, "local:nope"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, name := range []string{"a", "b"} {
+				_ = os.Remove(ran(name))
+			}
+			var stdout, stderr bytes.Buffer
+			cmd := newDoctorCmd(&stdout, &stderr)
+			cmd.SetArgs(append([]string{"--json"}, tc.args...))
+			err := cmd.Execute()
+			for _, name := range tc.wantRan {
+				if _, statErr := os.Stat(ran(name)); statErr != nil {
+					t.Errorf("check %s did not run: %v", name, statErr)
+				}
+			}
+			for _, name := range tc.wantSkip {
+				if _, statErr := os.Stat(ran(name)); statErr == nil {
+					t.Errorf("check %s ran, but it was not selected", name)
+				}
+			}
+			if tc.wantErr != "" {
+				if err == nil {
+					t.Fatalf("unknown check name exited 0; stdout=%s", stdout.String())
+				}
+				if stdout.Len() != 0 {
+					t.Fatalf("refusal wrote stdout a consumer could parse as a report: %q", stdout.String())
+				}
+				if !strings.Contains(stderr.String(), tc.wantErr) || !strings.Contains(stderr.String(), "gc doctor --json") {
+					t.Fatalf("stderr = %q, want the unknown name and the listing remedy", stderr.String())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("doctor --check exited nonzero: %v; stderr=%s", err, stderr.String())
+			}
+			var payload struct {
+				Results []struct {
+					Name string `json:"name"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+				t.Fatalf("stdout is not JSON: %v\n%s", err, stdout.String())
+			}
+			var got []string
+			for _, r := range payload.Results {
+				got = append(got, r.Name)
+			}
+			var want []string
+			for _, name := range tc.wantRan {
+				want = append(want, "local:"+name)
+			}
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Fatalf("results = %v, want exactly %v", got, want)
+			}
+		})
 	}
 }
