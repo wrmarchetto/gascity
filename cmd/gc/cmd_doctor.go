@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +41,7 @@ func newDoctorCmd(stdout, stderr io.Writer) *cobra.Command {
 	var fix, verbose, jsonOut, explainPostgresAuth bool
 	var checkTimeout time.Duration
 	var jobs int
+	var only []string
 	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check workspace health",
@@ -58,10 +60,11 @@ legacy-to-current pack rewrites that are available on this branch.`,
   gc doctor --fix
   gc doctor --verbose
   gc doctor --json
+  gc doctor --json --check unclaimable-work
   gc doctor --explain-postgres-auth`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if doDoctor(fix, verbose, jsonOut, explainPostgresAuth, checkTimeout, jobs, stdout, stderr) != 0 {
+			if doDoctor(fix, verbose, jsonOut, explainPostgresAuth, checkTimeout, jobs, only, stdout, stderr) != 0 {
 				return errExit
 			}
 			return nil
@@ -76,6 +79,8 @@ legacy-to-current pack rewrites that are available on this branch.`,
 		"per-check time budget; a check or its --fix remediation exceeding it is abandoned and reported as timed out (0 disables)")
 	cmd.Flags().IntVar(&jobs, "jobs", defaultDoctorJobs,
 		"how many pack and local script checks may run at once; other checks, and every check under --fix, run one at a time (1 runs all serially)")
+	cmd.Flags().StringArrayVar(&only, "check", nil,
+		"run only the named check, as it appears in a result's name; repeatable, and an unknown name refuses before any check runs")
 	return cmd
 }
 
@@ -108,7 +113,8 @@ func doctorWorkspaceHasPostgresScope(cityPath string, cfg *config.City) bool {
 	return false
 }
 
-// doDoctor runs all health checks and prints results.
+// doctorSkipsDoltChecks reports whether no store in the workspace uses the
+// managed bd contract, or GC_DOLT asks to skip, so Dolt checks do not apply.
 func doctorSkipsDoltChecks(cityPath string) bool {
 	if gcDoltSkip() {
 		return true
@@ -486,7 +492,11 @@ func buildDoctorChecks(cityPath string, cfg *config.City, cfgErr error, opts bui
 	return checks
 }
 
-func doDoctor(fix, verbose, jsonOut, explainPostgresAuth bool, checkTimeout time.Duration, jobs int, stdout, stderr io.Writer) int {
+// doDoctor runs doctor restricted to the checks named in only, or every check
+// when only is empty. A name matching no registered check is refused before
+// anything runs: a consumer reading one result by name would otherwise take
+// its absence from the report for a pass.
+func doDoctor(fix, verbose, jsonOut, explainPostgresAuth bool, checkTimeout time.Duration, jobs int, only []string, stdout, stderr io.Writer) int {
 	cityPath, err := resolveCity()
 	if err != nil {
 		fmt.Fprintf(stderr, "gc doctor: %v\n", err) //nolint:errcheck // best-effort stderr
@@ -515,7 +525,7 @@ func doDoctor(fix, verbose, jsonOut, explainPostgresAuth bool, checkTimeout time
 	if cfgErr == nil && cfg != nil {
 		rolloutFlags, rolloutResolveErr = rollout.Resolve(cfg, rollout.ResolveOptions{})
 	}
-	for _, check := range buildDoctorChecks(cityPath, cfg, cfgErr, buildDoctorChecksOpts{
+	checks := buildDoctorChecks(cityPath, cfg, cfgErr, buildDoctorChecksOpts{
 		Stderr:               stderr,
 		ControllerRunning:    controllerRunning,
 		SupervisorRunning:    supervisorRunning,
@@ -525,7 +535,13 @@ func doDoctor(fix, verbose, jsonOut, explainPostgresAuth bool, checkTimeout time
 		SkipRigDoltChecks:    skipRigDoltChecks,
 		RolloutFlags:         rolloutFlags,
 		RolloutResolveErr:    rolloutResolveErr,
-	}) {
+	})
+	checks, err = selectDoctorChecks(checks, only)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc doctor: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	for _, check := range checks {
 		d.Register(check)
 	}
 
@@ -545,6 +561,38 @@ func doDoctor(fix, verbose, jsonOut, explainPostgresAuth bool, checkTimeout time
 		return 1
 	}
 	return 0
+}
+
+// selectDoctorChecks keeps the checks whose Name is in only, in registration
+// order, or returns all of them when only is empty.
+func selectDoctorChecks(checks []doctor.Check, only []string) ([]doctor.Check, error) {
+	if len(only) == 0 {
+		return checks, nil
+	}
+	want := make(map[string]bool, len(only))
+	for _, name := range only {
+		want[name] = true
+	}
+	found := make(map[string]bool, len(only))
+	var kept []doctor.Check
+	for _, c := range checks {
+		if want[c.Name()] {
+			kept = append(kept, c)
+			found[c.Name()] = true
+		}
+	}
+	var missing []string
+	for name := range want {
+		if !found[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("--check names no registered check: %s; list this city's check names with `gc doctor --json` (each result's \"name\")",
+			strings.Join(missing, ", "))
+	}
+	return kept, nil
 }
 
 type expandedConfigLoadCheck struct{}
